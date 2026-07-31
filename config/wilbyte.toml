@@ -1,0 +1,49 @@
+# Wil Byte brand + workflow defaults.
+# These encode the choices Wil makes by hand on every post (see README).
+
+[brand]
+name = "Agent Lead Lab"
+site_domain = "agentleadlab.com"
+# Canonical link is always https://<site_domain>/post/<url-slug>
+canonical_path_prefix = "/post/"
+
+[post]
+# Category is always LeadLab.
+category = "LeadLab"
+# Author is always Arnold "Tre" Tarpley.
+author = 'Arnold "Tre" Tarpley'
+# The same keyword set goes on every post.
+keywords = [
+  "Insurance marketing",
+  "Lead Lab",
+  "Lead vendors",
+  "Life Insurance",
+  "Life Insurance Leads through Facebook and Instagram",
+  "Agent Lead Lab",
+]
+
+[schedule]
+# One post per weekday at 10:00 AM. Never Saturday or Sunday.
+time = "10:00"
+timezone = "America/Chicago"
+weekdays_only = true
+# GHL rejects schedules less than ~15 minutes out.
+min_lead_minutes = 20
+
+[cover]
+# GHL recommends 600x400 for the blog cover image.
+width = 600
+height = 400
+# The highlighted kicker above the headline is 3-5 words, taken from one of the
+# headline options. The big headline below it is a different headline option.
+kicker_min_words = 3
+kicker_max_words = 5
+# Alt text for the cover image is the URL slug (matching Wil's manual process).
+alt_text_source = "url_slug"
+
+[copy]
+model = "claude-opus-5"
+max_tokens = 16000
+# Meta title / description limits enforced on the model output.
+meta_title_max = 60
+meta_description_max = 160

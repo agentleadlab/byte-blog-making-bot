@@ -1,0 +1,165 @@
+# Wil Byte
+
+Turns Agent Lead Lab YouTube videos into scheduled GoHighLevel blog posts.
+
+This automates the daily process Wil walks through in
+[the Loom](https://www.loom.com/share/1a5392d015334baca9c2ff748667741e): take a
+video off the playlist, pull its transcript, run it through the "Copywriting
+Frank" Claude project, build a cover image in Canva, then fill in the GHL blog
+form and schedule it for 10am on the next open weekday.
+
+```
+wilbyte run --playlist "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhxPLVUtlUmliQ0" -n 3
+```
+
+## What it replaces
+
+| Manual step (from the video) | Automated by |
+| --- | --- |
+| Open each playlist video, click "Show transcript", copy it | `youtube.py` — yt-dlp + youtube-transcript-api |
+| Paste transcript + YouTube link into the Copywriting Frank project | `copywriter.py` — Anthropic API, house style in `prompts/copywriting_frank.md` |
+| Pick a headline option that isn't the article's H1 | `selection.py` — picks the option least similar to the H1 |
+| Combine two headline fragments into a Canva cover image, export, upload | `cover.py` — HTML/CSS template screenshotted at 600×400 |
+| Fill slug, category, author, keywords, canonical, description, alt text | `ghl.py` — one API payload; constants live in `config/wilbyte.toml` |
+| Find the next weekday with no post, set 10:00 AM, hit Schedule | `scheduler.py` — reads occupied days from GHL, skips weekends |
+| Remember which playlist videos are already done | `state.py` — `state/ledger.json` |
+
+The constants that never change per post — category `LeadLab`, author
+`Arnold "Tre" Tarpley`, the six keywords, the `agentleadlab.com/post/` canonical
+prefix, 10am weekdays-only — are all in `config/wilbyte.toml`.
+
+## Setup
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/playwright install chromium     # skip if Chromium is already provisioned
+
+cp .env.example .env                       # then fill it in
+.venv/bin/wilbyte doctor                   # verify config + credentials + GHL access
+```
+
+`.env` needs an Anthropic API key and a GHL **Private Integration** token for the
+Agent Lead Lab sub-account, created under Settings → Private Integrations with
+these scopes:
+
+```
+blogs/post.write            blogs/post-update.write     blogs/check-slug.readonly
+blogs/category.readonly     blogs/author.readonly       medias.write
+medias.readonly
+```
+
+`GHL_LOCATION_ID` is in the GHL URL (`/v2/location/<THIS>/...`) and `GHL_BLOG_ID`
+is in the blog site URL (`/blogs/site/<THIS>?tab=blog-posts`). `wilbyte doctor`
+lists the blog sites it can see if you're unsure which id to use.
+
+## Usage
+
+```bash
+# What would get posted, and on what days — makes no changes.
+wilbyte plan --playlist <url>
+
+# Build 3 posts and schedule them. Skips anything already in the ledger.
+wilbyte run --playlist <url> -n 3
+
+# Build everything, print the exact API payload, send nothing.
+wilbyte run --playlist <url> -n 1 --dry-run
+
+# Create posts as DRAFT instead of SCHEDULED, to review inside GHL first.
+wilbyte run --playlist <url> -n 3 --draft
+
+# One video, with a transcript you pasted into a file yourself.
+wilbyte run --video <url> --transcript ./transcript.txt
+
+# Write files locally and never touch GHL.
+wilbyte run --playlist <url> -n 1 --local-only
+
+# Re-render a cover image on its own.
+wilbyte cover --kicker "Aged, Fresh, Premium" --headline "Why Most Agents Never Move Up a Lead Tier"
+```
+
+Every run writes a reviewable folder per post under `out/<url-slug>/`:
+
+```
+out/insurance-lead-progression-roadmap/
+├── post.html        the article body
+├── cover.png        600×400 cover image
+├── copy.json        raw copywriter output, including all headline options
+└── ghl-fields.txt   every field, labelled, for pasting by hand if needed
+```
+
+So `--local-only` or `--dry-run` still gives you everything you need to finish a
+post manually — the automation degrades to the current process rather than
+failing closed.
+
+## The two judgment calls
+
+**Headline.** Wil never uses the copy's own H1 as the blog title: *"I use the
+headline that is the opposite or not similar to the headline 1 clearly."*
+`choose_title` scores each option's word overlap against the article H1 and takes
+the least similar one. If every option overlaps the H1 (≥0.6 Jaccard), it still
+picks one but prints a `!` warning so you know to look.
+
+**Cover image.** Two lines: a 3–5 word highlighted kicker, and a bigger headline
+underneath. `plan_cover` sources them from *different* headline options and
+rejects any kicker that just restates the opening of the article H1 — so the
+cover never says the same thing twice.
+
+Both rules are covered in `tests/test_selection.py` against the exact example
+from the video.
+
+## Scheduling
+
+One post per weekday at 10:00 AM `America/Chicago`. Before assigning slots the
+bot reads every existing post on the blog and marks those days occupied, so if
+you're already booked through the 11th the next post lands on the 12th. Weekends
+are skipped, and a slot less than 20 minutes away is passed over because GHL
+rejects it.
+
+Change any of this in `config/wilbyte.toml` under `[schedule]`.
+
+## Brand assets
+
+The cover template renders without any assets, using a text wordmark and a
+system sans. To match the Canva original exactly, drop files into `assets/` —
+see [`assets/README.md`](assets/README.md). No code changes needed.
+
+## Adjusting the copy
+
+`prompts/copywriting_frank.md` is the system prompt. It's a **reconstruction** of
+the Organic Post AI Copywriter project instructions, rebuilt from the output
+shape visible in the video (headline options with char counts, meta title and
+description, URL slug, keyword map, internal link flag). If you can export the
+real project instructions, paste them over the body of that file — nothing in the
+code reads anything but the file.
+
+The structured fields the pipeline needs (`article_h1`, `headline_options`,
+`meta_title`, `meta_description`, `url_slug`, …) are enforced by the tool schema
+in `copywriter.py`, not by the prompt, so rewriting the prompt won't break
+parsing.
+
+## Verify before the first real run
+
+Two things are built from documentation rather than observed traffic, so confirm
+them once:
+
+1. **GHL field names.** The create-post body keys are collected in
+   `POST_FIELDS` in `ghl.py`. Run `wilbyte run --video <url> --dry-run` to print
+   the exact payload, and compare it against the
+   [Create Blog Post docs](https://marketplace.gohighlevel.com/docs/ghl/blogs/create-blog-post/).
+   If a key is wrong, fix it in that one dict.
+2. **Media upload response.** `upload_media` reads `url` / `fileUrl` from the
+   `/medias/upload-file` response. If your response nests it differently, the
+   error message prints the whole body.
+
+Start with `--draft` for the first batch, confirm the posts look right in GHL,
+then switch to the default scheduled mode.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest
+```
+
+51 tests, no network or credentials required. The cover tests render real PNGs
+through Chromium.
