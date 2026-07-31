@@ -121,5 +121,83 @@ def status_summary(
     return embed
 
 
+def copy_result(result) -> discord.Embed:
+    """Variants laid out so each one can be read and copied on its own."""
+    embed = discord.Embed(
+        title=f"{result.format.label} — {len(result.variants)} option(s)",
+        description=_truncate(result.brief, 400),
+        colour=GREEN,
+    )
+
+    for index, variant in enumerate(result.variants, start=1):
+        chunks = []
+        for spec in result.format.fields:
+            value = variant.get(spec.key)
+            if not value:
+                continue
+            if len(result.format.fields) == 1:
+                chunks.append(value)
+            elif spec.multiline:
+                chunks.append(f"**{spec.label}**\n{value}")
+            else:
+                chunks.append(f"**{spec.label}:** {value}")
+        body = "\n".join(chunks)
+        # Discord caps a field at 1024 characters; the attached file has it all.
+        embed.add_field(name=f"Option {index}", value=_truncate(body, 1024), inline=False)
+
+    if result.notes:
+        embed.add_field(name="Why these angles", value=_truncate(result.notes, 1024), inline=False)
+
+    if result.warnings:
+        embed.add_field(
+            name="⚠ Over the limit",
+            value=_truncate("\n".join(f"• {w}" for w in result.warnings), 1024),
+            inline=False,
+        )
+
+    if result.examples_used:
+        embed.set_footer(text=f"Written from {len(result.examples_used)} past piece(s)")
+    else:
+        embed.set_footer(text="No past copy to learn from yet — try @Byte learn with files")
+    return embed
+
+
+def learn_result(*, added: int, skipped: int, counts: dict, sources: list[str]) -> discord.Embed:
+    embed = discord.Embed(
+        title="Learned",
+        description=f"Added **{added}** new piece(s)."
+        + (f" {skipped} were already in my library." if skipped else ""),
+        colour=GREEN if added else GREY,
+    )
+    if sources:
+        embed.add_field(name="From", value=_truncate("\n".join(sources), 1024), inline=False)
+    if counts:
+        embed.add_field(name="Library now", value=_format_counts(counts), inline=False)
+    return embed
+
+
+def corpus_summary(*, counts: dict, total: int, words: int, recent: list[str]) -> discord.Embed:
+    embed = discord.Embed(
+        title="What I've learned",
+        description=(
+            f"**{total}** piece(s), about **{words:,}** words."
+            if total
+            else "Nothing yet. Attach files and say `@Byte learn`."
+        ),
+        colour=GREEN if total else GREY,
+    )
+    if counts:
+        embed.add_field(name="By format", value=_format_counts(counts), inline=False)
+    if recent:
+        embed.add_field(
+            name="Most recent", value=_truncate("\n".join(recent), 1024), inline=False
+        )
+    return embed
+
+
+def _format_counts(counts: dict) -> str:
+    return "\n".join(f"`{label:<10}` {count}" for label, count in counts.items()) or "—"
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(title="Something went wrong", description=_truncate(message, 4000), colour=RED)

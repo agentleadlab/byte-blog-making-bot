@@ -19,10 +19,12 @@ from . import cover as cover_mod
 from . import ghl, pipeline, youtube
 from .config import Config, ConfigError, load_config
 from .copywriter import CopywriterError
+from .corpus import CorpusError
 from .models import CoverPlan, Video
 from .pipeline import DEFAULT_OUTPUT_DIR, PipelineError
 from .scheduler import SchedulerError, next_open_slots, taken_days_from_posts
 from .state import Ledger
+from .writer import WriterError
 from .youtube import IngestError
 
 
@@ -239,6 +241,78 @@ def cmd_run(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_learn(args) -> int:
+    from . import corpus as corpus_mod
+    from .formats import find_label
+
+    store = corpus_mod.Corpus()
+    label = find_label(args.format) if args.format else None
+    parsed = []
+
+    for pattern in args.files:
+        matches = sorted(Path().glob(pattern)) if any(c in pattern for c in "*?[") else [Path(pattern)]
+        if not matches:
+            print(f"  no files matched {pattern}", file=sys.stderr)
+        for path in matches:
+            if not path.exists():
+                print(f"  not found: {path}", file=sys.stderr)
+                continue
+            pieces = corpus_mod.parse_upload(
+                path.read_bytes(), filename=path.name, label=label, added_by="cli"
+            )
+            print(f"  {path.name}: {len(pieces)} piece(s)")
+            parsed.extend(pieces)
+
+    if not parsed:
+        print("Nothing to learn.")
+        return 1
+
+    added = store.add(parsed)
+    print(f"\nAdded {len(added)} new piece(s); {len(parsed) - len(added)} already known.")
+    print(f"Library: {len(store.pieces)} piece(s) at {store.path}")
+    for lbl, count in store.counts().items():
+        print(f"  {lbl:<10} {count}")
+    return 0
+
+
+def cmd_write(args) -> int:
+    from . import writer
+    from .corpus import Corpus
+    from .formats import find
+
+    config = load_config()
+    fmt = find(args.format)
+    if not fmt:
+        from .formats import FORMATS
+
+        raise CLIError(
+            f"Unknown format {args.format!r}. Try: {', '.join(f.key for f in FORMATS)}"
+        )
+
+    brief = " ".join(args.brief).strip()
+    result = writer.generate(brief, fmt, config, Corpus())
+    print(writer.render_text(result))
+    for warning in result.warnings:
+        print(f"! {warning}", file=sys.stderr)
+    return 0
+
+
+def cmd_corpus(args) -> int:
+    from .corpus import Corpus
+
+    store = Corpus()
+    pieces = store.pieces
+    print(f"{len(pieces)} piece(s), ~{store.total_words():,} words")
+    print(f"stored at {store.path}\n")
+    for label, count in store.counts().items():
+        print(f"  {label:<10} {count}")
+    if args.verbose:
+        print()
+        for piece in sorted(pieces, key=lambda p: p.added_at, reverse=True)[:20]:
+            print(f"  [{piece.label:<8}] {piece.preview}")
+    return 0
+
+
 def cmd_bot(args) -> int:
     from .bot import run_bot
 
@@ -291,6 +365,20 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-only", action="store_true", help="skip GHL entirely; just write files locally")
     run.set_defaults(func=cmd_run)
 
+    learn = sub.add_parser("learn", help="add past copy to Byte's library")
+    learn.add_argument("files", nargs="+", help="txt, md, csv or json files (globs allowed)")
+    learn.add_argument("--format", help="label everything in these files, e.g. sms")
+    learn.set_defaults(func=cmd_learn)
+
+    write = sub.add_parser("write", help="write copy in the house voice")
+    write.add_argument("format", help="sms, email, ad, landing, script, social")
+    write.add_argument("brief", nargs="+", help="what it should be about")
+    write.set_defaults(func=cmd_write)
+
+    corpus_cmd = sub.add_parser("corpus", help="what past copy Byte has learned")
+    corpus_cmd.add_argument("-v", "--verbose", action="store_true", help="list recent pieces")
+    corpus_cmd.set_defaults(func=cmd_corpus)
+
     sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
 
     cover_cmd = sub.add_parser("cover", help="render a cover image from two lines of text")
@@ -308,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except (CLIError, ConfigError, IngestError, CopywriterError, cover_mod.CoverError,
-            ghl.GHLError, PipelineError, SchedulerError) as exc:
+            ghl.GHLError, PipelineError, SchedulerError, WriterError, CorpusError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

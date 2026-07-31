@@ -37,12 +37,28 @@ ACTION_WORDS = {
     "cover": "cover",
     "thumbnail": "cover",
     "thumb": "cover",
+    "learn": "learn",
+    "train": "learn",
+    "remember": "learn",
+    "ingest": "learn",
+    "study": "learn",
+    "corpus": "corpus",
+    "library": "corpus",
+    "memory": "corpus",
+    "knowledge": "corpus",
     "help": "help",
     "commands": "help",
     "hi": "help",
     "hello": "help",
     "hey": "help",
 }
+
+# Words that introduce a brief and shouldn't survive into it.
+_BRIEF_LEAD_INS = re.compile(
+    r"^(?:write|make|draft|give|create|do|need|want)\s+(?:me\s+)?(?:an?\s+|some\s+)?",
+    re.IGNORECASE,
+)
+_BRIEF_CONNECTORS = re.compile(r"^(?:copy|about|for|on|re|that|to)\b[:,]?\s*", re.IGNORECASE)
 
 MODE_WORDS = {
     "draft": "draft",
@@ -58,23 +74,49 @@ FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 
 @dataclass
 class MentionRequest:
-    action: str  # run | plan | status | cover | help
+    action: str  # run | plan | status | cover | write | learn | corpus | help
     source: str | None = None
     limit: int = 1
     mode: str = "scheduled"
     force: bool = False
     kicker: str | None = None
     headline: str | None = None
+    format_key: str | None = None  # write: which format; learn: which label
+    brief: str | None = None
 
 
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
+    from ..formats import find, find_label
+
     text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
     lowered = text.lower()
+    action = _first_action_word(lowered)
 
     # `cover` takes free text, so handle it before the link/number extraction.
-    if _first_action_word(lowered) == "cover":
+    if action == "cover":
         return _parse_cover(text)
+
+    if action == "learn":
+        # The label is optional: "learn sms" with files attached.
+        remainder = _strip_word(text, ("learn", "train", "remember", "ingest", "study"))
+        return MentionRequest(
+            action="learn",
+            format_key=find_label(remainder.split()[0]) if remainder.split() else None,
+        )
+
+    if action == "corpus":
+        return MentionRequest(action="corpus")
+
+    # A format word means "write me one of these", and wins over a link so that
+    # "email about the new playlist <link>" writes an email, not a blog post.
+    fmt = _first_format_word(text, find)
+    if fmt:
+        return MentionRequest(
+            action="write",
+            format_key=fmt.key,
+            brief=_extract_brief(text, fmt),
+        )
 
     url_match = URL_RE.search(text)
     source = url_match.group(0).rstrip(".,;)>") if url_match else None
@@ -82,7 +124,6 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         bare = BARE_PLAYLIST_RE.search(text)
         source = bare.group(1) if bare else None
 
-    action = _first_action_word(lowered)
     if action in ("status", "help"):
         return MentionRequest(action=action)
 
@@ -90,16 +131,39 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         # A mention with no link and no recognised verb is a greeting or a mistake.
         return MentionRequest(action="help")
 
-    if action != "plan":
-        action = "run"
-
     return MentionRequest(
-        action=action,
+        action="plan" if action == "plan" else "run",
         source=source,
         limit=_parse_limit(text, source, max_batch=max_batch),
         mode=_parse_mode(lowered),
         force=any(word in lowered.split() for word in FORCE_WORDS),
     )
+
+
+def _first_format_word(text: str, find) -> object | None:
+    """The first word that names a copy format, e.g. sms / email / fb / vsl."""
+    for word in re.findall(r"[a-zA-Z]+", text):
+        fmt = find(word)
+        if fmt:
+            return fmt
+    return None
+
+
+def _extract_brief(text: str, fmt) -> str:
+    """Everything the user said minus the format word and any lead-in verb."""
+    pattern = re.compile(
+        r"\b(?:" + "|".join(re.escape(w) for w in (fmt.key, *fmt.aliases)) + r")\b",
+        re.IGNORECASE,
+    )
+    brief = re.sub(r"\s+", " ", pattern.sub(" ", text, count=1)).strip()
+    brief = _BRIEF_LEAD_INS.sub("", brief).strip()
+    brief = _BRIEF_CONNECTORS.sub("", brief).strip()
+    return brief.strip(" -–—:,")
+
+
+def _strip_word(text: str, words: tuple[str, ...]) -> str:
+    pattern = re.compile(r"\b(?:" + "|".join(words) + r")\b", re.IGNORECASE)
+    return re.sub(r"\s+", " ", pattern.sub(" ", text, count=1)).strip()
 
 
 def _first_action_word(lowered: str) -> str | None:
@@ -144,17 +208,26 @@ def _parse_cover(text: str) -> MentionRequest:
     )
 
 
-HELP_TEXT = """**Hi, I'm Byte** 🤖 — mention me with a YouTube link and I'll get to work.
+HELP_TEXT = """**Hi, I'm Byte** 🤖 — I write copy in Agent Lead Lab's voice.
 
-**Things you can say**
+**Write me something**
+> @Byte **sms** about the OTP leads going live Monday
+> @Byte **email** we're raising aged lead prices next month
+> @Byte **ad** for agents stuck at 20 leads a week
+> @Byte **script** hook for a reel on cost per booked appointment
+> Also: **landing**, **social**
+
+**Teach me your voice** — attach files and say
+> @Byte **learn** — .txt, .md, .csv, .json; add a word like `sms` to label them
+> @Byte **corpus** — what I've learned so far
+
+**Blog posts from YouTube**
 > @Byte `<playlist link>` **3** — write the next 3 posts
-> @Byte **draft** `<link>` — save them to GHL as drafts instead
-> @Byte **preview** `<link>` — build them locally, send nothing
-> @Byte **plan** `<link>` — just show me what's queued and when
+> @Byte **draft** `<link>` — save to GHL as drafts instead
+> @Byte **preview** `<link>` — build locally, send nothing
+> @Byte **plan** `<link>` — what's queued and when
 > @Byte **status** — what's posted, what's next
-> @Byte **cover** Aged, Fresh, Premium | Why Agents Stall — render a cover
+> @Byte **cover** Aged, Fresh, Premium | Why Agents Stall
 
-Slash commands work too: `/run` `/plan` `/status` `/cover`.
-
-I'll always show you the post before anything goes live — nothing reaches the \
-blog until you click **Schedule it**."""
+The more past copy you give me, the more it'll sound like you. Nothing reaches \
+the blog until you click **Schedule it**."""

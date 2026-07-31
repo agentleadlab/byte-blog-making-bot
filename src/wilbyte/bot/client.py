@@ -22,14 +22,17 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
+from .. import corpus
 from .. import cover as cover_mod
-from .. import ghl
+from .. import formats, ghl, writer
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
+from ..corpus import Corpus
 from ..models import CoverPlan
 from ..pipeline import DEFAULT_OUTPUT_DIR, PipelineError
 from ..scheduler import SchedulerError, next_open_slots
 from ..state import Ledger
+from ..writer import WriterError
 from ..youtube import IngestError
 from . import embeds, jobs, mentions
 from .responders import InteractionResponder, MessageResponder, Responder
@@ -40,8 +43,12 @@ log = logging.getLogger("wilbyte.bot")
 # Errors that mean "this post failed" rather than "the bot is broken".
 PIPELINE_ERRORS = (
     IngestError, CopywriterError, cover_mod.CoverError, ghl.GHLError,
-    PipelineError, SchedulerError, ConfigError,
+    PipelineError, SchedulerError, ConfigError, WriterError, corpus.CorpusError,
 )
+
+# Ingestion guards: one mention shouldn't be able to upload the world.
+MAX_LEARN_FILES = 10
+MAX_LEARN_BYTES = 8_000_000
 
 
 def _intents() -> discord.Intents:
@@ -205,6 +212,23 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_status(responder, config)
                 return
 
+            if request.action == "corpus":
+                await _send_corpus(responder)
+                return
+
+            if request.action == "learn":
+                await _handle_learn(responder, message, request.format_key)
+                return
+
+            if request.action == "write":
+                await _send_write(
+                    responder, config,
+                    format_key=request.format_key,
+                    brief=request.brief or "",
+                    token=message.id,
+                )
+                return
+
             if request.action == "cover":
                 if not request.headline:
                     await responder.send(
@@ -312,6 +336,39 @@ def register_commands(bot: WilByteBot) -> None:
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(str(exc)))
 
+    @bot.tree.command(name="write", description="Write copy in the Agent Lead Lab voice")
+    @app_commands.describe(format="What kind of copy", brief="What it should be about")
+    @app_commands.choices(
+        format=[
+            app_commands.Choice(name=f.description, value=f.key) for f in formats.FORMATS
+        ]
+    )
+    async def write(
+        interaction: discord.Interaction, format: app_commands.Choice[str], brief: str
+    ):
+        if not await guard(interaction, config):
+            return
+        await interaction.response.defer(thinking=True)
+        responder = InteractionResponder(interaction)
+        try:
+            await _send_write(
+                responder, config,
+                format_key=format.value, brief=brief, token=interaction.id,
+            )
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+
+    @bot.tree.command(name="corpus", description="What past copy Byte has learned")
+    async def corpus_cmd(interaction: discord.Interaction):
+        if not await guard(interaction, config):
+            return
+        await interaction.response.defer(thinking=True)
+        responder = InteractionResponder(interaction)
+        try:
+            await _send_corpus(responder)
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+
     @bot.tree.command(name="cover", description="Render a cover image from two lines of text")
     @app_commands.describe(kicker="The highlighted 3-5 word line", headline="The big line underneath")
     async def cover(interaction: discord.Interaction, kicker: str, headline: str):
@@ -387,6 +444,121 @@ async def _send_status(responder: Responder, config: Config) -> None:
             booked_days=booked,
         )
     )
+
+
+async def _send_write(
+    responder: Responder, config: Config, *, format_key: str, brief: str, token: int
+) -> None:
+    fmt = formats.BY_KEY[format_key]
+    if not brief:
+        await responder.send(
+            f"What should the {fmt.label.lower()} be about? "
+            f"Try `@Byte {fmt.key} <the idea>`."
+        )
+        return
+
+    corpus_obj = await asyncio.to_thread(Corpus)
+    result = await asyncio.to_thread(writer.generate, brief, fmt, config, corpus_obj)
+
+    # The embed truncates long fields, so always attach the full text too.
+    out = DEFAULT_OUTPUT_DIR / "copy" / f"{fmt.key}-{token}.txt"
+    text = writer.render_text(result)
+    await asyncio.to_thread(_write_file, out, text)
+
+    await responder.send(
+        embed=embeds.copy_result(result),
+        file=discord.File(out, filename=f"{fmt.key}.txt"),
+    )
+
+
+def _write_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+async def _send_corpus(responder: Responder) -> None:
+    corpus_obj = await asyncio.to_thread(Corpus)
+    pieces = await asyncio.to_thread(lambda: corpus_obj.pieces)
+    recent = [
+        f"`{p.label:<8}` {p.preview[:70]}"
+        for p in sorted(pieces, key=lambda p: p.added_at, reverse=True)[:5]
+    ]
+    await responder.send(
+        embed=embeds.corpus_summary(
+            counts=corpus_obj.counts(),
+            total=len(pieces),
+            words=corpus_obj.total_words(),
+            recent=recent,
+        )
+    )
+
+
+async def _handle_learn(responder: Responder, message, label: str | None) -> None:
+    """Ingest whatever files are attached to the mention."""
+    attachments = list(getattr(message, "attachments", []) or [])
+    if not attachments:
+        await responder.send(
+            "Attach the copy and say `@Byte learn` — .txt, .md, .csv or .json. "
+            "Add a word like `sms` or `email` to label the whole file, or give the "
+            "CSV a `format` column. In a plain text file, separate pieces with a "
+            "line of `---`."
+        )
+        return
+
+    if len(attachments) > MAX_LEARN_FILES:
+        await responder.send(
+            f"That's {len(attachments)} files — I'll take {MAX_LEARN_FILES} at a time."
+        )
+        attachments = attachments[:MAX_LEARN_FILES]
+
+    corpus_obj = await asyncio.to_thread(Corpus)
+    parsed: list = []
+    sources: list[str] = []
+    problems: list[str] = []
+
+    for attachment in attachments:
+        if attachment.size and attachment.size > MAX_LEARN_BYTES:
+            problems.append(f"{attachment.filename}: over {MAX_LEARN_BYTES // 1_000_000}MB")
+            continue
+        try:
+            data = await attachment.read()
+            pieces = await asyncio.to_thread(
+                corpus.parse_upload,
+                data,
+                filename=attachment.filename,
+                label=label,
+                added_by=str(responder.requester_id),
+            )
+        except corpus.CorpusError as exc:
+            problems.append(str(exc))
+            continue
+        except Exception as exc:
+            problems.append(f"{attachment.filename}: {exc}")
+            continue
+
+        if not pieces:
+            problems.append(f"{attachment.filename}: nothing usable in it")
+            continue
+        parsed.extend(pieces)
+        sources.append(f"{attachment.filename} — {len(pieces)} piece(s)")
+
+    added = await asyncio.to_thread(corpus_obj.add, parsed) if parsed else []
+
+    if not added and not problems:
+        await responder.send("I already had all of that.")
+        return
+
+    if added or sources:
+        await responder.send(
+            embed=embeds.learn_result(
+                added=len(added),
+                skipped=len(parsed) - len(added),
+                counts=corpus_obj.counts(),
+                sources=sources,
+            )
+        )
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems[:10])))
 
 
 async def _send_cover(

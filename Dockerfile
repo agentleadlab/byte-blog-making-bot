@@ -7,7 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     WILBYTE_HOME=/app \
     WILBYTE_STATE_DIR=/data/state \
-    WILBYTE_OUTPUT_DIR=/data/out
+    WILBYTE_OUTPUT_DIR=/data/out \
+    WILBYTE_CORPUS_DIR=/data/corpus
 
 WORKDIR /app
 
@@ -20,8 +21,9 @@ COPY config/ ./config/
 COPY prompts/ ./prompts/
 COPY assets/ ./assets/
 
-# /data is where the ledger and rendered posts go. Mount a volume here, or the
-# ledger resets on every redeploy and already-posted videos get posted again.
-RUN mkdir -p /data/state /data/out
+# /data holds the ledger, the rendered posts, and the copy library. Mount a
+# volume here - without one the ledger resets on every redeploy (already-posted
+# videos get posted again) and every piece of copy Byte has learned is lost.
+RUN mkdir -p /data/state /data/out /data/corpus
 
 CMD ["wilbyte", "bot"]

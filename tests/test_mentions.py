@@ -150,5 +150,83 @@ def test_cover_wins_over_a_link_in_the_same_message():
 
 
 def test_help_text_lists_the_real_commands():
-    for fragment in ("status", "plan", "cover", "draft", "preview", "Schedule it"):
+    for fragment in ("status", "plan", "cover", "draft", "preview", "Schedule it",
+                     "sms", "email", "learn", "corpus"):
         assert fragment in HELP_TEXT
+
+
+# ------------------------------------------------------------------- copywriting
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("sms about the price drop", "sms"),
+        ("write me an email about aged leads", "email"),
+        ("make an ad for stuck agents", "ad"),
+        ("draft a script hook on lead costs", "script"),
+        ("landing page for the OTP offer", "landing"),
+        ("fb copy about live transfers", "ad"),
+        ("vsl for the new funnel", "script"),
+    ],
+)
+def test_format_words_route_to_the_writer(text, expected):
+    request = parse(f"{BOT} {text}")
+
+    assert request.action == "write"
+    assert request.format_key == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected_brief",
+    [
+        ("sms about the price drop", "the price drop"),
+        ("write me an email about aged leads", "aged leads"),
+        ("email: we're raising prices", "we're raising prices"),
+        ("ad for agents stuck at 20 leads a week", "agents stuck at 20 leads a week"),
+    ],
+)
+def test_the_brief_survives_without_the_format_word(text, expected_brief):
+    assert parse(f"{BOT} {text}").brief == expected_brief
+
+
+def test_a_format_word_beats_a_youtube_link():
+    """'email about the new video <link>' wants an email, not a blog post."""
+    request = parse(f"{BOT} email about the new video {VIDEO}")
+
+    assert request.action == "write"
+    assert request.format_key == "email"
+
+
+def test_posts_does_not_trigger_the_social_format():
+    """'3 posts' is a batch size for the blog pipeline, not a social post."""
+    request = parse(f"{BOT} {PLAYLIST} 3 posts")
+
+    assert request.action == "run"
+    assert request.limit == 3
+
+
+@pytest.mark.parametrize("word", ["learn", "train", "remember", "study"])
+def test_learn_keywords(word):
+    request = parse(f"{BOT} {word}")
+
+    assert request.action == "learn"
+    assert request.format_key is None
+
+
+def test_learn_can_carry_a_label():
+    assert parse(f"{BOT} learn sms").format_key == "sms"
+    assert parse(f"{BOT} learn blog").format_key == "blog"
+
+
+@pytest.mark.parametrize("word", ["corpus", "library", "memory", "knowledge"])
+def test_corpus_keywords(word):
+    assert parse(f"{BOT} {word}").action == "corpus"
+
+
+def test_a_format_word_with_no_brief_still_routes_to_write():
+    """The handler asks what it should be about rather than guessing."""
+    request = parse(f"{BOT} sms")
+
+    assert request.action == "write"
+    assert request.brief == ""

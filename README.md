@@ -1,6 +1,61 @@
 # Byte
 
-Turns Agent Lead Lab YouTube videos into scheduled GoHighLevel blog posts.
+Agent Lead Lab's copywriter. Byte learns from copy you've already published,
+then writes new SMS, email, ads, scripts and landing pages in that voice — and
+turns YouTube videos into scheduled GoHighLevel blog posts.
+
+## Copywriting
+
+Teach it your voice by attaching files:
+
+```
+@Byte learn            ← attach .txt, .md, .csv or .json
+@Byte corpus           ← what it's learned so far
+```
+
+Then ask for copy:
+
+```
+@Byte sms about the OTP leads going live Monday
+@Byte email we're raising aged lead prices next month
+@Byte ad for agents stuck at 20 leads a week
+@Byte script hook for a reel on cost per booked appointment
+```
+
+Byte pulls the most relevant past pieces in that format, studies them, and
+writes several variants on different angles. Every reply comes with a `.txt`
+attachment holding the full text, since Discord truncates long fields.
+
+**Formats:** `sms` `email` `ad` `landing` `script` `social` — plus aliases, so
+`texts`, `fb`, `ig`, `vsl`, `reel` and `optin` all resolve. Add one by appending
+to `FORMATS` in `src/wilbyte/formats.py`; the schema, the Discord choices, and
+the corpus labels all follow from it.
+
+### Feeding it copy
+
+| File | How it's read |
+| --- | --- |
+| `.txt` / `.md` | One piece, or many separated by a line of `---` |
+| `.csv` | Needs a `body`/`copy`/`text`/`message` column. Optional `format`, `title`, `tags` |
+| `.json` / `.jsonl` | Objects with a `body` field; optional `format`, `title`, `tags` |
+
+Labels are worked out from the `format` column, the filename (`sms-blasts.csv`),
+or the shape of the text — and `@Byte learn sms` labels a whole upload at once.
+Re-uploading the same copy is a no-op: pieces are keyed by a content hash, so
+duplicates are skipped.
+
+The library lives at `/data/corpus/pieces.jsonl` — one JSON object per line,
+so it greps, diffs, and edits by hand. You can also commit `corpus/*.jsonl` to
+the repo and Byte reads those too.
+
+### The house voice
+
+`prompts/house_voice.md` holds the writing rules — audience, default voice, and
+the compliance guardrails (no income claims, no guarantees, no invented numbers
+or fake scarcity). The examples override the style guidance on purpose: what the
+audience already responds to beats anything written down.
+
+## Blog posts from YouTube
 
 This automates the daily process Wil walks through in
 [the Loom](https://www.loom.com/share/1a5392d015334baca9c2ff748667741e): take a
