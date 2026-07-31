@@ -12,14 +12,21 @@ canonical_path_prefix = "/post/"
 category = "LeadLab"
 # Author is always Arnold "Tre" Tarpley.
 author = 'Arnold "Tre" Tarpley'
-# The same keyword set goes on every post.
+# The same keyword set goes on every post. These become the post's tags in GHL.
 keywords = [
-  "Insurance marketing",
-  "Lead Lab",
-  "Lead vendors",
-  "Life Insurance",
-  "Life Insurance Leads through Facebook and Instagram",
-  "Agent Lead Lab",
+  "agentleadlab",
+  "lead lab",
+  "life insurance leads",
+  "mtg leads",
+  "final expense leads",
+  "iul leads",
+  "vet leads",
+  "fex",
+  "iul",
+  "vet",
+  "mtg",
+  "lifeinsurance",
+  "life insurance agent",
 ]
 
 [schedule]

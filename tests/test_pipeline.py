@@ -22,7 +22,9 @@ def test_assemble_post_fills_every_ghl_field(copy_package, config, tmp_path):
     )
     assert post.category == "LeadLab"
     assert post.author == 'Arnold "Tre" Tarpley'
-    assert "Agent Lead Lab" in post.keywords
+    assert "agentleadlab" in post.keywords
+    assert "final expense leads" in post.keywords
+    assert len(post.keywords) == 13
     # Alt text mirrors the slug, matching the manual process.
     assert post.cover_alt_text == post.url_slug
     assert post.description == copy_package.meta_description

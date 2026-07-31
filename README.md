@@ -25,7 +25,7 @@ wilbyte run --playlist "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhx
 | Remember which playlist videos are already done | `state.py` — `state/ledger.json` |
 
 The constants that never change per post — category `LeadLab`, author
-`Arnold "Tre" Tarpley`, the six keywords, the `agentleadlab.com/post/` canonical
+`Arnold "Tre" Tarpley`, the 13 keywords, the `agentleadlab.com/post/` canonical
 prefix, 10am weekdays-only — are all in `config/wilbyte.toml`.
 
 ## Setup
