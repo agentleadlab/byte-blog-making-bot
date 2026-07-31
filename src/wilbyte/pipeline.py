@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -12,7 +13,7 @@ from .config import Config, REPO_ROOT
 from .models import BlogPost, CopyPackage, Transcript, Video
 from .state import Ledger
 
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "out"
+DEFAULT_OUTPUT_DIR = Path(os.getenv("WILBYTE_OUTPUT_DIR") or REPO_ROOT / "out")
 
 Reporter = Callable[[str], None]
 

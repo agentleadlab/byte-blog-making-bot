@@ -1,9 +1,11 @@
-"""The Discord bot: slash commands over the Wil Byte pipeline.
+"""The Discord bot: slash commands and @mentions over the Wil Byte pipeline.
 
-    /plan    playlist:<url>              what would be posted, and when
     /run     playlist:<url> limit:3      build each post, approve it, schedule it
+    /plan    playlist:<url>              what would be posted, and when
     /status                              ledger + next open slots
     /cover   kicker:.. headline:..       render a cover image on its own
+
+    @Wil Byte <playlist link> 3          the same thing, in plain language
 
 Runs are serialized behind a lock: slot assignment reads the blog's occupied
 days from GHL, so two concurrent runs would hand out the same day twice.
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import discord
@@ -27,7 +30,8 @@ from ..pipeline import DEFAULT_OUTPUT_DIR, PipelineError
 from ..scheduler import SchedulerError, next_open_slots
 from ..state import Ledger
 from ..youtube import IngestError
-from . import embeds, jobs
+from . import embeds, jobs, mentions
+from .responders import InteractionResponder, MessageResponder, Responder
 from .views import ApprovalView, Decision
 
 log = logging.getLogger("wilbyte.bot")
@@ -39,9 +43,23 @@ PIPELINE_ERRORS = (
 )
 
 
+def _intents() -> discord.Intents:
+    """Mentions deliver message content without the privileged intent.
+
+    Discord sends the real `content` for DMs, for the bot's own messages, and
+    for messages that @mention the bot - which covers everything this bot reads.
+    Set DISCORD_MESSAGE_CONTENT=true only if you have enabled the privileged
+    intent in the developer portal and want it requested.
+    """
+    intents = discord.Intents.default()
+    if os.getenv("DISCORD_MESSAGE_CONTENT", "").strip().lower() in ("1", "true", "yes"):
+        intents.message_content = True
+    return intents
+
+
 class WilByteBot(discord.Client):
     def __init__(self, config: Config):
-        super().__init__(intents=discord.Intents.default())
+        super().__init__(intents=_intents())
         self.config = config
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
@@ -61,30 +79,106 @@ class WilByteBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
+        await self.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching, name="YouTube so you don't have to"
+            )
+        )
+
+    async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot or self.user is None:
+            return
+        # Only a direct @mention counts - not @everyone, not a role ping.
+        if message.mention_everyone or self.user not in message.mentions:
+            return
+        await handle_mention(self, message)
 
 
 # ------------------------------------------------------------------ permissions
 
 
-def is_allowed(interaction: discord.Interaction, config: Config) -> tuple[bool, str]:
+def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, str]:
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
-    if channels and str(interaction.channel_id) not in channels:
+    if channels and str(channel_id) not in channels:
         return False, "Wil Byte isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids
     if roles:
-        member_roles = {str(r.id) for r in getattr(interaction.user, "roles", [])}
+        member_roles = {str(r.id) for r in getattr(user, "roles", [])}
         if not member_roles & set(roles):
             return False, "You don't have the role required to run this."
     return True, ""
 
 
 async def guard(interaction: discord.Interaction, config: Config) -> bool:
-    allowed, reason = is_allowed(interaction, config)
+    allowed, reason = is_allowed(
+        channel_id=interaction.channel_id, user=interaction.user, config=config
+    )
     if not allowed:
         await interaction.response.send_message(reason, ephemeral=True)
     return allowed
+
+
+# --------------------------------------------------------------------- mentions
+
+
+async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
+    config = bot.config
+    allowed, reason = is_allowed(
+        channel_id=message.channel.id, user=message.author, config=config
+    )
+    if not allowed:
+        await message.reply(reason, mention_author=False)
+        return
+
+    request = mentions.parse(message.content, max_batch=config.discord.max_batch)
+    responder = MessageResponder(message)
+
+    if request.action == "help":
+        await responder.send(mentions.HELP_TEXT)
+        return
+
+    async with message.channel.typing():
+        try:
+            if request.action == "status":
+                await _send_status(responder, config)
+                return
+
+            if request.action == "cover":
+                if not request.headline:
+                    await responder.send(
+                        "Give me two lines and I'll render it — "
+                        "`@Wil Byte cover Aged, Fresh, Premium | Why Agents Stall`"
+                    )
+                    return
+                await _send_cover(
+                    responder, config,
+                    kicker=request.kicker or "AGENT LEAD LAB",
+                    headline=request.headline,
+                    token=message.id,
+                )
+                return
+
+            if request.action == "plan":
+                await _send_plan(responder, config, request.source, request.limit)
+                return
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+            return
+
+    # action == "run"
+    if bot.run_lock.locked():
+        await responder.send(
+            "A run is already going — give it a minute so the two don't claim "
+            "the same posting slots."
+        )
+        return
+
+    async with bot.run_lock:
+        await _execute_run(
+            bot, responder, request.source, request.limit, request.mode, request.force
+        )
 
 
 # --------------------------------------------------------------------- commands
@@ -102,32 +196,11 @@ def register_commands(bot: WilByteBot) -> None:
         if not await guard(interaction, config):
             return
         await interaction.response.defer(thinking=True)
-
+        responder = InteractionResponder(interaction)
         try:
-            limit = max(1, min(limit, config.discord.max_batch))
-            ledger = await asyncio.to_thread(Ledger.load)
-            videos, skipped = await asyncio.to_thread(
-                jobs.resolve_videos, playlist, ledger, limit=limit, force=False
-            )
-            if not videos:
-                await interaction.followup.send(
-                    f"Nothing pending — all {skipped} video(s) are already processed."
-                )
-                return
-
-            context = await _maybe_open_ghl(config)
-            try:
-                slots = await asyncio.to_thread(jobs.plan_slots, videos, context, config)
-            finally:
-                if context:
-                    await asyncio.to_thread(context.close)
-
-            source = "the playlist" if len(videos) > 1 else "the video"
-            await interaction.followup.send(
-                embed=embeds.plan_summary(list(zip(videos, slots)), skipped=skipped, source=source)
-            )
+            await _send_plan(responder, config, playlist, limit)
         except PIPELINE_ERRORS as exc:
-            await interaction.followup.send(embed=embeds.error(str(exc)))
+            await responder.send(embed=embeds.error(str(exc)))
 
     @bot.tree.command(name="run", description="Write, review, and schedule blog posts from a playlist")
     @app_commands.describe(
@@ -164,44 +237,20 @@ def register_commands(bot: WilByteBot) -> None:
 
         await interaction.response.defer(thinking=True)
         async with bot.run_lock:
-            await _execute_run(bot, interaction, playlist, limit, mode_value, force)
+            await _execute_run(
+                bot, InteractionResponder(interaction), playlist, limit, mode_value, force
+            )
 
     @bot.tree.command(name="status", description="What's been posted and what's next")
     async def status(interaction: discord.Interaction):
         if not await guard(interaction, config):
             return
         await interaction.response.defer(thinking=True)
-
+        responder = InteractionResponder(interaction)
         try:
-            ledger = await asyncio.to_thread(Ledger.load)
-            entries = sorted(
-                ledger.entries.values(), key=lambda e: e.processed_at, reverse=True
-            )
-            recent = [f"`{e.url_slug}` — {e.title[:60]}" for e in entries[:5]]
-
-            context = await _maybe_open_ghl(config)
-            booked = None
-            try:
-                if context:
-                    days = await asyncio.to_thread(jobs.taken_days, context, config)
-                    booked = len(days)
-                    slots = next_open_slots(days, 3, config.schedule)
-                else:
-                    slots = next_open_slots(set(), 3, config.schedule)
-            finally:
-                if context:
-                    await asyncio.to_thread(context.close)
-
-            await interaction.followup.send(
-                embed=embeds.status_summary(
-                    processed=len(ledger.entries),
-                    recent=recent,
-                    next_slots=slots,
-                    booked_days=booked,
-                )
-            )
+            await _send_status(responder, config)
         except PIPELINE_ERRORS as exc:
-            await interaction.followup.send(embed=embeds.error(str(exc)))
+            await responder.send(embed=embeds.error(str(exc)))
 
     @bot.tree.command(name="cover", description="Render a cover image from two lines of text")
     @app_commands.describe(kicker="The highlighted 3-5 word line", headline="The big line underneath")
@@ -209,17 +258,16 @@ def register_commands(bot: WilByteBot) -> None:
         if not await guard(interaction, config):
             return
         await interaction.response.defer(thinking=True)
-
+        responder = InteractionResponder(interaction)
         try:
-            plan_obj = CoverPlan(kicker=kicker.upper(), headline=headline.upper())
-            out = DEFAULT_OUTPUT_DIR / "previews" / f"cover-{interaction.id}.png"
-            await asyncio.to_thread(cover_mod.render_cover, plan_obj, config, out)
-            await interaction.followup.send(file=discord.File(out, filename="cover.png"))
+            await _send_cover(
+                responder, config, kicker=kicker, headline=headline, token=interaction.id
+            )
         except PIPELINE_ERRORS as exc:
-            await interaction.followup.send(embed=embeds.error(str(exc)))
+            await responder.send(embed=embeds.error(str(exc)))
 
 
-# ----------------------------------------------------------------------- runner
+# ------------------------------------------------------------------ shared work
 
 
 async def _maybe_open_ghl(config: Config):
@@ -230,9 +278,72 @@ async def _maybe_open_ghl(config: Config):
     return await asyncio.to_thread(jobs.open_ghl, config)
 
 
+async def _send_plan(responder: Responder, config: Config, source: str, limit: int) -> None:
+    limit = max(1, min(limit, config.discord.max_batch))
+    ledger = await asyncio.to_thread(Ledger.load)
+    videos, skipped = await asyncio.to_thread(
+        jobs.resolve_videos, source, ledger, limit=limit, force=False
+    )
+    if not videos:
+        await responder.send(f"Nothing pending — all {skipped} video(s) are already processed.")
+        return
+
+    context = await _maybe_open_ghl(config)
+    try:
+        slots = await asyncio.to_thread(jobs.plan_slots, videos, context, config)
+    finally:
+        if context:
+            await asyncio.to_thread(context.close)
+
+    label = "the playlist" if len(videos) > 1 else "the video"
+    await responder.send(
+        embed=embeds.plan_summary(list(zip(videos, slots)), skipped=skipped, source=label)
+    )
+
+
+async def _send_status(responder: Responder, config: Config) -> None:
+    ledger = await asyncio.to_thread(Ledger.load)
+    entries = sorted(ledger.entries.values(), key=lambda e: e.processed_at, reverse=True)
+    recent = [f"`{e.url_slug}` — {e.title[:60]}" for e in entries[:5]]
+
+    context = await _maybe_open_ghl(config)
+    booked = None
+    try:
+        if context:
+            days = await asyncio.to_thread(jobs.taken_days, context, config)
+            booked = len(days)
+            slots = next_open_slots(days, 3, config.schedule)
+        else:
+            slots = next_open_slots(set(), 3, config.schedule)
+    finally:
+        if context:
+            await asyncio.to_thread(context.close)
+
+    await responder.send(
+        embed=embeds.status_summary(
+            processed=len(ledger.entries),
+            recent=recent,
+            next_slots=slots,
+            booked_days=booked,
+        )
+    )
+
+
+async def _send_cover(
+    responder: Responder, config: Config, *, kicker: str, headline: str, token: int
+) -> None:
+    plan_obj = CoverPlan(kicker=kicker.upper(), headline=headline.upper())
+    out = DEFAULT_OUTPUT_DIR / "previews" / f"cover-{token}.png"
+    await asyncio.to_thread(cover_mod.render_cover, plan_obj, config, out)
+    await responder.send(file=discord.File(out, filename="cover.png"))
+
+
+# ----------------------------------------------------------------------- runner
+
+
 async def _execute_run(
     bot: WilByteBot,
-    interaction: discord.Interaction,
+    responder: Responder,
     source: str,
     limit: int,
     mode: str,
@@ -248,13 +359,13 @@ async def _execute_run(
             jobs.resolve_videos, source, ledger, limit=limit, force=force
         )
     except PIPELINE_ERRORS as exc:
-        await interaction.followup.send(embed=embeds.error(str(exc)))
+        await responder.send(embed=embeds.error(str(exc)))
         return
 
     if not videos:
-        await interaction.followup.send(
+        await responder.send(
             f"Nothing pending — all {already_done} video(s) are already processed. "
-            "Use `force: true` to redo one."
+            "Add **force** to redo one."
         )
         return
 
@@ -263,22 +374,22 @@ async def _execute_run(
         try:
             context = await _maybe_open_ghl(config)
             if context is None:
-                await interaction.followup.send(
+                await responder.send(
                     embed=embeds.error(
                         "No GHL credentials configured, so nothing can be posted. "
-                        "Use `mode: preview` to build posts locally instead."
+                        "Say **preview** to build posts locally instead."
                     )
                 )
                 return
         except PIPELINE_ERRORS as exc:
-            await interaction.followup.send(embed=embeds.error(str(exc)))
+            await responder.send(embed=embeds.error(str(exc)))
             return
 
     created = skipped = failed = 0
     try:
         slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config)
-        await interaction.followup.send(
-            f"Building {len(videos)} post(s) in **{mode}** mode."
+        await responder.send(
+            f"On it — building {len(videos)} post(s) in **{mode}** mode."
             + (f" Skipping {already_done} already done." if already_done else "")
         )
 
@@ -287,9 +398,7 @@ async def _execute_run(
                 post = await asyncio.to_thread(jobs.build, video, config, output_dir)
             except PIPELINE_ERRORS as exc:
                 failed += 1
-                await interaction.followup.send(
-                    embed=embeds.error(f"{video.title}\n{exc}")
-                )
+                await responder.send(embed=embeds.error(f"{video.title}\n{exc}"))
                 continue
 
             # Show the slot this post would take without consuming it yet, so a
@@ -297,7 +406,7 @@ async def _execute_run(
             post.scheduled_at = slot_pool[0] if slot_pool else None
 
             decision = await _review(
-                interaction, post, index=index, total=len(videos), mode=mode, config=config
+                responder, post, index=index, total=len(videos), mode=mode, config=config
             )
 
             if decision is Decision.SKIP:
@@ -305,14 +414,14 @@ async def _execute_run(
                 continue
             if decision is Decision.TIMEOUT:
                 skipped += 1
-                await interaction.followup.send(
-                    f"No response on **{post.title}** — skipped. Files are in "
-                    f"`{output_dir / post.url_slug}`."
+                await responder.send(
+                    f"No answer on **{post.title}** — skipped it. Files are in "
+                    f"`{output_dir / post.url_slug}` if you want them."
                 )
                 continue
             if decision is Decision.STOP:
                 skipped += 1
-                await interaction.followup.send("Run stopped.")
+                await responder.send("Stopped.")
                 break
 
             if mode == "preview":
@@ -332,7 +441,7 @@ async def _execute_run(
                 await asyncio.to_thread(jobs.publish, post, config, context, status=status)
                 await asyncio.to_thread(jobs.record, ledger, post)
                 created += 1
-                await interaction.followup.send(
+                await responder.send(
                     f"✅ **{post.title}** → `{post.url_slug}` "
                     + (
                         f"scheduled for {post.scheduled_at:%a %b %d at %I:%M %p}"
@@ -344,17 +453,17 @@ async def _execute_run(
                 failed += 1
                 if status == ghl.STATUS_SCHEDULED and post.scheduled_at:
                     slot_pool.insert(0, post.scheduled_at)  # publishing failed, free the slot
-                await interaction.followup.send(
+                await responder.send(
                     embed=embeds.error(f"Failed to publish {post.title}\n{exc}")
                 )
 
     except PIPELINE_ERRORS as exc:
-        await interaction.followup.send(embed=embeds.error(str(exc)))
+        await responder.send(embed=embeds.error(str(exc)))
     finally:
         if context:
             await asyncio.to_thread(context.close)
 
-    await interaction.followup.send(
+    await responder.send(
         embed=embeds.result_summary(
             created=created, skipped=skipped, failed=failed,
             mode=mode, output_dir=str(output_dir),
@@ -363,7 +472,7 @@ async def _execute_run(
 
 
 async def _review(
-    interaction: discord.Interaction,
+    responder: Responder,
     post,
     *,
     index: int,
@@ -377,14 +486,14 @@ async def _review(
     embed = embeds.post_preview(post, index=index, total=total, mode=mode)
 
     if not config.discord.require_approval:
-        await interaction.followup.send(embed=embed, file=file)
+        await responder.send(embed=embed, file=file)
         return Decision.DRAFT if mode == "draft" else Decision.APPROVE
 
     view = ApprovalView(
-        requester_id=interaction.user.id,
+        requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
     )
-    await interaction.followup.send(embed=embed, file=file, view=view)
+    await responder.send(embed=embed, file=file, view=view)
     await view.wait()
     return view.decision
 

@@ -19,9 +19,9 @@ CT = ZoneInfo("America/Chicago")
 PLAYLIST = "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhxPLVUtlUmliQ0"
 
 
-def interaction(channel_id: int, role_ids: list[int] = ()):
+def actor(channel_id: int, role_ids: list[int] = ()):
     user = SimpleNamespace(id=1, roles=[SimpleNamespace(id=r) for r in role_ids])
-    return SimpleNamespace(channel_id=channel_id, user=user)
+    return {"channel_id": channel_id, "user": user}
 
 
 # ------------------------------------------------------------------ source kind
@@ -51,7 +51,7 @@ def test_single_video_urls_are_not_playlists(url):
 
 
 def test_no_allowlist_permits_any_channel(config):
-    allowed, _ = is_allowed(interaction(999), config)
+    allowed, _ = is_allowed(**actor(999), config=config)
 
     assert allowed
 
@@ -60,8 +60,8 @@ def test_channel_allowlist_blocks_other_channels(config):
     gated = replace(config.secrets, discord_channel_ids=("111",))
     config = replace(config, secrets=gated)
 
-    assert is_allowed(interaction(111), config)[0]
-    allowed, reason = is_allowed(interaction(222), config)
+    assert is_allowed(**actor(111), config=config)[0]
+    allowed, reason = is_allowed(**actor(222), config=config)
     assert not allowed
     assert "channel" in reason
 
@@ -70,8 +70,8 @@ def test_role_allowlist_requires_a_matching_role(config):
     gated = replace(config.secrets, discord_role_ids=("42",))
     config = replace(config, secrets=gated)
 
-    assert is_allowed(interaction(1, role_ids=[42]), config)[0]
-    allowed, reason = is_allowed(interaction(1, role_ids=[7]), config)
+    assert is_allowed(**actor(1, role_ids=[42]), config=config)[0]
+    allowed, reason = is_allowed(**actor(1, role_ids=[7]), config=config)
     assert not allowed
     assert "role" in reason
 

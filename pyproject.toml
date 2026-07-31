@@ -10,7 +10,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "yt-dlp>=2024.1",
     "youtube-transcript-api>=0.6",
-    "playwright>=1.44",
+    # Pinned exactly: the Docker base image bakes in the matching browser build,
+    # and a version skew leaves Playwright looking for a revision that isn't there.
+    # Bump this and the Dockerfile's FROM tag together.
+    "playwright==1.62.0",
     "discord.py>=2.3",
 ]
 

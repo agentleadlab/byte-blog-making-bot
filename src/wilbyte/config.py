@@ -9,7 +9,29 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+def _repo_root() -> Path:
+    """Locate the directory holding `config/`, `prompts/` and `assets/`.
+
+    Editable installs sit two levels below the repo root, but an installed
+    package lands in site-packages where that guess is meaningless - so fall
+    back to the working directory when it carries the config, and let
+    WILBYTE_HOME override both (that's what the container sets).
+    """
+    override = os.getenv("WILBYTE_HOME")
+    if override:
+        return Path(override)
+
+    source_guess = Path(__file__).resolve().parents[2]
+    if (source_guess / "config" / "wilbyte.toml").exists():
+        return source_guess
+
+    cwd = Path.cwd()
+    if (cwd / "config" / "wilbyte.toml").exists():
+        return cwd
+    return source_guess
+
+
+REPO_ROOT = _repo_root()
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "wilbyte.toml"
 
 

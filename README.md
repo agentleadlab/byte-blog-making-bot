@@ -8,10 +8,10 @@ video off the playlist, pull its transcript, run it through the "Copywriting
 Frank" Claude project, build a cover image in Canva, then fill in the GHL blog
 form and schedule it for 10am on the next open weekday.
 
-Drop a playlist link in Discord:
+Just @ the bot with a playlist link:
 
 ```
-/run playlist:https://youtube.com/playlist?list=PLry8Oc9... limit:3
+@Wil Byte https://youtube.com/playlist?list=PLry8Oc9... 3
 ```
 
 The bot writes each post, renders the cover, and shows you a review card. Nothing
@@ -71,14 +71,25 @@ lists the blog sites it can see if you're unsure which id to use.
 wilbyte bot
 ```
 
-| Command | What it does |
+### Talking to it
+
+Mention the bot and say what you want — word order doesn't matter.
+
+| Say | It does |
 | --- | --- |
-| `/run playlist:<url> limit:3` | Builds each post, shows a review card, schedules on approval |
-| `/run playlist:<url> mode:draft` | Same, but everything lands in GHL as a draft |
-| `/run playlist:<url> mode:preview` | Builds locally, sends nothing to GHL |
-| `/plan playlist:<url>` | Which videos are queued and what day each would land on |
-| `/status` | Posts in the ledger, days already booked, next open slots |
-| `/cover kicker:.. headline:..` | Renders a cover image on its own |
+| `@Wil Byte <link> 3` | Writes the next 3 posts |
+| `@Wil Byte draft <link>` | Same, but everything lands in GHL as a draft |
+| `@Wil Byte preview <link>` | Builds locally, sends nothing to GHL |
+| `@Wil Byte plan <link>` | Which videos are queued and what day each would land on |
+| `@Wil Byte status` | Posts in the ledger, days booked, next open slots |
+| `@Wil Byte cover Aged, Fresh, Premium \| Why Agents Stall` | Renders a cover image |
+| `@Wil Byte` | Help |
+
+A count is picked up in any position (`3`, `3 posts`, `x3`, `next 3`), and digits
+inside the URL are ignored. Add `force` to redo something already in the ledger.
+
+The same things work as slash commands, if you prefer a form to fill in:
+`/run` `/plan` `/status` `/cover`.
 
 Each review card shows the cover image, title, slug, scheduled slot, description,
 and the article H1 — so you can confirm the title genuinely differs from the H1
@@ -102,13 +113,55 @@ day.
 3. **Installation** → enable the `applications.commands` and `bot` scopes, then use the generated URL to add it to your server
 4. Right-click your server → **Copy Server ID** → `DISCORD_GUILD_ID` (without this, new slash commands take up to an hour to appear)
 
-No privileged intents or message-content access needed — it only uses slash
-commands. Optionally restrict it with `DISCORD_CHANNEL_IDS` and
-`DISCORD_ROLE_IDS`; leave them blank to allow everywhere.
+**No privileged intents needed.** Discord delivers real message content for
+messages that @mention your bot even without the Message Content intent, which
+is the only thing this bot reads. If you've enabled that intent in the portal
+anyway and want it requested, set `DISCORD_MESSAGE_CONTENT=true`.
+
+Optionally restrict it with `DISCORD_CHANNEL_IDS` and `DISCORD_ROLE_IDS`; leave
+them blank to allow everywhere.
 
 Approval behaviour is under `[discord]` in `config/wilbyte.toml` — set
 `require_approval = false` to have `/run` post straight through without the
 review step.
+
+## Deploying to Railway
+
+The repo ships a `Dockerfile` and `railway.json`, so Railway builds it directly.
+Without them Railway's autodetect finds a Python project, can't guess a start
+command, and the build fails with *"No start command detected"* — a Discord bot
+is a worker, not a web app, so there's nothing for it to infer.
+
+The image is based on Microsoft's Playwright image, which already contains
+Chromium and its system libraries — that's what renders the cover images.
+
+**1. Point the service at this repo and branch.** Railway picks up
+`railway.json` automatically; no build or start command needs setting in the UI.
+
+**2. Add a volume — this one matters.** Railway's filesystem is ephemeral, so
+without a volume the ledger resets on every redeploy and the bot reposts videos
+it has already done. In the service: **Settings → Volumes → mount at `/data`**.
+The image already writes the ledger to `/data/state` and rendered posts to
+`/data/out`.
+
+**3. Set the variables** (Settings → Variables):
+
+```
+DISCORD_BOT_TOKEN     DISCORD_GUILD_ID      ANTHROPIC_API_KEY
+GHL_API_TOKEN         GHL_LOCATION_ID       GHL_BLOG_ID
+```
+
+Everything else has a default. There's no `PORT` and no healthcheck — it's a
+worker, so Railway showing no public domain is correct.
+
+Deploy logs should end with `Connected as Wil Byte`. If it restart-loops,
+check the deploy logs: a bad `DISCORD_BOT_TOKEN` surfaces as a login failure,
+and missing config surfaces as a named `Missing required environment
+variable(s)` error.
+
+Any other host works the same way — it's a plain container with one long-running
+process. `docker build -t wilbyte . && docker run --env-file .env -v wilbyte:/data wilbyte`
+runs it locally.
 
 ## CLI usage
 
@@ -218,6 +271,6 @@ then switch to the default scheduled mode.
 .venv/bin/python -m pytest
 ```
 
-69 tests, no network or credentials required. The cover tests render real PNGs
-through Chromium, and the bot tests build real embeds without a gateway
-connection.
+105 tests, no network or credentials required. The cover tests render real PNGs
+through Chromium, and the bot tests build real embeds and parse real mention
+text without a gateway connection.

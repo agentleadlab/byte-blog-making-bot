@@ -8,13 +8,26 @@ August 12, I'm gonna finish up until August 14... then we'll proceed to the week
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import REPO_ROOT
 
-DEFAULT_LEDGER_PATH = REPO_ROOT / "state" / "ledger.json"
+
+def _state_dir() -> Path:
+    """Where the ledger lives.
+
+    Overridable so a container can point it at a mounted volume - on an ephemeral
+    filesystem the ledger would reset on every redeploy and the bot would happily
+    repost videos it had already done.
+    """
+    override = os.getenv("WILBYTE_STATE_DIR")
+    return Path(override) if override else REPO_ROOT / "state"
+
+
+DEFAULT_LEDGER_PATH = _state_dir() / "ledger.json"
 
 
 @dataclass
