@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.bot import embeds, jobs
-from wilbyte.bot.client import is_allowed
+from wilbyte.bot.client import is_allowed, parse_guild_id
 from wilbyte.bot.views import Decision
 from wilbyte.models import Video
 from wilbyte.pipeline import assemble_post
@@ -74,6 +74,31 @@ def test_role_allowlist_requires_a_matching_role(config):
     allowed, reason = is_allowed(**actor(1, role_ids=[7]), config=config)
     assert not allowed
     assert "role" in reason
+
+
+# ------------------------------------------------------------------- guild id
+
+
+def test_a_plain_server_id_parses():
+    assert parse_guild_id("1234567890123456789") == 1234567890123456789
+    assert parse_guild_id("  1234567890123456789  ") == 1234567890123456789
+    assert parse_guild_id('"1234567890123456789"') == 1234567890123456789
+
+
+def test_an_invite_url_is_rejected_rather_than_mined_for_digits():
+    """It contains the *application* id, not the server's - using it would sync
+    commands to nowhere, so it must be refused outright."""
+    url = (
+        "https://discord.com/oauth2/authorize?client_id=1532879451400000201"
+        "&permissions=117760&integration_type=0&scope=applications.commands+bot"
+    )
+
+    assert parse_guild_id(url) is None
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "not-an-id", "12345", "abc123456789012345"])
+def test_junk_values_return_none_instead_of_raising(raw):
+    assert parse_guild_id(raw) is None
 
 
 # ---------------------------------------------------------------------- embeds

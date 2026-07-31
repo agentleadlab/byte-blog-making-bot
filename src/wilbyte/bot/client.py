@@ -57,6 +57,28 @@ def _intents() -> discord.Intents:
     return intents
 
 
+def parse_guild_id(raw: str | None) -> int | None:
+    """Read DISCORD_GUILD_ID, returning None if it isn't a Discord snowflake.
+
+    A misconfigured *optional* variable must never take the bot down, and the
+    common mistake here is pasting the bot's invite URL - which does contain a
+    long number, but it's the application id, not the server's. Extracting
+    digits from it would silently sync commands to nowhere, so reject anything
+    that isn't a bare id and let the caller fall back to a global sync.
+    """
+    if not raw:
+        return None
+    text = raw.strip().strip("\"'")
+    if text.isdigit() and 15 <= len(text) <= 21:
+        return int(text)
+    return None
+
+
+def _clip(text: str, limit: int = 60) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 class WilByteBot(discord.Client):
     def __init__(self, config: Config):
         super().__init__(intents=_intents())
@@ -66,16 +88,29 @@ class WilByteBot(discord.Client):
 
     async def setup_hook(self) -> None:
         register_commands(self)
-        guild_id = self.config.secrets.discord_guild_id
+        raw_guild_id = self.config.secrets.discord_guild_id
+        guild_id = parse_guild_id(raw_guild_id)
+
         if guild_id:
             # Guild-scoped commands appear immediately; global ones take ~1 hour.
-            guild = discord.Object(id=int(guild_id))
+            guild = discord.Object(id=guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
             log.info("Slash commands synced to guild %s", guild_id)
-        else:
-            await self.tree.sync()
-            log.info("Slash commands synced globally (may take up to an hour to appear)")
+            return
+
+        if raw_guild_id:
+            log.error(
+                "DISCORD_GUILD_ID is not a server id: %r. It should be ~18 digits, "
+                "copied from Discord with right-click your server -> Copy Server ID "
+                "(User Settings -> Advanced -> Developer Mode must be on). The bot "
+                "invite URL is a different thing - that goes in a browser, not here.",
+                _clip(raw_guild_id),
+            )
+            log.warning("Falling back to a global command sync for now.")
+
+        await self.tree.sync()
+        log.info("Slash commands synced globally (may take up to an hour to appear)")
 
     async def on_ready(self) -> None:
         log.info("Connected as %s", self.user)
