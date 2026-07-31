@@ -505,8 +505,68 @@ def build_bot(config: Config | None = None) -> WilByteBot:
     return WilByteBot(config or load_config())
 
 
+# What each credential unlocks, printed at boot so a crash in a hosted
+# environment names the missing variable instead of just exiting.
+_PREFLIGHT = [
+    ("discord_bot_token", "DISCORD_BOT_TOKEN", True, "connect to Discord"),
+    ("anthropic_api_key", "ANTHROPIC_API_KEY", False, "write the copy"),
+    ("ghl_api_token", "GHL_API_TOKEN", False, "post to GoHighLevel"),
+    ("ghl_location_id", "GHL_LOCATION_ID", False, "post to GoHighLevel"),
+    ("ghl_blog_id", "GHL_BLOG_ID", False, "post to GoHighLevel"),
+    ("discord_guild_id", "DISCORD_GUILD_ID", False, "sync slash commands instantly"),
+]
+
+
+def preflight(config: Config) -> list[str]:
+    """Log which credentials are present. Returns the missing required ones."""
+    log.info("Wil Byte starting up")
+    log.info("config: %s", config.path)
+    log.info("state:  %s", DEFAULT_OUTPUT_DIR)
+
+    missing_required = []
+    for attr, env_name, required, purpose in _PREFLIGHT:
+        present = bool(getattr(config.secrets, attr))
+        if present:
+            log.info("  [ok]      %-20s (%s)", env_name, purpose)
+        elif required:
+            log.error("  [MISSING] %-20s needed to %s", env_name, purpose)
+            missing_required.append(env_name)
+        else:
+            log.warning("  [not set] %-20s needed to %s", env_name, purpose)
+    return missing_required
+
+
 def run_bot(config: Config | None = None) -> None:
-    config = config or load_config()
-    config.secrets.require("discord_bot_token")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    build_bot(config).run(config.secrets.discord_bot_token, log_handler=None)
+
+    try:
+        config = config or load_config()
+    except ConfigError as exc:
+        log.error("Could not load configuration: %s", exc)
+        raise SystemExit(1)
+
+    missing = preflight(config)
+    if missing:
+        log.error(
+            "Cannot start without %s. Set it in your host's environment variables "
+            "(on Railway: the service's Variables tab), then redeploy.",
+            " and ".join(missing),
+        )
+        raise SystemExit(1)
+
+    try:
+        build_bot(config).run(config.secrets.discord_bot_token, log_handler=None)
+    except discord.LoginFailure:
+        log.error(
+            "Discord rejected the bot token. Copy a fresh one from the developer "
+            "portal (Bot -> Reset Token) into DISCORD_BOT_TOKEN - note it is the "
+            "bot token, not the application id, client secret, or public key."
+        )
+        raise SystemExit(1)
+    except discord.PrivilegedIntentsRequired:
+        log.error(
+            "Discord requires the intents this bot asked for to be enabled in the "
+            "developer portal. Either turn on Message Content there, or unset "
+            "DISCORD_MESSAGE_CONTENT - mentions work without it."
+        )
+        raise SystemExit(1)
