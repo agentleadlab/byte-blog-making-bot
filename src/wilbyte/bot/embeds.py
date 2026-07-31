@@ -103,7 +103,7 @@ def result_summary(
 def status_summary(
     *, processed: int, recent: list[str], next_slots: list[datetime], booked_days: int | None
 ) -> discord.Embed:
-    embed = discord.Embed(title="Wil Byte status", colour=GREEN)
+    embed = discord.Embed(title="Byte status", colour=GREEN)
     embed.add_field(name="Posts in ledger", value=str(processed), inline=True)
     embed.add_field(
         name="Days booked in GHL",

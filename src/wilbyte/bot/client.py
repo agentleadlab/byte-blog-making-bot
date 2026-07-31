@@ -1,11 +1,11 @@
-"""The Discord bot: slash commands and @mentions over the Wil Byte pipeline.
+"""The Discord bot: slash commands and @mentions over the Byte pipeline.
 
     /run     playlist:<url> limit:3      build each post, approve it, schedule it
     /plan    playlist:<url>              what would be posted, and when
     /status                              ledger + next open slots
     /cover   kicker:.. headline:..       render a cover image on its own
 
-    @Wil Byte <playlist link> 3          the same thing, in plain language
+    @Byte <playlist link> 3          the same thing, in plain language
 
 Runs are serialized behind a lock: slot assignment reads the blog's occupied
 days from GHL, so two concurrent runs would hand out the same day twice.
@@ -136,7 +136,7 @@ def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, s
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
     if channels and str(channel_id) not in channels:
-        return False, "Wil Byte isn't enabled in this channel."
+        return False, "Byte isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids
     if roles:
@@ -184,7 +184,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if not request.headline:
                     await responder.send(
                         "Give me two lines and I'll render it — "
-                        "`@Wil Byte cover Aged, Fresh, Premium | Why Agents Stall`"
+                        "`@Byte cover Aged, Fresh, Premium | Why Agents Stall`"
                     )
                     return
                 await _send_cover(
@@ -554,7 +554,7 @@ _PREFLIGHT = [
 
 def preflight(config: Config) -> list[str]:
     """Log which credentials are present. Returns the missing required ones."""
-    log.info("Wil Byte starting up")
+    log.info("Byte starting up")
     log.info("config: %s", config.path)
     log.info("state:  %s", DEFAULT_OUTPUT_DIR)
 

@@ -1,7 +1,7 @@
 [project]
 name = "wilbyte"
 version = "0.1.0"
-description = "Wil Byte - turns Agent Lead Lab YouTube videos into scheduled GoHighLevel blog posts"
+description = "Byte - turns Agent Lead Lab YouTube videos into scheduled GoHighLevel blog posts"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.60",

@@ -1,10 +1,10 @@
 """Turn an @mention into a pipeline action.
 
-    @Wil Byte https://youtube.com/playlist?list=PL... 3          -> run, limit 3
-    @Wil Byte draft https://youtu.be/abc                         -> run as draft
-    @Wil Byte plan https://youtube.com/playlist?list=PL...       -> plan
-    @Wil Byte status                                             -> status
-    @Wil Byte cover Aged, Fresh, Premium | Why Agents Stall      -> cover
+    @Byte https://youtube.com/playlist?list=PL... 3          -> run, limit 3
+    @Byte draft https://youtu.be/abc                         -> run as draft
+    @Byte plan https://youtube.com/playlist?list=PL...       -> plan
+    @Byte status                                             -> status
+    @Byte cover Aged, Fresh, Premium | Why Agents Stall      -> cover
 
 Deliberately forgiving about word order - a link plus a number in any
 arrangement is the common case, and it should just work.
@@ -144,15 +144,15 @@ def _parse_cover(text: str) -> MentionRequest:
     )
 
 
-HELP_TEXT = """**Hi, I'm Wil Byte** 🤖 — mention me with a YouTube link and I'll get to work.
+HELP_TEXT = """**Hi, I'm Byte** 🤖 — mention me with a YouTube link and I'll get to work.
 
 **Things you can say**
-> @Wil Byte `<playlist link>` **3** — write the next 3 posts
-> @Wil Byte **draft** `<link>` — save them to GHL as drafts instead
-> @Wil Byte **preview** `<link>` — build them locally, send nothing
-> @Wil Byte **plan** `<link>` — just show me what's queued and when
-> @Wil Byte **status** — what's posted, what's next
-> @Wil Byte **cover** Aged, Fresh, Premium | Why Agents Stall — render a cover
+> @Byte `<playlist link>` **3** — write the next 3 posts
+> @Byte **draft** `<link>` — save them to GHL as drafts instead
+> @Byte **preview** `<link>` — build them locally, send nothing
+> @Byte **plan** `<link>` — just show me what's queued and when
+> @Byte **status** — what's posted, what's next
+> @Byte **cover** Aged, Fresh, Premium | Why Agents Stall — render a cover
 
 Slash commands work too: `/run` `/plan` `/status` `/cover`.
 

@@ -1,4 +1,4 @@
-"""Wil Byte command line.
+"""Byte command line.
 
     wilbyte doctor                        check config + credentials + GHL access
     wilbyte plan --playlist <url>         show what would be posted, and when

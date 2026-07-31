@@ -1,4 +1,4 @@
-# Wil Byte
+# Byte
 
 Turns Agent Lead Lab YouTube videos into scheduled GoHighLevel blog posts.
 
@@ -11,7 +11,7 @@ form and schedule it for 10am on the next open weekday.
 Just @ the bot with a playlist link:
 
 ```
-@Wil Byte https://youtube.com/playlist?list=PLry8Oc9... 3
+@Byte https://youtube.com/playlist?list=PLry8Oc9... 3
 ```
 
 The bot writes each post, renders the cover, and shows you a review card. Nothing
@@ -77,13 +77,13 @@ Mention the bot and say what you want — word order doesn't matter.
 
 | Say | It does |
 | --- | --- |
-| `@Wil Byte <link> 3` | Writes the next 3 posts |
-| `@Wil Byte draft <link>` | Same, but everything lands in GHL as a draft |
-| `@Wil Byte preview <link>` | Builds locally, sends nothing to GHL |
-| `@Wil Byte plan <link>` | Which videos are queued and what day each would land on |
-| `@Wil Byte status` | Posts in the ledger, days booked, next open slots |
-| `@Wil Byte cover Aged, Fresh, Premium \| Why Agents Stall` | Renders a cover image |
-| `@Wil Byte` | Help |
+| `@Byte <link> 3` | Writes the next 3 posts |
+| `@Byte draft <link>` | Same, but everything lands in GHL as a draft |
+| `@Byte preview <link>` | Builds locally, sends nothing to GHL |
+| `@Byte plan <link>` | Which videos are queued and what day each would land on |
+| `@Byte status` | Posts in the ledger, days booked, next open slots |
+| `@Byte cover Aged, Fresh, Premium \| Why Agents Stall` | Renders a cover image |
+| `@Byte` | Help |
 
 A count is picked up in any position (`3`, `3 posts`, `x3`, `next 3`), and digits
 inside the URL are ignored. Add `force` to redo something already in the ledger.
@@ -154,7 +154,7 @@ GHL_API_TOKEN         GHL_LOCATION_ID       GHL_BLOG_ID
 Everything else has a default. There's no `PORT` and no healthcheck — it's a
 worker, so Railway showing no public domain is correct.
 
-Deploy logs should end with `Connected as Wil Byte`. If it restart-loops,
+Deploy logs should end with `Connected as Byte`. If it restart-loops,
 check the deploy logs: a bad `DISCORD_BOT_TOKEN` surfaces as a login failure,
 and missing config surfaces as a named `Missing required environment
 variable(s)` error.
