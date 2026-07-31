@@ -57,6 +57,17 @@ class CoverConfig:
 
 
 @dataclass
+class DiscordConfig:
+    require_approval: bool
+    approval_timeout_minutes: int
+    max_batch: int
+
+    @property
+    def approval_timeout_seconds(self) -> float:
+        return self.approval_timeout_minutes * 60
+
+
+@dataclass
 class CopyConfig:
     model: str
     max_tokens: int
@@ -78,6 +89,10 @@ class Secrets:
     ghl_blog_id: str | None = None
     ghl_author_id: str | None = None
     ghl_category_id: str | None = None
+    discord_bot_token: str | None = None
+    discord_guild_id: str | None = None
+    discord_channel_ids: tuple[str, ...] = ()
+    discord_role_ids: tuple[str, ...] = ()
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -96,8 +111,16 @@ class Config:
     schedule: ScheduleConfig
     cover: CoverConfig
     copy: CopyConfig
+    discord: DiscordConfig
     secrets: Secrets = field(default_factory=Secrets)
     path: Path | None = None
+
+
+def _id_list(raw: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated list of Discord snowflake ids from the env."""
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
@@ -119,6 +142,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
             schedule=ScheduleConfig(**raw["schedule"]),
             cover=CoverConfig(**raw["cover"]),
             copy=CopyConfig(**raw["copy"]),
+            discord=DiscordConfig(**raw["discord"]),
             secrets=Secrets(
                 anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
                 ghl_api_token=os.getenv("GHL_API_TOKEN"),
@@ -126,6 +150,10 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 ghl_blog_id=os.getenv("GHL_BLOG_ID"),
                 ghl_author_id=os.getenv("GHL_AUTHOR_ID"),
                 ghl_category_id=os.getenv("GHL_CATEGORY_ID"),
+                discord_bot_token=os.getenv("DISCORD_BOT_TOKEN"),
+                discord_guild_id=os.getenv("DISCORD_GUILD_ID"),
+                discord_channel_ids=_id_list(os.getenv("DISCORD_CHANNEL_IDS")),
+                discord_role_ids=_id_list(os.getenv("DISCORD_ROLE_IDS")),
             ),
             path=config_path,
         )

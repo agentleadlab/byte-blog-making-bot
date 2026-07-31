@@ -11,6 +11,7 @@ dependencies = [
     "yt-dlp>=2024.1",
     "youtube-transcript-api>=0.6",
     "playwright>=1.44",
+    "discord.py>=2.3",
 ]
 
 [project.optional-dependencies]

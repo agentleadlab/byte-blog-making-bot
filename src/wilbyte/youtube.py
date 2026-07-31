@@ -31,6 +31,19 @@ def extract_playlist_id(url_or_id: str) -> str:
     raise IngestError(f"Could not find a playlist id in: {url_or_id!r}")
 
 
+def looks_like_playlist(url_or_id: str) -> bool:
+    """True for a playlist URL or a bare playlist id.
+
+    A `list=` parameter wins even on a watch URL, which is the link you get from
+    "share" while playing a video inside a playlist. Bare ids are disambiguated
+    by length: video ids are always 11 characters, playlist ids are longer.
+    """
+    text = url_or_id.strip()
+    if _PLAYLIST_ID_RE.search(text):
+        return True
+    return len(text) != 11 and text.startswith(("PL", "UU", "OL", "LL", "FL", "RD"))
+
+
 def extract_video_id(url_or_id: str) -> str:
     match = _VIDEO_ID_RE.search(url_or_id)
     if match:

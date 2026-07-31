@@ -48,6 +48,15 @@ kicker_max_words = 5
 # Alt text for the cover image is the URL slug (matching Wil's manual process).
 alt_text_source = "url_slug"
 
+[discord]
+# Show each finished post in Discord (cover image, title, slug, slot) and wait
+# for an Approve click before anything is created in GHL.
+require_approval = true
+# How long an approval prompt stays live before the post is skipped.
+approval_timeout_minutes = 60
+# Max videos a single /run may process, so one command can't burn the playlist.
+max_batch = 10
+
 [copy]
 model = "claude-opus-5"
 max_tokens = 16000

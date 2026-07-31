@@ -5,6 +5,7 @@
     wilbyte run --playlist <url> -n 3     write, render, and schedule 3 posts
     wilbyte run --video <url> --dry-run   one video, print the payload, send nothing
     wilbyte cover --kicker .. --headline ..   re-render a cover image only
+    wilbyte bot                           run the Discord bot
 """
 
 from __future__ import annotations
@@ -238,6 +239,15 @@ def cmd_run(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_bot(args) -> int:
+    from .bot import run_bot
+
+    config = load_config()
+    print("Starting the Discord bot. Ctrl-C to stop.")
+    run_bot(config)
+    return 0
+
+
 def cmd_cover(args) -> int:
     config = load_config()
     plan = CoverPlan(kicker=args.kicker.upper(), headline=args.headline.upper())
@@ -280,6 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="build everything, print the payload, send nothing")
     run.add_argument("--local-only", action="store_true", help="skip GHL entirely; just write files locally")
     run.set_defaults(func=cmd_run)
+
+    sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
 
     cover_cmd = sub.add_parser("cover", help="render a cover image from two lines of text")
     cover_cmd.add_argument("--kicker", required=True, help="the highlighted 3-5 word line")

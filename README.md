@@ -8,8 +8,19 @@ video off the playlist, pull its transcript, run it through the "Copywriting
 Frank" Claude project, build a cover image in Canva, then fill in the GHL blog
 form and schedule it for 10am on the next open weekday.
 
+Drop a playlist link in Discord:
+
 ```
-wilbyte run --playlist "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhxPLVUtlUmliQ0" -n 3
+/run playlist:https://youtube.com/playlist?list=PLry8Oc9... limit:3
+```
+
+The bot writes each post, renders the cover, and shows you a review card. Nothing
+reaches GHL until you click **Schedule it**.
+
+There's a CLI too, if you'd rather not use Discord:
+
+```
+wilbyte run --playlist "https://youtube.com/playlist?list=PLry8Oc9..." -n 3
 ```
 
 ## What it replaces
@@ -23,6 +34,7 @@ wilbyte run --playlist "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhx
 | Fill slug, category, author, keywords, canonical, description, alt text | `ghl.py` — one API payload; constants live in `config/wilbyte.toml` |
 | Find the next weekday with no post, set 10:00 AM, hit Schedule | `scheduler.py` — reads occupied days from GHL, skips weekends |
 | Remember which playlist videos are already done | `state.py` — `state/ledger.json` |
+| Kicking the whole thing off, and reviewing the result | `bot/` — Discord slash commands with an approve-before-publish card |
 
 The constants that never change per post — category `LeadLab`, author
 `Arnold "Tre" Tarpley`, the 13 keywords, the `agentleadlab.com/post/` canonical
@@ -39,7 +51,7 @@ cp .env.example .env                       # then fill it in
 .venv/bin/wilbyte doctor                   # verify config + credentials + GHL access
 ```
 
-`.env` needs an Anthropic API key and a GHL **Private Integration** token for the
+`.env` needs a Discord bot token (see below), an Anthropic API key, and a GHL **Private Integration** token for the
 Agent Lead Lab sub-account, created under Settings → Private Integrations with
 these scopes:
 
@@ -53,7 +65,52 @@ medias.readonly
 is in the blog site URL (`/blogs/site/<THIS>?tab=blog-posts`). `wilbyte doctor`
 lists the blog sites it can see if you're unsure which id to use.
 
-## Usage
+## Discord bot
+
+```bash
+wilbyte bot
+```
+
+| Command | What it does |
+| --- | --- |
+| `/run playlist:<url> limit:3` | Builds each post, shows a review card, schedules on approval |
+| `/run playlist:<url> mode:draft` | Same, but everything lands in GHL as a draft |
+| `/run playlist:<url> mode:preview` | Builds locally, sends nothing to GHL |
+| `/plan playlist:<url>` | Which videos are queued and what day each would land on |
+| `/status` | Posts in the ledger, days already booked, next open slots |
+| `/cover kicker:.. headline:..` | Renders a cover image on its own |
+
+Each review card shows the cover image, title, slug, scheduled slot, description,
+and the article H1 — so you can confirm the title genuinely differs from the H1
+before approving. Four buttons: **Schedule it**, **Save as draft**, **Skip**,
+**Stop the run**.
+
+Skipping leaves the day free, so the next post in the batch takes that slot
+instead of leaving a gap. If a publish fails, its slot is returned to the pool
+too. Only the person who ran the command can click the buttons, and an
+unanswered card times out after an hour (configurable) and is skipped — the
+files still land in `out/<slug>/` either way.
+
+Runs are serialized: `/run` refuses to start while another is going, because slot
+assignment reads occupied days from GHL and two parallel runs would double-book a
+day.
+
+### Setting up the Discord app
+
+1. [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application**
+2. **Bot** → **Reset Token** → copy it into `DISCORD_BOT_TOKEN`
+3. **Installation** → enable the `applications.commands` and `bot` scopes, then use the generated URL to add it to your server
+4. Right-click your server → **Copy Server ID** → `DISCORD_GUILD_ID` (without this, new slash commands take up to an hour to appear)
+
+No privileged intents or message-content access needed — it only uses slash
+commands. Optionally restrict it with `DISCORD_CHANNEL_IDS` and
+`DISCORD_ROLE_IDS`; leave them blank to allow everywhere.
+
+Approval behaviour is under `[discord]` in `config/wilbyte.toml` — set
+`require_approval = false` to have `/run` post straight through without the
+review step.
+
+## CLI usage
 
 ```bash
 # What would get posted, and on what days — makes no changes.
@@ -161,5 +218,6 @@ then switch to the default scheduled mode.
 .venv/bin/python -m pytest
 ```
 
-51 tests, no network or credentials required. The cover tests render real PNGs
-through Chromium.
+69 tests, no network or credentials required. The cover tests render real PNGs
+through Chromium, and the bot tests build real embeds without a gateway
+connection.
