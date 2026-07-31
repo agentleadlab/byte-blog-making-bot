@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.bot import embeds, jobs
-from wilbyte.bot.client import is_allowed, parse_guild_id
+from wilbyte.bot.client import is_allowed, is_direct_mention, parse_guild_id
 from wilbyte.bot.views import Decision
 from wilbyte.models import Video
 from wilbyte.pipeline import assemble_post
@@ -74,6 +74,70 @@ def test_role_allowlist_requires_a_matching_role(config):
     allowed, reason = is_allowed(**actor(1, role_ids=[7]), config=config)
     assert not allowed
     assert "role" in reason
+
+
+# -------------------------------------------------------------- when to speak
+
+BOT_USER = SimpleNamespace(id=999, bot=True)
+
+
+def msg(content, *, mentions=(), author_is_bot=False, mention_everyone=False):
+    return SimpleNamespace(
+        content=content,
+        mentions=list(mentions),
+        mention_everyone=mention_everyone,
+        author=SimpleNamespace(id=1, bot=author_is_bot),
+    )
+
+
+def test_a_typed_mention_is_answered():
+    assert is_direct_mention(msg("<@999> status", mentions=[BOT_USER]), BOT_USER)
+
+
+def test_a_nickname_style_mention_is_answered():
+    assert is_direct_mention(msg("<@!999> status", mentions=[BOT_USER]), BOT_USER)
+
+
+def test_ordinary_chatter_is_ignored():
+    assert not is_direct_mention(msg("byte should do this later"), BOT_USER)
+
+
+def test_everyone_pings_are_ignored():
+    assert not is_direct_mention(
+        msg("<@999> heads up", mentions=[BOT_USER], mention_everyone=True), BOT_USER
+    )
+
+
+def test_a_role_ping_is_ignored():
+    """A role mention doesn't put the bot in `mentions`, and mustn't trigger it."""
+    assert not is_direct_mention(msg("<@&555> standup time"), BOT_USER)
+
+
+def test_a_reply_ping_without_a_typed_tag_is_ignored():
+    """Replying to one of Byte's messages adds it to `mentions` even though the
+    text contains no tag - that is not someone asking Byte for something."""
+    assert not is_direct_mention(msg("thanks, that worked", mentions=[BOT_USER]), BOT_USER)
+
+
+def test_other_bots_cannot_trigger_it():
+    assert not is_direct_mention(
+        msg("<@999> go", mentions=[BOT_USER], author_is_bot=True), BOT_USER
+    )
+
+
+def test_a_mention_of_someone_else_is_ignored():
+    other = SimpleNamespace(id=777, bot=False)
+
+    assert not is_direct_mention(msg("<@777> can you check", mentions=[other]), BOT_USER)
+
+
+def test_a_similar_id_does_not_count_as_a_mention():
+    """`<@9991>` is a different user and must not match `<@999>`."""
+    assert not is_direct_mention(msg("<@9991> hi", mentions=[BOT_USER]), BOT_USER)
+
+
+def test_nothing_happens_before_the_bot_knows_who_it_is():
+    assert not is_direct_mention(msg("<@999> hi", mentions=[BOT_USER]), None)
 
 
 # ------------------------------------------------------------------- guild id

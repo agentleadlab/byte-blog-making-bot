@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 
 import discord
@@ -121,12 +122,36 @@ class WilByteBot(discord.Client):
         )
 
     async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot or self.user is None:
-            return
-        # Only a direct @mention counts - not @everyone, not a role ping.
-        if message.mention_everyone or self.user not in message.mentions:
+        if not is_direct_mention(message, self.user):
             return
         await handle_mention(self, message)
+
+
+# ---------------------------------------------------------------- when to speak
+
+
+def is_direct_mention(message, bot_user) -> bool:
+    """True only when a human typed `@Byte` in the message itself.
+
+    Deliberately strict - the bot stays silent in a busy channel unless somebody
+    actually asked it something. Each of these is a way to end up in
+    `message.mentions` without having been addressed:
+
+      - @everyone / @here sweeping the whole server
+      - a role ping, when the bot happens to hold that role
+      - replying to one of the bot's own messages with the ping toggle left on,
+        which adds the author to `mentions` while the text contains no tag
+      - another bot (Zapier and friends) posting something that tags it
+
+    So the test is the literal mention token in the text, typed by a human.
+    """
+    if bot_user is None or message.author.bot:
+        return False
+    if message.mention_everyone:
+        return False
+    if bot_user not in message.mentions:
+        return False
+    return bool(re.search(rf"<@!?{bot_user.id}>", message.content or ""))
 
 
 # ------------------------------------------------------------------ permissions

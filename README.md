@@ -88,6 +88,13 @@ Mention the bot and say what you want — word order doesn't matter.
 A count is picked up in any position (`3`, `3 posts`, `x3`, `next 3`), and digits
 inside the URL are ignored. Add `force` to redo something already in the ledger.
 
+**Byte only speaks when spoken to.** It replies when a person types `@Byte` in
+the message itself, and stays quiet for everything else — normal conversation,
+`@everyone`/`@here`, a role ping that happens to include it, another bot tagging
+it, and replies to its own messages with the ping toggle left on (those land in
+Discord's mention list without any tag in the text). It's safe to leave in a busy
+channel.
+
 The same things work as slash commands, if you prefer a form to fill in:
 `/run` `/plan` `/status` `/cover`.
 
