@@ -244,5 +244,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
 
+If YouTube won't give me a transcript, paste it out of the video yourself and \
+attach it (`.txt` or `.vtt`) along with the link — I'll write from that.
+
 The more past copy you give me, the more it'll sound like you. Nothing reaches \
 the blog until you click **Schedule it**."""

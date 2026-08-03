@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .. import ghl, pipeline, youtube
 from ..config import Config
-from ..models import BlogPost, Video
+from ..models import BlogPost, Transcript, Video
 from ..scheduler import next_open_slots, taken_days_from_posts
 from ..state import Ledger
 
@@ -75,9 +75,27 @@ def plan_slots(
     return next_open_slots(taken_days(context, config), len(videos), config.schedule)
 
 
-def build(video: Video, config: Config, output_dir: Path) -> BlogPost:
-    """Transcript -> copy -> title -> cover image. No GHL contact."""
-    transcript = youtube.fetch_transcript(video.video_id)
+def build(
+    video: Video,
+    config: Config,
+    output_dir: Path,
+    *,
+    transcript_text: str | None = None,
+) -> BlogPost:
+    """Transcript -> copy -> title -> cover image. No GHL contact.
+
+    `transcript_text` skips the fetch entirely, which is how an attached
+    transcript gets used when YouTube refuses to serve one.
+    """
+    if transcript_text:
+        transcript = Transcript(
+            video_id=video.video_id,
+            text=youtube.clean_transcript(transcript_text),
+            source="manual",
+        )
+    else:
+        transcript = youtube.fetch_transcript(video.video_id)
+
     return pipeline.build_post(
         video, transcript, config, output_dir=output_dir, report=lambda _: None
     )

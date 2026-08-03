@@ -24,7 +24,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, writer
+from .. import formats, ghl, writer, youtube
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -263,10 +263,35 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         )
         return
 
+    transcript_text = await _attached_transcript(message)
     async with bot.run_lock:
         await _execute_run(
-            bot, responder, request.source, request.limit, request.mode, request.force
+            bot, responder, request.source, request.limit, request.mode, request.force,
+            transcript_text=transcript_text,
         )
+
+
+# Caption and transcript files people actually paste out of YouTube.
+TRANSCRIPT_SUFFIXES = (".txt", ".vtt", ".srt", ".md")
+
+
+async def _attached_transcript(message) -> str | None:
+    """Read a transcript attached to the mention, if there is one.
+
+    This is the escape hatch for when YouTube refuses to serve captions to the
+    server: paste the transcript out of YouTube yourself and attach it.
+    """
+    for attachment in getattr(message, "attachments", []) or []:
+        if not attachment.filename.lower().endswith(TRANSCRIPT_SUFFIXES):
+            continue
+        if attachment.size and attachment.size > MAX_LEARN_BYTES:
+            continue
+        raw = (await attachment.read()).decode("utf-8", errors="replace")
+        if attachment.filename.lower().endswith((".vtt", ".srt")):
+            raw = youtube.parse_captions(raw)
+        if raw.strip():
+            return raw
+    return None
 
 
 # --------------------------------------------------------------------- commands
@@ -613,6 +638,7 @@ async def _execute_run(
     limit: int,
     mode: str,
     force: bool,
+    transcript_text: str | None = None,
 ) -> None:
     config = bot.config
     limit = max(1, min(limit, config.discord.max_batch))
@@ -660,7 +686,10 @@ async def _execute_run(
 
         for index, video in enumerate(videos, start=1):
             try:
-                post = await asyncio.to_thread(jobs.build, video, config, output_dir)
+                post = await asyncio.to_thread(
+                    jobs.build, video, config, output_dir,
+                    transcript_text=transcript_text if len(videos) == 1 else None,
+                )
             except PIPELINE_ERRORS as exc:
                 failed += 1
                 await responder.send(embed=embeds.error(f"{video.title}\n{exc}"))

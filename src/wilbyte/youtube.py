@@ -158,8 +158,11 @@ def fetch_transcript(
 ) -> Transcript:
     """Pull the YouTube transcript, preferring manual captions over auto-generated.
 
-    Retries a throttled response with backoff; an outright IP block fails fast,
-    since waiting a few seconds will not lift it.
+    Three ways in, cheapest first: the transcript API, then yt-dlp's caption
+    download (a different endpoint, so it often survives a block that stops the
+    first), and failing both, an instruction to attach the transcript by hand.
+    A throttled response is retried with backoff, but an outright IP block skips
+    straight to the fallback - waiting seconds will not lift it.
     """
     import time
 
@@ -177,26 +180,108 @@ def fetch_transcript(
             break
         except Exception as exc:
             last_error = exc
-            if _is_blocked(exc) and not proxy_config:
-                raise IngestError(
-                    f"YouTube is blocking transcript requests from this server's IP. "
-                    f"Cloud hosts get blocked routinely. Set WEBSHARE_PROXY_USERNAME and "
-                    f"WEBSHARE_PROXY_PASSWORD (a residential proxy), or YOUTUBE_PROXY_URL "
-                    f"for a generic one, and this clears up. Video: {video_id}"
-                ) from exc
-            if attempt == attempts - 1:
-                raise IngestError(
-                    f"No transcript available for {video_id}: {_first_line(exc)}"
-                ) from exc
+            # An IP block won't lift on a retry, so go straight to the fallback.
+            if _is_blocked(exc) or attempt == attempts - 1:
+                break
             time.sleep(2**attempt)
 
     if not snippets:
-        raise IngestError(f"No transcript returned for {video_id}: {last_error}")
+        try:
+            return fetch_transcript_via_ytdlp(video_id, languages=languages)
+        except IngestError as fallback_error:
+            blocked = last_error is not None and _is_blocked(last_error)
+            detail = (
+                "YouTube is blocking this server's IP for transcripts, and the "
+                "caption fallback did not work either."
+                if blocked
+                else f"{_first_line(last_error) if last_error else 'unknown error'}"
+            )
+            raise IngestError(
+                f"Could not get a transcript for {video_id}. {detail} "
+                f"Fallback said: {fallback_error}. "
+                f"You can attach the transcript as a .txt or .vtt file with the link "
+                f"instead, or set WEBSHARE_PROXY_USERNAME/WEBSHARE_PROXY_PASSWORD."
+            ) from fallback_error
 
-    text = _clean_transcript(" ".join(snippets))
+    text = clean_transcript(" ".join(snippets))
     if not text.strip():
         raise IngestError(f"Transcript for {video_id} came back empty.")
     return Transcript(video_id=video_id, text=text, source="youtube")
+
+
+def fetch_transcript_via_ytdlp(
+    video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
+) -> Transcript:
+    """Get captions through yt-dlp instead of the transcript API.
+
+    yt-dlp fetches captions the way the player does, which is a different
+    endpoint from the one the transcript API uses - so this often still works
+    when that one is IP-blocked. Free, and no proxy needed.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from yt_dlp import YoutubeDL
+
+    with tempfile.TemporaryDirectory() as tmp:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": list(languages),
+            "subtitlesformat": "vtt",
+            "outtmpl": str(_Path(tmp) / "%(id)s"),
+        }
+        try:
+            with YoutubeDL(opts) as ydl:
+                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+        except Exception as exc:
+            raise IngestError(f"yt-dlp could not fetch captions for {video_id}: {_first_line(exc)}") from exc
+
+        files = sorted(_Path(tmp).glob("*.vtt")) or sorted(_Path(tmp).glob("*.srt"))
+        if not files:
+            raise IngestError(f"No caption track published for {video_id}.")
+        raw = files[0].read_text(encoding="utf-8", errors="replace")
+
+    text = clean_transcript(parse_captions(raw))
+    if not text.strip():
+        raise IngestError(f"Caption file for {video_id} was empty.")
+    return Transcript(video_id=video_id, text=text, source="youtube-ytdlp")
+
+
+_TIMESTAMP_LINE = re.compile(r"^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->")
+_INLINE_TAG = re.compile(r"<[^>]+>")
+
+
+def parse_captions(raw: str) -> str:
+    """Flatten a VTT or SRT caption file into plain prose.
+
+    Auto-generated captions scroll, so the same words appear on several
+    consecutive cues; emitting them verbatim triples the transcript. Lines are
+    de-duplicated against what was last emitted.
+    """
+    lines: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
+            continue
+        if _TIMESTAMP_LINE.match(line) or "-->" in line:
+            continue
+        if line.isdigit():  # SRT cue numbers
+            continue
+        line = _INLINE_TAG.sub("", line).strip()
+        if not line:
+            continue
+        if lines and (line == lines[-1] or line in lines[-1]):
+            continue
+        # A scrolling cue often repeats the previous line plus new words.
+        if lines and line.startswith(lines[-1]):
+            lines[-1] = line
+            continue
+        lines.append(line)
+    return " ".join(lines)
 
 
 def _first_line(exc: Exception) -> str:
@@ -212,16 +297,20 @@ def load_manual_transcript(video_id: str, path: str | Path) -> Transcript:
     file_path = Path(path)
     if not file_path.exists():
         raise IngestError(f"Transcript file not found: {file_path}")
-    text = _clean_transcript(file_path.read_text(encoding="utf-8"))
+    text = clean_transcript(file_path.read_text(encoding="utf-8"))
     if not text.strip():
         raise IngestError(f"Transcript file is empty: {file_path}")
     return Transcript(video_id=video_id, text=text, source="manual")
 
 
-def _clean_transcript(text: str) -> str:
+def clean_transcript(text: str) -> str:
     """Strip caption artifacts and timestamp lines, collapse whitespace."""
     text = re.sub(r"\[(?:Music|Applause|Laughter|__)\]", " ", text, flags=re.IGNORECASE)
     # Timestamp lines like "0:42" or "01:23:45" that appear in copy-pasted transcripts.
     text = re.sub(r"(?m)^\s*\d{1,2}:\d{2}(?::\d{2})?\s*$", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+# Kept for the tests and callers that used the private name.
+_clean_transcript = clean_transcript
