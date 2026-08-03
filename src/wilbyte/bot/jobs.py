@@ -137,13 +137,26 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
                     "it was copied whole — they are long and easy to clip.",
                 ))
             elif "403" in str(exc):
-                results.append((
-                    False,
-                    "403 means the token is valid but missing a scope. It needs "
-                    "blogs/post.write, blogs/post-update.write, blogs/check-slug.readonly, "
-                    "blogs/category.readonly, blogs/author.readonly, medias.write, "
-                    "medias.readonly.",
-                ))
+                # GHL returns 403 for two unrelated problems. Its message says
+                # which, so read it rather than guessing at scopes.
+                if "location" in str(exc).lower():
+                    results.append((
+                        False,
+                        f"The token belongs to a different sub-account than "
+                        f"GHL_LOCATION_ID ({config.secrets.ghl_location_id}). In GHL, open "
+                        "the sub-account you made the Private Integration in and read the "
+                        "id out of the URL: /v2/location/<THIS>/. Either set "
+                        "GHL_LOCATION_ID to that (and GHL_BLOG_ID to a blog site inside "
+                        "it), or recreate the integration inside the sub-account you want.",
+                    ))
+                else:
+                    results.append((
+                        False,
+                        "403 with a valid token usually means a missing scope. It needs "
+                        "blogs/post.write, blogs/post-update.write, blogs/check-slug.readonly, "
+                        "blogs/category.readonly, blogs/author.readonly, blogs/posts.readonly, "
+                        "blogs/list.readonly, medias.write, medias.readonly.",
+                    ))
             return results
 
         blog_id = config.secrets.ghl_blog_id
