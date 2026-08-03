@@ -103,7 +103,7 @@ def result_summary(
 def status_summary(
     *, processed: int, recent: list[str], next_slots: list[datetime], booked_days: int | None
 ) -> discord.Embed:
-    embed = discord.Embed(title="Byte status", colour=GREEN)
+    embed = discord.Embed(title="RYTE status", colour=GREEN)
     embed.add_field(name="Posts in ledger", value=str(processed), inline=True)
     embed.add_field(
         name="Days booked in GHL",
@@ -158,7 +158,7 @@ def copy_result(result) -> discord.Embed:
     if result.examples_used:
         embed.set_footer(text=f"Written from {len(result.examples_used)} past piece(s)")
     else:
-        embed.set_footer(text="No past copy to learn from yet — try @Byte learn with files")
+        embed.set_footer(text="No past copy to learn from yet — try @RYTE learn with files")
     return embed
 
 
@@ -182,7 +182,7 @@ def corpus_summary(*, counts: dict, total: int, words: int, recent: list[str]) -
         description=(
             f"**{total}** piece(s), about **{words:,}** words."
             if total
-            else "Nothing yet. Attach files and say `@Byte learn`."
+            else "Nothing yet. Attach files and say `@RYTE learn`."
         ),
         colour=GREEN if total else GREY,
     )
@@ -197,6 +197,36 @@ def corpus_summary(*, counts: dict, total: int, words: int, recent: list[str]) -
 
 def _format_counts(counts: dict) -> str:
     return "\n".join(f"`{label:<10}` {count}" for label, count in counts.items()) or "—"
+
+
+def check_report(
+    *, credentials: list[tuple[bool, str]], ghl: list[tuple[bool, str]],
+    youtube: list[tuple[bool, str]],
+) -> discord.Embed:
+    """Green when every hard requirement passed, red when something blocks a run."""
+    hard = [ok for ok, _ in credentials + ghl + youtube if ok is not None]
+    all_good = all(hard) if hard else False
+
+    embed = discord.Embed(
+        title="System check",
+        description=(
+            "Everything a real run needs is working."
+            if all_good
+            else "Some things need fixing before a scheduled run will work."
+        ),
+        colour=GREEN if all_good else AMBER,
+    )
+    for name, rows in (
+        ("Credentials", credentials), ("GoHighLevel", ghl), ("YouTube", youtube)
+    ):
+        if rows:
+            embed.add_field(name=name, value=_truncate(_checklist(rows), 1024), inline=False)
+    return embed
+
+
+def _checklist(rows: list[tuple[bool, str]]) -> str:
+    marks = {True: "✅", False: "❌", None: "▫️"}
+    return "\n".join(f"{marks.get(ok, '▫️')} {text}" for ok, text in rows)
 
 
 def error(message: str) -> discord.Embed:

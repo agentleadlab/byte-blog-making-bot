@@ -1,10 +1,10 @@
 """Turn an @mention into a pipeline action.
 
-    @Byte https://youtube.com/playlist?list=PL... 3          -> run, limit 3
-    @Byte draft https://youtu.be/abc                         -> run as draft
-    @Byte plan https://youtube.com/playlist?list=PL...       -> plan
-    @Byte status                                             -> status
-    @Byte cover Aged, Fresh, Premium | Why Agents Stall      -> cover
+    @RYTE https://youtube.com/playlist?list=PL... 3          -> run, limit 3
+    @RYTE draft https://youtu.be/abc                         -> run as draft
+    @RYTE plan https://youtube.com/playlist?list=PL...       -> plan
+    @RYTE status                                             -> status
+    @RYTE cover Aged, Fresh, Premium | Why Agents Stall      -> cover
 
 Deliberately forgiving about word order - a link plus a number in any
 arrangement is the common case, and it should just work.
@@ -46,6 +46,11 @@ ACTION_WORDS = {
     "library": "corpus",
     "memory": "corpus",
     "knowledge": "corpus",
+    # Note: "test" stays a MODE word (preview), not a check alias.
+    "check": "check",
+    "diagnose": "check",
+    "doctor": "check",
+    "checkup": "check",
     "help": "help",
     "commands": "help",
     "hi": "help",
@@ -108,6 +113,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action == "corpus":
         return MentionRequest(action="corpus")
 
+    if action == "check":
+        # A link is optional, but with one the check can prove YouTube works.
+        return MentionRequest(action="check", source=_find_source(text))
+
     # A format word means "write me one of these", and wins over a link so that
     # "email about the new playlist <link>" writes an email, not a blog post.
     fmt = _first_format_word(text, find)
@@ -118,11 +127,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             brief=_extract_brief(text, fmt),
         )
 
-    url_match = URL_RE.search(text)
-    source = url_match.group(0).rstrip(".,;)>") if url_match else None
-    if not source:
-        bare = BARE_PLAYLIST_RE.search(text)
-        source = bare.group(1) if bare else None
+    source = _find_source(text)
 
     if action in ("status", "help"):
         return MentionRequest(action=action)
@@ -138,6 +143,15 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         mode=_parse_mode(lowered),
         force=any(word in lowered.split() for word in FORCE_WORDS),
     )
+
+
+def _find_source(text: str) -> str | None:
+    """The YouTube link or bare playlist id in a message, if there is one."""
+    url_match = URL_RE.search(text)
+    if url_match:
+        return url_match.group(0).rstrip(".,;)>")
+    bare = BARE_PLAYLIST_RE.search(text)
+    return bare.group(1) if bare else None
 
 
 def _first_format_word(text: str, find) -> object | None:
@@ -208,26 +222,27 @@ def _parse_cover(text: str) -> MentionRequest:
     )
 
 
-HELP_TEXT = """**Hi, I'm Byte** 🤖 — I write copy in Agent Lead Lab's voice.
+HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 
 **Write me something**
-> @Byte **sms** about the OTP leads going live Monday
-> @Byte **email** we're raising aged lead prices next month
-> @Byte **ad** for agents stuck at 20 leads a week
-> @Byte **script** hook for a reel on cost per booked appointment
+> @RYTE **sms** about the OTP leads going live Monday
+> @RYTE **email** we're raising aged lead prices next month
+> @RYTE **ad** for agents stuck at 20 leads a week
+> @RYTE **script** hook for a reel on cost per booked appointment
 > Also: **landing**, **social**
 
 **Teach me your voice** — attach files and say
-> @Byte **learn** — .txt, .md, .csv, .json; add a word like `sms` to label them
-> @Byte **corpus** — what I've learned so far
+> @RYTE **learn** — .txt, .md, .csv, .json; add a word like `sms` to label them
+> @RYTE **corpus** — what I've learned so far
 
 **Blog posts from YouTube**
-> @Byte `<playlist link>` **3** — write the next 3 posts
-> @Byte **draft** `<link>` — save to GHL as drafts instead
-> @Byte **preview** `<link>` — build locally, send nothing
-> @Byte **plan** `<link>` — what's queued and when
-> @Byte **status** — what's posted, what's next
-> @Byte **cover** Aged, Fresh, Premium | Why Agents Stall
+> @RYTE `<playlist link>` **3** — write the next 3 posts
+> @RYTE **draft** `<link>` — save to GHL as drafts instead
+> @RYTE **preview** `<link>` — build locally, send nothing
+> @RYTE **plan** `<link>` — what's queued and when
+> @RYTE **status** — what's posted, what's next
+> @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
+> @RYTE **check** `<link>` — test my GHL and YouTube connections
 
 The more past copy you give me, the more it'll sound like you. Nothing reaches \
 the blog until you click **Schedule it**."""

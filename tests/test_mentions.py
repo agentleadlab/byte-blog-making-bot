@@ -224,6 +224,26 @@ def test_corpus_keywords(word):
     assert parse(f"{BOT} {word}").action == "corpus"
 
 
+@pytest.mark.parametrize("word", ["check", "diagnose", "doctor", "checkup"])
+def test_check_keywords(word):
+    assert parse(f"{BOT} {word}").action == "check"
+
+
+def test_check_picks_up_a_link_to_test_youtube_with():
+    request = parse(f"{BOT} check {PLAYLIST}")
+
+    assert request.action == "check"
+    assert request.source == PLAYLIST
+
+
+def test_test_still_means_preview_mode_not_a_system_check():
+    """'test' was a mode word before the check command existed - keep it that way."""
+    request = parse(f"{BOT} test {VIDEO}")
+
+    assert request.action == "run"
+    assert request.mode == "preview"
+
+
 def test_a_format_word_with_no_brief_still_routes_to_write():
     """The handler asks what it should be about rather than guessing."""
     request = parse(f"{BOT} sms")

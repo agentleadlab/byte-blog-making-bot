@@ -1,4 +1,4 @@
-"""Discord front-end for the Byte pipeline."""
+"""Discord front-end for the RYTE pipeline."""
 
 from .client import build_bot, run_bot
 

@@ -1,6 +1,6 @@
-"""The kinds of copy Byte writes, and the shape each one takes.
+"""The kinds of copy RYTE writes, and the shape each one takes.
 
-Adding a format here is all it takes to teach Byte a new one - the corpus
+Adding a format here is all it takes to teach RYTE a new one - the corpus
 labels, the Discord commands, and the structured output schema are all derived
 from this table.
 """

@@ -1,4 +1,4 @@
-"""Byte command line.
+"""RYTE command line.
 
     wilbyte doctor                        check config + credentials + GHL access
     wilbyte plan --playlist <url>         show what would be posted, and when
@@ -365,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-only", action="store_true", help="skip GHL entirely; just write files locally")
     run.set_defaults(func=cmd_run)
 
-    learn = sub.add_parser("learn", help="add past copy to Byte's library")
+    learn = sub.add_parser("learn", help="add past copy to RYTE's library")
     learn.add_argument("files", nargs="+", help="txt, md, csv or json files (globs allowed)")
     learn.add_argument("--format", help="label everything in these files, e.g. sms")
     learn.set_defaults(func=cmd_learn)
@@ -375,7 +375,7 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("brief", nargs="+", help="what it should be about")
     write.set_defaults(func=cmd_write)
 
-    corpus_cmd = sub.add_parser("corpus", help="what past copy Byte has learned")
+    corpus_cmd = sub.add_parser("corpus", help="what past copy RYTE has learned")
     corpus_cmd.add_argument("-v", "--verbose", action="store_true", help="list recent pieces")
     corpus_cmd.set_defaults(func=cmd_corpus)
 

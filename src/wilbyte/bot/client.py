@@ -1,11 +1,11 @@
-"""The Discord bot: slash commands and @mentions over the Byte pipeline.
+"""The Discord bot: slash commands and @mentions over the RYTE pipeline.
 
     /run     playlist:<url> limit:3      build each post, approve it, schedule it
     /plan    playlist:<url>              what would be posted, and when
     /status                              ledger + next open slots
     /cover   kicker:.. headline:..       render a cover image on its own
 
-    @Byte <playlist link> 3          the same thing, in plain language
+    @RYTE <playlist link> 3          the same thing, in plain language
 
 Runs are serialized behind a lock: slot assignment reads the blog's occupied
 days from GHL, so two concurrent runs would hand out the same day twice.
@@ -138,7 +138,7 @@ class WilByteBot(discord.Client):
 
 
 def is_direct_mention(message, bot_user) -> bool:
-    """True only when a human typed `@Byte` in the message itself.
+    """True only when a human typed `@RYTE` in the message itself.
 
     Deliberately strict - the bot stays silent in a busy channel unless somebody
     actually asked it something. Each of these is a way to end up in
@@ -168,7 +168,7 @@ def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, s
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
     if channels and str(channel_id) not in channels:
-        return False, "Byte isn't enabled in this channel."
+        return False, "RYTE isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids
     if roles:
@@ -216,6 +216,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_corpus(responder)
                 return
 
+            if request.action == "check":
+                await _send_check(responder, config, request.source)
+                return
+
             if request.action == "learn":
                 await _handle_learn(responder, message, request.format_key)
                 return
@@ -233,7 +237,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if not request.headline:
                     await responder.send(
                         "Give me two lines and I'll render it — "
-                        "`@Byte cover Aged, Fresh, Premium | Why Agents Stall`"
+                        "`@RYTE cover Aged, Fresh, Premium | Why Agents Stall`"
                     )
                     return
                 await _send_cover(
@@ -358,7 +362,19 @@ def register_commands(bot: WilByteBot) -> None:
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(str(exc)))
 
-    @bot.tree.command(name="corpus", description="What past copy Byte has learned")
+    @bot.tree.command(name="check", description="Test the GHL and YouTube connections")
+    @app_commands.describe(playlist="Optional: a link to prove YouTube access works")
+    async def check(interaction: discord.Interaction, playlist: str | None = None):
+        if not await guard(interaction, config):
+            return
+        await interaction.response.defer(thinking=True)
+        responder = InteractionResponder(interaction)
+        try:
+            await _send_check(responder, config, playlist)
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+
+    @bot.tree.command(name="corpus", description="What past copy RYTE has learned")
     async def corpus_cmd(interaction: discord.Interaction):
         if not await guard(interaction, config):
             return
@@ -446,6 +462,23 @@ async def _send_status(responder: Responder, config: Config) -> None:
     )
 
 
+async def _send_check(responder: Responder, config: Config, source: str | None) -> None:
+    """Everything a real run needs, tested from where the bot actually runs."""
+    credentials = [
+        (bool(getattr(config.secrets, attr)), f"{env}{'' if getattr(config.secrets, attr) else ' is not set'}")
+        for attr, env, required, _ in _PREFLIGHT
+        if required or attr != "discord_guild_id"
+    ]
+    ghl_rows = await asyncio.to_thread(jobs.check_ghl, config)
+    youtube_rows = await asyncio.to_thread(jobs.check_youtube, source)
+
+    await responder.send(
+        embed=embeds.check_report(
+            credentials=credentials, ghl=ghl_rows, youtube=youtube_rows
+        )
+    )
+
+
 async def _send_write(
     responder: Responder, config: Config, *, format_key: str, brief: str, token: int
 ) -> None:
@@ -453,7 +486,7 @@ async def _send_write(
     if not brief:
         await responder.send(
             f"What should the {fmt.label.lower()} be about? "
-            f"Try `@Byte {fmt.key} <the idea>`."
+            f"Try `@RYTE {fmt.key} <the idea>`."
         )
         return
 
@@ -498,7 +531,7 @@ async def _handle_learn(responder: Responder, message, label: str | None) -> Non
     attachments = list(getattr(message, "attachments", []) or [])
     if not attachments:
         await responder.send(
-            "Attach the copy and say `@Byte learn` — .txt, .md, .csv or .json. "
+            "Attach the copy and say `@RYTE learn` — .txt, .md, .csv or .json. "
             "Add a word like `sms` or `email` to label the whole file, or give the "
             "CSV a `format` column. In a plain text file, separate pieces with a "
             "line of `---`."
@@ -751,7 +784,7 @@ _PREFLIGHT = [
 
 def preflight(config: Config) -> list[str]:
     """Log which credentials are present. Returns the missing required ones."""
-    log.info("Byte starting up")
+    log.info("RYTE starting up")
     log.info("config: %s", config.path)
     log.info("state:  %s", DEFAULT_OUTPUT_DIR)
 

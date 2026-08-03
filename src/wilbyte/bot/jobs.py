@@ -107,6 +107,89 @@ def publish(
     )
 
 
+def check_ghl(config: Config) -> list[tuple[bool, str]]:
+    """Verify everything the pipeline needs from GHL before a real run."""
+    results: list[tuple[bool, str]] = []
+    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
+        return [(False, "No GHL token or location id set")]
+
+    client = ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id)
+    try:
+        try:
+            sites = client.list_blog_sites()
+            results.append((True, f"Connected — {len(sites)} blog site(s) visible"))
+        except Exception as exc:
+            results.append((False, f"Cannot reach GHL: {exc}"))
+            return results
+
+        blog_id = config.secrets.ghl_blog_id
+        if not blog_id:
+            results.append((False, "GHL_BLOG_ID is not set"))
+        elif any(str(s.get("_id") or s.get("id")) == blog_id for s in sites):
+            results.append((True, "GHL_BLOG_ID matches a real blog site"))
+        else:
+            names = ", ".join(
+                f"{s.get('name') or s.get('title') or '?'} = {s.get('_id') or s.get('id')}"
+                for s in sites[:5]
+            )
+            results.append((False, f"GHL_BLOG_ID not among your sites. Found: {names}"))
+
+        for kind, wanted, lister in (
+            ("author", config.post.author, client.list_authors),
+            ("category", config.post.category, client.list_categories),
+        ):
+            try:
+                found = ghl.resolve_by_name(lister(), wanted, kind=kind)
+                results.append((True, f"{kind.title()} {wanted!r} found ({found})"))
+            except Exception as exc:
+                results.append((False, str(exc)))
+
+        if blog_id:
+            try:
+                posts = client.list_posts(blog_id)
+                days = taken_days_from_posts(posts, config.schedule)
+                results.append((True, f"Read {len(posts)} existing post(s), {len(days)} day(s) booked"))
+            except Exception as exc:
+                results.append((False, f"Cannot list existing posts: {exc}"))
+    finally:
+        client.close()
+    return results
+
+
+def check_youtube(source: str | None) -> list[tuple[bool, str]]:
+    """Verify YouTube is reachable, and that transcripts actually come back.
+
+    This is the step most likely to fail in a datacenter: YouTube blocks many
+    cloud IP ranges for transcript requests even when video metadata loads.
+    """
+    if not source:
+        return [(None, "No link given — add one to test YouTube access")]
+
+    results: list[tuple[bool, str]] = []
+    try:
+        if youtube.looks_like_playlist(source):
+            videos = youtube.list_playlist_videos(source, limit=3)
+            results.append((True, f"Playlist readable — {len(videos)}+ video(s)"))
+        else:
+            videos = [youtube.fetch_video(source)]
+            results.append((True, f"Video readable — {videos[0].title[:60]}"))
+    except Exception as exc:
+        results.append((False, f"Cannot read from YouTube: {_short(exc)}"))
+        return results
+
+    try:
+        transcript = youtube.fetch_transcript(videos[0].video_id)
+        results.append((True, f"Transcript works — {transcript.word_count} words"))
+    except Exception as exc:
+        results.append((False, f"No transcript: {_short(exc)}"))
+    return results
+
+
+def _short(exc: Exception, limit: int = 220) -> str:
+    text = " ".join(str(exc).split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def record(ledger: Ledger, post: BlogPost) -> None:
     ledger.record(
         video_id=post.video.video_id,

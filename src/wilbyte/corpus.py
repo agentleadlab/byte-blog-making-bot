@@ -1,4 +1,4 @@
-"""Byte's memory: every piece of copy Agent Lead Lab has written.
+"""RYTE's memory: every piece of copy Agent Lead Lab has written.
 
 Feed it via Discord attachments, pasted text, or a `corpus/` folder in the repo.
 Each piece is stored with a format label so retrieval can say "show me how we

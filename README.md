@@ -1,6 +1,6 @@
-# Byte
+# RYTE
 
-Agent Lead Lab's copywriter. Byte learns from copy you've already published,
+Agent Lead Lab's copywriter. RYTE learns from copy you've already published,
 then writes new SMS, email, ads, scripts and landing pages in that voice — and
 turns YouTube videos into scheduled GoHighLevel blog posts.
 
@@ -9,20 +9,20 @@ turns YouTube videos into scheduled GoHighLevel blog posts.
 Teach it your voice by attaching files:
 
 ```
-@Byte learn            ← attach .txt, .md, .csv or .json
-@Byte corpus           ← what it's learned so far
+@RYTE learn            ← attach .txt, .md, .csv or .json
+@RYTE corpus           ← what it's learned so far
 ```
 
 Then ask for copy:
 
 ```
-@Byte sms about the OTP leads going live Monday
-@Byte email we're raising aged lead prices next month
-@Byte ad for agents stuck at 20 leads a week
-@Byte script hook for a reel on cost per booked appointment
+@RYTE sms about the OTP leads going live Monday
+@RYTE email we're raising aged lead prices next month
+@RYTE ad for agents stuck at 20 leads a week
+@RYTE script hook for a reel on cost per booked appointment
 ```
 
-Byte pulls the most relevant past pieces in that format, studies them, and
+RYTE pulls the most relevant past pieces in that format, studies them, and
 writes several variants on different angles. Every reply comes with a `.txt`
 attachment holding the full text, since Discord truncates long fields.
 
@@ -40,13 +40,13 @@ the corpus labels all follow from it.
 | `.json` / `.jsonl` | Objects with a `body` field; optional `format`, `title`, `tags` |
 
 Labels are worked out from the `format` column, the filename (`sms-blasts.csv`),
-or the shape of the text — and `@Byte learn sms` labels a whole upload at once.
+or the shape of the text — and `@RYTE learn sms` labels a whole upload at once.
 Re-uploading the same copy is a no-op: pieces are keyed by a content hash, so
 duplicates are skipped.
 
 The library lives at `/data/corpus/pieces.jsonl` — one JSON object per line,
 so it greps, diffs, and edits by hand. You can also commit `corpus/*.jsonl` to
-the repo and Byte reads those too.
+the repo and RYTE reads those too.
 
 ### The house voice
 
@@ -66,7 +66,7 @@ form and schedule it for 10am on the next open weekday.
 Just @ the bot with a playlist link:
 
 ```
-@Byte https://youtube.com/playlist?list=PLry8Oc9... 3
+@RYTE https://youtube.com/playlist?list=PLry8Oc9... 3
 ```
 
 The bot writes each post, renders the cover, and shows you a review card. Nothing
@@ -132,18 +132,18 @@ Mention the bot and say what you want — word order doesn't matter.
 
 | Say | It does |
 | --- | --- |
-| `@Byte <link> 3` | Writes the next 3 posts |
-| `@Byte draft <link>` | Same, but everything lands in GHL as a draft |
-| `@Byte preview <link>` | Builds locally, sends nothing to GHL |
-| `@Byte plan <link>` | Which videos are queued and what day each would land on |
-| `@Byte status` | Posts in the ledger, days booked, next open slots |
-| `@Byte cover Aged, Fresh, Premium \| Why Agents Stall` | Renders a cover image |
-| `@Byte` | Help |
+| `@RYTE <link> 3` | Writes the next 3 posts |
+| `@RYTE draft <link>` | Same, but everything lands in GHL as a draft |
+| `@RYTE preview <link>` | Builds locally, sends nothing to GHL |
+| `@RYTE plan <link>` | Which videos are queued and what day each would land on |
+| `@RYTE status` | Posts in the ledger, days booked, next open slots |
+| `@RYTE cover Aged, Fresh, Premium \| Why Agents Stall` | Renders a cover image |
+| `@RYTE` | Help |
 
 A count is picked up in any position (`3`, `3 posts`, `x3`, `next 3`), and digits
 inside the URL are ignored. Add `force` to redo something already in the ledger.
 
-**Byte only speaks when spoken to.** It replies when a person types `@Byte` in
+**RYTE only speaks when spoken to.** It replies when a person types `@RYTE` in
 the message itself, and stays quiet for everything else — normal conversation,
 `@everyone`/`@here`, a role ping that happens to include it, another bot tagging
 it, and replies to its own messages with the ping toggle left on (those land in
@@ -216,7 +216,7 @@ GHL_API_TOKEN         GHL_LOCATION_ID       GHL_BLOG_ID
 Everything else has a default. There's no `PORT` and no healthcheck — it's a
 worker, so Railway showing no public domain is correct.
 
-Deploy logs should end with `Connected as Byte`. If it restart-loops,
+Deploy logs should end with `Connected as RYTE`. If it restart-loops,
 check the deploy logs: a bad `DISCORD_BOT_TOKEN` surfaces as a login failure,
 and missing config surfaces as a named `Missing required environment
 variable(s)` error.
