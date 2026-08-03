@@ -497,12 +497,14 @@ async def _send_check(responder: Responder, config: Config, source: str | None) 
         for attr, env, required, _ in _PREFLIGHT
         if required or attr != "discord_guild_id"
     ]
+    claude_rows = await asyncio.to_thread(jobs.check_anthropic, config)
     ghl_rows = await asyncio.to_thread(jobs.check_ghl, config)
     youtube_rows = await asyncio.to_thread(jobs.check_youtube, source)
 
     await responder.send(
         embed=embeds.check_report(
-            credentials=credentials, ghl=ghl_rows, youtube=youtube_rows
+            credentials=credentials, claude=claude_rows,
+            ghl=ghl_rows, youtube=youtube_rows,
         )
     )
 

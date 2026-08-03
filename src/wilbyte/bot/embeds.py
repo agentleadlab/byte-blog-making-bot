@@ -201,10 +201,11 @@ def _format_counts(counts: dict) -> str:
 
 def check_report(
     *, credentials: list[tuple[bool, str]], ghl: list[tuple[bool, str]],
-    youtube: list[tuple[bool, str]],
+    youtube: list[tuple[bool, str]], claude: list[tuple[bool, str]] | None = None,
 ) -> discord.Embed:
     """Green when every hard requirement passed, red when something blocks a run."""
-    core = [ok for ok, _ in credentials + ghl if ok is not None]
+    claude = claude or []
+    core = [ok for ok, _ in credentials + claude + ghl if ok is not None]
     core_ok = all(core) if core else False
     yt = [ok for ok, _ in youtube if ok is not None]
     youtube_ok = all(yt) if yt else None
@@ -226,7 +227,8 @@ def check_report(
 
     embed = discord.Embed(title="System check", description=description, colour=colour)
     for name, rows in (
-        ("Credentials", credentials), ("GoHighLevel", ghl), ("YouTube", youtube)
+        ("Credentials", credentials), ("Claude", claude),
+        ("GoHighLevel", ghl), ("YouTube", youtube),
     ):
         if rows:
             embed.add_field(name=name, value=_truncate(_checklist(rows), 1024), inline=False)

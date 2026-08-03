@@ -215,6 +215,59 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
     return results
 
 
+def check_anthropic(config: Config) -> list[tuple[bool, str]]:
+    """Actually call the API, rather than just confirming a key is present.
+
+    A present-but-invalid key looks fine at boot and then fails at the moment
+    it matters most - after the transcript is in and the run has started.
+    """
+    key = config.secrets.anthropic_api_key
+    if not key:
+        return [(False, "ANTHROPIC_API_KEY is not set")]
+
+    results: list[tuple[bool, str]] = []
+    if not key.startswith("sk-ant-"):
+        results.append((
+            False,
+            f"ANTHROPIC_API_KEY starts {key[:7]!r} — a Claude API key starts 'sk-ant-'.",
+        ))
+
+    from anthropic import Anthropic
+
+    try:
+        client = Anthropic(api_key=key)
+        client.messages.create(
+            model=config.copy.model,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        results.append((True, f"Claude API works ({config.copy.model})"))
+    except Exception as exc:
+        text = str(exc)
+        if "authentication_error" in text or "401" in text:
+            results.append((
+                False,
+                "Claude rejected the key. Make a fresh one at console.anthropic.com "
+                "-> Settings -> API Keys, and paste the whole thing — they are long "
+                "and easy to clip.",
+            ))
+        elif "credit balance" in text or "billing" in text.lower():
+            results.append((
+                False,
+                "The key is valid but the account has no credit. Add some at "
+                "console.anthropic.com -> Billing.",
+            ))
+        elif "not_found_error" in text or "model" in text.lower():
+            results.append((
+                False,
+                f"Model {config.copy.model!r} is not available to this key. "
+                "Change [copy] model in config/wilbyte.toml.",
+            ))
+        else:
+            results.append((False, f"Claude API call failed: {_short(exc)}"))
+    return results
+
+
 def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     """Verify YouTube is reachable, and that transcripts actually come back.
 
