@@ -9,6 +9,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
+def _env(name: str) -> str | None:
+    """Read an env var, trimming stray whitespace and quotes.
+
+    Credentials pasted into a hosting dashboard routinely pick up a trailing
+    newline or wrapping quotes, which turns a valid token into a 401. Defined
+    first because module-level path resolution below already uses it.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return None
+    return value.strip().strip("\"'").strip() or None
+
+
 def _repo_root() -> Path:
     """Locate the directory holding `config/`, `prompts/` and `assets/`.
 
@@ -17,7 +31,7 @@ def _repo_root() -> Path:
     back to the working directory when it carries the config, and let
     WILBYTE_HOME override both (that's what the container sets).
     """
-    override = os.getenv("WILBYTE_HOME")
+    override = _env("WILBYTE_HOME")
     if override:
         return Path(override)
 
@@ -166,16 +180,16 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
             copy=CopyConfig(**raw["copy"]),
             discord=DiscordConfig(**raw["discord"]),
             secrets=Secrets(
-                anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-                ghl_api_token=os.getenv("GHL_API_TOKEN"),
-                ghl_location_id=os.getenv("GHL_LOCATION_ID"),
-                ghl_blog_id=os.getenv("GHL_BLOG_ID"),
-                ghl_author_id=os.getenv("GHL_AUTHOR_ID"),
-                ghl_category_id=os.getenv("GHL_CATEGORY_ID"),
-                discord_bot_token=os.getenv("DISCORD_BOT_TOKEN"),
-                discord_guild_id=os.getenv("DISCORD_GUILD_ID"),
-                discord_channel_ids=_id_list(os.getenv("DISCORD_CHANNEL_IDS")),
-                discord_role_ids=_id_list(os.getenv("DISCORD_ROLE_IDS")),
+                anthropic_api_key=_env("ANTHROPIC_API_KEY"),
+                ghl_api_token=_env("GHL_API_TOKEN"),
+                ghl_location_id=_env("GHL_LOCATION_ID"),
+                ghl_blog_id=_env("GHL_BLOG_ID"),
+                ghl_author_id=_env("GHL_AUTHOR_ID"),
+                ghl_category_id=_env("GHL_CATEGORY_ID"),
+                discord_bot_token=_env("DISCORD_BOT_TOKEN"),
+                discord_guild_id=_env("DISCORD_GUILD_ID"),
+                discord_channel_ids=_id_list(_env("DISCORD_CHANNEL_IDS")),
+                discord_role_ids=_id_list(_env("DISCORD_ROLE_IDS")),
             ),
             path=config_path,
         )

@@ -113,13 +113,37 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
     if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
         return [(False, "No GHL token or location id set")]
 
-    client = ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id)
+    token = config.secrets.ghl_api_token
+    if not token.startswith("pit-"):
+        results.append((
+            False,
+            f"GHL_API_TOKEN starts {token[:4]!r} — a Private Integration token starts "
+            "'pit-'. Agency API keys and OAuth client secrets are rejected by the v2 API.",
+        ))
+
+    client = ghl.GHLClient(token, config.secrets.ghl_location_id)
     try:
         try:
             sites = client.list_blog_sites()
             results.append((True, f"Connected — {len(sites)} blog site(s) visible"))
         except Exception as exc:
-            results.append((False, f"Cannot reach GHL: {exc}"))
+            results.append((False, f"Cannot reach GHL: {_short(exc)}"))
+            if "401" in str(exc):
+                results.append((
+                    False,
+                    "401 means the token itself was rejected. Check it was created in "
+                    "the Agent Lead Lab sub-account (Settings -> Private Integrations) "
+                    "and not at agency level, that it matches GHL_LOCATION_ID, and that "
+                    "it was copied whole — they are long and easy to clip.",
+                ))
+            elif "403" in str(exc):
+                results.append((
+                    False,
+                    "403 means the token is valid but missing a scope. It needs "
+                    "blogs/post.write, blogs/post-update.write, blogs/check-slug.readonly, "
+                    "blogs/category.readonly, blogs/author.readonly, medias.write, "
+                    "medias.readonly.",
+                ))
             return results
 
         blog_id = config.secrets.ghl_blog_id
