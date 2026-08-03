@@ -204,18 +204,27 @@ def check_report(
     youtube: list[tuple[bool, str]],
 ) -> discord.Embed:
     """Green when every hard requirement passed, red when something blocks a run."""
-    hard = [ok for ok, _ in credentials + ghl + youtube if ok is not None]
-    all_good = all(hard) if hard else False
+    core = [ok for ok, _ in credentials + ghl if ok is not None]
+    core_ok = all(core) if core else False
+    yt = [ok for ok, _ in youtube if ok is not None]
+    youtube_ok = all(yt) if yt else None
 
-    embed = discord.Embed(
-        title="System check",
-        description=(
-            "Everything a real run needs is working."
-            if all_good
-            else "Some things need fixing before a scheduled run will work."
-        ),
-        colour=GREEN if all_good else AMBER,
-    )
+    if core_ok and youtube_ok is not False:
+        description = "Everything a real run needs is working."
+        colour = GREEN
+    elif core_ok:
+        # YouTube has a workaround, so this is not a blocker - say so, rather
+        # than implying the whole pipeline is down.
+        description = (
+            "GoHighLevel is ready. YouTube won't serve this server, so attach the "
+            "transcript as a .txt alongside the link and everything else runs."
+        )
+        colour = AMBER
+    else:
+        description = "Some things need fixing before a scheduled run will work."
+        colour = AMBER
+
+    embed = discord.Embed(title="System check", description=description, colour=colour)
     for name, rows in (
         ("Credentials", credentials), ("GoHighLevel", ghl), ("YouTube", youtube)
     ):
