@@ -429,9 +429,12 @@ def register_commands(bot: WilByteBot) -> None:
 
 
 async def _maybe_open_ghl(config: Config):
-    """Open a GHL session if credentials exist; otherwise run against an empty calendar."""
-    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id
-            and config.secrets.ghl_blog_id):
+    """Open a GHL session if credentials exist; otherwise run against an empty calendar.
+
+    GHL_BLOG_ID is not required here - the session resolves the blog itself, and
+    falls back to the location's only blog when there is just one.
+    """
+    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
         return None
     return await asyncio.to_thread(jobs.open_ghl, config)
 

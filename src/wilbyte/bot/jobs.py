@@ -31,10 +31,13 @@ class GHLContext:
 
 
 def open_ghl(config: Config) -> GHLContext:
-    """Connect to GHL and resolve the author/category ids up front."""
-    config.secrets.require("ghl_api_token", "ghl_location_id", "ghl_blog_id")
+    """Connect to GHL and resolve the blog, author and category ids up front."""
+    config.secrets.require("ghl_api_token", "ghl_location_id")
     client = ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id)
     try:
+        blog_id, _ = ghl.resolve_blog_id(
+            client.list_blog_sites(), config.secrets.ghl_blog_id
+        )
         author_id = config.secrets.ghl_author_id or ghl.resolve_by_name(
             client.list_authors(), config.post.author, kind="author"
         )
@@ -44,7 +47,7 @@ def open_ghl(config: Config) -> GHLContext:
     except Exception:
         client.close()
         raise
-    return GHLContext(client, config.secrets.ghl_blog_id, author_id, [category_id])
+    return GHLContext(client, blog_id, author_id, [category_id])
 
 
 def taken_days(context: GHLContext | None, config: Config) -> set[date]:
@@ -177,17 +180,12 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
                     ))
             return results
 
-        blog_id = config.secrets.ghl_blog_id
-        if not blog_id:
-            results.append((False, "GHL_BLOG_ID is not set"))
-        elif any(str(s.get("_id") or s.get("id")) == blog_id for s in sites):
-            results.append((True, "GHL_BLOG_ID matches a real blog site"))
-        else:
-            names = ", ".join(
-                f"{s.get('name') or s.get('title') or '?'} = {s.get('_id') or s.get('id')}"
-                for s in sites[:5]
-            )
-            results.append((False, f"GHL_BLOG_ID not among your sites. Found: {names}"))
+        try:
+            blog_id, note = ghl.resolve_blog_id(sites, config.secrets.ghl_blog_id)
+            results.append((True, note or "GHL_BLOG_ID matches a real blog site"))
+        except ghl.GHLError as exc:
+            results.append((False, str(exc)))
+            blog_id = None
 
         for kind, wanted, lister in (
             ("author", config.post.author, client.list_authors),

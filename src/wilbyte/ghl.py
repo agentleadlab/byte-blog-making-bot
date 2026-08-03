@@ -225,6 +225,47 @@ def to_api_timestamp(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def site_id(site: dict) -> str:
+    return str(site.get("_id") or site.get("id") or "")
+
+
+def site_name(site: dict) -> str:
+    return str(site.get("name") or site.get("title") or "?")
+
+
+def resolve_blog_id(sites: list[dict], configured: str | None) -> tuple[str, str | None]:
+    """Pick the blog to post to. Returns (blog_id, warning).
+
+    A configured id that matches wins. Otherwise, when the location has exactly
+    one blog there is no ambiguity to resolve - use it and say so, rather than
+    failing over a mistyped id. These ids are full of 0/O and l/I lookalikes and
+    get transcribed wrong constantly.
+    """
+    if not sites:
+        raise GHLError("This location has no blog sites. Create one in GHL first.")
+
+    ids = {site_id(s) for s in sites}
+    if configured and configured in ids:
+        return configured, None
+
+    if len(sites) == 1:
+        only = sites[0]
+        note = f"Using the only blog on this location: {site_name(only)} = {site_id(only)}"
+        if configured:
+            note = (
+                f"GHL_BLOG_ID ({configured}) doesn't match any blog here, but there is "
+                f"only one — using {site_name(only)} = {site_id(only)}. "
+                f"Set GHL_BLOG_ID to that to silence this."
+            )
+        return site_id(only), note
+
+    listing = ", ".join(f"{site_name(s)} = {site_id(s)}" for s in sites)
+    raise GHLError(
+        f"GHL_BLOG_ID ({configured or 'not set'}) doesn't match any blog on this "
+        f"location, and there are several to choose from: {listing}"
+    )
+
+
 def resolve_by_name(items: list[dict], wanted: str, *, kind: str) -> str:
     """Find an author/category id by display name, case- and quote-insensitive."""
     target = _normalize_name(wanted)

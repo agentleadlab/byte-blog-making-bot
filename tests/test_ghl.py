@@ -58,6 +58,55 @@ def test_payload_omits_image_url_when_there_is_no_cover_yet():
     assert "publishedAt" not in payload
 
 
+SITES_ONE = [{"_id": "vVS0DP09w5DdUY9AVVuA", "name": "Agent Lead Lab Blogs"}]
+SITES_TWO = SITES_ONE + [{"_id": "other123", "name": "Second Blog"}]
+
+
+def test_a_matching_blog_id_is_used_without_comment():
+    from wilbyte.ghl import resolve_blog_id
+
+    assert resolve_blog_id(SITES_ONE, "vVS0DP09w5DdUY9AVVuA") == ("vVS0DP09w5DdUY9AVVuA", None)
+
+
+def test_a_mistyped_id_falls_back_to_the_only_blog():
+    """These ids are full of 0/O lookalikes; one blog means no ambiguity."""
+    from wilbyte.ghl import resolve_blog_id
+
+    blog_id, note = resolve_blog_id(SITES_ONE, "vVSODP09w5DdUY9AVVuA")  # letter O
+
+    assert blog_id == "vVS0DP09w5DdUY9AVVuA"
+    assert "only one" in note
+
+
+def test_an_unset_id_falls_back_to_the_only_blog():
+    from wilbyte.ghl import resolve_blog_id
+
+    blog_id, note = resolve_blog_id(SITES_ONE, None)
+
+    assert blog_id == "vVS0DP09w5DdUY9AVVuA"
+    assert note
+
+
+def test_several_blogs_and_a_bad_id_is_an_error_listing_them():
+    from wilbyte.ghl import resolve_blog_id
+
+    with pytest.raises(GHLError, match="Second Blog"):
+        resolve_blog_id(SITES_TWO, "nope")
+
+
+def test_several_blogs_with_a_good_id_is_fine():
+    from wilbyte.ghl import resolve_blog_id
+
+    assert resolve_blog_id(SITES_TWO, "other123")[0] == "other123"
+
+
+def test_no_blogs_at_all_is_an_error():
+    from wilbyte.ghl import resolve_blog_id
+
+    with pytest.raises(GHLError, match="no blog sites"):
+        resolve_blog_id([], None)
+
+
 def test_author_lookup_ignores_smart_quotes_and_case():
     """GHL shows 'Arnold "Tre" Tarpley'; the config may use straight or curly quotes."""
     authors = [
