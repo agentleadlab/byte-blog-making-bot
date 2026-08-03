@@ -72,7 +72,9 @@ def test_cover_pairs_a_kicker_from_a_different_headline(copy_package, config):
     plan = plan_cover(copy_package, title, config)
 
     assert plan.kicker == "AGED, FRESH, PREMIUM"
-    assert plan.headline == "WHY MOST AGENTS NEVER MOVE UP A LEAD TIER (AND STAY STUCK)"
+    # The blog title keeps "(And Stay Stuck)"; the cover drops it. A cover is a
+    # poster - past ~7 words the type shrinks and it stops reading.
+    assert plan.headline == "WHY MOST AGENTS NEVER MOVE UP A LEAD TIER"
     assert plan.kicker.lower() not in plan.headline.lower()
     assert "manual look" not in plan.source_note
 

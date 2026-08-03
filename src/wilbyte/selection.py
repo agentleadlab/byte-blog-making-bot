@@ -28,6 +28,10 @@ _STOPWORDS = frozenset(
 # How similar a headline may be to the article H1 before it counts as "the same".
 SIMILARITY_THRESHOLD = 0.6
 
+# How short a complete headline may be, relative to a trimmed one, and still be
+# preferred for the cover.
+WHOLE_HEADLINE_RATIO = 0.6
+
 
 def _tokens(text: str) -> set[str]:
     words = re.findall(r"[a-z0-9$']+", text.lower())
@@ -107,6 +111,57 @@ def kicker_candidates(copy: CopyPackage, config: Config) -> list[str]:
     return unique
 
 
+def cover_headline(copy: CopyPackage, title: Headline, config: Config) -> str:
+    """The big line on the cover - short enough to still read as a poster.
+
+    The blog title can run long; the cover cannot. Preference order:
+      1. The chosen title, if it's already short.
+      2. The shortest headline option that fits.
+      3. The chosen title cut at a natural break (colon, dash, or a clause).
+    """
+    limit = config.cover.headline_max_chars
+    chosen = _strip_trailing_punct(title.text)
+
+    if len(chosen) <= limit:
+        return chosen
+
+    trimmed = _shorten(title.text, limit)
+
+    # A complete headline reads better than a truncated one even when it's a
+    # little shorter - "Why Your Sales Stalled After You Paused" beats "Here Is
+    # Exactly Why Your Sales Stalled After". But a drastically shorter option
+    # wastes the canvas, so it has to be within reach of the trimmed length.
+    fitting = [
+        _strip_trailing_punct(h.text) for h in copy.headline_options
+        if len(_strip_trailing_punct(h.text)) <= limit
+    ]
+    if fitting:
+        best = max(fitting, key=len)
+        if len(best) >= len(trimmed) * WHOLE_HEADLINE_RATIO:
+            return best
+
+    return trimmed
+
+
+def _shorten(text: str, limit: int) -> str:
+    """Cut at the last natural break that fits the character limit."""
+    text = _strip_trailing_punct(text)
+
+    # A parenthetical or trailing clause is the first thing to go.
+    for separator in ("(", " — ", " – ", ": ", " - "):
+        head = _strip_trailing_punct(text.split(separator, 1)[0])
+        if head and len(head) <= limit:
+            return head
+
+    words = text.split()
+    while words and len(" ".join(words)) > limit:
+        words.pop()
+    # Don't end on a word that leaves the line dangling.
+    while len(words) > 3 and words[-1].lower() in _STOPWORDS:
+        words.pop()
+    return _strip_trailing_punct(" ".join(words))
+
+
 def plan_cover(copy: CopyPackage, title: Headline, config: Config) -> CoverPlan:
     """Choose the kicker + headline pair for the cover image.
 
@@ -139,7 +194,7 @@ def plan_cover(copy: CopyPackage, title: Headline, config: Config) -> CoverPlan:
 
     return CoverPlan(
         kicker=kicker.upper(),
-        headline=_strip_trailing_punct(title.text).upper(),
+        headline=cover_headline(copy, title, config).upper(),
         source_note=note,
     )
 

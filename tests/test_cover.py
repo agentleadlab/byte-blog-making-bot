@@ -31,6 +31,14 @@ def test_html_escapes_text_so_quotes_do_not_break_the_markup(config):
     assert "<ARE>" not in markup
 
 
+def test_the_brand_font_is_embedded_by_default(plan, config):
+    """assets/fonts ships Anton, so covers render condensed out of the box."""
+    markup = build_html(plan, config)
+
+    assert "font-family: 'Anton'" in markup
+    assert "font/woff2;base64," in markup
+
+
 def test_renders_a_png_at_the_configured_size(plan, config, tmp_path):
     out = render_cover(plan, config, tmp_path / "cover.png")
 

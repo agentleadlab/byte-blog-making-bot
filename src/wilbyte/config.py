@@ -90,6 +90,7 @@ class CoverConfig:
     kicker_min_words: int
     kicker_max_words: int
     alt_text_source: str
+    headline_max_chars: int = 46
 
 
 @dataclass

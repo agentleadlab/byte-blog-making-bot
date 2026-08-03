@@ -38,9 +38,15 @@ weekdays_only = true
 min_lead_minutes = 20
 
 [cover]
-# GHL recommends 600x400 for the blog cover image.
-width = 600
-height = 400
+# 1200x630 - the standard social/OG preview size. Wider than GHL's suggested
+# 600x400, which cramped long headlines onto three or four lines.
+width = 1200
+height = 630
+# The cover headline is trimmed to this many characters. Characters, not words,
+# because what actually matters is rendered width - "up a lead tier" costs far
+# less room than "generation momentum". Past this the type shrinks onto three
+# or four lines and stops reading as a poster.
+headline_max_chars = 46
 # The highlighted kicker above the headline is 3-5 words, taken from one of the
 # headline options. The big headline below it is a different headline option.
 kicker_min_words = 3

@@ -34,7 +34,7 @@ def build_html(plan: CoverPlan, config: Config, *, logo_path: Path | None = None
         raise CoverError(f"Cover template missing: {TEMPLATE_PATH}")
 
     width, height = config.cover.width, config.cover.height
-    scale = height / 400  # the template's sizes are tuned at 600x400
+    scale = height / 630  # the template's sizes are tuned at 1200x630
 
     logo_file = logo_path if logo_path is not None else LOGO_PATH
     if logo_file and logo_file.exists():
@@ -49,15 +49,19 @@ def build_html(plan: CoverPlan, config: Config, *, logo_path: Path | None = None
         "__FONT_FACES__": _font_faces(),
         "__WIDTH__": width,
         "__HEIGHT__": height,
-        "__PAD__": round(28 * scale),
-        "__LOGO_H__": round(34 * scale),
-        "__LOGO_GAP__": round(14 * scale),
-        "__KICKER_GAP__": round(12 * scale),
+        "__PAD__": round(64 * scale),
+        "__LOGO_H__": round(92 * scale),
+        "__LOGO_GAP__": round(30 * scale),
+        "__WORDMARK__": round(22 * scale),
+        "__KICKER_GAP__": round(26 * scale),
         "__KICKER_SIZE__": round(26 * scale),
-        "__KICKER_MAX_H__": round(44 * scale),
-        "__HEADLINE_SIZE__": round(58 * scale),
-        "__SHADOW__": round(2 * scale),
-        "__SHADOW_BLUR__": round(10 * scale),
+        "__KICKER_MAX_H__": round(56 * scale),
+        "__KICK_PAD_V__": round(10 * scale),
+        "__KICK_PAD_H__": round(18 * scale),
+        "__HEADLINE_SIZE__": round(84 * scale),
+        # Keeping the headline off the edges is what makes it read as designed
+        # rather than as text stretched to fit.
+        "__HEADLINE_MAX__": round(width * 0.84),
         "__LOGO_HTML__": logo_html,
         "__KICKER__": html.escape(plan.kicker),
         "__HEADLINE__": html.escape(plan.headline),

@@ -6,8 +6,8 @@
 
   :root {
     --ink: #ffffff;
-    --highlight: #35d07f;
-    --highlight-ink: #04150c;
+    --highlight: #00b86b;
+    --highlight-ink: #ffffff;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -19,12 +19,12 @@
   }
 
   body {
+    /* Green bloom off the top-left corner falling away to near-black. */
     background:
-      radial-gradient(140% 100% at 0% 0%, #14653a 0%, rgba(6, 24, 14, 0) 55%),
-      radial-gradient(120% 120% at 100% 100%, #0d3a22 0%, rgba(0, 0, 0, 0) 55%),
-      #050b07;
-    font-family: "Anton", "Oswald", "Archivo Black", "Arial Narrow Bold",
-                 "Helvetica Neue Condensed", Impact, sans-serif;
+      radial-gradient(90% 120% at 0% 0%, #1f7a4d 0%, rgba(10, 32, 20, 0) 58%),
+      radial-gradient(70% 90% at 100% 100%, #0a2e1c 0%, rgba(0, 0, 0, 0) 60%),
+      #060a08;
+    font-family: "Anton", "Archivo Black", "Oswald", "Arial Narrow", Impact, sans-serif;
     color: var(--ink);
     display: flex;
     flex-direction: column;
@@ -34,55 +34,45 @@
     text-align: center;
   }
 
-  /* Subtle vignette so light headline text stays legible over the gradient. */
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background: radial-gradient(90% 70% at 50% 50%, rgba(0,0,0,0) 40%, rgba(0,0,0,.55) 100%);
-    pointer-events: none;
-  }
-
   .logo {
-    position: relative;
-    z-index: 1;
-    margin-bottom: __LOGO_GAP__px;
     flex: 0 0 auto;
+    margin-bottom: __LOGO_GAP__px;
   }
 
   .logo img { height: __LOGO_H__px; width: auto; display: block; }
 
   .logo-fallback {
-    font-size: __LOGO_H__px;
+    font-size: __WORDMARK__px;
     line-height: 1;
-    letter-spacing: .18em;
-    color: var(--highlight);
+    letter-spacing: .34em;
+    text-indent: .34em;         /* re-centre: tracking adds space after the last letter */
+    color: #7ee0ac;
     text-transform: uppercase;
+    font-family: "Archivo Black", "Anton", sans-serif;
   }
 
   .kicker {
-    position: relative;
-    z-index: 1;
+    flex: 0 0 auto;
     display: inline-block;
     background: var(--highlight);
     color: var(--highlight-ink);
-    padding: .18em .5em .24em;
-    letter-spacing: .04em;
+    padding: __KICK_PAD_V__px __KICK_PAD_H__px;
+    letter-spacing: .06em;
     line-height: 1;
     text-transform: uppercase;
     margin-bottom: __KICKER_GAP__px;
-    flex: 0 0 auto;
+    font-family: "Archivo Black", "Anton", sans-serif;
   }
 
   .headline {
-    position: relative;
-    z-index: 1;
-    line-height: .94;
-    letter-spacing: .01em;
-    text-transform: uppercase;
-    text-shadow: 0 __SHADOW__px __SHADOW_BLUR__px rgba(0, 0, 0, .55);
-    max-width: 100%;
     flex: 0 0 auto;
+    line-height: 1.02;
+    letter-spacing: .005em;
+    text-transform: uppercase;
+    max-width: __HEADLINE_MAX__px;
+    /* Even out the ragged edge instead of leaving one orphan word on line two. */
+    text-wrap: balance;
+    text-align: center;
   }
 </style>
 
@@ -91,15 +81,13 @@
 <div class="headline" id="headline">__HEADLINE__</div>
 
 <script>
-  // Shrink each line until it fits its box. Headline length varies a lot between
-  // posts, so the sizes are fitted at render time rather than hard-coded.
+  // Fit each line to its box. Headline length varies a lot between posts, so
+  // sizes are measured at render time rather than hard-coded.
   function fit(el, start, min, maxWidth, maxHeight) {
     let size = start;
     el.style.fontSize = size + 'px';
     while (size > min) {
-      const tooWide = el.scrollWidth > maxWidth;
-      const tooTall = el.scrollHeight > maxHeight;
-      if (!tooWide && !tooTall) break;
+      if (el.scrollWidth <= maxWidth && el.scrollHeight <= maxHeight) break;
       size -= 1;
       el.style.fontSize = size + 'px';
     }
@@ -107,16 +95,18 @@
   }
 
   const pad = __PAD__;
-  const boxWidth = __WIDTH__ - pad * 2;
   const kicker = document.getElementById('kicker');
   const headline = document.getElementById('headline');
   const logo = document.getElementById('logo');
 
-  fit(kicker, __KICKER_SIZE__, 10, boxWidth, __KICKER_MAX_H__);
+  // Wait for the embedded faces. Measuring before they load sizes the text
+  // against the fallback font, and the screenshot lands mid-swap.
+  document.fonts.ready.then(function () {
+    fit(kicker, __KICKER_SIZE__, 10, __WIDTH__ - pad * 2, __KICKER_MAX_H__);
 
-  const used = logo.offsetHeight + __LOGO_GAP__ + kicker.offsetHeight + __KICKER_GAP__;
-  const headlineBox = __HEIGHT__ - pad * 2 - used;
-  fit(headline, __HEADLINE_SIZE__, 12, boxWidth, headlineBox);
+    const used = logo.offsetHeight + __LOGO_GAP__ + kicker.offsetHeight + __KICKER_GAP__;
+    fit(headline, __HEADLINE_SIZE__, 14, __HEADLINE_MAX__, __HEIGHT__ - pad * 2 - used);
 
-  document.documentElement.dataset.ready = '1';
+    document.documentElement.dataset.ready = '1';
+  });
 </script>
