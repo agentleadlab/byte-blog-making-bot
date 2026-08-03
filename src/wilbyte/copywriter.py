@@ -94,9 +94,12 @@ def load_system_prompt(path: Path | None = None) -> str:
 
 def build_user_message(video: Video, transcript: Transcript) -> str:
     """Mirror what Wil pastes by hand: the transcript, then the YouTube link."""
+    # The title is omitted when unknown - it's a hint, not a requirement, and an
+    # empty label reads to the model as a real (blank) title.
+    title_line = f"YouTube title: {video.title}\n" if video.title else ""
     return (
         "Write the Agent Lead Lab blog post for this video.\n\n"
-        f"YouTube title: {video.title}\n"
+        f"{title_line}"
         f"YouTube link: {video.short_url}\n\n"
         "TRANSCRIPT:\n"
         f"{transcript.text}\n\n"

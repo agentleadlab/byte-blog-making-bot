@@ -650,7 +650,8 @@ async def _execute_run(
     try:
         ledger = await asyncio.to_thread(Ledger.load)
         videos, already_done = await asyncio.to_thread(
-            jobs.resolve_videos, source, ledger, limit=limit, force=force
+            jobs.resolve_videos, source, ledger,
+            limit=limit, force=force, offline=bool(transcript_text),
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(str(exc)))

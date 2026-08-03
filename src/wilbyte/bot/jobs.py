@@ -57,11 +57,17 @@ def taken_days(context: GHLContext | None, config: Config) -> set[date]:
 
 
 def resolve_videos(
-    source: str, ledger: Ledger, *, limit: int, force: bool
+    source: str, ledger: Ledger, *, limit: int, force: bool, offline: bool = False
 ) -> tuple[list[Video], int]:
-    """Expand a playlist or single-video URL into the videos still to process."""
+    """Expand a playlist or single-video URL into the videos still to process.
+
+    `offline` skips the metadata lookup, which matters when a transcript was
+    supplied by hand precisely because YouTube is refusing this server.
+    """
     if youtube.looks_like_playlist(source):
         videos = youtube.list_playlist_videos(source)
+    elif offline:
+        videos = [youtube.video_from_link(source)]
     else:
         videos = [youtube.fetch_video(source)]
 
@@ -228,6 +234,13 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
             results.append((True, f"Video readable — {videos[0].title[:60]}"))
     except Exception as exc:
         results.append((False, f"Cannot read from YouTube: {_short(exc)}"))
+        if "not a bot" in str(exc) or "cookies" in str(exc).lower():
+            results.append((
+                False,
+                "YouTube is refusing this server outright, not just for transcripts. "
+                "Attach the transcript as a .txt with the link and RYTE will skip "
+                "YouTube entirely — everything else in the pipeline still works.",
+            ))
         return results
 
     try:

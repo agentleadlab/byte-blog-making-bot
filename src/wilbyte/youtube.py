@@ -120,6 +120,21 @@ def fetch_video(video_url_or_id: str) -> Video:
     )
 
 
+def video_from_link(url_or_id: str) -> Video:
+    """Build a Video from the id alone, with no network call.
+
+    Used when the transcript is supplied by hand: YouTube may be refusing this
+    server entirely, and the title is only a nicety - the copy comes from the
+    transcript.
+    """
+    video_id = extract_video_id(url_or_id)
+    return Video(
+        video_id=video_id,
+        title="",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+    )
+
+
 def _proxy_config():
     """Route transcript requests through a proxy when one is configured.
 
