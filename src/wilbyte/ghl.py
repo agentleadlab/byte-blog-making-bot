@@ -41,6 +41,9 @@ POST_FIELDS = {
     "published_at": "publishedAt",
 }
 
+# The Blogs API rejects any page size over 50 with a 422.
+MAX_PAGE = 50
+
 STATUS_DRAFT = "DRAFT"
 STATUS_PUBLISHED = "PUBLISHED"
 STATUS_SCHEDULED = "SCHEDULED"
@@ -93,48 +96,44 @@ class GHLClient:
 
     # ------------------------------------------------------------- lookups
 
-    def list_blog_sites(self, *, limit: int = 50) -> list[dict]:
+    def list_blog_sites(self, *, limit: int = MAX_PAGE) -> list[dict]:
         data = self._request(
             "GET", "/blogs/site/all",
             params={"locationId": self.location_id, "limit": limit, "skip": 0},
         )
         return data.get("data") or data.get("blogs") or []
 
-    def list_posts(self, blog_id: str, *, limit: int = 100) -> list[dict]:
-        """All posts on a blog, paged through so the scheduler sees every taken day."""
-        posts: list[dict] = []
+    def _paged(self, path: str, keys: tuple[str, ...], **extra_params) -> list[dict]:
+        """Walk a paged endpoint at the API's maximum page size."""
+        items: list[dict] = []
         offset = 0
         while True:
             data = self._request(
-                "GET", "/blogs/posts/all",
+                "GET", path,
                 params={
                     "locationId": self.location_id,
-                    "blogId": blog_id,
-                    "limit": limit,
+                    "limit": MAX_PAGE,
                     "offset": offset,
+                    **extra_params,
                 },
             )
-            batch = data.get("blogs") or data.get("data") or data.get("posts") or []
-            posts.extend(batch)
-            if len(batch) < limit:
-                return posts
-            offset += limit
+            batch = next((data[k] for k in keys if data.get(k)), [])
+            items.extend(batch)
+            if len(batch) < MAX_PAGE:
+                return items
+            offset += MAX_PAGE
             if offset > 5000:  # guard against a non-terminating pager
-                return posts
+                return items
 
-    def list_authors(self, *, limit: int = 100) -> list[dict]:
-        data = self._request(
-            "GET", "/blogs/authors",
-            params={"locationId": self.location_id, "limit": limit, "offset": 0},
-        )
-        return data.get("authors") or data.get("data") or []
+    def list_posts(self, blog_id: str) -> list[dict]:
+        """All posts on a blog, paged so the scheduler sees every taken day."""
+        return self._paged("/blogs/posts/all", ("blogs", "data", "posts"), blogId=blog_id)
 
-    def list_categories(self, *, limit: int = 100) -> list[dict]:
-        data = self._request(
-            "GET", "/blogs/categories",
-            params={"locationId": self.location_id, "limit": limit, "offset": 0},
-        )
-        return data.get("categories") or data.get("data") or []
+    def list_authors(self) -> list[dict]:
+        return self._paged("/blogs/authors", ("authors", "data"))
+
+    def list_categories(self) -> list[dict]:
+        return self._paged("/blogs/categories", ("categories", "data"))
 
     def slug_exists(self, url_slug: str, *, post_id: str | None = None) -> bool:
         params = {"locationId": self.location_id, "urlSlug": url_slug}

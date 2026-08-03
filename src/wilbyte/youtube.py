@@ -120,28 +120,91 @@ def fetch_video(video_url_or_id: str) -> Video:
     )
 
 
-def fetch_transcript(video_id: str, *, languages: tuple[str, ...] = ("en", "en-US")) -> Transcript:
-    """Pull the YouTube transcript, preferring manual captions over auto-generated."""
+def _proxy_config():
+    """Route transcript requests through a proxy when one is configured.
+
+    YouTube blocks datacenter IP ranges for transcript requests, so a bot on a
+    cloud host works intermittently at best - fine for the first few calls, then
+    blocked. A residential proxy is the only reliable fix.
+    """
+    import os
+
+    username = os.getenv("WEBSHARE_PROXY_USERNAME")
+    password = os.getenv("WEBSHARE_PROXY_PASSWORD")
+    generic = os.getenv("YOUTUBE_PROXY_URL")
+    if not (username and password) and not generic:
+        return None
+
+    from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+
+    if username and password:
+        return WebshareProxyConfig(proxy_username=username, proxy_password=password)
+    return GenericProxyConfig(http_url=generic, https_url=generic)
+
+
+def _is_blocked(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("blocking requests", "too many requests", "ipblocked", "429")
+    )
+
+
+def fetch_transcript(
+    video_id: str,
+    *,
+    languages: tuple[str, ...] = ("en", "en-US"),
+    attempts: int = 3,
+) -> Transcript:
+    """Pull the YouTube transcript, preferring manual captions over auto-generated.
+
+    Retries a throttled response with backoff; an outright IP block fails fast,
+    since waiting a few seconds will not lift it.
+    """
+    import time
+
     from youtube_transcript_api import YouTubeTranscriptApi
 
-    try:
-        api = YouTubeTranscriptApi()
-        fetched = api.fetch(video_id, languages=list(languages))
-        snippets = [s.text for s in fetched]
-    except AttributeError:
-        # youtube-transcript-api < 1.0 exposed a classmethod instead.
-        raw = YouTubeTranscriptApi.get_transcript(video_id, languages=list(languages))
-        snippets = [item["text"] for item in raw]
-    except Exception as exc:
-        raise IngestError(
-            f"No transcript available for {video_id}: {exc}. "
-            f"Pass one manually with --transcript <file>."
-        ) from exc
+    proxy_config = _proxy_config()
+    last_error: Exception | None = None
+    snippets: list[str] = []
+
+    for attempt in range(attempts):
+        try:
+            api = YouTubeTranscriptApi(proxy_config=proxy_config)
+            fetched = api.fetch(video_id, languages=list(languages))
+            snippets = [s.text for s in fetched]
+            break
+        except Exception as exc:
+            last_error = exc
+            if _is_blocked(exc) and not proxy_config:
+                raise IngestError(
+                    f"YouTube is blocking transcript requests from this server's IP. "
+                    f"Cloud hosts get blocked routinely. Set WEBSHARE_PROXY_USERNAME and "
+                    f"WEBSHARE_PROXY_PASSWORD (a residential proxy), or YOUTUBE_PROXY_URL "
+                    f"for a generic one, and this clears up. Video: {video_id}"
+                ) from exc
+            if attempt == attempts - 1:
+                raise IngestError(
+                    f"No transcript available for {video_id}: {_first_line(exc)}"
+                ) from exc
+            time.sleep(2**attempt)
+
+    if not snippets:
+        raise IngestError(f"No transcript returned for {video_id}: {last_error}")
 
     text = _clean_transcript(" ".join(snippets))
     if not text.strip():
         raise IngestError(f"Transcript for {video_id} came back empty.")
     return Transcript(video_id=video_id, text=text, source="youtube")
+
+
+def _first_line(exc: Exception) -> str:
+    """Transcript errors carry a long help blurb; the first line is the reason."""
+    for line in str(exc).splitlines():
+        if line.strip():
+            return line.strip()[:200]
+    return str(exc)[:200]
 
 
 def load_manual_transcript(video_id: str, path: str | Path) -> Transcript:
