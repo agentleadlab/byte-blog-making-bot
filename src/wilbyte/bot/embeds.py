@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import discord
 
@@ -104,15 +104,22 @@ def result_summary(
 
 
 def status_summary(
-    *, processed: int, recent: list[str], next_slots: list[datetime], booked_days: int | None
+    *, processed: int, recent: list[str], next_slots: list[datetime], booked_days: set[date] | None
 ) -> discord.Embed:
     embed = discord.Embed(title="RYTE status", colour=GREEN)
     embed.add_field(name="Posts in ledger", value=str(processed), inline=True)
     embed.add_field(
         name="Days booked in GHL",
-        value=str(booked_days) if booked_days is not None else "—",
+        value=str(len(booked_days)) if booked_days is not None else "—",
         inline=True,
     )
+    # The furthest booked day is the one worth seeing: if GHL holds posts
+    # scheduled into next week and this says yesterday, the calendar isn't
+    # being read properly and the next slot will land on a day already taken.
+    if booked_days:
+        embed.add_field(
+            name="Booked through", value=max(booked_days).strftime("%a %b %d, %Y"), inline=True
+        )
     if next_slots:
         embed.add_field(
             name="Next open slots",

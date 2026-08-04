@@ -53,6 +53,15 @@ class GHLError(RuntimeError):
     """Raised when the LeadConnector API rejects a request."""
 
 
+def post_key(post: dict) -> str:
+    """A stable identity for a post, for deduping across status queries."""
+    for field in ("_id", "id", "postId", "urlSlug"):
+        value = post.get(field)
+        if value:
+            return str(value)
+    return repr(sorted(post.items()))
+
+
 class GHLClient:
     def __init__(self, token: str, location_id: str, *, timeout: float = 60.0):
         self.location_id = location_id
@@ -126,8 +135,29 @@ class GHLClient:
                 return items
 
     def list_posts(self, blog_id: str) -> list[dict]:
-        """All posts on a blog, paged so the scheduler sees every taken day."""
-        return self._paged("/blogs/posts/all", ("blogs", "data", "posts"), blogId=blog_id)
+        """Every post on a blog, whatever its status.
+
+        Asked without a status the endpoint has been observed to answer with
+        published posts only - which makes a calendar full of *scheduled* posts
+        look empty and hands the scheduler days that are already spoken for.
+        So ask for each status by name as well and merge on post id. A status
+        this deployment doesn't accept is skipped rather than failing the run.
+        """
+        merged: dict[str, dict] = {}
+
+        def collect(**params) -> None:
+            for post in self._paged(
+                "/blogs/posts/all", ("blogs", "data", "posts"), blogId=blog_id, **params
+            ):
+                merged[post_key(post)] = post
+
+        collect()
+        for status in (STATUS_PUBLISHED, STATUS_SCHEDULED, STATUS_DRAFT):
+            try:
+                collect(status=status)
+            except GHLError:
+                continue
+        return list(merged.values())
 
     def list_authors(self) -> list[dict]:
         return self._paged("/blogs/authors", ("authors", "data"))

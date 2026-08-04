@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import re
+from datetime import date
 from pathlib import Path
 
 import discord
@@ -468,12 +469,11 @@ async def _send_status(responder: Responder, config: Config) -> None:
     recent = [f"`{e.url_slug}` — {e.title[:60]}" for e in entries[:5]]
 
     context = await _maybe_open_ghl(config)
-    booked = None
+    booked: set[date] | None = None
     try:
         if context:
-            days = await asyncio.to_thread(jobs.taken_days, context, config)
-            booked = len(days)
-            slots = next_open_slots(days, 3, config.schedule)
+            booked = await asyncio.to_thread(jobs.taken_days, context, config)
+            slots = next_open_slots(booked, 3, config.schedule)
         else:
             slots = next_open_slots(set(), 3, config.schedule)
     finally:

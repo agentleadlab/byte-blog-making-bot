@@ -92,3 +92,23 @@ def test_taken_days_converts_utc_to_local_posting_date(config):
 
 def test_taken_days_ignores_posts_with_no_timestamp(config):
     assert taken_days_from_posts([{"title": "draft with no date"}], config.schedule) == set()
+
+
+def test_a_scheduled_post_books_its_future_day_not_the_day_it_was_written(config):
+    """The day a post goes out is the day that's taken.
+
+    A post written on Jul 31 and scheduled for Aug 12 booked Jul 31, so Aug 12
+    still looked free and the next run scheduled straight on top of it.
+    """
+    posts = [{"createdAt": "2026-07-31T20:48:00.000Z", "publishDate": "2026-08-12T15:00:00.000Z"}]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 12)}
+
+
+def test_slots_start_after_the_last_scheduled_post(config):
+    """Aug 5-7 and 10-12 are spoken for, so a new post lands on the 13th."""
+    booked = {date(2026, 8, d) for d in (4, 5, 6, 7, 10, 11, 12)}
+
+    slots = next_open_slots(booked, 2, config.schedule, now=at(2026, 8, 4, 16, 24))
+
+    assert [s.date() for s in slots] == [date(2026, 8, 13), date(2026, 8, 14)]

@@ -82,16 +82,30 @@ def next_open_slots(
     )
 
 
+# The day a post occupies, most authoritative first. A scheduled post carries a
+# future date under one of these; `createdAt` is the last resort because for a
+# scheduled post it is the day it was *written*, which books the wrong day.
+POST_DATE_FIELDS = (
+    "publishedAt",
+    "publishDate",
+    "publishedDate",
+    "scheduledAt",
+    "scheduleDate",
+    "scheduledDate",
+    "createdAt",
+)
+
+
 def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date]:
     """Extract occupied dates from GHL blog posts.
 
-    Accepts the `publishedAt` timestamps GHL returns (ISO 8601, usually UTC) and
-    converts them into local posting dates.
+    Accepts the timestamps GHL returns (ISO 8601 or epoch millis, usually UTC)
+    and converts them into local posting dates.
     """
     tz = ZoneInfo(config.timezone)
     taken: set[date] = set()
     for post in posts:
-        raw = post.get("publishedAt") or post.get("scheduledAt") or post.get("createdAt")
+        raw = next((post[f] for f in POST_DATE_FIELDS if post.get(f)), None)
         if not raw:
             continue
         parsed = parse_timestamp(raw)

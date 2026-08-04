@@ -3,7 +3,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from wilbyte.ghl import GHLError, build_post_payload, resolve_by_name, to_api_timestamp
+from wilbyte.ghl import (
+    GHLClient,
+    GHLError,
+    build_post_payload,
+    resolve_by_name,
+    to_api_timestamp,
+)
 
 
 def test_timestamp_converts_local_10am_to_utc():
@@ -124,3 +130,67 @@ def test_category_lookup_by_name():
 def test_unknown_name_lists_what_is_available():
     with pytest.raises(GHLError, match="LeadLab"):
         resolve_by_name([{"_id": "c1", "name": "LeadLab"}], "Marketing", kind="category")
+
+
+# ------------------------------------------------------- listing every status
+
+
+class FakePostsAPI:
+    """Stands in for /blogs/posts/all.
+
+    Modelled on what the live endpoint does: asked with no status it answers
+    with published posts only, which is how a calendar full of scheduled posts
+    came back looking empty.
+    """
+
+    def __init__(self, by_status: dict, *, accepts_status: bool = True):
+        self.by_status = by_status
+        self.accepts_status = accepts_status
+        self.calls: list[str | None] = []
+
+    def __call__(self, method, path, params=None, **kwargs):
+        status = (params or {}).get("status")
+        self.calls.append(status)
+        if status and not self.accepts_status:
+            raise GHLError("HTTP 422: status is not allowed")
+        if status:
+            return {"data": list(self.by_status.get(status, []))}
+        return {"data": list(self.by_status.get("PUBLISHED", []))}
+
+
+def client_with(api) -> GHLClient:
+    client = GHLClient.__new__(GHLClient)
+    client.location_id = "loc"
+    client._request = api
+    return client
+
+
+def test_scheduled_posts_are_listed_even_though_the_bare_call_hides_them():
+    api = FakePostsAPI({
+        "PUBLISHED": [{"_id": "p1"}],
+        "SCHEDULED": [{"_id": "s1"}, {"_id": "s2"}],
+        "DRAFT": [{"_id": "d1"}],
+    })
+
+    posts = client_with(api).list_posts("blog1")
+
+    assert {p["_id"] for p in posts} == {"p1", "s1", "s2", "d1"}
+
+
+def test_a_post_returned_under_two_statuses_is_only_counted_once():
+    api = FakePostsAPI({"PUBLISHED": [{"_id": "p1"}], "SCHEDULED": [{"_id": "p1"}]})
+
+    assert len(client_with(api).list_posts("blog1")) == 1
+
+
+def test_an_api_that_rejects_the_status_filter_still_returns_what_it_can():
+    """Never let a probe for extra posts turn into a failed run."""
+    api = FakePostsAPI({"PUBLISHED": [{"_id": "p1"}]}, accepts_status=False)
+
+    assert [p["_id"] for p in client_with(api).list_posts("blog1")] == ["p1"]
+
+
+def test_posts_without_an_id_are_not_collapsed_into_one():
+    api = FakePostsAPI({"PUBLISHED": [{"urlSlug": "a"}, {"urlSlug": "b"}]})
+
+    assert len(client_with(api).list_posts("blog1")) == 2
