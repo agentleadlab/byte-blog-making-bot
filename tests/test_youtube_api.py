@@ -101,3 +101,33 @@ def test_any_track_beats_no_track():
 
 def test_no_tracks_returns_none():
     assert youtube_api.pick_caption_track([], ("en",)) is None
+
+
+# ------------------------------------------------------- half-finished setup
+
+
+def test_nothing_set_reports_all_three_missing():
+    assert youtube_api.missing_oauth_vars() == list(youtube_api.OAUTH_VARS)
+
+
+def test_the_one_missing_variable_is_named(monkeypatch):
+    """Two of three behaves like none, so the check has to say which is absent."""
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "secret")
+
+    assert youtube_api.missing_oauth_vars() == ["GOOGLE_REFRESH_TOKEN"]
+
+
+def test_a_blank_value_counts_as_missing(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("GOOGLE_REFRESH_TOKEN", "   ")
+
+    assert youtube_api.missing_oauth_vars() == ["GOOGLE_REFRESH_TOKEN"]
+
+
+def test_complete_setup_is_missing_nothing(monkeypatch):
+    for name in youtube_api.OAUTH_VARS:
+        monkeypatch.setenv(name, "x")
+
+    assert youtube_api.missing_oauth_vars() == []

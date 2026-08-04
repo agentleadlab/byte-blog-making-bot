@@ -284,13 +284,18 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     from .. import youtube_api
 
     results: list[tuple[bool, str]] = []
-    if youtube_api.oauth_credentials():
+    missing = youtube_api.missing_oauth_vars()
+    if not missing:
         results.append((True, "Data API configured with OAuth — captions available"))
+    elif len(missing) < len(youtube_api.OAUTH_VARS):
+        # Half-finished setup: name the gap instead of repeating "not configured".
+        results.append((False, "OAuth is half set up — still missing " + ", ".join(missing)))
     elif youtube_api.api_key():
         results.append((
             True,
-            "Data API key set (metadata only). Add the three GOOGLE_* OAuth "
-            "variables to read captions too.",
+            "Data API key set (metadata only). Add "
+            + ", ".join(youtube_api.OAUTH_VARS)
+            + " to read captions too.",
         ))
     else:
         results.append((

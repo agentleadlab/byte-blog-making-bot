@@ -48,6 +48,19 @@ def oauth_credentials() -> tuple[str, str, str] | None:
     return None
 
 
+OAUTH_VARS = ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN")
+
+
+def missing_oauth_vars() -> list[str]:
+    """Which of the three OAuth variables are still blank.
+
+    Two of three is the usual state halfway through the setup, and it behaves
+    exactly like none of them - so `check` should be able to name the one that
+    is missing rather than say "not configured" again.
+    """
+    return [name for name in OAUTH_VARS if not (os.getenv(name) or "").strip()]
+
+
 def configured() -> bool:
     return bool(api_key() or oauth_credentials())
 
