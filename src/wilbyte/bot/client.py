@@ -698,7 +698,9 @@ async def _execute_run(
                 )
             except PIPELINE_ERRORS as exc:
                 failed += 1
-                await responder.send(embed=embeds.error(f"{video.title}\n{exc}"))
+                await responder.send(
+                    embed=embeds.error(f"{video.title or video.short_url}\n{exc}")
+                )
                 continue
 
             # Show the slot this post would take without consuming it yet, so a

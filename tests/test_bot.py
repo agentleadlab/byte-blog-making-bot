@@ -10,8 +10,10 @@ import pytest
 from wilbyte.bot import embeds, jobs
 from wilbyte.bot.client import is_allowed, is_direct_mention, parse_guild_id
 from wilbyte.bot.views import Decision
+from wilbyte import youtube
 from wilbyte.models import Video
 from wilbyte.pipeline import assemble_post
+from wilbyte.state import Ledger
 from wilbyte.youtube import looks_like_playlist
 
 CT = ZoneInfo("America/Chicago")
@@ -253,6 +255,54 @@ def test_decision_enum_covers_every_button():
 
 def test_taken_days_is_empty_without_a_ghl_session(config):
     assert jobs.taken_days(None, config) == set()
+
+
+def test_plan_embed_labels_a_video_whose_title_could_not_be_read():
+    pairs = [(Video(video_id="n2DRr4cRUe4", title="", url="u"),
+              datetime(2026, 8, 12, 10, tzinfo=CT))]
+
+    body = " ".join(f.value for f in embeds.plan_summary(pairs, skipped=0, source="a link").fields)
+
+    assert "(title unavailable)" in body
+    assert "n2DRr4cRUe4" in body
+
+
+# ------------------------------------------------------- blocked metadata lookup
+
+
+def test_a_blocked_title_lookup_does_not_end_the_run(monkeypatch, tmp_path):
+    """YouTube refusing metadata is not a reason to stop - the id is in the URL.
+
+    The title is only a hint to the copywriter, so the run should continue and
+    fail (or not) at the transcript, whose error actually tells you what to do.
+    """
+    def blocked(_url):
+        raise youtube.IngestError("Sign in to confirm you're not a bot")
+
+    monkeypatch.setattr(jobs.youtube, "fetch_video", blocked)
+    ledger = Ledger(path=tmp_path / "ledger.json")
+
+    videos, done = jobs.resolve_videos(
+        "https://youtu.be/n2DRr4cRUe4", ledger, limit=5, force=True
+    )
+
+    assert done == 0
+    assert [v.video_id for v in videos] == ["n2DRr4cRUe4"]
+    assert videos[0].title == ""
+
+
+def test_a_readable_title_is_still_used(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        jobs.youtube, "fetch_video",
+        lambda _url: Video(video_id="n2DRr4cRUe4", title="Real Title", url="u"),
+    )
+    ledger = Ledger(path=tmp_path / "ledger.json")
+
+    videos, _ = jobs.resolve_videos(
+        "https://youtu.be/n2DRr4cRUe4", ledger, limit=5, force=True
+    )
+
+    assert videos[0].title == "Real Title"
 
 
 def test_plan_slots_works_with_no_ghl_session(config):

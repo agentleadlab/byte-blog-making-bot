@@ -69,7 +69,14 @@ def resolve_videos(
     elif offline:
         videos = [youtube.video_from_link(source)]
     else:
-        videos = [youtube.fetch_video(source)]
+        try:
+            videos = [youtube.fetch_video(source)]
+        except youtube.IngestError:
+            # The title is only a hint to the copywriter, so a blocked metadata
+            # lookup is no reason to end the run - the id is in the URL. Let it
+            # fail later at the transcript, which is the step that actually
+            # matters and whose error says what to do about it.
+            videos = [youtube.video_from_link(source)]
 
     if force:
         return videos[:limit], 0

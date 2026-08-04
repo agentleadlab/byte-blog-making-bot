@@ -71,7 +71,10 @@ def plan_summary(
 
     lines = []
     for video, slot in pairs:
-        lines.append(f"**{format_slot(slot)}**\n{_truncate(video.title, 90)}\n{video.short_url}")
+        # An unresolved title means YouTube refused the metadata lookup; the id
+        # still identifies the video, so show the link rather than a blank line.
+        label = _truncate(video.title, 90) if video.title else "(title unavailable)"
+        lines.append(f"**{format_slot(slot)}**\n{label}\n{video.short_url}")
 
     body = "\n\n".join(lines) or "Nothing pending."
     # Embed descriptions cap at 4096; split the long list across fields instead.
