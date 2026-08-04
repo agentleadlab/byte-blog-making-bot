@@ -239,15 +239,55 @@ back human-written or auto-generated.
 **Quota:** 10,000 units/day, free. A caption download is 200 units, a playlist
 listing 1. Three posts a day is around 600.
 
-### If you'd rather not set that up
+### Or just run it on your own machine
 
-- **Attach the transcript.** Paste it out of YouTube into a `.txt` and attach it
-  with the link. No API, no account, always works.
-- **Run RYTE on your own machine.** A home IP isn't blocked. Posts already
-  scheduled in GHL publish on time regardless, so the bot only needs to be
-  running while you're creating them.
-- **A residential proxy**, via `WEBSHARE_PROXY_USERNAME` / `WEBSHARE_PROXY_PASSWORD`
-  or `YOUTUBE_PROXY_URL`. Works, but costs money.
+A home internet connection isn't blocked, so YouTube works normally with nothing
+to configure. See [Running locally](#running-locally) below.
+
+### Or attach the transcript
+
+Paste it out of YouTube into a `.txt` and attach it with the link. No API, no
+account, always works — this is the current manual process, minus everything
+after it.
+
+### Or a residential proxy
+
+`WEBSHARE_PROXY_USERNAME` / `WEBSHARE_PROXY_PASSWORD`, or `YOUTUBE_PROXY_URL`.
+Works, but costs money.
+
+## Running locally
+
+The simplest way around the YouTube block: run RYTE on your own computer, where
+the IP looks like a person rather than a datacenter.
+
+```bash
+git clone https://github.com/agentleadlab/byte-blog-making-bot.git
+cd byte-blog-making-bot
+bash scripts/setup.sh        # one time
+```
+
+Setup finds a suitable Python, builds a virtualenv, installs everything, fetches
+Chromium for the cover images, and creates `.env`. Paste your keys into that
+file — the same four values as Railway — and then, whenever you want to work:
+
+```bash
+bash scripts/start.sh
+```
+
+RYTE comes online in Discord. Leave the window open; `Ctrl-C` when you're done.
+
+**It doesn't need to stay running.** RYTE creates posts in GHL with a scheduled
+date, and *GHL* publishes them — so once a batch is approved, your computer is
+irrelevant. A typical session is: start it, `@RYTE <playlist> 5`, approve five
+posts, quit. They go out at 10am on their days regardless.
+
+**Don't run local and Railway at the same time.** Discord allows one connection
+per bot token, so the two will fight over messages. Either pause the Railway
+service, or make a second Discord application and give the local copy its own
+`DISCORD_BOT_TOKEN`.
+
+Setup is safe to re-run — it skips whatever is already done, which also makes it
+the way to update after a `git pull`.
 
 ## Deploying to Railway
 
