@@ -6,6 +6,7 @@ clicks "Show transcript", and copies the text into the Claude project.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -91,12 +92,7 @@ def list_playlist_videos(playlist_url_or_id: str, *, limit: int | None = None) -
 
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": "in_playlist",
-        "skip_download": True,
-    }
+    opts = _ydl_opts(extract_flat="in_playlist")
     if limit:
         opts["playlistend"] = limit
 
@@ -148,7 +144,7 @@ def fetch_video(video_url_or_id: str) -> Video:
             pass  # fall through to yt-dlp
 
     try:
-        with YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        with YoutubeDL(_ydl_opts()) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
     except Exception as exc:
         raise IngestError(f"Failed to read video {video_id}: {exc}") from exc
@@ -177,6 +173,58 @@ def video_from_link(url_or_id: str) -> Video:
     )
 
 
+_COOKIE_CACHE: dict[str, str] = {}
+
+
+def cookie_file() -> str | None:
+    """Path to a Netscape cookies.txt for yt-dlp, if one is configured.
+
+    This is the route that actually beats "Sign in to confirm you're not a bot"
+    from a datacenter: signed-in requests aren't subject to the check. The
+    cookies come from any logged-in YouTube session - it does not have to be the
+    channel owner, so a throwaway account is fine and safer.
+
+    YOUTUBE_COOKIES holds the file's contents (that's what fits in a Railway
+    variable); YOUTUBE_COOKIES_FILE points at one already on disk.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    existing = (os.getenv("YOUTUBE_COOKIES_FILE") or "").strip()
+    if existing and _Path(existing).exists():
+        return existing
+
+    raw = os.getenv("YOUTUBE_COOKIES") or ""
+    # Railway strips real newlines out of some pasted values; accept the escaped
+    # form too rather than writing a one-line file yt-dlp can't parse.
+    text = raw.replace("\\n", "\n").strip()
+    if not text:
+        return None
+
+    cached = _COOKIE_CACHE.get(text)
+    if cached and _Path(cached).exists():
+        return cached
+
+    handle = tempfile.NamedTemporaryFile(
+        "w", suffix=".txt", prefix="yt-cookies-", delete=False, encoding="utf-8"
+    )
+    with handle:
+        if not text.startswith("# Netscape"):
+            handle.write("# Netscape HTTP Cookie File\n")
+        handle.write(text + "\n")
+    _COOKIE_CACHE[text] = handle.name
+    return handle.name
+
+
+def _ydl_opts(**extra) -> dict:
+    """Base yt-dlp options, with cookies attached when they are configured."""
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, **extra}
+    cookies = cookie_file()
+    if cookies:
+        opts["cookiefile"] = cookies
+    return opts
+
+
 def _proxy_config():
     """Route transcript requests through a proxy when one is configured.
 
@@ -184,8 +232,6 @@ def _proxy_config():
     cloud host works intermittently at best - fine for the first few calls, then
     blocked. A residential proxy is the only reliable fix.
     """
-    import os
-
     username = os.getenv("WEBSHARE_PROXY_USERNAME")
     password = os.getenv("WEBSHARE_PROXY_PASSWORD")
     generic = os.getenv("YOUTUBE_PROXY_URL")
@@ -241,6 +287,16 @@ def fetch_transcript(
             api_error = exc
 
     proxy_config = _proxy_config()
+
+    # Cookies make yt-dlp a signed-in request, which is not subject to the bot
+    # check - so when they're set it beats the anonymous transcript API rather
+    # than waiting behind three doomed retries of it.
+    if cookie_file() and not proxy_config:
+        try:
+            return fetch_transcript_via_ytdlp(video_id, languages=languages)
+        except IngestError as exc:
+            api_error = api_error or exc
+
     last_error: Exception | None = None
     snippets: list[str] = []
 
@@ -356,16 +412,13 @@ def fetch_transcript_via_ytdlp(
     from yt_dlp import YoutubeDL
 
     with tempfile.TemporaryDirectory() as tmp:
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "writesubtitles": True,
-            "writeautomaticsub": True,
-            "subtitleslangs": list(languages),
-            "subtitlesformat": "vtt",
-            "outtmpl": str(_Path(tmp) / "%(id)s"),
-        }
+        opts = _ydl_opts(
+            writesubtitles=True,
+            writeautomaticsub=True,
+            subtitleslangs=list(languages),
+            subtitlesformat="vtt",
+            outtmpl=str(_Path(tmp) / "%(id)s"),
+        )
         try:
             with YoutubeDL(opts) as ydl:
                 ydl.download([f"https://www.youtube.com/watch?v={video_id}"])

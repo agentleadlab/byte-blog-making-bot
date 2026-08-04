@@ -241,6 +241,30 @@ back human-written or auto-generated.
 **Quota:** 10,000 units/day, free. A caption download is 200 units, a playlist
 listing 1. Three posts a day is around 600.
 
+### Or send cookies (free, and it works for Studio-made captions)
+
+The Data API has one hard limit worth knowing before you set it up: `captions.list`
+will show you a track that `captions.download` then refuses with a 403. Captions
+created in YouTube Studio generally can't be downloaded through the API at all,
+even by the channel owner — so on a channel that captions its videos the normal
+way, the API route lists the track and stops there.
+
+Cookies don't have that problem. "Sign in to confirm you're not a bot" applies to
+*anonymous* requests; a signed-in one gets through, and yt-dlp reads the same
+caption track the browser does.
+
+1. Install the **Get cookies.txt LOCALLY** extension (Chrome or Firefox)
+2. Open youtube.com **logged in**, click the extension, **Export**
+3. Open the downloaded `cookies.txt`, copy all of it
+4. Paste it into `YOUTUBE_COOKIES`
+
+The account does **not** have to own the channel — any logged-in YouTube session
+works, so use a throwaway account rather than the one your channel lives on.
+
+Cookies expire eventually (months, usually). When transcripts start failing again,
+re-export and paste. `@RYTE check <link>` says `YouTube cookies loaded` when they
+are in use.
+
 ### Or just run it on your own machine
 
 A home internet connection isn't blocked, so YouTube works normally with nothing

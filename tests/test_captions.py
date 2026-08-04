@@ -1,5 +1,8 @@
 """Caption parsing for the free transcript fallbacks."""
 
+from pathlib import Path
+
+from wilbyte import youtube
 from wilbyte.youtube import clean_transcript, parse_captions
 
 VTT = """WEBVTT
@@ -67,3 +70,71 @@ def test_empty_caption_file_yields_nothing():
 
 def test_cleaning_strips_caption_artefacts():
     assert clean_transcript("[Music] hello  there [Applause]") == "hello there"
+
+
+# ------------------------------------------------------------------- cookies
+
+
+def test_no_cookies_configured_is_none(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+
+    assert youtube.cookie_file() is None
+
+
+def test_cookie_contents_are_written_to_a_file(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv(
+        "YOUTUBE_COOKIES",
+        "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc123\n",
+    )
+
+    path = youtube.cookie_file()
+
+    assert path is not None
+    assert "SID\tabc123" in Path(path).read_text()
+
+
+def test_a_header_is_added_when_the_paste_is_missing_one(monkeypatch):
+    """yt-dlp rejects a cookie file without the Netscape header line."""
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n")
+
+    text = Path(youtube.cookie_file()).read_text()
+
+    assert text.startswith("# Netscape HTTP Cookie File")
+
+
+def test_escaped_newlines_are_restored(monkeypatch):
+    """Some hosts flatten a pasted multi-line value into literal backslash-n."""
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", ".youtube.com\\tTRUE\\t/\\tTRUE\\t0\\tSID\\tabc\\nfoo")
+
+    text = Path(youtube.cookie_file()).read_text()
+
+    assert "\n" in text.strip()
+
+
+def test_whitespace_only_cookies_are_ignored(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", "   \n  ")
+
+    assert youtube.cookie_file() is None
+
+
+def test_ydl_options_carry_the_cookie_file(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n")
+
+    opts = youtube._ydl_opts(writesubtitles=True)
+
+    assert opts["cookiefile"] == youtube.cookie_file()
+    assert opts["writesubtitles"] is True
+    assert opts["quiet"] is True
+
+
+def test_ydl_options_omit_cookies_when_there_are_none(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+
+    assert "cookiefile" not in youtube._ydl_opts()

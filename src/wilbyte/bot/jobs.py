@@ -284,6 +284,9 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     from .. import youtube_api
 
     results: list[tuple[bool, str]] = []
+    if youtube.cookie_file():
+        results.append((True, "YouTube cookies loaded — requests go out signed in"))
+
     missing = youtube_api.missing_oauth_vars()
     if not missing:
         results.append((True, "Data API configured with OAuth — captions available"))
