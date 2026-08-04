@@ -440,6 +440,13 @@ def fetch_transcript_via_api(
     )
 
 
+# Which of YouTube's player clients to ask, in order. Whether a response
+# carries caption tracks at all varies by client and from request to request, so
+# a single ask that comes back empty means nothing - the same video answered
+# with 10,000 words a minute earlier.
+PLAYER_CLIENTS = (None, "web", "mweb", "android")
+
+
 def fetch_transcript_via_ytdlp(
     video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
 ) -> Transcript:
@@ -454,20 +461,30 @@ def fetch_transcript_via_ytdlp(
     """
     from yt_dlp import YoutubeDL
 
-    opts = _ydl_opts(ignore_no_formats_error=True)
-    try:
-        with YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(
-                f"https://www.youtube.com/watch?v={video_id}", download=False
-            )
-    except Exception as exc:
-        raise IngestError(
-            f"yt-dlp could not read {video_id}: {_first_line(exc)}"
-        ) from exc
+    url_for_video = f"https://www.youtube.com/watch?v={video_id}"
+    track = None
+    problems: list[str] = []
 
-    track = pick_subtitle_track(info or {}, languages)
+    for client in PLAYER_CLIENTS:
+        opts = _ydl_opts(ignore_no_formats_error=True)
+        if client:
+            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url_for_video, download=False)
+        except Exception as exc:
+            problems.append(f"{client or 'default'}: {_first_line(exc)}")
+            continue
+
+        track = pick_subtitle_track(info or {}, languages)
+        if track:
+            break
+        problems.append(f"{client or 'default'}: no caption track in the response")
+
     if not track:
-        raise IngestError(f"No caption track published for {video_id}.")
+        raise IngestError(
+            f"No caption track published for {video_id}. Tried " + "; ".join(problems) + "."
+        )
 
     url, is_asr = track
     try:

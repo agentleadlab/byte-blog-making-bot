@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from wilbyte import youtube
 from wilbyte.youtube import clean_transcript, parse_captions
 
@@ -244,3 +246,84 @@ def test_no_readable_format_is_no_track():
 
 def test_a_video_with_no_captions_at_all():
     assert youtube.pick_subtitle_track({}, ("en",)) is None
+
+
+# ------------------------------------------------- retrying across player clients
+
+
+class FakeYDL:
+    """Stands in for yt-dlp, answering differently per player client.
+
+    Modelled on the real behaviour: whether a response carries caption tracks
+    varies by client and between requests, so one empty answer proves nothing.
+    """
+
+    def __init__(self, by_client):
+        self.by_client = by_client
+        self.asked = []
+
+    def __call__(self, opts):
+        clients = (opts.get("extractor_args", {}).get("youtube", {}) or {}).get("player_client")
+        self.client = clients[0] if clients else None
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def extract_info(self, url, download=False):
+        self.asked.append(self.client)
+        return self.by_client.get(self.client, {})
+
+
+def install(monkeypatch, fake):
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", fake)
+    monkeypatch.setattr(
+        youtube.httpx, "get",
+        lambda *a, **k: SimpleResponse("WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello there\n"),
+    )
+
+
+class SimpleResponse:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
+def test_an_empty_first_answer_retries_another_client(monkeypatch):
+    fake = FakeYDL({
+        None: {},
+        "web": {"subtitles": {"en": [{"ext": "vtt", "url": "https://x/t"}]}},
+    })
+    install(monkeypatch, fake)
+
+    result = youtube.fetch_transcript_via_ytdlp("vid123")
+
+    assert "hello there" in result.text
+    assert fake.asked == [None, "web"]
+
+
+def test_the_first_client_that_answers_wins(monkeypatch):
+    fake = FakeYDL({None: {"subtitles": {"en": [{"ext": "vtt", "url": "https://x/t"}]}}})
+    install(monkeypatch, fake)
+
+    youtube.fetch_transcript_via_ytdlp("vid123")
+
+    assert fake.asked == [None]  # no needless extra requests
+
+
+def test_every_client_coming_back_empty_says_which_were_tried(monkeypatch):
+    install(monkeypatch, FakeYDL({}))
+
+    with pytest.raises(youtube.IngestError) as caught:
+        youtube.fetch_transcript_via_ytdlp("vid123")
+
+    message = str(caught.value)
+    assert "No caption track published" in message
+    for client in ("default", "web", "mweb", "android"):
+        assert client in message
