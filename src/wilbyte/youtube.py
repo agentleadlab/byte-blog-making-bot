@@ -229,11 +229,16 @@ def fetch_transcript(
 
     # The official API first: it's the only route that isn't subject to bot
     # detection, because it authenticates as the channel's owner.
+    api_error: Exception | None = None
     if youtube_api.oauth_credentials():
         try:
             return fetch_transcript_via_api(video_id, languages=languages)
-        except (youtube_api.YouTubeAPIError, IngestError):
-            pass
+        except (youtube_api.YouTubeAPIError, IngestError) as exc:
+            # Keep the reason. When OAuth is configured this is *the* route, and
+            # reporting the scraper's IP block instead sends you off fixing the
+            # wrong thing - the answer is usually that consent was given by an
+            # account that doesn't own the video.
+            api_error = exc
 
     proxy_config = _proxy_config()
     last_error: Exception | None = None
@@ -256,6 +261,19 @@ def fetch_transcript(
         try:
             return fetch_transcript_via_ytdlp(video_id, languages=languages)
         except IngestError as fallback_error:
+            if api_error is not None:
+                # OAuth was configured, so the Data API was the real attempt and
+                # the scraping routes were never going to work from a datacenter.
+                # Lead with what Google actually said.
+                raise IngestError(
+                    f"Could not get a transcript for {video_id}. The YouTube Data "
+                    f"API refused: {_first_line(api_error)} "
+                    f"Captions are owner-only, so the usual cause is that consent "
+                    f"was granted by a Google account that doesn't own this video. "
+                    f"Re-authorise as the channel owner, or attach the transcript "
+                    f"as a .txt with the link."
+                ) from api_error
+
             blocked = last_error is not None and _is_blocked(last_error)
             detail = (
                 "YouTube is blocking this server's IP for transcripts, and the "

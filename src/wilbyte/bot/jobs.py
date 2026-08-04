@@ -325,6 +325,35 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
             ))
         return results
 
+    if not missing:
+        # Ask the caption endpoint directly. It separates the two failures that
+        # otherwise look identical: this account doesn't own the video, versus
+        # the video has no caption track at all.
+        try:
+            tracks = youtube_api.list_captions(videos[0].video_id)
+            if tracks:
+                kinds = ", ".join(
+                    sorted({
+                        "auto-generated" if (t.get("snippet") or {}).get("trackKind") == "ASR"
+                        else "human-written"
+                        for t in tracks
+                    })
+                )
+                results.append((True, f"{len(tracks)} caption track(s) visible — {kinds}"))
+            else:
+                results.append((
+                    False,
+                    "No caption tracks on this video. Nothing to transcribe — check "
+                    "the video has captions in YouTube Studio.",
+                ))
+        except Exception as exc:
+            results.append((
+                False,
+                f"Caption list refused: {_short(exc)} Captions are owner-only, so "
+                f"this usually means consent was granted by an account that doesn't "
+                f"own the channel.",
+            ))
+
     try:
         transcript = youtube.fetch_transcript(videos[0].video_id)
         route = {
@@ -338,7 +367,7 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     return results
 
 
-def _short(exc: Exception, limit: int = 220) -> str:
+def _short(exc: Exception, limit: int = 400) -> str:
     text = " ".join(str(exc).split())
     return text if len(text) <= limit else text[:limit] + "…"
 

@@ -131,3 +131,36 @@ def test_complete_setup_is_missing_nothing(monkeypatch):
         monkeypatch.setenv(name, "x")
 
     assert youtube_api.missing_oauth_vars() == []
+
+
+# ------------------------------------------------------ transcript diagnosis
+
+
+def test_a_data_api_refusal_is_reported_instead_of_the_scraper_block(monkeypatch):
+    """With OAuth configured, the API is the real route - say why it refused.
+
+    The scraping fallbacks were never going to work from a datacenter, so
+    leading with their IP-block message sends you off fixing the wrong thing.
+    """
+    from wilbyte import youtube
+
+    for name in youtube_api.OAUTH_VARS:
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setattr(
+        youtube, "fetch_transcript_via_api",
+        lambda *a, **k: (_ for _ in ()).throw(
+            youtube_api.YouTubeAPIError("403: caption track not owned by requester")
+        ),
+    )
+    monkeypatch.setattr(
+        youtube, "fetch_transcript_via_ytdlp",
+        lambda *a, **k: (_ for _ in ()).throw(youtube.IngestError("not a bot")),
+    )
+
+    with pytest.raises(youtube.IngestError) as caught:
+        youtube.fetch_transcript("vid123", attempts=1)
+
+    message = str(caught.value)
+    assert "not owned by requester" in message
+    assert "owner-only" in message
+    assert "blocking this server's IP" not in message
