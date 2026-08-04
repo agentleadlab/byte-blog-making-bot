@@ -211,9 +211,63 @@ def cookie_file() -> str | None:
     with handle:
         if not text.startswith("# Netscape"):
             handle.write("# Netscape HTTP Cookie File\n")
-        handle.write(text + "\n")
+        handle.write(_retab_cookies(text) + "\n")
     _COOKIE_CACHE[text] = handle.name
     return handle.name
+
+
+def _retab_cookies(text: str) -> str:
+    """Put the tabs back into a cookies.txt that lost them on the way here.
+
+    The format is tab-separated, and pasting a file through a web form very
+    often turns those tabs into runs of spaces. yt-dlp then reads a file with
+    no usable cookies in it and fails exactly as though none were given, which
+    is a miserable thing to debug.
+    """
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "\t" in line:
+            lines.append(line)
+            continue
+        fields = stripped.split()
+        # domain, include-subdomains, path, secure, expiry, name, value. A value
+        # containing spaces would over-split, so only rejoin an exact match.
+        if len(fields) == 7:
+            lines.append("\t".join(fields))
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+# The cookies that actually carry a YouTube login. Without one of these the
+# file parses fine and the request still goes out anonymous.
+_LOGIN_COOKIES = ("__Secure-3PSID", "__Secure-1PSID", "SAPISID", "SID")
+
+
+def cookie_summary() -> tuple[int, bool]:
+    """(usable cookie lines, whether a login cookie is among them).
+
+    An export taken from a logged-out tab produces a perfectly valid file with
+    no session in it - indistinguishable from a good one until a fetch fails.
+    """
+    path = cookie_file()
+    if not path:
+        return 0, False
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0, False
+
+    names = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split("\t")
+        if len(fields) >= 6:
+            names.append(fields[5])
+    return len(names), any(name in _LOGIN_COOKIES for name in names)
 
 
 def _ydl_opts(**extra) -> dict:

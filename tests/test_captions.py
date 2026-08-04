@@ -138,3 +138,53 @@ def test_ydl_options_omit_cookies_when_there_are_none(monkeypatch):
     monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
 
     assert "cookiefile" not in youtube._ydl_opts()
+
+
+def test_spaces_are_turned_back_into_tabs(monkeypatch):
+    """Pasting a cookies.txt through a web form often eats the tabs.
+
+    yt-dlp then reads a file with no usable cookies and fails exactly as if
+    none had been given.
+    """
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv(
+        "YOUTUBE_COOKIES",
+        ".youtube.com TRUE / TRUE 1799999999 __Secure-3PSID abc123",
+    )
+
+    text = Path(youtube.cookie_file()).read_text()
+
+    assert ".youtube.com\tTRUE\t/\tTRUE\t1799999999\t__Secure-3PSID\tabc123" in text
+
+
+def test_a_comment_line_is_left_alone(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", "# This is a generated file!  Do not edit.\n")
+
+    assert "# This is a generated file!  Do not edit." in Path(youtube.cookie_file()).read_text()
+
+
+def test_a_signed_in_export_is_recognised(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv(
+        "YOUTUBE_COOKIES",
+        ".youtube.com\tTRUE\t/\tTRUE\t0\t__Secure-3PSID\tabc\n"
+        ".youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tf1=50\n",
+    )
+
+    assert youtube.cookie_summary() == (2, True)
+
+
+def test_a_logged_out_export_is_caught(monkeypatch):
+    """A valid file with no session in it looks identical until a fetch fails."""
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES", ".youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tf1=50\n")
+
+    assert youtube.cookie_summary() == (1, False)
+
+
+def test_no_cookies_summarise_as_nothing(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+
+    assert youtube.cookie_summary() == (0, False)

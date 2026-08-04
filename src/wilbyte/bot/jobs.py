@@ -285,7 +285,16 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
 
     results: list[tuple[bool, str]] = []
     if youtube.cookie_file():
-        results.append((True, "YouTube cookies loaded — requests go out signed in"))
+        count, signed_in = youtube.cookie_summary()
+        if signed_in:
+            results.append((True, f"YouTube cookies loaded — {count} cookies, signed in"))
+        else:
+            results.append((
+                False,
+                f"YouTube cookies loaded ({count} cookies) but none of them is a login "
+                f"cookie, so requests still go out anonymous. Re-export from a "
+                f"youtube.com tab where you are signed in, and paste the whole file.",
+            ))
 
     missing = youtube_api.missing_oauth_vars()
     if not missing:
