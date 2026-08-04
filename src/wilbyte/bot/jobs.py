@@ -347,12 +347,7 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
                     "the video has captions in YouTube Studio.",
                 ))
         except Exception as exc:
-            results.append((
-                False,
-                f"Caption list refused: {_short(exc)} Captions are owner-only, so "
-                f"this usually means consent was granted by an account that doesn't "
-                f"own the channel.",
-            ))
+            results.append((False, f"Caption list refused: {_short(exc)}{_owner_hint(exc)}"))
 
     try:
         transcript = youtube.fetch_transcript(videos[0].video_id)
@@ -365,6 +360,21 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     except Exception as exc:
         results.append((False, f"No transcript: {_short(exc)}"))
     return results
+
+
+def _owner_hint(exc: Exception) -> str:
+    """The ownership explanation, but only when the refusal is about permission.
+
+    A rejected refresh token is a credentials mismatch, not an ownership one,
+    and pinning it on the wrong Google account costs an hour of re-consenting.
+    """
+    text = str(exc)
+    if "403" in text or "permission" in text.lower() or "forbidden" in text.lower():
+        return (
+            " Captions are owner-only, so this usually means consent was granted "
+            "by an account that doesn't own the channel."
+        )
+    return ""
 
 
 def _short(exc: Exception, limit: int = 400) -> str:

@@ -264,14 +264,20 @@ def fetch_transcript(
             if api_error is not None:
                 # OAuth was configured, so the Data API was the real attempt and
                 # the scraping routes were never going to work from a datacenter.
-                # Lead with what Google actually said.
+                # Lead with what Google actually said - and only blame ownership
+                # when the refusal was actually about permission.
+                text = str(api_error)
+                hint = (
+                    " Captions are owner-only, so the usual cause is consent given "
+                    "by a Google account that doesn't own this video. Re-authorise "
+                    "as the channel owner."
+                    if "403" in text or "permission" in text.lower()
+                    else ""
+                )
                 raise IngestError(
                     f"Could not get a transcript for {video_id}. The YouTube Data "
-                    f"API refused: {_first_line(api_error)} "
-                    f"Captions are owner-only, so the usual cause is that consent "
-                    f"was granted by a Google account that doesn't own this video. "
-                    f"Re-authorise as the channel owner, or attach the transcript "
-                    f"as a .txt with the link."
+                    f"API refused: {_first_line(api_error)}{hint} "
+                    f"You can always attach the transcript as a .txt with the link."
                 ) from api_error
 
             blocked = last_error is not None and _is_blocked(last_error)

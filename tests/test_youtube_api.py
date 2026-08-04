@@ -221,3 +221,41 @@ def test_every_track_refused_reports_the_api_error(monkeypatch):
 
     with pytest.raises(youtube.IngestError, match="not owned by requester"):
         youtube.fetch_transcript_via_api("vid123")
+
+
+# ------------------------------------------------------- refresh-token errors
+
+
+class FakeResponse:
+    def __init__(self, text, status_code=400):
+        self.text = text
+        self.status_code = status_code
+
+
+def test_a_token_from_a_different_client_says_so():
+    """unauthorized_client is a credentials mismatch, not an ownership problem.
+
+    Reporting it as "the wrong Google account owns this channel" costs an hour
+    of re-consenting that fixes nothing.
+    """
+    message = youtube_api._explain_refresh(
+        FakeResponse('{"error": "unauthorized_client", "error_description": "Unauthorized"}', 401)
+    )
+
+    assert "does not belong to this GOOGLE_CLIENT_ID" in message
+    assert "Use your own OAuth credentials" in message
+    assert "own the channel" not in message
+
+
+def test_a_dead_token_says_to_mint_a_new_one():
+    message = youtube_api._explain_refresh(FakeResponse('{"error": "invalid_grant"}', 400))
+
+    assert "no longer valid" in message
+    assert "ya29" in message  # the pasted-the-access-token mistake
+
+
+def test_an_unrecognised_rejection_still_reports_the_body():
+    message = youtube_api._explain_refresh(FakeResponse('{"error": "teapot"}', 418))
+
+    assert "teapot" in message
+    assert "418" in message

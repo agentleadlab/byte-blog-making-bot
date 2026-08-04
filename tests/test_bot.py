@@ -331,3 +331,19 @@ def test_plan_slots_works_with_no_ghl_session(config):
     assert len(slots) == 2
     assert all(s.hour == 10 for s in slots)
     assert all(s.weekday() < 5 for s in slots)
+
+
+# --------------------------------------------------------- diagnosis wording
+
+
+def test_a_permission_refusal_mentions_ownership():
+    hint = jobs._owner_hint(RuntimeError("YouTube refused captions/x (403)"))
+
+    assert "own the channel" in hint
+
+
+def test_a_credentials_refusal_does_not_blame_ownership():
+    """401 unauthorized_client is about which OAuth client minted the token."""
+    hint = jobs._owner_hint(RuntimeError('HTTP 401: {"error": "unauthorized_client"}'))
+
+    assert hint == ""

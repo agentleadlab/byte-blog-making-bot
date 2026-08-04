@@ -94,11 +94,7 @@ def access_token(*, force: bool = False) -> str:
         raise YouTubeAPIError(f"Could not reach Google to refresh the token: {exc}") from exc
 
     if response.status_code >= 400:
-        raise YouTubeAPIError(
-            f"Google rejected the refresh token (HTTP {response.status_code}): "
-            f"{response.text[:300]}. Mint a new one - refresh tokens are revoked when "
-            f"the OAuth client is edited or the grant is removed."
-        )
+        raise YouTubeAPIError(_explain_refresh(response))
 
     payload = response.json()
     token = payload.get("access_token")
@@ -133,6 +129,39 @@ def _get(path: str, params: dict, *, use_oauth: bool = False) -> dict:
     if response.status_code >= 400:
         raise YouTubeAPIError(_explain(path, response))
     return response.json()
+
+
+def _explain_refresh(response: httpx.Response) -> str:
+    """Say which of the three OAuth values is actually wrong.
+
+    Google's two rejections here mean opposite things and have opposite fixes,
+    and neither has anything to do with who owns the channel - so they must not
+    be reported as an ownership problem.
+    """
+    body = response.text[:300]
+
+    if "unauthorized_client" in body:
+        return (
+            "GOOGLE_REFRESH_TOKEN does not belong to this GOOGLE_CLIENT_ID. The "
+            "token was minted against a different OAuth client - usually because "
+            "'Use your own OAuth credentials' was unticked in the OAuth "
+            "Playground's gear panel, so Google issued a token for the "
+            "playground's own client. Tick it, paste the same client id and "
+            "secret that are set here, and mint the token again."
+        )
+
+    if "invalid_grant" in body:
+        return (
+            "GOOGLE_REFRESH_TOKEN is no longer valid. Refresh tokens die when the "
+            "OAuth client is edited, when access is revoked, or if an access "
+            "token (ya29...) was pasted in place of the refresh token (1//...). "
+            "Mint a fresh one in the OAuth Playground."
+        )
+
+    return (
+        f"Google rejected the refresh token (HTTP {response.status_code}): {body}. "
+        f"Mint a new one in the OAuth Playground."
+    )
 
 
 def _explain(path: str, response: httpx.Response) -> str:
