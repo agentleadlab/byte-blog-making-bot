@@ -56,11 +56,39 @@ def extract_video_id(url_or_id: str) -> str:
 def list_playlist_videos(playlist_url_or_id: str, *, limit: int | None = None) -> list[Video]:
     """Return the playlist's videos in playlist order (oldest position first).
 
-    Uses yt-dlp in flat mode - metadata only, no media download.
+    Prefers the official Data API when configured - yt-dlp gets blocked from
+    datacenter IPs, and the API does not.
     """
     from yt_dlp import YoutubeDL  # imported lazily; heavy module
 
+    from . import youtube_api
+
     playlist_id = extract_playlist_id(playlist_url_or_id)
+
+    if youtube_api.configured():
+        try:
+            items = youtube_api.list_playlist_items(playlist_id, limit=limit)
+            videos = []
+            for index, item in enumerate(items, start=1):
+                snippet = item.get("snippet") or {}
+                video_id = (item.get("contentDetails") or {}).get("videoId") or (
+                    snippet.get("resourceId") or {}
+                ).get("videoId")
+                if not video_id:
+                    continue
+                videos.append(
+                    Video(
+                        video_id=video_id,
+                        title=snippet.get("title") or "(untitled)",
+                        url=f"https://www.youtube.com/watch?v={video_id}",
+                        playlist_index=index,
+                    )
+                )
+            if videos:
+                return videos
+        except youtube_api.YouTubeAPIError:
+            pass  # fall through to yt-dlp
+
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
 
     opts = {
@@ -104,7 +132,21 @@ def fetch_video(video_url_or_id: str) -> Video:
     """Metadata for a single video, for the one-off `--video` path."""
     from yt_dlp import YoutubeDL
 
+    from . import youtube_api
+
     video_id = extract_video_id(video_url_or_id)
+
+    if youtube_api.configured():
+        try:
+            item = youtube_api.get_video(video_id)
+            return Video(
+                video_id=video_id,
+                title=(item.get("snippet") or {}).get("title") or "(untitled)",
+                url=f"https://www.youtube.com/watch?v={video_id}",
+            )
+        except youtube_api.YouTubeAPIError:
+            pass  # fall through to yt-dlp
+
     try:
         with YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
@@ -183,6 +225,16 @@ def fetch_transcript(
 
     from youtube_transcript_api import YouTubeTranscriptApi
 
+    from . import youtube_api
+
+    # The official API first: it's the only route that isn't subject to bot
+    # detection, because it authenticates as the channel's owner.
+    if youtube_api.oauth_credentials():
+        try:
+            return fetch_transcript_via_api(video_id, languages=languages)
+        except (youtube_api.YouTubeAPIError, IngestError):
+            pass
+
     proxy_config = _proxy_config()
     last_error: Exception | None = None
     snippets: list[str] = []
@@ -222,6 +274,33 @@ def fetch_transcript(
     if not text.strip():
         raise IngestError(f"Transcript for {video_id} came back empty.")
     return Transcript(video_id=video_id, text=text, source="youtube")
+
+
+def fetch_transcript_via_api(
+    video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
+) -> Transcript:
+    """Get captions through the YouTube Data API, as the channel owner."""
+    from . import youtube_api
+
+    tracks = youtube_api.list_captions(video_id)
+    if not tracks:
+        raise IngestError(f"No caption track published for {video_id}.")
+
+    track = youtube_api.pick_caption_track(tracks, languages)
+    if not track:
+        raise IngestError(f"No usable caption track for {video_id}.")
+
+    raw = youtube_api.download_caption(track["id"])
+    text = clean_transcript(parse_captions(raw))
+    if not text.strip():
+        raise IngestError(f"Caption track for {video_id} was empty.")
+
+    kind = (track.get("snippet") or {}).get("trackKind", "")
+    return Transcript(
+        video_id=video_id,
+        text=text,
+        source="youtube-api-asr" if kind == "ASR" else "youtube-api",
+    )
 
 
 def fetch_transcript_via_ytdlp(

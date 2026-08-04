@@ -187,6 +187,68 @@ Approval behaviour is under `[discord]` in `config/wilbyte.toml` — set
 `require_approval = false` to have `/run` post straight through without the
 review step.
 
+## YouTube access
+
+YouTube blocks anonymous scraping from datacenter IPs, so a bot on Railway (or
+any cloud host) gets refused — first for transcripts, eventually for video
+titles too. The official Data API isn't subject to that, because it
+authenticates. It's free, and captions work because you own the channel.
+
+RYTE tries, in order: **Data API → transcript library → yt-dlp → a transcript
+you attach by hand**. Any one of them working is enough.
+
+### Setting up the Data API
+
+**Part 1 — the API key** (2 minutes, fixes playlists and video titles)
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create a project
+2. **APIs & Services → Library** → search **YouTube Data API v3** → **Enable**
+3. **APIs & Services → Credentials → Create Credentials → API key**
+4. Copy it into `YOUTUBE_API_KEY`
+
+**Part 2 — OAuth** (10 minutes, unlocks captions)
+
+Captions can only be downloaded by the video's owner, so this has to be
+authorised as the Agent Lead Lab channel.
+
+1. **Credentials → Create Credentials → OAuth client ID** → type **Web application**
+2. Under **Authorised redirect URIs** add exactly:
+   `https://developers.google.com/oauthplayground`
+3. Create it, and copy the **Client ID** and **Client secret**
+4. On the **OAuth consent screen**, add your Google account under **Test users**
+   (otherwise consent is refused while the app is unpublished)
+5. Go to [OAuth Playground](https://developers.google.com/oauthplayground)
+6. Click the ⚙ gear, top right → tick **Use your own OAuth credentials** → paste
+   the client ID and secret
+7. In the left list, find **YouTube Data API v3** and select
+   `https://www.googleapis.com/auth/youtube.force-ssl`
+8. **Authorize APIs** → sign in **as the account that owns the channel** → allow
+9. **Exchange authorization code for tokens** → copy the **Refresh token**
+
+Then set:
+
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REFRESH_TOKEN=...
+```
+
+`@RYTE check <link>` reports which route it's using and whether captions came
+back human-written or auto-generated.
+
+**Quota:** 10,000 units/day, free. A caption download is 200 units, a playlist
+listing 1. Three posts a day is around 600.
+
+### If you'd rather not set that up
+
+- **Attach the transcript.** Paste it out of YouTube into a `.txt` and attach it
+  with the link. No API, no account, always works.
+- **Run RYTE on your own machine.** A home IP isn't blocked. Posts already
+  scheduled in GHL publish on time regardless, so the bot only needs to be
+  running while you're creating them.
+- **A residential proxy**, via `WEBSHARE_PROXY_USERNAME` / `WEBSHARE_PROXY_PASSWORD`
+  or `YOUTUBE_PROXY_URL`. Works, but costs money.
+
 ## Deploying to Railway
 
 The repo ships a `Dockerfile` and `railway.json`, so Railway builds it directly.

@@ -274,10 +274,27 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     This is the step most likely to fail in a datacenter: YouTube blocks many
     cloud IP ranges for transcript requests even when video metadata loads.
     """
-    if not source:
-        return [(None, "No link given — add one to test YouTube access")]
+    from .. import youtube_api
 
     results: list[tuple[bool, str]] = []
+    if youtube_api.oauth_credentials():
+        results.append((True, "Data API configured with OAuth — captions available"))
+    elif youtube_api.api_key():
+        results.append((
+            True,
+            "Data API key set (metadata only). Add the three GOOGLE_* OAuth "
+            "variables to read captions too.",
+        ))
+    else:
+        results.append((
+            None,
+            "No Data API credentials — falling back to scraping, which cloud "
+            "hosts get blocked from.",
+        ))
+
+    if not source:
+        results.append((None, "No link given — add one to test a real fetch"))
+        return results
     try:
         if youtube.looks_like_playlist(source):
             videos = youtube.list_playlist_videos(source, limit=3)
@@ -298,7 +315,12 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
 
     try:
         transcript = youtube.fetch_transcript(videos[0].video_id)
-        results.append((True, f"Transcript works — {transcript.word_count} words"))
+        route = {
+            "youtube-api": "official API, human-written captions",
+            "youtube-api-asr": "official API, auto-generated captions",
+            "youtube-ytdlp": "yt-dlp fallback",
+        }.get(transcript.source, transcript.source)
+        results.append((True, f"Transcript works — {transcript.word_count} words ({route})"))
     except Exception as exc:
         results.append((False, f"No transcript: {_short(exc)}"))
     return results
