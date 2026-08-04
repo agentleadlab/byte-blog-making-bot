@@ -114,6 +114,26 @@ def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date
     return taken
 
 
+def taken_days_from_ledger(entries, config: ScheduleConfig) -> set[date]:
+    """The days RYTE has already handed out, from its own record.
+
+    A second source of truth on purpose. GHL does not always report a schedule
+    back on a post RYTE created, and when that happens the calendar read says
+    the day is free and the next run books straight on top of it. The ledger
+    knows what it gave out regardless of what the API says about it.
+    """
+    tz = ZoneInfo(config.timezone)
+    taken: set[date] = set()
+    for entry in entries:
+        raw = getattr(entry, "scheduled_at", None)
+        if not raw:
+            continue
+        parsed = parse_timestamp(raw)
+        if parsed:
+            taken.add(parsed.astimezone(tz).date())
+    return taken
+
+
 def parse_timestamp(raw: str | int | float) -> datetime | None:
     """Parse the timestamp formats GHL returns: ISO strings or epoch millis."""
     if isinstance(raw, (int, float)):

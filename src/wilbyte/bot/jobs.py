@@ -13,7 +13,7 @@ from pathlib import Path
 from .. import ghl, pipeline, youtube
 from ..config import Config
 from ..models import BlogPost, Transcript, Video
-from ..scheduler import next_open_slots, taken_days_from_posts
+from ..scheduler import next_open_slots, taken_days_from_ledger, taken_days_from_posts
 from ..state import Ledger
 
 
@@ -50,10 +50,21 @@ def open_ghl(config: Config) -> GHLContext:
     return GHLContext(client, blog_id, author_id, [category_id])
 
 
-def taken_days(context: GHLContext | None, config: Config) -> set[date]:
-    if context is None:
-        return set()
-    return taken_days_from_posts(context.client.list_posts(context.blog_id), config.schedule)
+def taken_days(
+    context: GHLContext | None, config: Config, ledger: Ledger | None = None
+) -> set[date]:
+    """Every day already spoken for, from GHL and from RYTE's own ledger.
+
+    Both, because neither alone is complete: GHL holds posts written by hand
+    that RYTE never saw, and the ledger holds slots GHL has not reported back a
+    schedule for. Missing either one double-books a day.
+    """
+    days: set[date] = set()
+    if context is not None:
+        days |= taken_days_from_posts(context.client.list_posts(context.blog_id), config.schedule)
+    if ledger is not None:
+        days |= taken_days_from_ledger(ledger.entries.values(), config.schedule)
+    return days
 
 
 def resolve_videos(
@@ -86,9 +97,12 @@ def resolve_videos(
 
 
 def plan_slots(
-    videos: list[Video], context: GHLContext | None, config: Config
+    videos: list[Video],
+    context: GHLContext | None,
+    config: Config,
+    ledger: Ledger | None = None,
 ) -> list[datetime]:
-    return next_open_slots(taken_days(context, config), len(videos), config.schedule)
+    return next_open_slots(taken_days(context, config, ledger), len(videos), config.schedule)
 
 
 def build(

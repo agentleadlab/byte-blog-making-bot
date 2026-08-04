@@ -452,7 +452,7 @@ async def _send_plan(responder: Responder, config: Config, source: str, limit: i
 
     context = await _maybe_open_ghl(config)
     try:
-        slots = await asyncio.to_thread(jobs.plan_slots, videos, context, config)
+        slots = await asyncio.to_thread(jobs.plan_slots, videos, context, config, ledger)
     finally:
         if context:
             await asyncio.to_thread(context.close)
@@ -472,7 +472,7 @@ async def _send_status(responder: Responder, config: Config) -> None:
     booked: set[date] | None = None
     try:
         if context:
-            booked = await asyncio.to_thread(jobs.taken_days, context, config)
+            booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
             slots = next_open_slots(booked, 3, config.schedule)
         else:
             slots = next_open_slots(set(), 3, config.schedule)
@@ -694,7 +694,7 @@ async def _execute_run(
 
     created = skipped = failed = 0
     try:
-        slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config)
+        slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config, ledger)
         await responder.send(
             f"On it — building {len(videos)} post(s) in **{mode}** mode."
             + (f" Skipping {already_done} already done." if already_done else "")

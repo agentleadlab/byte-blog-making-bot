@@ -9,6 +9,7 @@ from wilbyte.scheduler import (
     next_open_slots,
     next_posting_day,
     parse_timestamp,
+    taken_days_from_ledger,
     taken_days_from_posts,
 )
 
@@ -112,3 +113,33 @@ def test_slots_start_after_the_last_scheduled_post(config):
     slots = next_open_slots(booked, 2, config.schedule, now=at(2026, 8, 4, 16, 24))
 
     assert [s.date() for s in slots] == [date(2026, 8, 13), date(2026, 8, 14)]
+
+
+# ------------------------------------------------------ ledger as a second source
+
+
+class Entry:
+    def __init__(self, scheduled_at):
+        self.scheduled_at = scheduled_at
+
+
+def test_the_ledger_books_the_days_ryte_handed_out(config):
+    """GHL doesn't always report a schedule back on a post RYTE created.
+
+    When it doesn't, the calendar read says the day is free and the next run
+    books straight on top of it - which is exactly what happened on Aug 13.
+    """
+    entries = [Entry("2026-08-13T14:00:00+00:00"), Entry("2026-08-14T14:00:00+00:00")]
+
+    assert taken_days_from_ledger(entries, config.schedule) == {
+        date(2026, 8, 13), date(2026, 8, 14)
+    }
+
+
+def test_a_draft_in_the_ledger_books_nothing(config):
+    """Drafts have no slot, so they must not take a day out of the calendar."""
+    assert taken_days_from_ledger([Entry(None)], config.schedule) == set()
+
+
+def test_an_unparseable_ledger_date_is_skipped_quietly(config):
+    assert taken_days_from_ledger([Entry("whenever")], config.schedule) == set()
