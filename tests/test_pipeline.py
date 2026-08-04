@@ -48,7 +48,7 @@ def test_ledger_skips_videos_already_processed(tmp_path):
     ledger = Ledger.load(tmp_path / "ledger.json")
     ledger.record(
         video_id="done1", title="t", url_slug="s",
-        scheduled_at=datetime(2026, 8, 12, 10, tzinfo=ZoneInfo("America/Chicago")),
+        scheduled_at=datetime(2026, 8, 12, 10, tzinfo=ZoneInfo("America/New_York")),
         ghl_post_id="p1",
     )
     ledger.save()

@@ -30,9 +30,11 @@ keywords = [
 ]
 
 [schedule]
-# One post per weekday at 10:00 AM. Never Saturday or Sunday.
+# One post per weekday at 10:00 AM Eastern. Never Saturday or Sunday.
+# America/New_York, not a fixed -05:00, so 10:00 stays 10:00 across the DST
+# switch rather than drifting to 11:00 for half the year.
 time = "10:00"
-timezone = "America/Chicago"
+timezone = "America/New_York"
 weekdays_only = true
 # GHL rejects schedules less than ~15 minutes out.
 min_lead_minutes = 20

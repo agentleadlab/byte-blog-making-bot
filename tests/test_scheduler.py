@@ -12,11 +12,11 @@ from wilbyte.scheduler import (
     taken_days_from_posts,
 )
 
-CT = ZoneInfo("America/Chicago")
+ET = ZoneInfo("America/New_York")
 
 
 def at(y, m, d, hh=9, mm=0):
-    return datetime(y, m, d, hh, mm, tzinfo=CT)
+    return datetime(y, m, d, hh, mm, tzinfo=ET)
 
 
 def test_weekends_are_not_posting_days(config):
@@ -84,8 +84,8 @@ def test_parse_timestamp_handles_iso_and_epoch_millis():
 
 
 def test_taken_days_converts_utc_to_local_posting_date(config):
-    # 15:00 UTC on Aug 12 is 10:00 CDT the same day.
-    posts = [{"publishedAt": "2026-08-12T15:00:00.000Z"}, {"publishedAt": "2026-08-13T15:00:00.000Z"}]
+    # 14:00 UTC on Aug 12 is 10:00 EDT the same day.
+    posts = [{"publishedAt": "2026-08-12T14:00:00.000Z"}, {"publishedAt": "2026-08-13T14:00:00.000Z"}]
 
     assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 12), date(2026, 8, 13)}
 

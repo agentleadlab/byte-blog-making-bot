@@ -386,11 +386,12 @@ from the video.
 
 ## Scheduling
 
-One post per weekday at 10:00 AM `America/Chicago`. Before assigning slots the
-bot reads every existing post on the blog and marks those days occupied, so if
-you're already booked through the 11th the next post lands on the 12th. Weekends
-are skipped, and a slot less than 20 minutes away is passed over because GHL
-rejects it.
+One post per weekday at 10:00 AM Eastern (`America/New_York`, so it stays 10:00
+through the daylight-saving switch). Before assigning slots the bot reads every
+existing post on the blog — published, scheduled and draft alike — and marks
+those days occupied, so if you're already booked through the 11th the next post
+lands on the 12th. Weekends are skipped, and a slot less than 20 minutes away is
+passed over because GHL rejects it.
 
 Change any of this in `config/wilbyte.toml` under `[schedule]`.
 

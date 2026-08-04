@@ -13,9 +13,9 @@ from wilbyte.ghl import (
 
 
 def test_timestamp_converts_local_10am_to_utc():
-    moment = datetime(2026, 8, 12, 10, 0, tzinfo=ZoneInfo("America/Chicago"))
+    moment = datetime(2026, 8, 12, 10, 0, tzinfo=ZoneInfo("America/New_York"))
 
-    assert to_api_timestamp(moment) == "2026-08-12T15:00:00.000Z"
+    assert to_api_timestamp(moment) == "2026-08-12T14:00:00.000Z"
 
 
 def test_naive_datetime_is_refused():
@@ -38,7 +38,7 @@ def test_payload_contains_every_field_wil_fills_in_by_hand():
         image_url="https://cdn/img.png",
         image_alt="insurance-lead-progression-roadmap",
         status="SCHEDULED",
-        published_at=datetime(2026, 8, 12, 10, 0, tzinfo=ZoneInfo("America/Chicago")),
+        published_at=datetime(2026, 8, 12, 10, 0, tzinfo=ZoneInfo("America/New_York")),
     )
 
     assert payload["locationId"] == "LOC"
@@ -48,7 +48,7 @@ def test_payload_contains_every_field_wil_fills_in_by_hand():
     assert payload["author"] == "AUTHOR"
     assert payload["tags"] == ["Lead Lab", "Agent Lead Lab"]
     assert payload["status"] == "SCHEDULED"
-    assert payload["publishedAt"] == "2026-08-12T15:00:00.000Z"
+    assert payload["publishedAt"] == "2026-08-12T14:00:00.000Z"
     assert payload["imageAltText"] == "insurance-lead-progression-roadmap"
 
 

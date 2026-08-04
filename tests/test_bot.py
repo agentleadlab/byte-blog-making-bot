@@ -21,7 +21,7 @@ from wilbyte.pipeline import assemble_post
 from wilbyte.state import Ledger
 from wilbyte.youtube import looks_like_playlist
 
-CT = ZoneInfo("America/Chicago")
+ET = ZoneInfo("America/New_York")
 
 PLAYLIST = "https://youtube.com/playlist?list=PLry8Oc9d41ocnWVvVOmhxPLVUtlUmliQ0"
 
@@ -178,7 +178,7 @@ def test_junk_values_return_none_instead_of_raising(raw):
 def test_preview_embed_shows_every_field_before_anything_is_sent(copy_package, config, tmp_path):
     video = Video(video_id="w7mazKut2lk", title="t", url="u")
     post = assemble_post(video, copy_package, config, output_dir=tmp_path, report=lambda _: None)
-    post.scheduled_at = datetime(2026, 8, 12, 10, tzinfo=CT)
+    post.scheduled_at = datetime(2026, 8, 12, 10, tzinfo=ET)
 
     embed = embeds.post_preview(post, index=1, total=3, mode="scheduled")
     fields = {f.name: f.value for f in embed.fields}
@@ -215,7 +215,7 @@ def test_long_description_is_truncated_to_discord_limits(copy_package, config, t
 
 def test_plan_embed_lists_each_video_with_its_slot():
     pairs = [
-        (Video(video_id=f"v{i}", title=f"Video {i}", url="u"), datetime(2026, 8, 12 + i, 10, tzinfo=CT))
+        (Video(video_id=f"v{i}", title=f"Video {i}", url="u"), datetime(2026, 8, 12 + i, 10, tzinfo=ET))
         for i in range(3)
     ]
 
@@ -239,16 +239,16 @@ def test_plan_embed_handles_an_empty_queue():
 
 def test_slot_is_only_consumed_on_approval():
     """A skipped post must leave its day free for the next one in the batch."""
-    pool = [datetime(2026, 8, d, 10, tzinfo=CT) for d in (12, 13, 14)]
+    pool = [datetime(2026, 8, d, 10, tzinfo=ET) for d in (12, 13, 14)]
 
     shown_first = pool[0]           # post 1 previewed
     # ...skipped, so nothing is popped
     shown_second = pool[0]          # post 2 previewed
 
-    assert shown_first == shown_second == datetime(2026, 8, 12, 10, tzinfo=CT)
+    assert shown_first == shown_second == datetime(2026, 8, 12, 10, tzinfo=ET)
 
     pool.pop(0)                     # post 2 approved
-    assert pool[0] == datetime(2026, 8, 13, 10, tzinfo=CT)
+    assert pool[0] == datetime(2026, 8, 13, 10, tzinfo=ET)
 
 
 def test_clicking_schedule_schedules_even_in_draft_mode():
@@ -277,7 +277,7 @@ def test_taken_days_is_empty_without_a_ghl_session(config):
 
 def test_plan_embed_labels_a_video_whose_title_could_not_be_read():
     pairs = [(Video(video_id="n2DRr4cRUe4", title="", url="u"),
-              datetime(2026, 8, 12, 10, tzinfo=CT))]
+              datetime(2026, 8, 12, 10, tzinfo=ET))]
 
     body = " ".join(f.value for f in embeds.plan_summary(pairs, skipped=0, source="a link").fields)
 
