@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -76,11 +77,27 @@ class ScheduleConfig:
     timezone: str
     weekdays_only: bool
     min_lead_minutes: int
+    # Never schedule before this day, whatever the blog calendar says. The
+    # escape hatch for posts GHL reports without a schedule: they look like
+    # free days and get booked twice. An ISO date, or empty for no floor.
+    earliest_day: str = ""
 
     @property
     def hour_minute(self) -> tuple[int, int]:
         hour, minute = self.time.split(":")
         return int(hour), int(minute)
+
+    @property
+    def floor(self) -> date | None:
+        text = (self.earliest_day or "").strip()
+        if not text:
+            return None
+        try:
+            return date.fromisoformat(text)
+        except ValueError as exc:
+            raise ConfigError(
+                f"[schedule] earliest_day must be a date like 2026-08-18, not {text!r}."
+            ) from exc
 
 
 @dataclass

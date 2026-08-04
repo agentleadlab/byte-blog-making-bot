@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -187,3 +188,44 @@ def test_a_post_with_only_a_creation_date_still_books_that_day(config):
     posts = [{"createdAt": "2026-08-03T14:00:00.000Z"}]
 
     assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 3)}
+
+
+# ------------------------------------------------------------ a hard floor
+
+
+def floored(config, day):
+    return replace(config.schedule, earliest_day=day)
+
+
+def test_a_floor_pushes_past_days_the_calendar_thinks_are_free(config):
+    """GHL reports some posts without a schedule, so those days look empty.
+
+    The floor is the manual override for exactly that - it wins over the
+    calendar read, because the calendar is the unreliable part.
+    """
+    slots = next_open_slots(set(), 2, floored(config, "2026-08-18"), now=at(2026, 8, 5, 9))
+
+    assert [s.date() for s in slots] == [date(2026, 8, 18), date(2026, 8, 19)]
+
+
+def test_a_floor_on_a_weekend_still_lands_on_a_weekday(config):
+    slots = next_open_slots(set(), 1, floored(config, "2026-08-15"), now=at(2026, 8, 5, 9))
+
+    assert slots[0].date() == date(2026, 8, 17)  # Saturday -> Monday
+
+
+def test_a_floor_in_the_past_changes_nothing(config):
+    slots = next_open_slots(set(), 1, floored(config, "2026-01-01"), now=at(2026, 8, 5, 9))
+
+    assert slots[0].date() == date(2026, 8, 5)
+
+
+def test_no_floor_set_behaves_as_before(config):
+    slots = next_open_slots(set(), 1, floored(config, ""), now=at(2026, 8, 5, 9))
+
+    assert slots[0].date() == date(2026, 8, 5)
+
+
+def test_a_floor_that_is_not_a_date_says_so(config):
+    with pytest.raises(Exception, match="earliest_day"):
+        next_open_slots(set(), 1, floored(config, "next tuesday"), now=at(2026, 8, 5, 9))

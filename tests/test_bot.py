@@ -347,3 +347,28 @@ def test_a_credentials_refusal_does_not_blame_ownership():
     hint = jobs._owner_hint(RuntimeError('HTTP 401: {"error": "unauthorized_client"}'))
 
     assert hint == ""
+
+
+# ------------------------------------------------------ undated posts in check
+
+
+def test_posts_with_a_readable_date_raise_nothing(config):
+    posts = [{"_id": "a", "publishedAt": "2026-08-12T14:00:00.000Z"}]
+
+    assert jobs._undated_posts(posts, config) == []
+
+
+def test_an_undated_post_is_flagged_with_the_fields_ghl_sent(config):
+    """A post with no readable date is a day the scheduler will hand out again."""
+    posts = [{"_id": "a", "title": "Are Old Leads Bad", "status": "SCHEDULED"}]
+
+    (ok, message), = jobs._undated_posts(posts, config)
+
+    assert ok is False
+    assert "1 post(s) came back with no readable date" in message
+    # The field list is the point - it ends the guessing about key names.
+    assert "status" in message and "title" in message
+
+
+def test_no_posts_at_all_is_not_a_problem(config):
+    assert jobs._undated_posts([], config) == []

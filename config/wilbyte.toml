@@ -38,6 +38,10 @@ timezone = "America/New_York"
 weekdays_only = true
 # GHL rejects schedules less than ~15 minutes out.
 min_lead_minutes = 20
+# Never schedule before this day. GHL reports some posts without a schedule,
+# so those days read as free and get booked twice - set this past the last day
+# you know is taken. Leave empty to trust the blog calendar alone.
+earliest_day = ""
 
 [cover]
 # 1200x630 - the standard social/OG preview size. Wider than GHL's suggested

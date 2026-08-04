@@ -229,6 +229,7 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
                 posts = client.list_posts(blog_id)
                 days = taken_days_from_posts(posts, config.schedule)
                 results.append((True, f"Read {len(posts)} existing post(s), {len(days)} day(s) booked"))
+                results.extend(_undated_posts(posts, config))
             except Exception as exc:
                 results.append((False, f"Cannot list existing posts: {exc}"))
     finally:
@@ -387,6 +388,30 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
     except Exception as exc:
         results.append((False, f"No transcript: {_short(exc)}"))
     return results
+
+
+def _undated_posts(posts: list[dict], config: Config) -> list[tuple[bool, str]]:
+    """Flag posts whose day can't be read, and say what GHL did send.
+
+    A post GHL reports without any date is a day the scheduler will hand out
+    again. Rather than guess at field names a third time, show the keys the
+    API actually returned for one of them.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import post_day
+
+    tz = ZoneInfo(config.schedule.timezone)
+    undated = [p for p in posts if post_day(p, tz) is None]
+    if not undated:
+        return []
+
+    keys = ", ".join(sorted(undated[0].keys())) or "(nothing at all)"
+    return [(
+        False,
+        f"{len(undated)} post(s) came back with no readable date — those days can "
+        f"be double-booked. GHL sent these fields: {keys}",
+    )]
 
 
 def _owner_hint(exc: Exception) -> str:

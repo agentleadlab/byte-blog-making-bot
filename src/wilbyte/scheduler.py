@@ -65,6 +65,13 @@ def next_open_slots(
     slots: list[datetime] = []
     day = now.date() - timedelta(days=1)  # next_posting_day() steps forward from here
 
+    # A configured floor wins over the calendar read, because the calendar is
+    # what's unreliable: GHL reports some posts without a schedule, and those
+    # days look free.
+    floor = config.floor
+    if floor and floor > day:
+        day = floor - timedelta(days=1)
+
     # Bound the walk so a fully-booked calendar fails loudly instead of hanging.
     for _ in range(count * 10 + 60):
         day = next_posting_day(day, config)
