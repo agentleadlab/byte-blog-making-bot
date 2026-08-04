@@ -32,6 +32,11 @@ SIMILARITY_THRESHOLD = 0.6
 # preferred for the cover.
 WHOLE_HEADLINE_RATIO = 0.6
 
+# How far over the character limit a *complete* headline may run before it is
+# worth cutting. The renderer scales text to its box, so a little over just
+# reads slightly smaller - where a cut can change what the line says.
+HEADLINE_OVERFLOW_RATIO = 1.25
+
 
 def _tokens(text: str) -> set[str]:
     words = re.findall(r"[a-z0-9$']+", text.lower())
@@ -96,9 +101,16 @@ def kicker_candidates(copy: CopyPackage, config: Config) -> list[str]:
     for headline in copy.headline_options:
         words = _strip_trailing_punct(headline.text).split()
         for size in range(hi, lo - 1, -1):
-            if len(words) >= size:
-                candidates.append(" ".join(words[:size]))
-                break
+            if len(words) < size:
+                continue
+            # Taking the first N words can stop on a joining word - "What To
+            # Sell First As" reads as a sentence someone interrupted. Back off
+            # until it ends on a word that carries meaning.
+            take = list(words[:size])
+            while len(take) > lo and take[-1].lower() in _STOPWORDS:
+                take.pop()
+            candidates.append(" ".join(take))
+            break
 
     # De-duplicate case-insensitively while preserving order.
     seen: set[str] = set()
@@ -122,7 +134,12 @@ def cover_headline(copy: CopyPackage, title: Headline, config: Config) -> str:
     limit = config.cover.headline_max_chars
     chosen = _strip_trailing_punct(title.text)
 
-    if len(chosen) <= limit:
+    # The template shrinks text to fit its box, so the limit is about how a
+    # poster reads, not about what physically fits. Cutting a title one
+    # character over the line turned "The Wrong Question New Life Insurance
+    # Agents Ask" into "...Insurance Agents" - a fragment that means something
+    # else. A whole headline slightly over always beats that.
+    if len(chosen) <= limit * HEADLINE_OVERFLOW_RATIO:
         return chosen
 
     trimmed = _shorten(title.text, limit)

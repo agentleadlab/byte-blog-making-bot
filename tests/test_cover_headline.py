@@ -3,7 +3,7 @@
 import pytest
 
 from wilbyte.models import CopyPackage, Headline
-from wilbyte.selection import cover_headline
+from wilbyte.selection import cover_headline, kicker_candidates
 
 
 def package(h1, *options):
@@ -89,3 +89,39 @@ def test_trailing_punctuation_is_stripped(config, punct):
     copy = package("H1", title.text)
 
     assert cover_headline(copy, title, config) == "Lead Flow Is Cash Flow"
+
+
+def test_a_headline_a_hair_over_the_limit_is_kept_whole(config):
+    """Cutting one character over changed what the line said.
+
+    "The Wrong Question New Life Insurance Agents Ask" is 47 characters against
+    a 46 limit, and trimming produced "...New Life Insurance Agents" - which
+    reads as a different, unfinished claim. The renderer scales to its box, so
+    slightly over just means slightly smaller.
+    """
+    title = Headline(text="The Wrong Question New Life Insurance Agents Ask")
+    copy = package(title.text)
+
+    assert cover_headline(copy, title, config).endswith("ASK".title())
+
+
+def test_a_genuinely_long_headline_is_still_cut(config):
+    long_title = Headline(
+        text="Here Is Exactly Why Your Agency Sales Stalled After You Paused Your Lead Flow"
+    )
+    copy = package(long_title.text)
+
+    result = cover_headline(copy, long_title, config)
+
+    assert len(result) <= config.cover.headline_max_chars * 1.25
+    assert len(result) < len(long_title.text)
+
+
+def test_a_kicker_does_not_end_on_a_joining_word(config):
+    """"What To Sell First As" reads as a sentence someone interrupted."""
+    copy = package("some h1", "What To Sell First As A New Life Insurance Agent")
+
+    candidates = kicker_candidates(copy, config)
+
+    assert candidates
+    assert not any(c.lower().split()[-1] in {"as", "the", "and", "of", "to"} for c in candidates)
