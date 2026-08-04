@@ -327,3 +327,36 @@ def test_every_client_coming_back_empty_says_which_were_tried(monkeypatch):
     assert "No caption track published" in message
     for client in ("default", "web", "mweb", "android"):
         assert client in message
+
+
+# ----------------------------------------------------- a signed-in transcript API
+
+
+def test_no_cookies_means_no_session(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+
+    assert youtube.cookie_session() is None
+
+
+def test_the_session_carries_the_cookies_and_a_real_user_agent(monkeypatch):
+    """A default python-requests user agent is itself a bot signal."""
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
+    monkeypatch.setenv(
+        "YOUTUBE_COOKIES",
+        ".youtube.com\tTRUE\t/\tTRUE\t1799999999\t__Secure-3PSID\tabc123\n",
+    )
+
+    session = youtube.cookie_session()
+
+    assert session is not None
+    assert any(c.name == "__Secure-3PSID" for c in session.cookies)
+    assert "Mozilla/5.0" in session.headers["User-Agent"]
+
+
+def test_an_unreadable_cookie_file_yields_no_session(monkeypatch, tmp_path):
+    bad = tmp_path / "cookies.txt"
+    bad.write_text("this is not a cookie file at all\n")
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(bad))
+
+    assert youtube.cookie_session() is None

@@ -301,6 +301,41 @@ def _proxy_config():
     return GenericProxyConfig(http_url=generic, https_url=generic)
 
 
+def cookie_session():
+    """A requests session carrying the configured cookies, or None.
+
+    The transcript API takes an `http_client`, so handing it this makes its
+    requests signed in too. That matters because it hits a different endpoint
+    from yt-dlp's - when YouTube starts returning player responses with no
+    caption tracks in them, this route can still answer.
+    """
+    path = cookie_file()
+    if not path:
+        return None
+
+    import http.cookiejar
+
+    import requests
+
+    jar = http.cookiejar.MozillaCookieJar(path)
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except (OSError, http.cookiejar.LoadError):
+        return None
+
+    session = requests.Session()
+    session.cookies = jar
+    # A default python-requests user agent is itself a bot signal.
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    return session
+
+
 def _is_blocked(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(
@@ -352,17 +387,24 @@ def fetch_transcript(
         except IngestError as exc:
             failures.append(("cookies", exc))
 
+    # The transcript API hits a different endpoint from yt-dlp's, so it can
+    # still answer when player responses come back with no caption tracks in
+    # them - and handing it the cookies makes it a signed-in request too.
+    session = cookie_session()
+    label = "transcript API (signed in)" if session else "transcript API"
+
     snippets: list[str] = []
     for attempt in range(attempts):
         try:
-            api = YouTubeTranscriptApi(proxy_config=proxy_config)
+            api = YouTubeTranscriptApi(proxy_config=proxy_config, http_client=session)
             fetched = api.fetch(video_id, languages=list(languages))
             snippets = [s.text for s in fetched]
             break
         except Exception as exc:
-            if attempt == attempts - 1 or _is_blocked(exc):
-                # An IP block won't lift on a retry; go straight to the fallback.
-                failures.append(("transcript API", exc))
+            if attempt == attempts - 1 or (_is_blocked(exc) and not session):
+                # An anonymous IP block won't lift on a retry. A signed-in one
+                # is worth retrying - it's usually throttling, not a wall.
+                failures.append((label, exc))
                 break
             time.sleep(2**attempt)
 
@@ -370,7 +412,7 @@ def fetch_transcript(
         text = clean_transcript(" ".join(snippets))
         if text.strip():
             return Transcript(video_id=video_id, text=text, source="youtube")
-        failures.append(("transcript API", IngestError("came back empty")))
+        failures.append((label, IngestError("came back empty")))
 
     if not have_cookies or proxy_config:
         try:
