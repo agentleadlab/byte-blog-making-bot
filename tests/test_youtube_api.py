@@ -136,16 +136,18 @@ def test_complete_setup_is_missing_nothing(monkeypatch):
 # ------------------------------------------------------ transcript diagnosis
 
 
-def test_a_data_api_refusal_is_reported_instead_of_the_scraper_block(monkeypatch):
-    """With OAuth configured, the API is the real route - say why it refused.
+def test_every_route_that_failed_is_named(monkeypatch):
+    """Routes fail for unrelated reasons, so one message has to carry them all.
 
-    The scraping fallbacks were never going to work from a datacenter, so
-    leading with their IP-block message sends you off fixing the wrong thing.
+    Reporting only the first failure meant a cookie problem was invisible
+    behind the Data API's permission error, and vice versa.
     """
     from wilbyte import youtube
 
     for name in youtube_api.OAUTH_VARS:
         monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("YOUTUBE_COOKIES", ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
     monkeypatch.setattr(
         youtube, "fetch_transcript_via_api",
         lambda *a, **k: (_ for _ in ()).throw(
@@ -154,16 +156,23 @@ def test_a_data_api_refusal_is_reported_instead_of_the_scraper_block(monkeypatch
     )
     monkeypatch.setattr(
         youtube, "fetch_transcript_via_ytdlp",
-        lambda *a, **k: (_ for _ in ()).throw(youtube.IngestError("not a bot")),
+        lambda *a, **k: (_ for _ in ()).throw(youtube.IngestError("cookies were rejected")),
     )
 
     with pytest.raises(youtube.IngestError) as caught:
         youtube.fetch_transcript("vid123", attempts=1)
 
     message = str(caught.value)
-    assert "not owned by requester" in message
-    assert "owner-only" in message
-    assert "blocking this server's IP" not in message
+    assert "Data API: 403: caption track not owned by requester" in message
+    assert "cookies: cookies were rejected" in message
+    # ...and the permission refusal points at the route that actually works.
+    assert "cookies are the route that works" in message
+
+
+def test_the_message_survives_having_no_failures_to_report():
+    from wilbyte.youtube import _transcript_failure
+
+    assert "vid123" in _transcript_failure("vid123", [])
 
 
 # ---------------------------------------------------------- track fallthrough

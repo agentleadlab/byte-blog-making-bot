@@ -261,11 +261,14 @@ def fetch_transcript(
 ) -> Transcript:
     """Pull the YouTube transcript, preferring manual captions over auto-generated.
 
-    Three ways in, cheapest first: the transcript API, then yt-dlp's caption
-    download (a different endpoint, so it often survives a block that stops the
-    first), and failing both, an instruction to attach the transcript by hand.
-    A throttled response is retried with backoff, but an outright IP block skips
-    straight to the fallback - waiting seconds will not lift it.
+    Several ways in, best first: the Data API when OAuth is set, yt-dlp with
+    cookies (a signed-in request, so the bot check doesn't apply), then the
+    anonymous transcript API and yt-dlp without cookies. Whichever answers
+    first wins.
+
+    Every failure is kept and reported together. Routes fail for unrelated
+    reasons - an API permission refusal says nothing about why cookies didn't
+    work - and showing only the first one turns diagnosis into guesswork.
     """
     import time
 
@@ -273,33 +276,27 @@ def fetch_transcript(
 
     from . import youtube_api
 
-    # The official API first: it's the only route that isn't subject to bot
-    # detection, because it authenticates as the channel's owner.
-    api_error: Exception | None = None
+    failures: list[tuple[str, Exception]] = []
+
     if youtube_api.oauth_credentials():
         try:
             return fetch_transcript_via_api(video_id, languages=languages)
         except (youtube_api.YouTubeAPIError, IngestError) as exc:
-            # Keep the reason. When OAuth is configured this is *the* route, and
-            # reporting the scraper's IP block instead sends you off fixing the
-            # wrong thing - the answer is usually that consent was given by an
-            # account that doesn't own the video.
-            api_error = exc
+            failures.append(("Data API", exc))
 
     proxy_config = _proxy_config()
+    have_cookies = bool(cookie_file())
 
     # Cookies make yt-dlp a signed-in request, which is not subject to the bot
-    # check - so when they're set it beats the anonymous transcript API rather
-    # than waiting behind three doomed retries of it.
-    if cookie_file() and not proxy_config:
+    # check - so when they're set it goes ahead of the anonymous transcript API
+    # rather than waiting behind three doomed retries of it.
+    if have_cookies and not proxy_config:
         try:
             return fetch_transcript_via_ytdlp(video_id, languages=languages)
         except IngestError as exc:
-            api_error = api_error or exc
+            failures.append(("cookies", exc))
 
-    last_error: Exception | None = None
     snippets: list[str] = []
-
     for attempt in range(attempts):
         try:
             api = YouTubeTranscriptApi(proxy_config=proxy_config)
@@ -307,53 +304,43 @@ def fetch_transcript(
             snippets = [s.text for s in fetched]
             break
         except Exception as exc:
-            last_error = exc
-            # An IP block won't lift on a retry, so go straight to the fallback.
-            if _is_blocked(exc) or attempt == attempts - 1:
+            if attempt == attempts - 1 or _is_blocked(exc):
+                # An IP block won't lift on a retry; go straight to the fallback.
+                failures.append(("transcript API", exc))
                 break
             time.sleep(2**attempt)
 
-    if not snippets:
+    if snippets:
+        text = clean_transcript(" ".join(snippets))
+        if text.strip():
+            return Transcript(video_id=video_id, text=text, source="youtube")
+        failures.append(("transcript API", IngestError("came back empty")))
+
+    if not have_cookies or proxy_config:
         try:
             return fetch_transcript_via_ytdlp(video_id, languages=languages)
-        except IngestError as fallback_error:
-            if api_error is not None:
-                # OAuth was configured, so the Data API was the real attempt and
-                # the scraping routes were never going to work from a datacenter.
-                # Lead with what Google actually said - and only blame ownership
-                # when the refusal was actually about permission.
-                text = str(api_error)
-                hint = (
-                    " Captions are owner-only, so the usual cause is consent given "
-                    "by a Google account that doesn't own this video. Re-authorise "
-                    "as the channel owner."
-                    if "403" in text or "permission" in text.lower()
-                    else ""
-                )
-                raise IngestError(
-                    f"Could not get a transcript for {video_id}. The YouTube Data "
-                    f"API refused: {_first_line(api_error)}{hint} "
-                    f"You can always attach the transcript as a .txt with the link."
-                ) from api_error
+        except IngestError as exc:
+            failures.append(("yt-dlp", exc))
 
-            blocked = last_error is not None and _is_blocked(last_error)
-            detail = (
-                "YouTube is blocking this server's IP for transcripts, and the "
-                "caption fallback did not work either."
-                if blocked
-                else f"{_first_line(last_error) if last_error else 'unknown error'}"
-            )
-            raise IngestError(
-                f"Could not get a transcript for {video_id}. {detail} "
-                f"Fallback said: {fallback_error}. "
-                f"You can attach the transcript as a .txt or .vtt file with the link "
-                f"instead, or set WEBSHARE_PROXY_USERNAME/WEBSHARE_PROXY_PASSWORD."
-            ) from fallback_error
+    raise IngestError(_transcript_failure(video_id, failures))
 
-    text = clean_transcript(" ".join(snippets))
-    if not text.strip():
-        raise IngestError(f"Transcript for {video_id} came back empty.")
-    return Transcript(video_id=video_id, text=text, source="youtube")
+
+def _transcript_failure(video_id: str, failures: list[tuple[str, Exception]]) -> str:
+    """One message naming every route that was tried and what it said."""
+    if not failures:
+        return f"Could not get a transcript for {video_id}."
+
+    lines = [f"{route}: {_first_line(exc)}" for route, exc in failures]
+    advice = "Attach the transcript as a .txt with the link and everything else runs."
+
+    joined = " ".join(str(exc) for _, exc in failures).lower()
+    if "403" in joined or "permission" in joined:
+        advice = (
+            "Captions made in YouTube Studio can't be downloaded through the Data "
+            "API even by the owner - cookies are the route that works. " + advice
+        )
+
+    return f"Could not get a transcript for {video_id}. Tried — " + " | ".join(lines) + f". {advice}"
 
 
 def fetch_transcript_via_api(
