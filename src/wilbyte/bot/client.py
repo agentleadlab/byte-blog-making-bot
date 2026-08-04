@@ -636,6 +636,16 @@ async def _send_cover(
 # ----------------------------------------------------------------------- runner
 
 
+def publish_status(decision: Decision) -> str:
+    """Which GHL status a reviewed post gets.
+
+    The button is the whole decision. The run mode only picks the default the
+    review returns when approval is off - a card that says "Schedule it" above
+    a date has to schedule when clicked, whatever word started the run.
+    """
+    return ghl.STATUS_DRAFT if decision is Decision.DRAFT else ghl.STATUS_SCHEDULED
+
+
 async def _execute_run(
     bot: WilByteBot,
     responder: Responder,
@@ -730,10 +740,8 @@ async def _execute_run(
                 created += 1
                 continue
 
-            # `mode: draft` sends the whole batch to drafts; the per-post button can
-            # still force a single draft while the run is otherwise scheduling.
-            to_draft = decision is Decision.DRAFT or mode == "draft"
-            status = ghl.STATUS_DRAFT if to_draft else ghl.STATUS_SCHEDULED
+            status = publish_status(decision)
+            to_draft = status == ghl.STATUS_DRAFT
             if to_draft:
                 post.scheduled_at = None
             elif slot_pool:

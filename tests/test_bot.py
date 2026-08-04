@@ -8,9 +8,14 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.bot import embeds, jobs
-from wilbyte.bot.client import is_allowed, is_direct_mention, parse_guild_id
+from wilbyte.bot.client import (
+    is_allowed,
+    is_direct_mention,
+    parse_guild_id,
+    publish_status,
+)
 from wilbyte.bot.views import Decision
-from wilbyte import youtube
+from wilbyte import ghl, youtube
 from wilbyte.models import Video
 from wilbyte.pipeline import assemble_post
 from wilbyte.state import Ledger
@@ -244,6 +249,19 @@ def test_slot_is_only_consumed_on_approval():
 
     pool.pop(0)                     # post 2 approved
     assert pool[0] == datetime(2026, 8, 13, 10, tzinfo=CT)
+
+
+def test_clicking_schedule_schedules_even_in_draft_mode():
+    """The card promises a date above a "Schedule it" button - honour it.
+
+    Asking for the run with the word "draft" used to override the button, so a
+    post previewed as "Scheduled Wed Aug 05" quietly landed as a draft.
+    """
+    assert publish_status(Decision.APPROVE) == ghl.STATUS_SCHEDULED
+
+
+def test_clicking_save_as_draft_drafts():
+    assert publish_status(Decision.DRAFT) == ghl.STATUS_DRAFT
 
 
 def test_decision_enum_covers_every_button():

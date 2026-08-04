@@ -132,8 +132,8 @@ Mention the bot and say what you want — word order doesn't matter.
 
 | Say | It does |
 | --- | --- |
-| `@RYTE <link> 3` | Writes the next 3 posts |
-| `@RYTE draft <link>` | Same, but everything lands in GHL as a draft |
+| `@RYTE <link> 3` | Writes the next 3 posts and schedules them |
+| `@RYTE draft <link>` | Same, but **Save as draft** is the default answer |
 | `@RYTE preview <link>` | Builds locally, sends nothing to GHL |
 | `@RYTE plan <link>` | Which videos are queued and what day each would land on |
 | `@RYTE status` | Posts in the ledger, days booked, next open slots |
@@ -156,7 +156,9 @@ The same things work as slash commands, if you prefer a form to fill in:
 Each review card shows the cover image, title, slug, scheduled slot, description,
 and the article H1 — so you can confirm the title genuinely differs from the H1
 before approving. Four buttons: **Schedule it**, **Save as draft**, **Skip**,
-**Stop the run**.
+**Stop the run**. The button you click always wins — starting the run with the
+word `draft` only changes what happens on an unattended run, not what
+**Schedule it** does.
 
 Skipping leaves the day free, so the next post in the batch takes that slot
 instead of leaving a gap. If a publish fails, its slot is returned to the pool
