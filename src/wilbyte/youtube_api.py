@@ -199,11 +199,13 @@ def list_captions(video_id: str) -> list[dict]:
     return data.get("items") or []
 
 
-def pick_caption_track(tracks: list[dict], languages: tuple[str, ...]) -> dict | None:
-    """Prefer a human-written track in a wanted language, then auto-generated.
+def rank_caption_tracks(tracks: list[dict], languages: tuple[str, ...]) -> list[dict]:
+    """Every track, best first: human-written and in a wanted language wins.
 
     Manual captions are punctuated and correctly cased, which produces markedly
-    better copy than ASR output.
+    better copy than ASR output. The whole list is returned rather than just the
+    winner because `captions.download` can refuse an individual track that
+    `captions.list` happily showed - so the caller gets to try the next one.
     """
     def language(track: dict) -> str:
         return (track.get("snippet") or {}).get("language", "")
@@ -213,17 +215,20 @@ def pick_caption_track(tracks: list[dict], languages: tuple[str, ...]) -> dict |
 
     wanted = [lang.lower() for lang in languages]
 
-    for asr in (False, True):
-        for lang in wanted:
-            for track in tracks:
-                if is_asr(track) is asr and language(track).lower().startswith(lang.split("-")[0]):
-                    return track
-    # Nothing in the requested languages - take whatever exists.
-    for asr in (False, True):
-        for track in tracks:
-            if is_asr(track) is asr:
-                return track
-    return None
+    def rank(track: dict) -> tuple[int, int]:
+        base = language(track).lower().split("-")[0]
+        position = next(
+            (i for i, lang in enumerate(wanted) if base == lang.split("-")[0]), len(wanted)
+        )
+        return (int(is_asr(track)), position)
+
+    return sorted(tracks, key=rank)
+
+
+def pick_caption_track(tracks: list[dict], languages: tuple[str, ...]) -> dict | None:
+    """The single best caption track, or None if there are none at all."""
+    ranked = rank_caption_tracks(tracks, languages)
+    return ranked[0] if ranked else None
 
 
 def download_caption(caption_id: str, *, fmt: str = "srt") -> str:

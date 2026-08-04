@@ -164,3 +164,60 @@ def test_a_data_api_refusal_is_reported_instead_of_the_scraper_block(monkeypatch
     assert "not owned by requester" in message
     assert "owner-only" in message
     assert "blocking this server's IP" not in message
+
+
+# ---------------------------------------------------------- track fallthrough
+
+
+def test_ranking_puts_the_best_track_first_and_keeps_the_rest():
+    """Every track comes back, so a refused download can try the next one."""
+    tracks = [track("asr", "en", "ASR"), track("es", "es"), track("human", "en")]
+
+    ranked = youtube_api.rank_caption_tracks(tracks, ("en",))
+
+    assert [t["id"] for t in ranked] == ["human", "es", "asr"]
+
+
+def test_ranking_of_nothing_is_nothing():
+    assert youtube_api.rank_caption_tracks([], ("en",)) == []
+
+
+def test_a_refused_track_falls_through_to_the_next_one(monkeypatch):
+    """captions.download applies a stricter rule than captions.list.
+
+    A track the API happily listed can still 403, so the human-written one
+    being refused must not end the attempt while an ASR track remains.
+    """
+    from wilbyte import youtube
+
+    monkeypatch.setattr(
+        youtube_api, "list_captions",
+        lambda _vid: [track("human", "en"), track("asr", "en", "ASR")],
+    )
+
+    def download(caption_id, **kwargs):
+        if caption_id == "human":
+            raise youtube_api.YouTubeAPIError("403: not owned by requester")
+        return "1\n00:00:01,000 --> 00:00:02,000\nthe aged lead strategy\n"
+
+    monkeypatch.setattr(youtube_api, "download_caption", download)
+
+    result = youtube.fetch_transcript_via_api("vid123")
+
+    assert "aged lead strategy" in result.text
+    assert result.source == "youtube-api-asr"
+
+
+def test_every_track_refused_reports_the_api_error(monkeypatch):
+    from wilbyte import youtube
+
+    monkeypatch.setattr(youtube_api, "list_captions", lambda _vid: [track("human", "en")])
+    monkeypatch.setattr(
+        youtube_api, "download_caption",
+        lambda *a, **k: (_ for _ in ()).throw(
+            youtube_api.YouTubeAPIError("403: not owned by requester")
+        ),
+    )
+
+    with pytest.raises(youtube.IngestError, match="not owned by requester"):
+        youtube.fetch_transcript_via_api("vid123")

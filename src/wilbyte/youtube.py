@@ -304,14 +304,28 @@ def fetch_transcript_via_api(
     if not tracks:
         raise IngestError(f"No caption track published for {video_id}.")
 
-    track = youtube_api.pick_caption_track(tracks, languages)
-    if not track:
-        raise IngestError(f"No usable caption track for {video_id}.")
+    # `captions.download` applies a stricter ownership rule than `captions.list`,
+    # so a track that was listed can still be refused. Work down the ranking
+    # rather than giving up on the first refusal.
+    ranked = youtube_api.rank_caption_tracks(tracks, languages)
+    text = ""
+    track = None
+    last_error: Exception | None = None
+    for candidate in ranked:
+        try:
+            raw = youtube_api.download_caption(candidate["id"])
+        except youtube_api.YouTubeAPIError as exc:
+            last_error = exc
+            continue
+        text = clean_transcript(parse_captions(raw))
+        if text.strip():
+            track = candidate
+            break
 
-    raw = youtube_api.download_caption(track["id"])
-    text = clean_transcript(parse_captions(raw))
-    if not text.strip():
-        raise IngestError(f"Caption track for {video_id} was empty.")
+    if track is None:
+        if last_error is not None:
+            raise IngestError(str(last_error)) from last_error
+        raise IngestError(f"Every caption track for {video_id} was empty.")
 
     kind = (track.get("snippet") or {}).get("trackKind", "")
     return Transcript(
