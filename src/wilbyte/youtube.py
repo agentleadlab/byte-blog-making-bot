@@ -10,6 +10,8 @@ import os
 import re
 from pathlib import Path
 
+import httpx
+
 from .models import Transcript, Video
 
 _PLAYLIST_ID_RE = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
@@ -443,38 +445,80 @@ def fetch_transcript_via_ytdlp(
 ) -> Transcript:
     """Get captions through yt-dlp instead of the transcript API.
 
-    yt-dlp fetches captions the way the player does, which is a different
-    endpoint from the one the transcript API uses - so this often still works
-    when that one is IP-blocked. Free, and no proxy needed.
+    Only the caption track is wanted, never the video, so this reads the track
+    URL out of the extracted metadata and fetches it directly rather than going
+    through yt-dlp's downloader. Asking the downloader for subtitles makes it
+    resolve a video format first, and YouTube will refuse those to a datacenter
+    IP even on a signed-in request - which surfaced as "Requested format is not
+    available" on a video whose captions were sitting right there.
     """
-    import tempfile
-    from pathlib import Path as _Path
-
     from yt_dlp import YoutubeDL
 
-    with tempfile.TemporaryDirectory() as tmp:
-        opts = _ydl_opts(
-            writesubtitles=True,
-            writeautomaticsub=True,
-            subtitleslangs=list(languages),
-            subtitlesformat="vtt",
-            outtmpl=str(_Path(tmp) / "%(id)s"),
-        )
-        try:
-            with YoutubeDL(opts) as ydl:
-                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-        except Exception as exc:
-            raise IngestError(f"yt-dlp could not fetch captions for {video_id}: {_first_line(exc)}") from exc
+    opts = _ydl_opts(ignore_no_formats_error=True)
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(
+                f"https://www.youtube.com/watch?v={video_id}", download=False
+            )
+    except Exception as exc:
+        raise IngestError(
+            f"yt-dlp could not read {video_id}: {_first_line(exc)}"
+        ) from exc
 
-        files = sorted(_Path(tmp).glob("*.vtt")) or sorted(_Path(tmp).glob("*.srt"))
-        if not files:
-            raise IngestError(f"No caption track published for {video_id}.")
-        raw = files[0].read_text(encoding="utf-8", errors="replace")
+    track = pick_subtitle_track(info or {}, languages)
+    if not track:
+        raise IngestError(f"No caption track published for {video_id}.")
 
-    text = clean_transcript(parse_captions(raw))
+    url, is_asr = track
+    try:
+        response = httpx.get(url, timeout=60, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise IngestError(f"Could not download the caption track: {exc}") from exc
+
+    text = clean_transcript(parse_captions(response.text))
     if not text.strip():
         raise IngestError(f"Caption file for {video_id} was empty.")
-    return Transcript(video_id=video_id, text=text, source="youtube-ytdlp")
+    return Transcript(
+        video_id=video_id,
+        text=text,
+        source="youtube-ytdlp-asr" if is_asr else "youtube-ytdlp",
+    )
+
+
+# Caption formats this can parse, best first. json3 and srv* are YouTube's own
+# shapes and would each need their own reader.
+_SUBTITLE_EXTS = ("vtt", "srt", "ttml")
+
+
+def pick_subtitle_track(
+    info: dict, languages: tuple[str, ...]
+) -> tuple[str, bool] | None:
+    """(url, is_auto_generated) for the best caption track in the metadata.
+
+    Human-written beats auto-generated, and a wanted language beats any other,
+    for the same reason as everywhere else: ASR output is unpunctuated and
+    badly cased, and it makes visibly worse copy.
+    """
+    sources = (
+        (info.get("subtitles") or {}, False),
+        (info.get("automatic_captions") or {}, True),
+    )
+    wanted = [lang.split("-")[0].lower() for lang in languages]
+
+    for tracks, is_asr in sources:
+        ordered = sorted(
+            tracks.items(),
+            key=lambda item: wanted.index(item[0].split("-")[0].lower())
+            if item[0].split("-")[0].lower() in wanted
+            else len(wanted),
+        )
+        for _language, formats in ordered:
+            for ext in _SUBTITLE_EXTS:
+                for fmt in formats or []:
+                    if fmt.get("ext") == ext and fmt.get("url"):
+                        return fmt["url"], is_asr
+    return None
 
 
 _TIMESTAMP_LINE = re.compile(r"^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->")

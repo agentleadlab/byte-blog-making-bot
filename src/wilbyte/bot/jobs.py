@@ -366,7 +366,8 @@ def check_youtube(source: str | None) -> list[tuple[bool, str]]:
         route = {
             "youtube-api": "official API, human-written captions",
             "youtube-api-asr": "official API, auto-generated captions",
-            "youtube-ytdlp": "yt-dlp fallback",
+            "youtube-ytdlp": "yt-dlp, human-written captions",
+            "youtube-ytdlp-asr": "yt-dlp, auto-generated captions",
         }.get(transcript.source, transcript.source)
         results.append((True, f"Transcript works — {transcript.word_count} words ({route})"))
     except Exception as exc:

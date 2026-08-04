@@ -188,3 +188,59 @@ def test_no_cookies_summarise_as_nothing(monkeypatch):
     monkeypatch.delenv("YOUTUBE_COOKIES_FILE", raising=False)
 
     assert youtube.cookie_summary() == (0, False)
+
+
+# ----------------------------------------------------------- subtitle picking
+
+
+def fmt(ext, url="https://x/track"):
+    return {"ext": ext, "url": url}
+
+
+def test_human_written_captions_beat_auto_generated():
+    info = {
+        "subtitles": {"en": [fmt("vtt", "https://x/human")]},
+        "automatic_captions": {"en": [fmt("vtt", "https://x/asr")]},
+    }
+
+    assert youtube.pick_subtitle_track(info, ("en",)) == ("https://x/human", False)
+
+
+def test_auto_generated_is_used_when_that_is_all_there_is():
+    info = {"automatic_captions": {"en": [fmt("vtt", "https://x/asr")]}}
+
+    assert youtube.pick_subtitle_track(info, ("en",)) == ("https://x/asr", True)
+
+
+def test_a_wanted_language_wins():
+    info = {"subtitles": {
+        "es": [fmt("vtt", "https://x/es")],
+        "en": [fmt("vtt", "https://x/en")],
+    }}
+
+    assert youtube.pick_subtitle_track(info, ("en",))[0] == "https://x/en"
+
+
+def test_a_regional_variant_counts_as_the_language():
+    info = {"subtitles": {"en-GB": [fmt("vtt", "https://x/gb")]}}
+
+    assert youtube.pick_subtitle_track(info, ("en",))[0] == "https://x/gb"
+
+
+def test_a_parseable_format_is_chosen_over_youtubes_own():
+    """json3 and srv3 would each need their own reader; vtt we can already read."""
+    info = {"subtitles": {"en": [
+        fmt("json3", "https://x/json"), fmt("srv1", "https://x/srv"), fmt("vtt", "https://x/vtt"),
+    ]}}
+
+    assert youtube.pick_subtitle_track(info, ("en",))[0] == "https://x/vtt"
+
+
+def test_no_readable_format_is_no_track():
+    info = {"subtitles": {"en": [fmt("json3")]}}
+
+    assert youtube.pick_subtitle_track(info, ("en",)) is None
+
+
+def test_a_video_with_no_captions_at_all():
+    assert youtube.pick_subtitle_track({}, ("en",)) is None
