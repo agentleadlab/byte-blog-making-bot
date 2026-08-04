@@ -7,6 +7,7 @@ is Saturdays and Sundays."
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -82,9 +83,7 @@ def next_open_slots(
     )
 
 
-# The day a post occupies, most authoritative first. A scheduled post carries a
-# future date under one of these; `createdAt` is the last resort because for a
-# scheduled post it is the day it was *written*, which books the wrong day.
+# The day a post occupies, most authoritative first.
 POST_DATE_FIELDS = (
     "publishedAt",
     "publishDate",
@@ -92,8 +91,50 @@ POST_DATE_FIELDS = (
     "scheduledAt",
     "scheduleDate",
     "scheduledDate",
-    "createdAt",
 )
+
+# When a post was written or last touched - never when it goes out.
+BOOKKEEPING_DATE_FIELDS = frozenset(
+    {"createdat", "updatedat", "deletedat", "archivedat", "lastupdatedat"}
+)
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]")
+
+
+def post_day(post: dict, tz: ZoneInfo) -> date | None:
+    """The day this post occupies, or None.
+
+    GHL does not report a schedule under a predictable key on every post - the
+    ones RYTE creates come back without any of the documented fields, which
+    made a booked week look empty and double-booked it. So: try the documented
+    names, then fall back to scanning for any other ISO timestamp on the
+    object and taking the latest. Bookkeeping fields are excluded by name,
+    because a post written last Tuesday for next Thursday must book Thursday.
+    """
+    raw = next((post[f] for f in POST_DATE_FIELDS if post.get(f)), None)
+    if raw:
+        parsed = parse_timestamp(raw)
+        if parsed:
+            return parsed.astimezone(tz).date()
+
+    found: list[datetime] = []
+    for key, value in post.items():
+        if key.lower() in BOOKKEEPING_DATE_FIELDS:
+            continue
+        # Only ISO-shaped strings. Parsing arbitrary numbers would turn ids
+        # into dates and book days at random.
+        if not isinstance(value, str) or not _ISO_DATE.match(value):
+            continue
+        parsed = parse_timestamp(value)
+        if parsed:
+            found.append(parsed)
+    if found:
+        return max(found).astimezone(tz).date()
+
+    # Nothing else to go on. A published post's creation day is usually also
+    # its posting day, so this is better than treating the day as free.
+    created = parse_timestamp(post["createdAt"]) if post.get("createdAt") else None
+    return created.astimezone(tz).date() if created else None
 
 
 def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date]:
@@ -103,15 +144,7 @@ def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date
     and converts them into local posting dates.
     """
     tz = ZoneInfo(config.timezone)
-    taken: set[date] = set()
-    for post in posts:
-        raw = next((post[f] for f in POST_DATE_FIELDS if post.get(f)), None)
-        if not raw:
-            continue
-        parsed = parse_timestamp(raw)
-        if parsed:
-            taken.add(parsed.astimezone(tz).date())
-    return taken
+    return {day for post in posts if (day := post_day(post, tz)) is not None}
 
 
 def taken_days_from_ledger(entries, config: ScheduleConfig) -> set[date]:

@@ -143,3 +143,47 @@ def test_a_draft_in_the_ledger_books_nothing(config):
 
 def test_an_unparseable_ledger_date_is_skipped_quietly(config):
     assert taken_days_from_ledger([Entry("whenever")], config.schedule) == set()
+
+
+# --------------------------------------------- posts with an undocumented shape
+
+
+def test_a_schedule_under_an_unexpected_key_is_still_found(config):
+    """GHL returns no documented date field on the posts RYTE creates.
+
+    A booked week then looked empty and got booked again, so anything ISO
+    shaped on the object counts - latest wins.
+    """
+    posts = [{
+        "title": "Are Old Leads Bad",
+        "status": "SCHEDULED",
+        "createdAt": "2026-08-04T20:57:00.000Z",
+        "somethingElseEntirely": "2026-08-13T14:00:00.000Z",
+    }]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 13)}
+
+
+def test_bookkeeping_fields_never_win(config):
+    """A post written Tuesday for Thursday has to book Thursday."""
+    posts = [{
+        "createdAt": "2026-08-04T20:57:00.000Z",
+        "updatedAt": "2026-08-05T01:00:00.000Z",
+        "publishedAt": "2026-08-13T14:00:00.000Z",
+    }]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 13)}
+
+
+def test_ids_and_numbers_are_not_mistaken_for_dates(config):
+    """Parsing arbitrary values would book days at random."""
+    posts = [{"_id": "vVS0DP09w5DdUY9AVVuA", "views": 1786000000000, "title": "x"}]
+
+    assert taken_days_from_posts(posts, config.schedule) == set()
+
+
+def test_a_post_with_only_a_creation_date_still_books_that_day(config):
+    """Better than treating the day as free when there is nothing else."""
+    posts = [{"createdAt": "2026-08-03T14:00:00.000Z"}]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 3)}
