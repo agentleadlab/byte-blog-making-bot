@@ -86,10 +86,24 @@ class CopywriterError(RuntimeError):
 
 
 def load_system_prompt(path: Path | None = None) -> str:
+    """The operating brief, followed by every reference document.
+
+    The brief is deliberately first: it carries the blog-specific rules and the
+    compliance limits, and it says outright that it wins over anything in the
+    reference material. The reference docs are read in filename order, so
+    numbering them controls what the model sees first.
+
+    Dropping another `.md` into `prompts/reference/` is all it takes to teach
+    RYTE something new - no code change, no redeploy beyond a restart.
+    """
     prompt_path = path or PROMPT_PATH
     if not prompt_path.exists():
         raise CopywriterError(f"Copywriter prompt not found: {prompt_path}")
-    return prompt_path.read_text(encoding="utf-8")
+
+    parts = [prompt_path.read_text(encoding="utf-8")]
+    for doc in sorted((prompt_path.parent / "reference").glob("*.md")):
+        parts.append(f"\n\n---\n\n<!-- {doc.name} -->\n\n{doc.read_text(encoding='utf-8')}")
+    return "".join(parts)
 
 
 def build_user_message(video: Video, transcript: Transcript) -> str:
@@ -126,7 +140,15 @@ def generate_copy(
         response = client.messages.create(
             model=config.copy.model,
             max_tokens=config.copy.max_tokens,
-            system=system_prompt,
+            # The brief plus its reference documents is ~18k tokens and identical
+            # on every post, so cache it. Within a batch the second and third
+            # posts read it at a tenth of the price instead of paying full
+            # freight three times over.
+            system=[{
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }],
             tools=[BLOG_PACKAGE_TOOL],
             tool_choice={"type": "tool", "name": "emit_blog_package"},
             messages=[{"role": "user", "content": build_user_message(video, transcript)}],

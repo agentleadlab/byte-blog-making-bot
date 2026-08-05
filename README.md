@@ -433,12 +433,27 @@ see [`assets/README.md`](assets/README.md). No code changes needed.
 
 ## Adjusting the copy
 
-`prompts/copywriting_frank.md` is the system prompt. It's a **reconstruction** of
-the Organic Post AI Copywriter project instructions, rebuilt from the output
-shape visible in the video (headline options with char counts, meta title and
-description, URL slug, keyword map, internal link flag). If you can export the
-real project instructions, paste them over the body of that file — nothing in the
-code reads anything but the file.
+The system prompt is assembled at runtime from two places:
+
+- **`prompts/copywriting_frank.md`** — the operating brief: who's writing, the
+  method, the structure, the required outputs, and the hard rules. It says
+  outright that it overrides the reference material, and it is read first.
+- **`prompts/reference/*.md`** — the standard to write to, in filename order:
+  the voice profile, the copy systems, the format playbooks, the Agent Lead Lab
+  brand facts (the receipts vault — the only source of real numbers), and an
+  approved blog post as the target.
+
+**Dropping another `.md` into `prompts/reference/` teaches RYTE something new.**
+No code change; restart to pick it up. Numbering controls what it reads first.
+
+The assembled brief runs about 18k tokens and is identical on every post, so
+it's sent with `cache_control` — the second and third posts in a batch read it
+at a tenth of the price instead of paying for it three times.
+
+One thing to keep in mind when editing: the reference docs are Matthew
+Volkwyn's voice for **his own brand**. RYTE takes the systems, the sentence
+mechanics and the proof discipline from them — not the persona, the catchphrases
+or the profanity. The brief's hard rules say so explicitly, and they win.
 
 The structured fields the pipeline needs (`article_h1`, `headline_options`,
 `meta_title`, `meta_description`, `url_slug`, …) are enforced by the tool schema

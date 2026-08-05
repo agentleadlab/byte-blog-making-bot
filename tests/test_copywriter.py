@@ -95,3 +95,42 @@ def test_system_prompt_file_exists_and_is_substantial():
 
     assert "Agent Lead Lab" in prompt
     assert len(prompt) > 500
+
+
+# ------------------------------------------------------- the assembled brief
+
+
+def test_reference_documents_are_appended_to_the_brief():
+    """The brief is the operating instructions; the docs are the standard."""
+    prompt = load_system_prompt()
+
+    assert prompt.startswith("# Agent Lead Lab")
+    for marker in (
+        "Brand Facts Sheet",          # what is true
+        "Cost Per Acquisition",       # the approved exemplar
+        "BCD",                        # the hook system
+        "Noteworthy Format",          # the content-promo format
+    ):
+        assert marker in prompt, marker
+
+
+def test_the_operating_brief_comes_before_the_reference_material():
+    """It says outright that it overrides them, so it has to be read first."""
+    prompt = load_system_prompt()
+
+    assert prompt.index("Hard rules") < prompt.index("Matthew Volkwyn")
+
+
+def test_the_compliance_rules_survive_assembly():
+    prompt = load_system_prompt()
+
+    for rule in ("No income guarantees", "Clean language", "Invent nothing"):
+        assert rule in prompt, rule
+
+
+def test_a_missing_reference_folder_still_yields_the_brief(tmp_path):
+    """Reference docs are additive - losing them must not break generation."""
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Just the brief\n", encoding="utf-8")
+
+    assert load_system_prompt(brief) == "# Just the brief\n"
