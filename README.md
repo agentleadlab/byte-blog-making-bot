@@ -294,13 +294,19 @@ bash scripts/setup.sh        # one time
 
 Setup finds a suitable Python, builds a virtualenv, installs everything, fetches
 Chromium for the cover images, and creates `.env`. Paste your keys into that
-file — the same four values as Railway — and then, whenever you want to work:
+file — the same four values as Railway — and then, whenever you want to work,
+**double-click `Start RYTE` on your Desktop.** Setup puts it there. It kills any
+copy that's already running first, so you can't end up with two bots answering
+every message.
+
+The command-line equivalent, if you prefer one:
 
 ```bash
 bash scripts/start.sh
 ```
 
-RYTE comes online in Discord. Leave the window open; `Ctrl-C` when you're done.
+Either way RYTE comes online in Discord. Leave the window it opens alone;
+`Ctrl-C` (or closing it) stops RYTE.
 
 **It doesn't need to stay running.** RYTE creates posts in GHL with a scheduled
 date, and *GHL* publishes them — so once a batch is approved, your computer is

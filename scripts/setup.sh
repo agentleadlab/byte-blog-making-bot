@@ -102,6 +102,16 @@ else
   fi
 fi
 
+# --- Desktop launcher ---------------------------------------------------------
+# So starting RYTE is a double-click rather than a command.
+
+chmod +x "$ROOT/Start RYTE.command" 2>/dev/null || true
+if [ -d "$HOME/Desktop" ] && [ ! -e "$HOME/Desktop/Start RYTE.command" ]; then
+  ln -s "$ROOT/Start RYTE.command" "$HOME/Desktop/Start RYTE.command" 2>/dev/null \
+    && ok "Put 'Start RYTE' on your Desktop — double-click it to run RYTE"
+fi
+
 say "Done."
-echo "  Start RYTE with:  bash scripts/start.sh"
+echo "  Start RYTE by double-clicking 'Start RYTE.command' on your Desktop,"
+echo "  or with:  bash scripts/start.sh"
 echo ""
