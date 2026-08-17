@@ -26,7 +26,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, publisher, version, writer, youtube
+from .. import formats, ghl, prefs, publisher, version, writer, youtube
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -232,6 +232,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "fields":
                 await _send_fields(responder, config, message.id)
+                return
+
+            if request.action == "start":
+                await _set_earliest_day(responder, config, request.brief or "")
                 return
 
             if request.action == "check":
@@ -553,9 +557,9 @@ async def _send_status(responder: Responder, config: Config) -> None:
     try:
         if context:
             booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
-            slots = next_open_slots(booked, 3, config.schedule)
+            slots = jobs.open_slots(booked, 3, config)
         else:
-            slots = next_open_slots(set(), 3, config.schedule)
+            slots = jobs.open_slots(set(), 3, config)
     finally:
         if context:
             await asyncio.to_thread(context.close)
@@ -577,7 +581,7 @@ async def _send_schedule(responder: Responder, config: Config) -> None:
     try:
         posts = await asyncio.to_thread(jobs.upcoming_posts, context, config, ledger)
         booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
-        slots = next_open_slots(booked, 3, config.schedule)
+        slots = jobs.open_slots(booked, 3, config)
     finally:
         if context:
             await asyncio.to_thread(context.close)
@@ -680,6 +684,48 @@ async def _send_fields(responder: Responder, config: Config, token: int) -> None
     # has all of them either way.
     body = "\n".join(lines[:25])
     await responder.send(head + body, file=discord.File(str(path)))
+
+
+async def _set_earliest_day(responder: Responder, config: Config, text: str) -> None:
+    """Move the calendar's starting point, and show what it means in practice.
+
+    Saved outside the tracked config on purpose: editing `config/wilbyte.toml`
+    on the Mac would stop the auto-update fast-forwarding, and a RYTE stuck on
+    old code is a worse problem than a wrong start date.
+    """
+    if text.strip().lower() in ("clear", "off", "none", "reset"):
+        await asyncio.to_thread(prefs.clear_earliest_day)
+        await responder.send("Cleared — I'll just use the next free weekday.")
+        return
+
+    if not text.strip():
+        await responder.send(
+            f"{prefs.describe(config)}\nSet it with `@RYTE start Aug 18`, or "
+            f"`@RYTE start clear` to drop it."
+        )
+        return
+
+    try:
+        day = prefs.parse_day(text)
+    except prefs.PrefsError as exc:
+        await responder.send(str(exc))
+        return
+
+    await asyncio.to_thread(prefs.set_earliest_day, day)
+
+    ledger = await asyncio.to_thread(Ledger.load)
+    context = await _maybe_open_ghl(config)
+    try:
+        booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
+        slots = jobs.open_slots(booked, 3, config)
+    finally:
+        if context:
+            await asyncio.to_thread(context.close)
+
+    listed = ", ".join(f"{s:%a %b %d}" for s in slots) or "(nothing free — the calendar is full)"
+    await responder.send(
+        f"Got it — nothing before **{day:%a %b %d, %Y}**.\nNext posts land: {listed}"
+    )
 
 
 async def _send_corpus(responder: Responder) -> None:

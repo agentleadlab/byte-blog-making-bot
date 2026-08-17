@@ -10,3 +10,6 @@ dist/
 # Runtime output
 out/
 state/ledger.json
+# Settings RYTE changes about itself. Untracked on purpose: a local edit to a
+# tracked file blocks the auto-update from fast-forwarding.
+state/preferences.json

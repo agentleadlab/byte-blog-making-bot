@@ -86,6 +86,14 @@ MODE_WORDS = {
 
 FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 
+# Command-position only - see the note at the call site.
+START_WORDS = ("start", "starting", "resume", "from", "schedulefrom")
+
+
+def _opens_with(text: str, words: tuple[str, ...]) -> bool:
+    first = re.match(r"\s*([a-zA-Z]+)", text)
+    return bool(first) and first.group(1).lower() in words
+
 
 @dataclass
 class MentionRequest:
@@ -122,6 +130,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action == "corpus":
         return MentionRequest(action="corpus")
+
+    # "start" and "from" are ordinary words in a copy brief - "a script to start
+    # the year strong" must not move the calendar. So they only count as the
+    # command when they open the message, and everything after is the day.
+    if _opens_with(text, START_WORDS):
+        return MentionRequest(action="start", brief=_strip_word(text, START_WORDS))
 
     if action == "check":
         # A link is optional, but with one the check can prove YouTube works.
@@ -255,6 +269,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
 > @RYTE **fields** — what GHL is really storing on each post
+> @RYTE **start** Aug 18 — don't schedule anything before that day
 
 If YouTube won't give me a transcript, paste it out of the video yourself and \
 attach it (`.txt` or `.vtt`) along with the link — I'll write from that.

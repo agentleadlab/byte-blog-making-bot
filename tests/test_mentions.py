@@ -84,6 +84,27 @@ def test_status_keywords_need_no_link(word):
     assert request.source is None
 
 
+@pytest.mark.parametrize("text", ["start Aug 18", "from monday", "resume 2026-08-18"])
+def test_a_leading_start_word_moves_the_calendar(text):
+    request = parse(f"{BOT} {text}")
+
+    assert request.action == "start"
+    assert request.brief and request.brief.strip()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sms about getting a fresh start this quarter",
+        "email from the team about aged leads",
+        "ad for agents starting from scratch",
+    ],
+)
+def test_start_words_inside_a_brief_do_not_move_the_calendar(text):
+    """These are ordinary words in copy. Only the opening word is the command."""
+    assert parse(f"{BOT} {text}").action == "write"
+
+
 @pytest.mark.parametrize("word", ["fields", "raw", "inspect"])
 def test_fields_keywords_need_no_link(word):
     request = parse(f"{BOT} {word}")

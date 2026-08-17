@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 
-from .. import ghl, pipeline, youtube
+from .. import ghl, pipeline, prefs, youtube
 from ..config import Config
 from ..models import BlogPost, Transcript, Video
 from ..scheduler import next_open_slots, taken_days_from_ledger, taken_days_from_posts
@@ -142,13 +142,23 @@ def resolve_videos(
     return pending, len(done)
 
 
+def open_slots(taken: set[date], count: int, config: Config) -> list[datetime]:
+    """The next free slots, honouring an earliest day set from Discord.
+
+    Every slot decision goes through here so the floor can't apply in one view
+    and not another - a calendar that disagrees with itself is worse than one
+    that's simply wrong.
+    """
+    return next_open_slots(taken, count, prefs.apply(config).schedule)
+
+
 def plan_slots(
     videos: list[Video],
     context: GHLContext | None,
     config: Config,
     ledger: Ledger | None = None,
 ) -> list[datetime]:
-    return next_open_slots(taken_days(context, config, ledger), len(videos), config.schedule)
+    return open_slots(taken_days(context, config, ledger), len(videos), config)
 
 
 def build(
