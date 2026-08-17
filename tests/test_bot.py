@@ -372,3 +372,86 @@ def test_an_undated_post_is_flagged_with_the_fields_ghl_sent(config):
 
 def test_no_posts_at_all_is_not_a_problem(config):
     assert jobs._undated_posts([], config) == []
+
+
+# ------------------------------------------------------------- the calendar
+
+
+class FakeGHL:
+    def __init__(self, posts):
+        self.client = SimpleNamespace(list_posts=lambda _blog: posts, close=lambda: None)
+        self.blog_id = "blog1"
+
+
+class LedgerStub:
+    def __init__(self, entries):
+        self.entries = {str(i): e for i, e in enumerate(entries)}
+
+
+def entry(slug, title, scheduled_at):
+    return SimpleNamespace(url_slug=slug, title=title, scheduled_at=scheduled_at)
+
+
+def test_upcoming_posts_are_dated_and_sorted(config):
+    posts = [
+        {"title": "Later", "urlSlug": "later", "publishedAt": "2099-08-20T14:00:00.000Z"},
+        {"title": "Sooner", "urlSlug": "sooner", "publishedAt": "2099-08-18T14:00:00.000Z"},
+    ]
+
+    result = jobs.upcoming_posts(FakeGHL(posts), config)
+
+    assert [title for _day, title in result] == ["Sooner", "Later"]
+
+
+def test_posts_already_out_are_not_upcoming(config):
+    posts = [{"title": "Old news", "urlSlug": "old", "publishedAt": "2020-01-01T14:00:00.000Z"}]
+
+    assert jobs.upcoming_posts(FakeGHL(posts), config) == []
+
+
+def test_the_ledger_fills_in_what_ghl_wont_report(config):
+    """GHL returns RYTE's own posts without a schedule - they'd be invisible."""
+    ledger = LedgerStub([entry("ryte-post", "A RYTE Post", "2099-08-19T14:00:00+00:00")])
+
+    result = jobs.upcoming_posts(FakeGHL([]), config, ledger)
+
+    assert [title for _day, title in result] == ["A RYTE Post"]
+
+
+def test_ghl_wins_when_both_know_a_post(config):
+    """GHL is what shows an edit someone made in the dashboard."""
+    posts = [{"title": "Edited in GHL", "urlSlug": "same", "publishedAt": "2099-08-25T14:00:00.000Z"}]
+    ledger = LedgerStub([entry("same", "Stale ledger title", "2099-08-19T14:00:00+00:00")])
+
+    result = jobs.upcoming_posts(FakeGHL(posts), config, ledger)
+
+    assert [title for _day, title in result] == ["Edited in GHL"]
+
+
+def test_drafts_in_the_ledger_are_not_on_the_calendar(config):
+    ledger = LedgerStub([entry("a-draft", "A Draft", None)])
+
+    assert jobs.upcoming_posts(FakeGHL([]), config, ledger) == []
+
+
+def test_no_ghl_connection_still_reports_the_ledger(config):
+    ledger = LedgerStub([entry("ryte-post", "A RYTE Post", "2099-08-19T14:00:00+00:00")])
+
+    assert len(jobs.upcoming_posts(None, config, ledger)) == 1
+
+
+def test_the_schedule_embed_lists_each_post_with_its_day():
+    posts = [(date(2099, 8, 18), "Sooner"), (date(2099, 8, 19), "Later")]
+
+    embed = embeds.upcoming_summary(posts, next_slots=[], reachable=True)
+    body = " ".join(f.value for f in embed.fields)
+
+    assert "2 post(s)" in embed.description
+    assert "Tue Aug 18" in body and "Sooner" in body
+
+
+def test_the_schedule_embed_says_when_ghl_was_unreachable():
+    """Otherwise a short list reads as an empty calendar rather than a failure."""
+    embed = embeds.upcoming_summary([], next_slots=[], reachable=False)
+
+    assert "wasn't reachable" in embed.footer.text

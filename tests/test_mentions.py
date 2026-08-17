@@ -250,3 +250,20 @@ def test_a_format_word_with_no_brief_still_routes_to_write():
 
     assert request.action == "write"
     assert request.brief == ""
+
+
+# ------------------------------------------------------------ the calendar
+
+
+@pytest.mark.parametrize("word", ["schedule", "scheduled", "calendar", "upcoming"])
+def test_calendar_words_ask_for_the_schedule(word):
+    assert parse(f"<@999> {word}").action == "schedule"
+
+
+def test_status_is_still_its_own_thing():
+    """Different questions: what's booked vs what's actually going out."""
+    assert parse("<@999> status").action == "status"
+
+
+def test_a_link_with_a_count_still_runs():
+    assert parse("<@999> https://youtu.be/w7mazKut2lk 3").action == "run"

@@ -131,6 +131,41 @@ def status_summary(
     return embed
 
 
+def upcoming_summary(
+    posts: list[tuple[date, str]], *, next_slots: list[datetime], reachable: bool
+) -> discord.Embed:
+    """What's actually on the calendar, dated, soonest first."""
+    embed = discord.Embed(
+        title="Scheduled posts",
+        description=(
+            f"{len(posts)} post(s) still to go out."
+            if posts
+            else "Nothing scheduled ahead of today."
+        ),
+        colour=GREEN if posts else GREY,
+    )
+
+    if posts:
+        lines = [f"**{day.strftime('%a %b %d')}** — {_truncate(title, 70)}" for day, title in posts]
+        for index, start in enumerate(range(0, len(lines), 8)):
+            embed.add_field(
+                name="​" if index else "Going out",
+                value=_truncate("\n".join(lines[start : start + 8]), 1024),
+                inline=False,
+            )
+
+    if next_slots:
+        embed.add_field(
+            name="Next open slots",
+            value="\n".join(format_slot(s) for s in next_slots),
+            inline=False,
+        )
+
+    if not reachable:
+        embed.set_footer(text="GoHighLevel wasn't reachable — this is RYTE's own record only.")
+    return embed
+
+
 def copy_result(result) -> discord.Embed:
     """Variants laid out so each one can be read and copied on its own."""
     embed = discord.Embed(

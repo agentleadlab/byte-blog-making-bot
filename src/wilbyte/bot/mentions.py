@@ -34,6 +34,11 @@ ACTION_WORDS = {
     "status": "status",
     "state": "status",
     "ledger": "status",
+    # What is actually on the calendar, as opposed to how many days are taken.
+    "schedule": "schedule",
+    "scheduled": "schedule",
+    "calendar": "schedule",
+    "upcoming": "schedule",
     "cover": "cover",
     "thumbnail": "cover",
     "thumb": "cover",
@@ -79,7 +84,7 @@ FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 
 @dataclass
 class MentionRequest:
-    action: str  # run | plan | status | cover | write | learn | corpus | help
+    action: str  # run | plan | status | schedule | cover | write | learn | corpus | help
     source: str | None = None
     limit: int = 1
     mode: str = "scheduled"
@@ -129,7 +134,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     source = _find_source(text)
 
-    if action in ("status", "help"):
+    if action in ("status", "schedule", "help"):
         return MentionRequest(action=action)
 
     if not source:
@@ -240,6 +245,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **draft** `<link>` — save to GHL as drafts instead
 > @RYTE **preview** `<link>` — build locally, send nothing
 > @RYTE **plan** `<link>` — what's queued and when
+> @RYTE **schedule** — every post still to go out, and the day it lands
 > @RYTE **status** — what's posted, what's next
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections

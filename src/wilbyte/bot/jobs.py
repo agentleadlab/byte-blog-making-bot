@@ -67,6 +67,52 @@ def taken_days(
     return days
 
 
+def upcoming_posts(
+    context: GHLContext | None,
+    config: Config,
+    ledger: Ledger | None = None,
+    *,
+    limit: int = 15,
+) -> list[tuple[date, str]]:
+    """(day, title) for everything still to go out, soonest first.
+
+    Same two sources as `taken_days`, and for the same reason: GHL holds the
+    posts written by hand, the ledger holds the ones GHL won't report a
+    schedule for. GHL wins where both know a post - it's the one that would
+    show an edit made in the dashboard.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import parse_timestamp, post_day
+
+    tz = ZoneInfo(config.schedule.timezone)
+    today = datetime.now(tz).date()
+    found: dict[str, tuple[date, str]] = {}
+
+    if context is not None:
+        for post in context.client.list_posts(context.blog_id):
+            day = post_day(post, tz)
+            if day is None or day < today:
+                continue
+            title = post.get("title") or post.get("urlSlug") or "(untitled)"
+            found[(post.get("urlSlug") or title).lower()] = (day, title)
+
+    if ledger is not None:
+        for entry in ledger.entries.values():
+            parsed = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
+            if parsed is None:
+                continue
+            day = parsed.astimezone(tz).date()
+            if day < today:
+                continue
+            found.setdefault(
+                (entry.url_slug or entry.title).lower(),
+                (day, entry.title or entry.url_slug),
+            )
+
+    return sorted(found.values())[:limit]
+
+
 def resolve_videos(
     source: str, ledger: Ledger, *, limit: int, force: bool, offline: bool = False
 ) -> tuple[list[Video], int]:

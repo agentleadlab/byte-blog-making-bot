@@ -213,6 +213,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_status(responder, config)
                 return
 
+            if request.action == "schedule":
+                await _send_schedule(responder, config)
+                return
+
             if request.action == "corpus":
                 await _send_corpus(responder)
                 return
@@ -487,6 +491,23 @@ async def _send_status(responder: Responder, config: Config) -> None:
             next_slots=slots,
             booked_days=booked,
         )
+    )
+
+
+async def _send_schedule(responder: Responder, config: Config) -> None:
+    """The posting calendar: what goes out, on what day, soonest first."""
+    ledger = await asyncio.to_thread(Ledger.load)
+    context = await _maybe_open_ghl(config)
+    try:
+        posts = await asyncio.to_thread(jobs.upcoming_posts, context, config, ledger)
+        booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
+        slots = next_open_slots(booked, 3, config.schedule)
+    finally:
+        if context:
+            await asyncio.to_thread(context.close)
+
+    await responder.send(
+        embed=embeds.upcoming_summary(posts, next_slots=slots, reachable=context is not None)
     )
 
 
