@@ -156,6 +156,40 @@ def open_slots(taken: set[date], count: int, config: Config) -> list[datetime]:
     return next_open_slots(taken, count, prefs.apply(config).schedule)
 
 
+def resolve_many(
+    sources: list[str] | tuple[str, ...],
+    ledger: Ledger,
+    *,
+    limit: int,
+    force: bool,
+    offline: bool = False,
+) -> tuple[list[Video], int]:
+    """Expand every link in the message into the videos still to process.
+
+    A week of posts usually arrives as a dozen pasted links rather than a
+    playlist, so each one is expanded in turn and the results concatenated in
+    the order they were typed. A video named twice makes one post: repeats are
+    easy to paste and expensive to publish.
+    """
+    videos: list[Video] = []
+    seen: set[str] = set()
+    already_done = 0
+
+    for source in sources:
+        if len(videos) >= limit:
+            break
+        found, done = resolve_videos(
+            source, ledger, limit=limit - len(videos), force=force, offline=offline
+        )
+        already_done += done
+        for video in found:
+            if video.video_id not in seen:
+                seen.add(video.video_id)
+                videos.append(video)
+
+    return videos[:limit], already_done
+
+
 def plan_slots(
     videos: list[Video],
     context: GHLContext | None,

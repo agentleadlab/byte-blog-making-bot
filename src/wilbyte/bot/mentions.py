@@ -113,6 +113,9 @@ class MentionRequest:
     headline: str | None = None
     format_key: str | None = None  # write: which format; learn: which label
     brief: str | None = None
+    # Every link in the message, in the order they were typed. `source` is the
+    # first of them, kept because plan and check only ever act on one.
+    sources: tuple[str, ...] = ()
 
 
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
@@ -162,31 +165,48 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             brief=_extract_brief(text, fmt),
         )
 
-    source = _find_source(text)
+    sources = find_sources(text)
 
     if action in ("status", "schedule", "help", "fields", "reconcile"):
         return MentionRequest(action=action)
 
-    if not source:
+    if not sources:
         # A mention with no link and no recognised verb is a greeting or a mistake.
         return MentionRequest(action="help")
 
     return MentionRequest(
         action="plan" if action == "plan" else "run",
-        source=source,
-        limit=_parse_limit(text, source, max_batch=max_batch),
+        source=sources[0],
+        sources=sources,
+        limit=_parse_limit(text, sources, max_batch=max_batch),
         mode=_parse_mode(lowered),
         force=any(word in lowered.split() for word in FORCE_WORDS),
     )
 
 
 def _find_source(text: str) -> str | None:
-    """The YouTube link or bare playlist id in a message, if there is one."""
-    url_match = URL_RE.search(text)
-    if url_match:
-        return url_match.group(0).rstrip(".,;)>")
-    bare = BARE_PLAYLIST_RE.search(text)
-    return bare.group(1) if bare else None
+    """The first YouTube link or playlist id in a message, if there is one."""
+    found = find_sources(text)
+    return found[0] if found else None
+
+
+def find_sources(text: str) -> tuple[str, ...]:
+    """Every link in the message, in order, without repeats.
+
+    Pasting a dozen links at once is how a week of posts actually arrives -
+    they come out of a spreadsheet, not a playlist. Duplicates are dropped
+    because a list copied twice should still mean one post per video.
+    """
+    found: list[str] = []
+    for match in URL_RE.finditer(text):
+        url = match.group(0).rstrip(".,;)>")
+        if url not in found:
+            found.append(url)
+    if not found:
+        for match in BARE_PLAYLIST_RE.finditer(text):
+            if match.group(1) not in found:
+                found.append(match.group(1))
+    return tuple(found)
 
 
 def _first_format_word(text: str, find) -> object | None:
@@ -229,14 +249,22 @@ def _parse_mode(lowered: str) -> str:
     return "scheduled"
 
 
-def _parse_limit(text: str, source: str | None, *, max_batch: int) -> int:
-    """Find a count, ignoring digits that are part of the URL itself."""
-    haystack = text.replace(source, " ") if source else text
+def _parse_limit(text: str, sources: tuple[str, ...], *, max_batch: int) -> int:
+    """Find a count, ignoring digits that are part of the links themselves.
+
+    With several links and no number, the count *is* the number of links -
+    pasting twelve of them and getting one post back would be absurd. A number
+    still wins when one is given, so "<12 links> 3" builds three.
+    """
+    haystack = text
+    for source in sources:
+        haystack = haystack.replace(source, " ")
+
     match = COUNT_RE.search(haystack)
-    if not match:
-        return 1
-    found = next(group for group in match.groups() if group is not None)
-    return max(1, min(int(found), max_batch))
+    if match:
+        found = next(group for group in match.groups() if group is not None)
+        return max(1, min(int(found), max_batch))
+    return max(1, min(len(sources) or 1, max_batch))
 
 
 def _parse_cover(text: str) -> MentionRequest:
@@ -272,6 +300,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 
 **Blog posts from YouTube**
 > @RYTE `<playlist link>` **3** — write the next 3 posts
+> @RYTE `<link>` `<link>` `<link>` — paste as many as you like, one post each
 > @RYTE **draft** `<link>` — save to GHL as drafts instead
 > @RYTE **preview** `<link>` — build locally, send nothing
 > @RYTE **plan** `<link>` — what's queued and when

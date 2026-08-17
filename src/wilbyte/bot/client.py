@@ -298,7 +298,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     transcript_text = await _attached_transcript(message)
     async with bot.run_lock:
         await _execute_run(
-            bot, responder, request.source, request.limit, request.mode, request.force,
+            bot, responder, request.sources, request.limit, request.mode, request.force,
             transcript_text=transcript_text,
         )
 
@@ -445,8 +445,11 @@ def register_commands(bot: WilByteBot) -> None:
 
         await interaction.response.defer(thinking=True)
         async with bot.run_lock:
+            # The field takes several links too, space- or newline-separated.
             await _execute_run(
-                bot, InteractionResponder(interaction), playlist, limit, mode_value, force
+                bot, InteractionResponder(interaction),
+                mentions.find_sources(playlist) or (playlist,),
+                limit, mode_value, force,
             )
 
     @bot.tree.command(name="status", description="What's been posted and what's next")
@@ -951,7 +954,7 @@ def publish_status(decision: Decision) -> str:
 async def _execute_run(
     bot: WilByteBot,
     responder: Responder,
-    source: str,
+    sources: tuple[str, ...] | list[str],
     limit: int,
     mode: str,
     force: bool,
@@ -964,7 +967,7 @@ async def _execute_run(
     try:
         ledger = await asyncio.to_thread(Ledger.load)
         videos, already_done = await asyncio.to_thread(
-            jobs.resolve_videos, source, ledger,
+            jobs.resolve_many, sources, ledger,
             limit=limit, force=force, offline=bool(transcript_text),
         )
     except PIPELINE_ERRORS as exc:
@@ -997,9 +1000,17 @@ async def _execute_run(
     created = skipped = failed = 0
     try:
         slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config, ledger)
+        # Say what was left out. Ten links in and eight posts back looks like a
+        # bug unless the reason is on screen.
+        trimmed = max(0, len(sources) - len(videos) - already_done)
         await responder.send(
             f"On it — building {len(videos)} post(s) in **{mode}** mode."
             + (f" Skipping {already_done} already done." if already_done else "")
+            + (
+                f" That's my {config.discord.max_batch}-per-run cap — send the "
+                f"other {trimmed} link(s) after and I'll carry on from there."
+                if trimmed else ""
+            )
         )
 
         for index, video in enumerate(videos, start=1):

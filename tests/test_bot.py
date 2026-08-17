@@ -744,3 +744,80 @@ def test_a_published_post_still_holds_its_day(config, tmp_path):
     )
 
     assert date(2099, 8, 18) in jobs.taken_days(None, config, ledger)
+
+
+# --------------------------------------------------- several links in one message
+
+
+class FakeYT:
+    """Stands in for YouTube so link expansion can be tested offline."""
+
+    def __init__(self):
+        self.asked = []
+
+    def video_from_link(self, url):
+        self.asked.append(url)
+        return Video(video_id=url.rsplit("/", 1)[-1], title=url, url=url)
+
+
+def resolve(sources, ledger, monkeypatch, *, limit=10, force=True):
+    fake = FakeYT()
+    monkeypatch.setattr(jobs.youtube, "video_from_link", fake.video_from_link)
+    monkeypatch.setattr(jobs.youtube, "looks_like_playlist", lambda _s: False)
+    videos, done = jobs.resolve_many(
+        sources, ledger, limit=limit, force=force, offline=True
+    )
+    return videos, done, fake
+
+
+def test_every_link_becomes_its_own_video(tmp_path, monkeypatch):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    links = ["https://youtu.be/aaa", "https://youtu.be/bbb", "https://youtu.be/ccc"]
+
+    videos, _done, _fake = resolve(links, ledger, monkeypatch)
+
+    assert [v.video_id for v in videos] == ["aaa", "bbb", "ccc"]
+
+
+def test_the_order_they_were_typed_is_kept(tmp_path, monkeypatch):
+    """Slots are handed out in order, so this decides which post lands when."""
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    links = ["https://youtu.be/ccc", "https://youtu.be/aaa"]
+
+    videos, _done, _fake = resolve(links, ledger, monkeypatch)
+
+    assert [v.video_id for v in videos] == ["ccc", "aaa"]
+
+
+def test_a_video_named_twice_makes_one_post(tmp_path, monkeypatch):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    links = ["https://youtu.be/aaa", "https://youtu.be/bbb", "https://youtu.be/aaa"]
+
+    videos, _done, _fake = resolve(links, ledger, monkeypatch)
+
+    assert [v.video_id for v in videos] == ["aaa", "bbb"]
+
+
+def test_the_limit_stops_the_expansion_early(tmp_path, monkeypatch):
+    """Twenty links shouldn't cost twenty YouTube lookups to build ten posts."""
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    links = [f"https://youtu.be/v{i}" for i in range(20)]
+
+    videos, _done, fake = resolve(links, ledger, monkeypatch, limit=3)
+
+    assert len(videos) == 3
+    assert len(fake.asked) == 3
+
+
+def test_links_already_posted_are_counted_not_rebuilt(tmp_path, monkeypatch):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="aaa", title="Done", url_slug="done",
+        scheduled_at=None, ghl_post_id="p1",
+    )
+    links = ["https://youtu.be/aaa", "https://youtu.be/bbb"]
+
+    videos, done, _fake = resolve(links, ledger, monkeypatch, force=False)
+
+    assert [v.video_id for v in videos] == ["bbb"]
+    assert done == 1

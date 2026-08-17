@@ -296,3 +296,49 @@ def test_status_is_still_its_own_thing():
 
 def test_a_link_with_a_count_still_runs():
     assert parse("<@999> https://youtu.be/w7mazKut2lk 3").action == "run"
+
+
+# ----------------------------------------------------------- several links at once
+
+VID_A = "https://youtu.be/aaaaaaaaaaa"
+VID_B = "https://youtu.be/bbbbbbbbbbb"
+VID_C = "https://youtu.be/ccccccccccc"
+
+
+def test_every_link_in_the_message_is_picked_up():
+    """A week of posts arrives as pasted links, not a playlist."""
+    request = parse(f"{BOT} {VID_A} {VID_B} {VID_C}")
+
+    assert request.action == "run"
+    assert request.sources == (VID_A, VID_B, VID_C)
+
+
+def test_the_count_defaults_to_the_number_of_links():
+    """Pasting twelve links and getting one post back would be absurd."""
+    assert parse(f"{BOT} {VID_A} {VID_B} {VID_C}").limit == 3
+
+
+def test_an_explicit_count_still_wins():
+    assert parse(f"{BOT} {VID_A} {VID_B} {VID_C} 2").limit == 2
+
+
+def test_links_on_separate_lines_are_all_found():
+    assert len(parse(f"{BOT}\n{VID_A}\n{VID_B}\n{VID_C}").sources) == 3
+
+
+def test_a_link_pasted_twice_makes_one_post():
+    request = parse(f"{BOT} {VID_A} {VID_B} {VID_A}")
+
+    assert request.sources == (VID_A, VID_B)
+    assert request.limit == 2
+
+
+def test_the_batch_cap_still_applies():
+    many = " ".join(f"https://youtu.be/vid{i:07d}xxx" for i in range(20))
+
+    assert parse(f"{BOT} {many}", max_batch=10).limit == 10
+
+
+def test_source_is_still_the_first_link():
+    """plan and check act on one source; they must keep working."""
+    assert parse(f"{BOT} {VID_A} {VID_B}").source == VID_A
