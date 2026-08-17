@@ -25,7 +25,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, writer, youtube
+from .. import formats, ghl, version, writer, youtube
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -122,7 +122,7 @@ class WilByteBot(discord.Client):
         log.info("Slash commands synced globally (may take up to an hour to appear)")
 
     async def on_ready(self) -> None:
-        log.info("Connected as %s", self.user)
+        log.info("Connected as %s — running %s", self.user, version.code_version())
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching, name="YouTube so you don't have to"
@@ -204,7 +204,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     responder = MessageResponder(message)
 
     if request.action == "help":
-        await responder.send(mentions.HELP_TEXT)
+        # The version goes on the help text specifically, because this is the
+        # message you get when RYTE doesn't recognise a word - and "that word
+        # is new, this copy is old" is the most likely reason why.
+        await responder.send(f"{mentions.HELP_TEXT}\n\n-# Running `{version.code_version()}`")
         return
 
     async with message.channel.typing():
