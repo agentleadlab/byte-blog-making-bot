@@ -84,6 +84,13 @@ def assemble_post(
         post.warnings.append(f"headline selection: {title_note}")
     if "manual look" in cover_plan.source_note:
         post.warnings.append(f"cover text: {cover_plan.source_note}")
+    # An article with no tags at all publishes as a wall of plain text - or
+    # worse, as its own markup printed down the page. Cheap to check, and it
+    # shipped once already.
+    if "<" not in post.copy.article_html:
+        post.warnings.append(
+            "The article body has no HTML tags — it will publish as plain text."
+        )
 
     _write_local_artifacts(post, post_dir)
     return post

@@ -88,3 +88,21 @@ def test_transcript_cleaning_strips_captions_and_timestamps():
     raw = "0:42\n[Music] there is a blueprint   for hitting\n1:15\n$40,000 a month [Applause]"
 
     assert _clean_transcript(raw) == "there is a blueprint for hitting $40,000 a month"
+
+
+def test_a_body_with_no_tags_is_flagged_before_it_publishes(copy_package, config, tmp_path):
+    """It shipped once as visible markup down the page; cheap to catch."""
+    copy_package.article_html = "How to Get Started. Most agents start by asking..."
+    video = Video(video_id="w7mazKut2lk", title="t", url="u")
+
+    post = assemble_post(video, copy_package, config, output_dir=tmp_path, report=lambda _: None)
+
+    assert any("no HTML tags" in w for w in post.warnings)
+
+
+def test_a_normal_body_is_not_flagged(copy_package, config, tmp_path):
+    video = Video(video_id="w7mazKut2lk", title="t", url="u")
+
+    post = assemble_post(video, copy_package, config, output_dir=tmp_path, report=lambda _: None)
+
+    assert not any("no HTML tags" in w for w in post.warnings)

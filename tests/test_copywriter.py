@@ -2,6 +2,7 @@ import pytest
 
 from wilbyte.copywriter import (
     CopywriterError,
+    as_markup,
     build_user_message,
     load_system_prompt,
     normalize_slug,
@@ -134,3 +135,43 @@ def test_a_missing_reference_folder_still_yields_the_brief(tmp_path):
     brief.write_text("# Just the brief\n", encoding="utf-8")
 
     assert load_system_prompt(brief) == "# Just the brief\n"
+
+
+# ------------------------------------------------------------ escaped markup
+
+
+def test_escaped_html_from_the_model_is_decoded():
+    """`&lt;h1&gt;` renders as a visible tag - it shipped that way once."""
+    escaped = "&lt;h1&gt;How to Get Started&lt;/h1&gt; &lt;p&gt;Most agents...&lt;/p&gt;"
+
+    assert as_markup(escaped) == "<h1>How to Get Started</h1> <p>Most agents...</p>"
+
+
+def test_real_markup_is_left_alone():
+    html = "<h1>Title</h1><p>Body &amp; more</p>"
+
+    assert as_markup(html) == html
+
+
+def test_an_ampersand_in_prose_survives_decoding():
+    """Decoding twice would turn `&amp;lt;` in the copy into a real tag."""
+    escaped = "&lt;p&gt;Aged &amp;amp; fresh leads&lt;/p&gt;"
+
+    assert as_markup(escaped) == "<p>Aged &amp; fresh leads</p>"
+
+
+def test_plain_text_with_no_markup_is_returned_as_is():
+    assert as_markup("  Just a sentence.  ") == "Just a sentence."
+
+
+def test_the_package_decodes_on_the_way_through(config):
+    payload = {
+        "article_h1": "H",
+        "article_html": "&lt;h1&gt;H&lt;/h1&gt;&lt;p&gt;x&lt;/p&gt;",
+        "headline_options": ["a" * 45, "b" * 45, "c" * 45],
+        "meta_title": "t",
+        "meta_description": "d" * 120,
+        "url_slug": "s",
+    }
+
+    assert parse_copy_package(payload, config).article_html.startswith("<h1>")

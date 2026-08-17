@@ -34,7 +34,8 @@ BLOG_PACKAGE_TOOL = {
                 "type": "string",
                 "description": (
                     "The full article as semantic HTML, starting with the <h1>. "
-                    "Allowed tags: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,a."
+                    "Allowed tags: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,a. "
+                    "Real markup, not escaped entities: write <h1>, never &lt;h1&gt;."
                 ),
             },
             "headline_options": {
@@ -79,6 +80,23 @@ BLOG_PACKAGE_TOOL = {
         ],
     },
 }
+
+
+def as_markup(raw: str) -> str:
+    """Return real HTML, decoding it first if the model escaped it.
+
+    A model asked for HTML sometimes returns `&lt;h1&gt;` instead of `<h1>`.
+    Both look right in a JSON payload and only diverge at the last possible
+    moment - a browser renders the entities as visible tags, so the post ships
+    with its own markup printed down the page. Decode exactly once: twice would
+    turn a legitimately escaped `&amp;lt;` in the prose into a tag.
+    """
+    import html as html_module
+
+    text = raw.strip()
+    if "<" in text or "&lt;" not in text:
+        return text
+    return html_module.unescape(text).strip()
 
 
 class CopywriterError(RuntimeError):
@@ -194,7 +212,7 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
 
     package = CopyPackage(
         article_h1=str(payload["article_h1"]).strip(),
-        article_html=str(payload["article_html"]).strip(),
+        article_html=as_markup(str(payload["article_html"])),
         headline_options=[Headline(text=o) for o in options],
         meta_title=_truncate_clean(str(payload["meta_title"]).strip(), config.copy.meta_title_max),
         meta_description=_truncate_clean(
