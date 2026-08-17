@@ -19,13 +19,14 @@ import os
 import re
 from datetime import date
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, version, writer, youtube
+from .. import formats, ghl, publisher, version, writer, youtube
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -94,6 +95,7 @@ class WilByteBot(discord.Client):
         self.config = config
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
+        self.publisher_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         register_commands(self)
@@ -128,6 +130,10 @@ class WilByteBot(discord.Client):
                 type=discord.ActivityType.watching, name="YouTube so you don't have to"
             )
         )
+        # on_ready fires again after a reconnect, so guard it - two publisher
+        # loops would race each other for the same posts.
+        if self.publisher_task is None or self.publisher_task.done():
+            self.publisher_task = self.loop.create_task(publisher_loop(self))
 
     async def on_message(self, message: discord.Message) -> None:
         if not is_direct_mention(message, self.user):
@@ -303,6 +309,69 @@ async def _attached_transcript(message) -> str | None:
             raw = youtube.parse_captions(raw)
         if raw.strip():
             return raw
+    return None
+
+
+# ------------------------------------------------------------------- publishing
+
+# GHL publishes on the minute, so checking more often buys nothing; checking
+# much less often would let a 10:00 post go out at 10:20.
+PUBLISH_CHECK_SECONDS = 60
+
+
+async def publisher_loop(bot: WilByteBot) -> None:
+    """Publish scheduled posts when their slot arrives, for as long as RYTE runs.
+
+    GoHighLevel's scheduler is driven by a background task its API doesn't
+    create, so a post RYTE schedules sits there forever unless something
+    publishes it. That something is this.
+
+    It catches up rather than skipping: whatever is overdue goes out on the
+    next check. If RYTE was asleep at 10am the post goes out late, which is the
+    honest trade and still better than the alternative, which is never.
+    """
+    while not bot.is_closed():
+        try:
+            await _publish_due(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Publisher check failed; will try again next minute")
+        await asyncio.sleep(PUBLISH_CHECK_SECONDS)
+
+
+async def _publish_due(bot: WilByteBot) -> None:
+    ledger = await asyncio.to_thread(Ledger.load)
+    if not publisher.due(ledger):
+        return
+
+    published, problems = await asyncio.to_thread(
+        publisher.publish_due, bot.config, ledger
+    )
+    for entry in published:
+        log.info("Published %s (%s)", entry.title, entry.url_slug)
+    for problem in problems:
+        log.error("Could not publish: %s", problem)
+
+    channel = _announce_channel(bot)
+    if channel is None:
+        return
+    for entry in published:
+        link = bot.config.brand.canonical_link(entry.url_slug)
+        await channel.send(f"📣 **{entry.title}** is live — {link}")
+    for problem in problems:
+        await channel.send(f"⚠ Couldn't publish a post that was due — {problem}")
+
+
+def _announce_channel(bot: WilByteBot):
+    """Where to say a post went live: the first allowed channel, if there is one."""
+    for raw in bot.config.secrets.discord_channel_ids:
+        try:
+            channel = bot.get_channel(int(raw))
+        except (TypeError, ValueError):
+            continue
+        if channel is not None:
+            return channel
     return None
 
 
@@ -516,6 +585,20 @@ async def _send_schedule(responder: Responder, config: Config) -> None:
     await responder.send(
         embed=embeds.upcoming_summary(posts, next_slots=slots, reachable=context is not None)
     )
+
+    # RYTE publishes these itself, so whether it is running is part of the
+    # answer to "is this going out?" - and that isn't visible from GHL.
+    waiting = len(
+        [e for e in ledger.entries.values() if e.scheduled_at and not e.published_at]
+    )
+    if waiting:
+        moment = publisher.next_due(ledger)
+        when = f" Next one: {moment.astimezone(ZoneInfo(config.schedule.timezone)):%a %b %d at %I:%M %p}." if moment else ""
+        await responder.send(
+            f"-# I publish these myself — GoHighLevel's scheduler doesn't fire on "
+            f"posts made through its API. {waiting} waiting.{when} Keep me running "
+            f"and they go out on time."
+        )
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:

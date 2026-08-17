@@ -38,6 +38,12 @@ class LedgerEntry:
     scheduled_at: str | None
     ghl_post_id: str | None
     processed_at: str
+    # GHL's own scheduler never fires on posts made through its API, so RYTE
+    # publishes them when their slot comes. That needs the body it originally
+    # sent (an update is a replace, and the list endpoint omits the article),
+    # and a record of what has already gone out so it doesn't go out twice.
+    payload_path: str | None = None
+    published_at: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -47,6 +53,8 @@ class LedgerEntry:
             "scheduled_at": self.scheduled_at,
             "ghl_post_id": self.ghl_post_id,
             "processed_at": self.processed_at,
+            "payload_path": self.payload_path,
+            "published_at": self.published_at,
         }
 
 
@@ -75,6 +83,8 @@ class Ledger:
                 scheduled_at=item.get("scheduled_at"),
                 ghl_post_id=item.get("ghl_post_id"),
                 processed_at=item.get("processed_at", ""),
+                payload_path=item.get("payload_path"),
+                published_at=item.get("published_at"),
             )
             ledger.entries[entry.video_id] = entry
         return ledger
@@ -98,6 +108,8 @@ class Ledger:
         url_slug: str,
         scheduled_at: datetime | None,
         ghl_post_id: str | None,
+        payload_path: str | None = None,
+        published_at: datetime | None = None,
     ) -> LedgerEntry:
         entry = LedgerEntry(
             video_id=video_id,
@@ -106,6 +118,14 @@ class Ledger:
             scheduled_at=scheduled_at.isoformat() if scheduled_at else None,
             ghl_post_id=ghl_post_id,
             processed_at=datetime.now(timezone.utc).isoformat(),
+            payload_path=payload_path,
+            published_at=published_at.isoformat() if published_at else None,
         )
         self.entries[video_id] = entry
         return entry
+
+    def mark_published(self, video_id: str) -> None:
+        """Record that this post is live, so it is never published twice."""
+        entry = self.entries.get(video_id)
+        if entry:
+            entry.published_at = datetime.now(timezone.utc).isoformat()

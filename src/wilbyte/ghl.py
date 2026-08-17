@@ -41,12 +41,12 @@ POST_FIELDS = {
     "published_at": "publishedAt",
 }
 
-# Where a scheduled post's date goes. `publishedAt` alone was accepted without
-# complaint and then ignored: the posts sat as SCHEDULED with no date, never
-# published, and came back from the API with no date to read either. The name
-# isn't documented anywhere this build could reach, so send every plausible one
-# and let `create_post` back off if the API objects.
-SCHEDULE_FIELDS = ("publishedAt", "publishDate", "scheduledAt", "scheduleDate")
+# Where a post's date goes. Settled by reading the blog's own posts back: all
+# 39 that have ever gone out carry `publishedAt`, and `scheduledAt` is null on
+# every one of them. Three other names were guessed at while posts weren't
+# publishing; they were wrong, and one of them writes to a real field GHL
+# keeps for itself.
+SCHEDULE_FIELD = "publishedAt"
 
 # The Blogs API rejects any page size over 50 with a 422.
 MAX_PAGE = 50
@@ -202,22 +202,7 @@ class GHLClient:
     # ------------------------------------------------------------- posts
 
     def create_post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Create the post, falling back to the documented field set on refusal.
-
-        The payload carries the schedule date under several names because only
-        one of them works and it isn't documented. If the API rejects the extra
-        keys, retry with just `publishedAt` - a post that publishes on the wrong
-        day is recoverable, one that was never created is not.
-        """
-        try:
-            data = self._request("POST", "/blogs/posts", json=payload)
-        except GHLError as exc:
-            spare = {k: v for k, v in payload.items() if k not in SCHEDULE_FIELDS[1:]}
-            if spare == payload:
-                raise
-            if not any(code in str(exc) for code in ("400", "422")):
-                raise
-            data = self._request("POST", "/blogs/posts", json=spare)
+        data = self._request("POST", "/blogs/posts", json=payload)
         return data.get("data") or data
 
     def update_post(self, post_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -264,9 +249,7 @@ def build_post_payload(
     if image_url:
         payload[f["image_url"]] = image_url
     if published_at:
-        stamp = to_api_timestamp(published_at)
-        for field in SCHEDULE_FIELDS:
-            payload[field] = stamp
+        payload[SCHEDULE_FIELD] = to_api_timestamp(published_at)
     return payload
 
 

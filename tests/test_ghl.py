@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.ghl import (
-    SCHEDULE_FIELDS,
+    SCHEDULE_FIELD,
     GHLClient,
     GHLError,
     build_post_payload,
@@ -200,8 +200,8 @@ def test_posts_without_an_id_are_not_collapsed_into_one():
 # ------------------------------------------------------- the schedule date
 
 
-def test_a_schedule_is_sent_under_every_candidate_field():
-    """`publishedAt` alone was accepted and then ignored - posts never went out."""
+def test_a_schedule_is_sent_as_published_at():
+    """Settled by reading the blog back: every post that went out uses this."""
     payload = build_post_payload(
         location_id="LOC", blog_id="BLOG", title="t", content_html="<p>x</p>",
         description="d", url_slug="s", canonical_link="c", author_id="A",
@@ -210,11 +210,23 @@ def test_a_schedule_is_sent_under_every_candidate_field():
         published_at=datetime(2026, 8, 18, 10, 0, tzinfo=ZoneInfo("America/New_York")),
     )
 
-    for field in SCHEDULE_FIELDS:
-        assert payload[field] == "2026-08-18T14:00:00.000Z", field
+    assert payload[SCHEDULE_FIELD] == "2026-08-18T14:00:00.000Z"
 
 
-def test_a_draft_carries_no_schedule_fields():
+def test_no_invented_date_fields_are_sent():
+    """`scheduledAt` is a real field GHL keeps for itself - writing it is noise."""
+    payload = build_post_payload(
+        location_id="LOC", blog_id="BLOG", title="t", content_html="<p>x</p>",
+        description="d", url_slug="s", canonical_link="c", author_id="A",
+        category_ids=["C"], keywords=[], image_url=None, image_alt="a",
+        status="SCHEDULED",
+        published_at=datetime(2026, 8, 18, 10, 0, tzinfo=ZoneInfo("America/New_York")),
+    )
+
+    assert not any(k in payload for k in ("publishDate", "scheduledAt", "scheduleDate"))
+
+
+def test_a_draft_carries_no_schedule_field():
     payload = build_post_payload(
         location_id="LOC", blog_id="BLOG", title="t", content_html="<p>x</p>",
         description="d", url_slug="s", canonical_link="c", author_id="A",
@@ -222,40 +234,25 @@ def test_a_draft_carries_no_schedule_fields():
         status="DRAFT", published_at=None,
     )
 
-    assert not any(field in payload for field in SCHEDULE_FIELDS)
+    assert SCHEDULE_FIELD not in payload
 
 
 class RecordingAPI:
-    """Rejects the undocumented schedule fields, like a stricter deployment might."""
-
-    def __init__(self, *, strict: bool):
+    def __init__(self, *, strict: bool = False):
         self.strict = strict
         self.bodies = []
 
     def __call__(self, method, path, json=None, **kwargs):
         self.bodies.append(json)
-        if self.strict and any(f in json for f in SCHEDULE_FIELDS[1:]):
-            raise GHLError("POST /blogs/posts -> HTTP 422: unknown field")
         return {"data": {"_id": "post1"}}
 
 
-def test_extra_schedule_fields_are_dropped_when_the_api_objects():
-    """A post on the wrong day is recoverable; one never created is not."""
-    api = RecordingAPI(strict=True)
-    client = client_with(api)
+def test_the_create_body_is_sent_once_and_unaltered():
+    api = RecordingAPI()
 
-    assert client.create_post({"title": "t", **{f: "2026-08-18T14:00:00.000Z" for f in SCHEDULE_FIELDS}})
+    client_with(api).create_post({"title": "t", "publishedAt": "2026-08-18T14:00:00.000Z"})
 
-    assert len(api.bodies) == 2
-    assert set(api.bodies[1]) == {"title", "publishedAt"}
-
-
-def test_a_permissive_api_is_only_called_once():
-    api = RecordingAPI(strict=False)
-
-    client_with(api).create_post({"title": "t", **{f: "x" for f in SCHEDULE_FIELDS}})
-
-    assert len(api.bodies) == 1
+    assert api.bodies == [{"title": "t", "publishedAt": "2026-08-18T14:00:00.000Z"}]
 
 
 def test_an_unrelated_failure_is_not_retried():

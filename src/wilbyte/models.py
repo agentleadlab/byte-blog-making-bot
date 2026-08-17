@@ -95,6 +95,10 @@ class BlogPost:
     cover_alt_text: str = ""
     scheduled_at: datetime | None = None
     ghl_post_id: str | None = None
+    # Where the body sent to GHL was saved, so RYTE can publish this post
+    # itself when its slot arrives. GHL's scheduler never fires on posts made
+    # through its API, and its update endpoint replaces rather than patches.
+    ghl_payload_path: str | None = None
     warnings: list[str] = field(default_factory=list)
 
     def summary(self) -> str:

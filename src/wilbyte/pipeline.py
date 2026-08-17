@@ -144,6 +144,7 @@ def publish_post(
     category_ids: list[str],
     status: str,
     dry_run: bool = False,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
     report: Reporter = print,
 ) -> BlogPost:
     """Upload the cover image and create the post in GHL."""
@@ -184,7 +185,20 @@ def publish_post(
     created = client.create_post(payload)
     post.ghl_post_id = str(created.get("_id") or created.get("id") or "") or None
     report(f"  created GHL post {post.ghl_post_id or '(id not returned)'}")
+
+    # Keep the exact body that was sent. RYTE has to publish scheduled posts
+    # itself - GHL's scheduler never fires on API-created posts - and its
+    # update is a replace while its list endpoint omits `rawHTML`, so this file
+    # is the only place the article will still exist at publish time.
+    post.ghl_payload_path = str(_save_payload(payload, post, output_dir))
     return post
+
+
+def _save_payload(payload: dict, post: BlogPost, output_dir: Path) -> Path:
+    path = output_dir / post.url_slug / "ghl-payload.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
 
 
 def ensure_unique_slug(client: ghl.GHLClient, url_slug: str, *, report: Reporter = print) -> str:

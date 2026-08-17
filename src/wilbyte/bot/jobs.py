@@ -201,182 +201,34 @@ def publish(
     )
 
     if status == ghl.STATUS_SCHEDULED:
-        published.warnings.extend(confirm_scheduled(published, context, config))
+        published.warnings.extend(schedule_warnings(published))
     return published
 
 
-# A post is not queryable the instant it is created - GHL indexes it a beat
-# later, and a single read-back raced that and reported "not found" instead of
-# reporting the date.
-READBACK_TRIES = 4
-READBACK_DELAY = 2.0
+def schedule_warnings(post: BlogPost) -> list[str]:
+    """What would stop RYTE publishing this post when its slot arrives.
 
-
-def find_post(
-    context: GHLContext,
-    *,
-    url_slug: str,
-    post_id: str | None,
-    tries: int = READBACK_TRIES,
-    delay: float = READBACK_DELAY,
-    sleep=None,
-) -> tuple[dict | None, str, list[dict]]:
-    """Look a just-created post up again, allowing for indexing lag.
-
-    Returns (post, problem, everything). Matching prefers the id GHL handed
-    back at create and falls back to the slug, because a post can be created
-    and then have its slug adjusted, but its id never moves. The full list
-    comes back too - the posts that do publish are the reference for what a
-    post that doesn't is missing.
+    GHL's scheduler never fires on a post its API created, so RYTE publishes
+    them itself. That needs two things: the id GHL returned, and the body that
+    was sent - its update is a replace and its list endpoint omits the article,
+    so the saved payload is the only copy that will still exist by then.
+    Missing either is worth saying now rather than at 10am on the day.
     """
-    import time
-
-    sleep = sleep or time.sleep
-    problem = ""
-    posts: list[dict] = []
-    for attempt in range(max(1, tries)):
-        if attempt:
-            sleep(delay)
-        try:
-            posts = context.client.list_posts(context.blog_id)
-        except ghl.GHLError as exc:
-            problem = f"Couldn't confirm with GHL that the schedule stuck: {exc}"
-            continue
-        for candidate in posts:
-            if post_id and ghl.post_key(candidate) == post_id:
-                return candidate, "", posts
-        for candidate in posts:
-            if (candidate.get("urlSlug") or "").lower() == url_slug.lower():
-                return candidate, "", posts
-        problem = "GHL didn't return this post right after creating it — check the dashboard."
-    return None, problem, posts
-
-
-def schedule_payload(post: BlogPost, context: GHLContext) -> dict:
-    """The full post body again, with the schedule date on it.
-
-    A partial PUT is tempting and wrong: GHL's update endpoint replaces the
-    post, so anything left out is anything lost.
-    """
-    return ghl.build_post_payload(
-        location_id=context.client.location_id,
-        blog_id=context.blog_id,
-        title=post.title,
-        content_html=post.copy.article_html,
-        description=post.description,
-        url_slug=post.url_slug,
-        canonical_link=post.canonical_link,
-        author_id=context.author_id,
-        category_ids=context.category_ids,
-        keywords=post.keywords,
-        image_url=post.cover_image_url,
-        image_alt=post.cover_alt_text,
-        status=ghl.STATUS_SCHEDULED,
-        published_at=post.scheduled_at,
-    )
-
-
-def confirm_scheduled(
-    post: BlogPost, context: GHLContext, config: Config, *, sleep=None
-) -> list[str]:
-    """Check GHL recorded the date, repair it if not, and say so if it can't.
-
-    GHL has accepted a scheduled post without complaint, stored no date, and
-    then never published it - three posts sat as SCHEDULED and silently missed
-    their days. A create that returns 201 is not evidence the post will go out.
-
-    So read it back, and when the date is missing, send it again as an update:
-    an API that drops a field on create sometimes honours it on update, and
-    that is cheap to try. If even that doesn't take, report the field names GHL
-    did return - the next fix needs the real schema, not another guess.
-    """
-    from zoneinfo import ZoneInfo
-
-    from ..scheduler import stored_schedule
-
     if post.scheduled_at is None:
         return []
 
-    tz = ZoneInfo(config.schedule.timezone)
-    wanted = post.scheduled_at.date()
-
-    def landed(stored: dict) -> bool:
-        held = stored_schedule(stored)
-        return held is not None and held.astimezone(tz).date() == wanted
-
-    stored, problem, others = find_post(
-        context, url_slug=post.url_slug, post_id=post.ghl_post_id, sleep=sleep
-    )
-    if stored is None:
-        return [problem]
-    if landed(stored):
-        return []
-
-    if post.ghl_post_id:
-        try:
-            context.client.update_post(post.ghl_post_id, schedule_payload(post, context))
-        except ghl.GHLError as exc:
-            return [_stuck(stored, others, wanted, tz, f"and the repair was refused: {_short(exc)}")]
-        again, _, others = find_post(
-            context, url_slug=post.url_slug, post_id=post.ghl_post_id, sleep=sleep
+    problems = []
+    if not post.ghl_post_id:
+        problems.append(
+            "GHL didn't return an id for this post, so I can't publish it when "
+            "its day comes — publish it by hand in the dashboard."
         )
-        if again is not None:
-            if landed(again):
-                return []
-            stored = again
-
-    return [_stuck(stored, others, wanted, tz, "and sending it again didn't take")]
-
-
-def _stuck(stored: dict, others: list[dict], wanted: date, tz, why: str) -> str:
-    """One warning, carrying the evidence needed to fix the schema for good.
-
-    Both halves matter. The fields on our post say what GHL kept; the fields a
-    *working* post has and ours doesn't say what it wants - and there are
-    posts on this blog that publish on their day, so the answer is already
-    sitting in the same response.
-    """
-    from ..scheduler import stored_schedule
-
-    held = stored_schedule(stored)
-    has = held.astimezone(tz).strftime("%a %b %d") if held else "no date at all"
-    note = (
-        f"GHL saved this as scheduled but is holding {has}, not "
-        f"{wanted.strftime('%a %b %d')}, {why}. Set the date by hand in the dashboard "
-        f"or it won't publish."
-    )
-    return f"{note} {_field_evidence(stored, others)}"
-
-
-def _field_evidence(stored: dict, others: list[dict], limit: int = 320) -> str:
-    """What our post has, and what the posts that do publish have that it lacks."""
-    ours = set(stored.keys())
-    working: set[str] = set()
-    for other in others:
-        if other is stored:
-            continue
-        if stored_has_date(other):
-            working |= set(other.keys())
-
-    text = f"Fields on ours: {_names(sorted(ours), limit)}."
-    extra = sorted(working - ours)
-    if extra:
-        text += f" Fields the dated posts have and ours doesn't: {_names(extra, limit)}."
-    return text
-
-
-def stored_has_date(post: dict) -> bool:
-    from ..scheduler import stored_schedule
-
-    return stored_schedule(post) is not None
-
-
-def _names(names: list[str], limit: int) -> str:
-    """Join field names, trimmed - a warning has to fit in a Discord embed."""
-    if not names:
-        return "(none)"
-    text = ", ".join(names)
-    return text if len(text) <= limit else text[:limit].rsplit(", ", 1)[0] + ", …"
+    if not post.ghl_payload_path:
+        problems.append(
+            "I couldn't save this post's body, so I can't publish it later — "
+            "publish it by hand in the dashboard."
+        )
+    return problems
 
 
 def raw_post_fields(config: Config, *, limit: int = 40) -> list[dict]:
@@ -713,5 +565,6 @@ def record(ledger: Ledger, post: BlogPost) -> None:
         url_slug=post.url_slug,
         scheduled_at=post.scheduled_at,
         ghl_post_id=post.ghl_post_id,
+        payload_path=post.ghl_payload_path,
     )
     ledger.save()
