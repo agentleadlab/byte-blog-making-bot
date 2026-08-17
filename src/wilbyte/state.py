@@ -124,6 +124,10 @@ class Ledger:
         self.entries[video_id] = entry
         return entry
 
+    def forget(self, video_id: str) -> None:
+        """Drop an entry, freeing its day and letting the video be redone."""
+        self.entries.pop(video_id, None)
+
     def mark_published(self, video_id: str) -> None:
         """Record that this post is live, so it is never published twice."""
         entry = self.entries.get(video_id)

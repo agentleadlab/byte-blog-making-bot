@@ -554,3 +554,86 @@ def test_scheduled_posts_are_invisible_to_the_listing(config):
     posts = [{"urlSlug": "live", "status": "PUBLISHED", "publishedAt": "2099-08-18T14:00:00.000Z"}]
 
     assert jobs.taken_days(FakeGHL(posts), config) == {date(2099, 8, 18)}
+
+
+# --------------------------------------------------- reconciling with GHL
+
+
+class SlugGHL(FakeGHL):
+    """A GHL where only some slugs still exist."""
+
+    def __init__(self, existing, *, broken=()):
+        super().__init__([])
+        self.existing = set(existing)
+        self.broken = set(broken)
+        self.client.slug_exists = self._exists
+
+    def _exists(self, slug, **_kwargs):
+        if slug in self.broken:
+            raise ghl.GHLError("HTTP 500")
+        return slug in self.existing
+
+
+def ledger_of(tmp_path, *entries):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    for video_id, slug, scheduled, published in entries:
+        ledger.record(
+            video_id=video_id, title=slug, url_slug=slug,
+            scheduled_at=scheduled, ghl_post_id="p" + video_id,
+            published_at=published,
+        )
+    return ledger
+
+
+def test_a_deleted_post_stops_holding_its_day(tmp_path):
+    """Delete a post in GHL and RYTE would hold that day forever otherwise."""
+    when = datetime(2099, 8, 20, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "gone", when, None), ("v2", "still-here", when, None))
+
+    dropped, kept, problems = jobs.reconcile(SlugGHL({"still-here"}), ledger)
+
+    assert [e.url_slug for e in dropped] == ["gone"]
+    assert [e.url_slug for e in kept] == ["still-here"]
+    assert problems == []
+    assert "v1" not in ledger.entries
+
+
+def test_a_dropped_entry_lets_the_video_be_redone(tmp_path):
+    when = datetime(2099, 8, 20, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "gone", when, None))
+
+    jobs.reconcile(SlugGHL(set()), ledger)
+
+    assert not ledger.has("v1")
+
+
+def test_posts_already_published_are_left_alone(tmp_path):
+    """They are the record of what's been done, not a claim on a day."""
+    when = datetime(2020, 1, 1, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "old-news", when, when))
+
+    dropped, kept, _ = jobs.reconcile(SlugGHL(set()), ledger)
+
+    assert dropped == []
+    assert [e.url_slug for e in kept] == ["old-news"]
+
+
+def test_a_failed_check_keeps_the_entry_rather_than_guessing(tmp_path):
+    """Throwing away a booked day on a 500 would double-book it."""
+    when = datetime(2099, 8, 20, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "unknown", when, None))
+
+    dropped, kept, problems = jobs.reconcile(SlugGHL(set(), broken={"unknown"}), ledger)
+
+    assert dropped == []
+    assert [e.url_slug for e in kept] == ["unknown"]
+    assert "HTTP 500" in problems[0]
+
+
+def test_the_drop_survives_a_restart(tmp_path):
+    when = datetime(2099, 8, 20, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "gone", when, None))
+
+    jobs.reconcile(SlugGHL(set()), ledger)
+
+    assert "v1" not in Ledger.load(tmp_path / "ledger.json").entries

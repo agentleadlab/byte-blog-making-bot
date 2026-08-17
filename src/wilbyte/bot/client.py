@@ -238,6 +238,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_earliest_day(responder, config, request.brief or "")
                 return
 
+            if request.action == "reconcile":
+                await _send_reconcile(responder, config)
+                return
+
             if request.action == "check":
                 await _send_check(responder, config, request.source)
                 return
@@ -684,6 +688,44 @@ async def _send_fields(responder: Responder, config: Config, token: int) -> None
     # has all of them either way.
     body = "\n".join(lines[:25])
     await responder.send(head + body, file=discord.File(str(path)))
+
+
+async def _send_reconcile(responder: Responder, config: Config) -> None:
+    """Free up days RYTE is holding for posts that no longer exist in GHL."""
+    ledger = await asyncio.to_thread(Ledger.load)
+    context = await _maybe_open_ghl(config)
+    if context is None:
+        await responder.send("I can't reach GoHighLevel, so I can't check what's still there.")
+        return
+
+    try:
+        gone, kept, problems = await asyncio.to_thread(jobs.reconcile, context, ledger)
+        booked = await asyncio.to_thread(jobs.taken_days, context, config, ledger)
+        slots = jobs.open_slots(booked, 3, config)
+    finally:
+        await asyncio.to_thread(context.close)
+
+    if not gone and not problems:
+        await responder.send(
+            f"Nothing to tidy — all {len(kept)} post(s) I'm tracking are still in GHL."
+        )
+        return
+
+    lines = [f"Freed up {len(gone)} day(s) — these posts aren't in GHL any more:"]
+    lines += [f"• **{e.title or e.url_slug}** — was {_slot_day(e, config)}" for e in gone]
+    lines += [f"⚠ Couldn't check {p}" for p in problems]
+    if slots:
+        lines.append("\nNext posts land: " + ", ".join(f"{s:%a %b %d}" for s in slots))
+    await responder.send("\n".join(lines))
+
+
+def _slot_day(entry, config: Config) -> str:
+    from ..scheduler import parse_timestamp
+
+    slot = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
+    if slot is None:
+        return "a draft"
+    return f"{slot.astimezone(ZoneInfo(config.schedule.timezone)):%a %b %d}"
 
 
 async def _set_earliest_day(responder: Responder, config: Config, text: str) -> None:

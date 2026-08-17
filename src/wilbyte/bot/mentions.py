@@ -56,6 +56,11 @@ ACTION_WORDS = {
     "fields": "fields",
     "raw": "fields",
     "inspect": "fields",
+    # Drop calendar days held by posts that were deleted in GHL.
+    "cleanup": "reconcile",
+    "reconcile": "reconcile",
+    "tidy": "reconcile",
+    "sync": "reconcile",
     # Note: "test" stays a MODE word (preview), not a check alias.
     "check": "check",
     "diagnose": "check",
@@ -153,7 +158,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     source = _find_source(text)
 
-    if action in ("status", "schedule", "help", "fields"):
+    if action in ("status", "schedule", "help", "fields", "reconcile"):
         return MentionRequest(action=action)
 
     if not source:
@@ -270,6 +275,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
+> @RYTE **cleanup** — free up days held by posts you deleted in GHL
 
 If YouTube won't give me a transcript, paste it out of the video yourself and \
 attach it (`.txt` or `.vtt`) along with the link — I'll write from that.

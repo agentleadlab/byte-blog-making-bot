@@ -241,6 +241,39 @@ def schedule_warnings(post: BlogPost) -> list[str]:
     return problems
 
 
+def reconcile(context: GHLContext, ledger: Ledger) -> tuple[list, list, list[str]]:
+    """Drop ledger entries whose post is no longer in GHL. (gone, kept, problems)
+
+    RYTE keeps its own calendar because GHL's API won't list scheduled posts,
+    and the cost of that is drift: delete a post in the dashboard and RYTE goes
+    on holding its day forever, leaving a gap in the week nobody can explain.
+
+    The slug endpoint is what makes this safe. It answers for a post in any
+    status, so "not there" really means deleted - unlike the post listing,
+    which omits scheduled posts entirely and would have this throw away days
+    that are legitimately booked.
+    """
+    gone, kept, problems = [], [], []
+    for entry in list(ledger.entries.values()):
+        if entry.published_at or not entry.url_slug:
+            kept.append(entry)
+            continue
+        try:
+            exists = context.client.slug_exists(entry.url_slug)
+        except ghl.GHLError as exc:
+            problems.append(f"{entry.title or entry.url_slug}: {_short(exc)}")
+            kept.append(entry)
+            continue
+        if exists:
+            kept.append(entry)
+        else:
+            gone.append(entry)
+            ledger.forget(entry.video_id)
+    if gone:
+        ledger.save()
+    return gone, kept, problems
+
+
 def raw_post_fields(config: Config, *, limit: int = 40) -> list[dict]:
     """Every post exactly as GHL returns it, with the article bodies elided.
 
