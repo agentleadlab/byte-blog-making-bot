@@ -1,5 +1,8 @@
+import json
+
 import pytest
 
+from wilbyte import copywriter
 from wilbyte.copywriter import (
     CopywriterError,
     as_markup,
@@ -175,3 +178,87 @@ def test_the_package_decodes_on_the_way_through(config):
     }
 
     assert parse_copy_package(payload, config).article_html.startswith("<h1>")
+
+
+# ------------------------------------------------- headline options that aren't a list
+
+
+def test_a_json_string_of_options_is_decoded_not_iterated(config):
+    """This shipped a post titled `[`.
+
+    Asked for an array, the model returned a *string* that looks like one.
+    Python iterates that by character, so three headlines became sixty single
+    letters and the first one - an opening bracket - became the blog title.
+    """
+    package = copywriter.parse_copy_package(
+        {
+            "article_h1": "These Leads Changed — No. You Did.",
+            "article_html": "<h1>x</h1>",
+            "headline_options": json.dumps([
+                "The 3-Question Test For Blaming Your Leads",
+                "Your Leads Didn't Change. Your Follow-Up Did.",
+                "Why Aged Leads Outproduce Fresh Ones",
+            ]),
+            "meta_title": "t",
+            "meta_description": "d",
+            "url_slug": "lead-quality-changed",
+        },
+        config,
+    )
+
+    assert len(package.headline_options) == 3
+    assert package.headline_options[0].text.startswith("The 3-Question Test")
+
+
+def test_a_newline_separated_string_of_options_is_split(config):
+    package = copywriter.parse_copy_package(
+        {
+            "article_h1": "h",
+            "article_html": "<h1>x</h1>",
+            "headline_options": (
+                "1. The 3-Question Test For Blaming Your Leads\n"
+                "2. Your Leads Didn't Change. Your Follow-Up Did.\n"
+            ),
+            "meta_title": "t",
+            "meta_description": "d",
+            "url_slug": "s",
+        },
+        config,
+    )
+
+    assert [h.text for h in package.headline_options] == [
+        "The 3-Question Test For Blaming Your Leads",
+        "Your Leads Didn't Change. Your Follow-Up Did.",
+    ]
+
+
+def test_debris_short_enough_to_be_punctuation_is_refused(config):
+    """Better a failed post than one titled with a stray bracket."""
+    with pytest.raises(copywriter.CopywriterError, match="usable headline options"):
+        copywriter.parse_copy_package(
+            {
+                "article_h1": "h",
+                "article_html": "<h1>x</h1>",
+                "headline_options": ["[", '"', "A"],
+                "meta_title": "t",
+                "meta_description": "d",
+                "url_slug": "s",
+            },
+            config,
+        )
+
+
+def test_the_refusal_shows_what_the_model_actually_sent(config):
+    """Otherwise this is unfixable from a Discord error message."""
+    with pytest.raises(copywriter.CopywriterError, match="Raw value was"):
+        copywriter.parse_copy_package(
+            {
+                "article_h1": "h",
+                "article_html": "<h1>x</h1>",
+                "headline_options": "[",
+                "meta_title": "t",
+                "meta_description": "d",
+                "url_slug": "s",
+            },
+            config,
+        )

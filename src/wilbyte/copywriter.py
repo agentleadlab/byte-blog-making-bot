@@ -11,6 +11,7 @@ that file for the real project instructions and the pipeline picks it up.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .config import Config, ConfigError, REPO_ROOT
@@ -97,6 +98,40 @@ def as_markup(raw: str) -> str:
     if "<" in text or "&lt;" not in text:
         return text
     return html_module.unescape(text).strip()
+
+
+# The shortest a real headline can be. The schema asks for 40-60 characters, so
+# this only has to be low enough never to reject a genuine one and high enough
+# to catch debris - a stray bracket, a numbering prefix, an empty quote.
+MIN_HEADLINE_CHARS = 12
+
+
+def as_options(raw) -> list[str]:
+    """The headline options, whether the model sent a list or a string.
+
+    Asked for an array it sometimes returns `'["A", "B", "C"]'` - a *string*
+    that happens to look like one. Python iterates that by character, so the
+    three headlines became sixty-odd single letters and the post went out
+    titled `[`. Nothing upstream catches it: the tool schema validates the
+    field is present, and a string of length 60 passes every length check
+    written for a list of 3.
+    """
+    if isinstance(raw, str):
+        text = raw.strip()
+        try:
+            decoded = json.loads(text)
+        except ValueError:
+            decoded = text.splitlines()
+        raw = decoded if isinstance(decoded, list) else [text]
+
+    options = []
+    for item in raw or []:
+        cleaned = str(item).strip().strip('"').strip()
+        # Models number lists even when asked not to; the digit isn't the headline.
+        cleaned = re.sub(r"^\s*(?:\d+[.)]|[-*•])\s*", "", cleaned).strip()
+        if cleaned:
+            options.append(cleaned)
+    return options
 
 
 class CopywriterError(RuntimeError):
@@ -203,11 +238,12 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
     if missing:
         raise CopywriterError(f"Copy package missing fields: {', '.join(missing)}")
 
-    options = [str(h).strip() for h in payload["headline_options"] if str(h).strip()]
+    options = [o for o in as_options(payload["headline_options"]) if len(o) >= MIN_HEADLINE_CHARS]
     if len(options) < 2:
         raise CopywriterError(
-            f"Need at least 2 distinct headline options, got {len(options)}. "
-            "The blog title has to be able to differ from the article H1."
+            f"Need at least 2 usable headline options, got {len(options)}. "
+            "The blog title has to be able to differ from the article H1. "
+            f"Raw value was: {str(payload['headline_options'])[:200]!r}"
         )
 
     package = CopyPackage(
