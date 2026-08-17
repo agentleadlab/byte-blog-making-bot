@@ -108,21 +108,24 @@ BOOKKEEPING_DATE_FIELDS = frozenset(
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]")
 
 
-def post_day(post: dict, tz: ZoneInfo) -> date | None:
-    """The day this post occupies, or None.
+def stored_schedule(post: dict) -> datetime | None:
+    """The publish date GHL is actually holding for this post, or None.
 
-    GHL does not report a schedule under a predictable key on every post - the
-    ones RYTE creates come back without any of the documented fields, which
-    made a booked week look empty and double-booked it. So: try the documented
-    names, then fall back to scanning for any other ISO timestamp on the
-    object and taking the latest. Bookkeeping fields are excluded by name,
-    because a post written last Tuesday for next Thursday must book Thursday.
+    GHL does not report a schedule under a predictable key - the posts RYTE
+    creates have come back without any of the documented fields. So: try the
+    documented names, then scan for any other ISO timestamp on the object and
+    take the latest. Bookkeeping fields are excluded by name, because a post
+    written last Tuesday for next Thursday is a Thursday post.
+
+    Nothing is inferred here. None means GHL is holding no date at all, which
+    is a different fact from "the date is unknown" and is the one worth
+    reporting after a create.
     """
     raw = next((post[f] for f in POST_DATE_FIELDS if post.get(f)), None)
     if raw:
         parsed = parse_timestamp(raw)
         if parsed:
-            return parsed.astimezone(tz).date()
+            return parsed
 
     found: list[datetime] = []
     for key, value in post.items():
@@ -135,8 +138,19 @@ def post_day(post: dict, tz: ZoneInfo) -> date | None:
         parsed = parse_timestamp(value)
         if parsed:
             found.append(parsed)
-    if found:
-        return max(found).astimezone(tz).date()
+    return max(found) if found else None
+
+
+def post_day(post: dict, tz: ZoneInfo) -> date | None:
+    """The day this post occupies, or None.
+
+    Falls back to the creation day when GHL reports no schedule, because the
+    caller is asking "is this day free?" and a dateless post that is sitting
+    on a day must not make that day look free.
+    """
+    stamped = stored_schedule(post)
+    if stamped:
+        return stamped.astimezone(tz).date()
 
     # Nothing else to go on. A published post's creation day is usually also
     # its posting day, so this is better than treating the day as free.

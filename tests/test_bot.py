@@ -378,9 +378,34 @@ def test_no_posts_at_all_is_not_a_problem(config):
 
 
 class FakeGHL:
-    def __init__(self, posts):
-        self.client = SimpleNamespace(list_posts=lambda _blog: posts, close=lambda: None)
+    def __init__(self, posts, *, on_update=None, pages=None):
+        self.posts = list(posts)
+        self.pages = list(pages) if pages is not None else None
+        self.reads = 0
+        self.updates = []
+        self.on_update = on_update
         self.blog_id = "blog1"
+        self.author_id = "author1"
+        self.category_ids = ["cat1"]
+        self.client = SimpleNamespace(
+            location_id="loc1",
+            list_posts=self._list,
+            update_post=self._update,
+            close=lambda: None,
+        )
+
+    def _list(self, _blog):
+        """Answer from `pages` when given one, so indexing lag can be staged."""
+        self.reads += 1
+        if self.pages is None:
+            return self.posts
+        return self.pages[min(self.reads - 1, len(self.pages) - 1)]
+
+    def _update(self, post_id, payload):
+        self.updates.append((post_id, payload))
+        if self.on_update:
+            self.on_update(self, payload)
+        return {}
 
 
 class LedgerStub:
@@ -460,48 +485,139 @@ def test_the_schedule_embed_says_when_ghl_was_unreachable():
 # --------------------------------------------------- confirming the schedule
 
 
-def scheduled_post(slug, when):
-    post = SimpleNamespace(url_slug=slug, scheduled_at=when, warnings=[])
-    return post
+def scheduled_post(slug, when, *, post_id="post1"):
+    """Enough of a BlogPost to be re-sent to GHL as an update."""
+    return SimpleNamespace(
+        url_slug=slug,
+        scheduled_at=when,
+        warnings=[],
+        ghl_post_id=post_id,
+        title="A Post",
+        description="A description.",
+        canonical_link="https://agentleadlab.com/blog/a-post",
+        keywords=["leads"],
+        cover_image_url=None,
+        cover_alt_text="a-post",
+        copy=SimpleNamespace(article_html="<h1>A Post</h1>"),
+    )
+
+
+def confirm(post, context, config):
+    """confirm_scheduled without the real retry delay."""
+    return jobs.confirm_scheduled(post, context, config, sleep=lambda _s: None)
 
 
 def test_a_correctly_dated_post_raises_nothing(config):
     when = datetime(2099, 8, 18, 10, tzinfo=ET)
-    ghl_posts = [{"urlSlug": "a-post", "publishedAt": "2099-08-18T14:00:00.000Z"}]
+    context = FakeGHL([{"urlSlug": "a-post", "publishedAt": "2099-08-18T14:00:00.000Z"}])
 
-    assert jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config) == []
+    assert confirm(scheduled_post("a-post", when), context, config) == []
+    assert context.updates == []
 
 
-def test_a_post_stored_without_a_date_is_flagged(config):
+def test_a_post_is_matched_by_id_not_just_slug(config):
+    """The slug can be adjusted after create; the id GHL handed back cannot."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([{"_id": "post1", "urlSlug": "different", "publishedAt": "2099-08-18T14:00:00.000Z"}])
+
+    assert confirm(scheduled_post("a-post", when), context, config) == []
+
+
+def test_indexing_lag_is_waited_out_rather_than_reported(config):
+    """One read right after the create raced GHL and reported a missing post."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    dated = {"urlSlug": "a-post", "publishedAt": "2099-08-18T14:00:00.000Z"}
+    context = FakeGHL([], pages=[[], [dated]])
+
+    assert confirm(scheduled_post("a-post", when), context, config) == []
+
+
+def test_a_dateless_post_is_repaired_by_sending_the_date_again(config):
     """This is the failure: accepted, never dated, silently never published."""
     when = datetime(2099, 8, 18, 10, tzinfo=ET)
-    ghl_posts = [{"urlSlug": "a-post", "title": "A Post"}]
 
-    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config)
+    def store_it(ctx, payload):
+        ctx.posts = [{"urlSlug": "a-post", "publishedAt": payload["publishedAt"]}]
 
-    assert "no date" in warning
+    context = FakeGHL([{"urlSlug": "a-post", "title": "A Post"}], on_update=store_it)
+
+    assert confirm(scheduled_post("a-post", when), context, config) == []
+    post_id, payload = context.updates[0]
+    assert post_id == "post1"
+    assert payload["publishedAt"].startswith("2099-08-18T14:00")
+    # The update replaces the post, so the body has to go back with it.
+    assert payload["rawHTML"] == "<h1>A Post</h1>"
+
+
+def test_a_repair_that_does_not_take_reports_the_fields_ghl_returned(config):
+    """The next fix needs GHL's real schema, not a fifth guessed field name."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([{"urlSlug": "a-post", "title": "A Post", "status": "SCHEDULED"}])
+
+    (warning,) = confirm(scheduled_post("a-post", when), context, config)
+
+    assert "no date at all" in warning
     assert "won't publish" in warning
+    assert "status, title, urlSlug" in warning
+    assert context.updates, "it should have tried to repair before giving up"
+
+
+def test_the_warning_names_what_the_posts_that_do_publish_have(config):
+    """There are posts on this blog that go out on their day - diff against them."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([
+        {"urlSlug": "a-post", "title": "A Post"},
+        {"urlSlug": "works", "title": "Works", "publishedAt": "2099-07-01T14:00:00.000Z",
+         "authorId": "u1"},
+    ])
+
+    (warning,) = confirm(scheduled_post("a-post", when), context, config)
+
+    assert "ours doesn't: authorId, publishedAt" in warning
+
+
+def test_a_refused_repair_says_so(config):
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([{"urlSlug": "a-post", "title": "A Post"}])
+    context.client.update_post = lambda _i, _p: (_ for _ in ()).throw(ghl.GHLError("HTTP 422"))
+
+    (warning,) = confirm(scheduled_post("a-post", when), context, config)
+
+    assert "repair was refused" in warning and "422" in warning
+
+
+def test_a_post_with_no_id_is_flagged_without_a_repair_attempt(config):
+    """Updating by slug would edit whatever post happens to hold it."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([{"urlSlug": "a-post", "title": "A Post"}])
+
+    (warning,) = confirm(scheduled_post("a-post", when, post_id=None), context, config)
+
+    assert "no date at all" in warning
+    assert context.updates == []
 
 
 def test_a_post_stored_on_the_wrong_day_is_flagged(config):
     when = datetime(2099, 8, 18, 10, tzinfo=ET)
-    ghl_posts = [{"urlSlug": "a-post", "publishedAt": "2099-09-01T14:00:00.000Z"}]
+    context = FakeGHL([{"urlSlug": "a-post", "publishedAt": "2099-09-01T14:00:00.000Z"}])
 
-    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config)
+    (warning,) = confirm(scheduled_post("a-post", when), context, config)
 
     assert "Sep 01" in warning and "Aug 18" in warning
 
 
 def test_a_post_that_comes_back_missing_is_flagged(config):
     when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    context = FakeGHL([])
 
-    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL([]), config)
+    (warning,) = confirm(scheduled_post("a-post", when), context, config)
 
     assert "didn't return this post" in warning
+    assert context.reads > 1, "a single read races GHL's indexing"
 
 
 def test_a_draft_is_not_checked_for_a_date(config):
-    assert jobs.confirm_scheduled(scheduled_post("a-post", None), FakeGHL([]), config) == []
+    assert confirm(scheduled_post("a-post", None), FakeGHL([]), config) == []
 
 
 def test_a_failed_lookup_says_so_rather_than_claiming_success(config):
@@ -513,6 +629,6 @@ def test_a_failed_lookup_says_so_rather_than_claiming_success(config):
             list_posts=lambda _b: (_ for _ in ()).throw(ghl.GHLError("HTTP 500")),
         )
 
-    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), Broken(), config)
+    (warning,) = confirm(scheduled_post("a-post", when), Broken(), config)
 
     assert "Couldn't confirm" in warning

@@ -772,9 +772,13 @@ async def _execute_run(
                 await asyncio.to_thread(jobs.publish, post, config, context, status=status)
                 await asyncio.to_thread(jobs.record, ledger, post)
                 created += 1
-                # A post GHL accepted but didn't date will never publish, so the
-                # warning has to land next to the tick, not in a log.
-                trouble = "\n".join(f"⚠ {w}" for w in post.warnings if "GHL" in w)
+                # A post GHL accepted but didn't date will never publish, and a
+                # post with no markup publishes as a wall of tags. Both have to
+                # land next to the tick, not in a log. Headline and cover notes
+                # don't - the post still works, and they'd bury these.
+                trouble = "\n".join(
+                    f"⚠ {w}" for w in post.warnings if "GHL" in w or "publish" in w
+                )
                 await responder.send(
                     f"✅ **{post.title}** → `{post.url_slug}` "
                     + (
