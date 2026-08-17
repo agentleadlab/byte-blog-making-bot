@@ -413,8 +413,10 @@ class LedgerStub:
         self.entries = {str(i): e for i, e in enumerate(entries)}
 
 
-def entry(slug, title, scheduled_at):
-    return SimpleNamespace(url_slug=slug, title=title, scheduled_at=scheduled_at)
+def entry(slug, title, scheduled_at, published_at=None):
+    return SimpleNamespace(
+        url_slug=slug, title=title, scheduled_at=scheduled_at, published_at=published_at
+    )
 
 
 def test_upcoming_posts_are_dated_and_sorted(config):
@@ -710,3 +712,35 @@ def test_a_healthy_post_is_not_reported_as_stuck(tmp_path):
 
     assert jobs.stuck_posts(ledger) == []
     assert jobs.next_pending(ledger).title == "Fine"
+
+
+def test_a_post_already_published_is_not_listed_as_still_to_go_out(config, tmp_path):
+    """It still holds its day, but the list and the count must agree."""
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Already out", url_slug="out",
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET),
+        ghl_post_id="p1", payload_path="/tmp/p.json",
+        published_at=datetime(2099, 8, 18, 10, tzinfo=ET),
+    )
+    ledger.record(
+        video_id="v2", title="Still waiting", url_slug="waiting",
+        scheduled_at=datetime(2099, 8, 19, 10, tzinfo=ET),
+        ghl_post_id="p2", payload_path="/tmp/p.json",
+    )
+
+    listed = jobs.upcoming_posts(None, config, ledger)
+
+    assert [title for _day, title in listed] == ["Still waiting"]
+
+
+def test_a_published_post_still_holds_its_day(config, tmp_path):
+    """Freeing it would book a second post onto a day that already has one."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Already out", url_slug="out", scheduled_at=when,
+        ghl_post_id="p1", payload_path="/tmp/p.json", published_at=when,
+    )
+
+    assert date(2099, 8, 18) in jobs.taken_days(None, config, ledger)

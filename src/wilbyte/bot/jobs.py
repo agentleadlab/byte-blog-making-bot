@@ -99,6 +99,10 @@ def upcoming_posts(
 
     if ledger is not None:
         for entry in ledger.entries.values():
+            # Already out. It still holds its day, but it is not "still to go
+            # out" and listing it as such makes the count disagree with itself.
+            if entry.published_at:
+                continue
             parsed = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
             if parsed is None:
                 continue
