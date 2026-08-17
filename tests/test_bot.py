@@ -620,6 +620,27 @@ def test_a_draft_is_not_checked_for_a_date(config):
     assert confirm(scheduled_post("a-post", None), FakeGHL([]), config) == []
 
 
+def test_the_field_dump_marks_the_posts_holding_no_date(config):
+    posts = [
+        {"title": "Goes out", "status": "SCHEDULED", "publishedAt": "2099-08-18T14:00:00.000Z"},
+        {"title": "Never will", "status": "SCHEDULED"},
+    ]
+
+    goes_out, never = jobs.field_lines(posts, config)
+
+    assert "Aug 18" in goes_out and "NO DATE" not in goes_out
+    assert "NO DATE" in never
+
+
+def test_the_field_dump_drops_the_article_body_but_keeps_everything_else():
+    """The 8kb of HTML isn't the question; the field names are."""
+    compact = jobs._compact({"rawHTML": "x" * 9000, "urlSlug": "a-post", "publishedAt": None})
+
+    assert compact["rawHTML"] == "<9000 chars>"
+    assert compact["urlSlug"] == "a-post"
+    assert "publishedAt" in compact, "a null field is evidence too"
+
+
 def test_a_failed_lookup_says_so_rather_than_claiming_success(config):
     when = datetime(2099, 8, 18, 10, tzinfo=ET)
 

@@ -221,6 +221,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_corpus(responder)
                 return
 
+            if request.action == "fields":
+                await _send_fields(responder, config, message.id)
+                return
+
             if request.action == "check":
                 await _send_check(responder, config, request.source)
                 return
@@ -558,6 +562,38 @@ async def _send_write(
 def _write_file(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+async def _send_fields(responder: Responder, config: Config, token: int) -> None:
+    """Dump what GHL actually stores on each post, as an attached file.
+
+    Three publish days have now been missed to a schedule date GHL accepts and
+    then doesn't keep, and four guessed field names haven't found it. This
+    prints the real objects side by side so the next change is based on the
+    schema rather than another guess.
+    """
+    import json
+
+    posts = await asyncio.to_thread(jobs.raw_post_fields, config)
+    if not posts:
+        await responder.send("GHL returned no posts at all — that's its own problem.")
+        return
+
+    path = DEFAULT_OUTPUT_DIR / "diagnostics" / f"ghl-posts-{token}.json"
+    await asyncio.to_thread(
+        _write_file, path, json.dumps(posts, indent=2, default=str)
+    )
+
+    lines = jobs.field_lines(posts, config)
+    dateless = sum(1 for line in lines if "NO DATE" in line)
+    head = (
+        f"**What GHL is actually holding** — {len(posts)} post(s), "
+        f"{dateless} with no date at all.\n"
+    )
+    # 25 lines is about the most that fits before Discord truncates; the file
+    # has all of them either way.
+    body = "\n".join(lines[:25])
+    await responder.send(head + body, file=discord.File(str(path)))
 
 
 async def _send_corpus(responder: Responder) -> None:

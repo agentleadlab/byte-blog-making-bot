@@ -379,6 +379,54 @@ def _names(names: list[str], limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rsplit(", ", 1)[0] + ", …"
 
 
+def raw_post_fields(config: Config, *, limit: int = 40) -> list[dict]:
+    """Every post exactly as GHL returns it, with the article bodies elided.
+
+    Guessing at schedule field names has now cost three missed publish days.
+    This is the ground truth instead: what GHL stores on a post that goes out
+    on its day, sitting next to what it stores on one of ours that doesn't.
+    Newest first, because the interesting ones are the recent ones.
+    """
+    context = open_ghl(config)
+    try:
+        posts = context.client.list_posts(context.blog_id)
+    finally:
+        context.close()
+
+    from ..scheduler import parse_timestamp
+
+    def when(post: dict):
+        stamp = parse_timestamp(post.get("updatedAt") or post.get("createdAt") or "")
+        return stamp.timestamp() if stamp else 0.0
+
+    return [_compact(p) for p in sorted(posts, key=when, reverse=True)[:limit]]
+
+
+def _compact(post: dict, keep: int = 120) -> dict:
+    """The same object, minus the 8kb of article HTML that isn't the question."""
+    return {
+        key: (f"<{len(value)} chars>" if isinstance(value, str) and len(value) > keep else value)
+        for key, value in post.items()
+    }
+
+
+def field_lines(posts: list[dict], config: Config) -> list[str]:
+    """One line per post: what date GHL is holding, and its status."""
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import stored_schedule
+
+    tz = ZoneInfo(config.schedule.timezone)
+    lines = []
+    for post in posts:
+        held = stored_schedule(post)
+        day = held.astimezone(tz).strftime("%b %d %I:%M%p") if held else "— NO DATE —"
+        status = str(post.get("status") or "?")[:9]
+        title = str(post.get("title") or post.get("urlSlug") or "?")[:34]
+        lines.append(f"`{day:>15}` `{status:<9}` {title}")
+    return lines
+
+
 def check_ghl(config: Config) -> list[tuple[bool, str]]:
     """Verify everything the pipeline needs from GHL before a real run."""
     results: list[tuple[bool, str]] = []

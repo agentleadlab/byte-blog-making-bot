@@ -84,6 +84,14 @@ def test_status_keywords_need_no_link(word):
     assert request.source is None
 
 
+@pytest.mark.parametrize("word", ["fields", "raw", "inspect"])
+def test_fields_keywords_need_no_link(word):
+    request = parse(f"{BOT} {word}")
+
+    assert request.action == "fields"
+    assert request.source is None
+
+
 @pytest.mark.parametrize("text", ["", "hey", "hello there", "what can you do", "help"])
 def test_a_mention_with_no_link_asks_for_help(text):
     assert parse(f"{BOT} {text}").action == "help"
