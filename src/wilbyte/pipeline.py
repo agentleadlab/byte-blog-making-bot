@@ -183,8 +183,24 @@ def publish_post(
         return post
 
     created = client.create_post(payload)
-    post.ghl_post_id = str(created.get("_id") or created.get("id") or "") or None
+    post.ghl_post_id = ghl.created_id(created)
     report(f"  created GHL post {post.ghl_post_id or '(id not returned)'}")
+
+    # Keep what GHL said back. When the id can't be found this is the only
+    # record of what it actually sent, and without an id the post can never be
+    # published - so the answer needs to survive the run rather than be
+    # reconstructed by making another post.
+    post_dir = output_dir / post.url_slug
+    post_dir.mkdir(parents=True, exist_ok=True)
+    (post_dir / "ghl-response.json").write_text(
+        json.dumps(created, indent=2, default=str), encoding="utf-8"
+    )
+    if not post.ghl_post_id:
+        post.warnings.append(
+            "GHL didn't return a post id I could find, so I can't publish this "
+            f"one when its day comes. It sent these fields: "
+            f"{', '.join(sorted(created)) if isinstance(created, dict) else type(created).__name__}"
+        )
 
     # Keep the exact body that was sent. RYTE has to publish scheduled posts
     # itself - GHL's scheduler never fires on API-created posts - and its

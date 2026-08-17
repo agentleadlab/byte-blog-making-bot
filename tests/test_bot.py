@@ -580,6 +580,7 @@ def ledger_of(tmp_path, *entries):
         ledger.record(
             video_id=video_id, title=slug, url_slug=slug,
             scheduled_at=scheduled, ghl_post_id="p" + video_id,
+            payload_path=str(tmp_path / f"{slug}.json"),
             published_at=published,
         )
     return ledger
@@ -675,3 +676,37 @@ def test_changing_status_keeps_the_body_and_the_date(tmp_path):
     assert body["status"] == "PUBLISHED"
     assert body["rawHTML"] == "<h1>A</h1>"
     assert body["publishedAt"] == "2099-08-18T14:00:00.000Z"
+
+
+def test_a_post_with_no_ghl_id_is_named_rather_than_skipped(tmp_path):
+    """Skipping it quietly is exactly GHL's failure: the day just passes."""
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Orphan", url_slug="orphan", ghl_post_id=None,
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET), payload_path="/tmp/p.json",
+    )
+
+    assert jobs.next_pending(ledger) is None
+    assert jobs.stuck_posts(ledger) == [("Orphan", "GHL never gave me its post id")]
+
+
+def test_a_post_with_no_saved_body_is_named_too(tmp_path):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Bodyless", url_slug="b", ghl_post_id="post1",
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET), payload_path=None,
+    )
+
+    (_title, why), = jobs.stuck_posts(ledger)
+    assert "body" in why
+
+
+def test_a_healthy_post_is_not_reported_as_stuck(tmp_path):
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Fine", url_slug="f", ghl_post_id="post1",
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET), payload_path="/tmp/p.json",
+    )
+
+    assert jobs.stuck_posts(ledger) == []
+    assert jobs.next_pending(ledger).title == "Fine"

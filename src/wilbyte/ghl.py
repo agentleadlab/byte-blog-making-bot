@@ -60,6 +60,29 @@ class GHLError(RuntimeError):
     """Raised when the LeadConnector API rejects a request."""
 
 
+def created_id(response: dict, *, depth: int = 4) -> str | None:
+    """The new post's id, wherever the create response happens to put it.
+
+    Worth searching for rather than reaching for. Without this id RYTE cannot
+    publish the post when its day comes - and it fails silently, because an
+    entry with no id is simply skipped. A response shaped
+    `{"data": {"blogPost": {"_id": ...}}}` instead of `{"data": {"_id": ...}}`
+    is the difference between a working schedule and a post that never goes out.
+    """
+    if not isinstance(response, dict) or depth <= 0:
+        return None
+    for key in ("_id", "id", "postId"):
+        value = response.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+    for value in response.values():
+        if isinstance(value, dict):
+            found = created_id(value, depth=depth - 1)
+            if found:
+                return found
+    return None
+
+
 def post_key(post: dict) -> str:
     """A stable identity for a post, for deduping across status queries."""
     for field in ("_id", "id", "postId", "urlSlug"):

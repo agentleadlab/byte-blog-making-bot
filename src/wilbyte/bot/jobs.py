@@ -242,12 +242,34 @@ def schedule_warnings(post: BlogPost) -> list[str]:
 
 
 def next_pending(ledger: Ledger):
-    """The soonest post RYTE is still holding, or None."""
-    waiting = [
-        e for e in ledger.entries.values()
-        if not e.published_at and e.scheduled_at and e.ghl_post_id
-    ]
+    """The soonest post RYTE is still holding and *can* publish, or None."""
+    waiting = [e for e in ledger.entries.values() if publishable(e)]
     return min(waiting, key=lambda e: e.scheduled_at) if waiting else None
+
+
+def publishable(entry) -> bool:
+    return bool(
+        not entry.published_at and entry.scheduled_at
+        and entry.ghl_post_id and entry.payload_path
+    )
+
+
+def stuck_posts(ledger: Ledger) -> list[tuple[str, str]]:
+    """(title, why) for scheduled posts RYTE will never be able to publish.
+
+    Skipping these quietly is the same failure as GHL's: the post sits looking
+    scheduled and the day passes. Whatever else is wrong, this has to be said
+    out loud.
+    """
+    stuck = []
+    for entry in ledger.entries.values():
+        if entry.published_at or not entry.scheduled_at or publishable(entry):
+            continue
+        if not entry.ghl_post_id:
+            stuck.append((entry.title or entry.url_slug, "GHL never gave me its post id"))
+        else:
+            stuck.append((entry.title or entry.url_slug, "I have no saved copy of its body"))
+    return stuck
 
 
 def set_status(context: GHLContext, entry, status: str) -> datetime | None:

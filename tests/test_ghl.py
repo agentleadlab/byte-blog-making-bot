@@ -5,6 +5,7 @@ import pytest
 
 from wilbyte.ghl import (
     SCHEDULE_FIELD,
+    created_id,
     GHLClient,
     GHLError,
     build_post_payload,
@@ -262,3 +263,32 @@ def test_an_unrelated_failure_is_not_retried():
 
     with pytest.raises(GHLError, match="401"):
         client_with(unauthorized).create_post({"title": "t", "publishDate": "x"})
+
+
+# ------------------------------------------------- finding the new post's id
+
+
+def test_the_id_is_found_at_the_top_level():
+    assert created_id({"_id": "abc123"}) == "abc123"
+
+
+def test_the_id_is_found_when_the_response_nests_it():
+    """Without this the post has no id, and a post with no id never publishes."""
+    assert created_id({"data": {"blogPost": {"_id": "abc123", "title": "t"}}}) == "abc123"
+
+
+def test_an_id_key_is_preferred_over_searching_deeper():
+    assert created_id({"id": "top", "data": {"_id": "nested"}}) == "top"
+
+
+@pytest.mark.parametrize("response", [{}, {"data": {}}, {"data": {"_id": ""}}, {"ok": True}])
+def test_a_response_with_no_id_says_so_rather_than_inventing_one(response):
+    assert created_id(response) is None
+
+
+def test_the_search_does_not_recurse_forever():
+    """A self-referencing response must not hang the run."""
+    looped = {"data": {}}
+    looped["data"]["self"] = looped
+
+    assert created_id(looped) is None

@@ -605,6 +605,9 @@ async def _send_schedule(responder: Responder, config: Config) -> None:
     waiting = len(
         [e for e in ledger.entries.values() if e.scheduled_at and not e.published_at]
     )
+    for title, why in jobs.stuck_posts(ledger):
+        await responder.send(f"⚠ **{title}** won't go out — {why}.")
+
     if waiting:
         moment = publisher.next_due(ledger)
         when = f" Next one: {moment.astimezone(ZoneInfo(config.schedule.timezone)):%a %b %d at %I:%M %p}." if moment else ""
@@ -707,6 +710,19 @@ async def _send_date_test(responder: Responder, config: Config, undo: bool) -> N
     ledger = await asyncio.to_thread(Ledger.load)
     entry = jobs.next_pending(ledger)
     if entry is None:
+        stuck = jobs.stuck_posts(ledger)
+        if stuck:
+            # Never just say "nothing pending" when the truth is "something is
+            # pending and I can't publish it" - that is the failure we are here
+            # to stop happening quietly.
+            lines = [f"• **{title}** — {why}" for title, why in stuck]
+            await responder.send(
+                "I can't publish these, so they won't go out on their day:\n"
+                + "\n".join(lines)
+                + "\n\nPublish them by hand in GHL for now, and re-run them "
+                "after the next update so I can track them properly."
+            )
+            return
         await responder.send("Nothing pending to test with — schedule a post first.")
         return
 
