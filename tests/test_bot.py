@@ -455,3 +455,64 @@ def test_the_schedule_embed_says_when_ghl_was_unreachable():
     embed = embeds.upcoming_summary([], next_slots=[], reachable=False)
 
     assert "wasn't reachable" in embed.footer.text
+
+
+# --------------------------------------------------- confirming the schedule
+
+
+def scheduled_post(slug, when):
+    post = SimpleNamespace(url_slug=slug, scheduled_at=when, warnings=[])
+    return post
+
+
+def test_a_correctly_dated_post_raises_nothing(config):
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    ghl_posts = [{"urlSlug": "a-post", "publishedAt": "2099-08-18T14:00:00.000Z"}]
+
+    assert jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config) == []
+
+
+def test_a_post_stored_without_a_date_is_flagged(config):
+    """This is the failure: accepted, never dated, silently never published."""
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    ghl_posts = [{"urlSlug": "a-post", "title": "A Post"}]
+
+    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config)
+
+    assert "no date" in warning
+    assert "won't publish" in warning
+
+
+def test_a_post_stored_on_the_wrong_day_is_flagged(config):
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+    ghl_posts = [{"urlSlug": "a-post", "publishedAt": "2099-09-01T14:00:00.000Z"}]
+
+    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL(ghl_posts), config)
+
+    assert "Sep 01" in warning and "Aug 18" in warning
+
+
+def test_a_post_that_comes_back_missing_is_flagged(config):
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+
+    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), FakeGHL([]), config)
+
+    assert "didn't return this post" in warning
+
+
+def test_a_draft_is_not_checked_for_a_date(config):
+    assert jobs.confirm_scheduled(scheduled_post("a-post", None), FakeGHL([]), config) == []
+
+
+def test_a_failed_lookup_says_so_rather_than_claiming_success(config):
+    when = datetime(2099, 8, 18, 10, tzinfo=ET)
+
+    class Broken:
+        blog_id = "blog1"
+        client = SimpleNamespace(
+            list_posts=lambda _b: (_ for _ in ()).throw(ghl.GHLError("HTTP 500")),
+        )
+
+    (warning,) = jobs.confirm_scheduled(scheduled_post("a-post", when), Broken(), config)
+
+    assert "Couldn't confirm" in warning

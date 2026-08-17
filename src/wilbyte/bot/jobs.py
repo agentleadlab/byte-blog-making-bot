@@ -188,7 +188,7 @@ def publish(
     if config.cover.alt_text_source == "url_slug":
         post.cover_alt_text = post.url_slug
 
-    return pipeline.publish_post(
+    published = pipeline.publish_post(
         post,
         config,
         context.client,
@@ -199,6 +199,49 @@ def publish(
         dry_run=False,
         report=lambda _: None,
     )
+
+    if status == ghl.STATUS_SCHEDULED:
+        published.warnings.extend(confirm_scheduled(published, context, config))
+    return published
+
+
+def confirm_scheduled(
+    post: BlogPost, context: GHLContext, config: Config
+) -> list[str]:
+    """Read the post back and check GHL actually recorded the date.
+
+    It once accepted a scheduled post without complaint, stored no date, and
+    then never published it - three posts sat as SCHEDULED and silently missed
+    their days. A create that returns 201 is not evidence the post will go out.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import post_day
+
+    if post.scheduled_at is None:
+        return []
+
+    try:
+        posts = context.client.list_posts(context.blog_id)
+    except ghl.GHLError as exc:
+        return [f"Couldn't confirm the schedule stuck: {exc}"]
+
+    stored = next(
+        (p for p in posts if (p.get("urlSlug") or "").lower() == post.url_slug.lower()), None
+    )
+    if stored is None:
+        return ["GHL didn't return this post right after creating it — check the dashboard."]
+
+    day = post_day(stored, ZoneInfo(config.schedule.timezone))
+    wanted = post.scheduled_at.date()
+    if day == wanted:
+        return []
+    return [
+        f"GHL saved this as scheduled but recorded "
+        f"{day.strftime('%a %b %d') if day else 'no date'}, not "
+        f"{wanted.strftime('%a %b %d')}. Set the date by hand in the dashboard or it "
+        f"won't publish."
+    ]
 
 
 def check_ghl(config: Config) -> list[tuple[bool, str]]:

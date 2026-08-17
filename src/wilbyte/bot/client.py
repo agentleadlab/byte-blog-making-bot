@@ -772,6 +772,9 @@ async def _execute_run(
                 await asyncio.to_thread(jobs.publish, post, config, context, status=status)
                 await asyncio.to_thread(jobs.record, ledger, post)
                 created += 1
+                # A post GHL accepted but didn't date will never publish, so the
+                # warning has to land next to the tick, not in a log.
+                trouble = "\n".join(f"⚠ {w}" for w in post.warnings if "GHL" in w)
                 await responder.send(
                     f"✅ **{post.title}** → `{post.url_slug}` "
                     + (
@@ -779,6 +782,7 @@ async def _execute_run(
                         if post.scheduled_at
                         else "saved as a draft"
                     )
+                    + (f"\n{trouble}" if trouble else "")
                 )
             except PIPELINE_ERRORS as exc:
                 failed += 1
