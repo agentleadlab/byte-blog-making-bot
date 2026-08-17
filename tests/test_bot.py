@@ -637,3 +637,41 @@ def test_the_drop_survives_a_restart(tmp_path):
     jobs.reconcile(SlugGHL(set()), ledger)
 
     assert "v1" not in Ledger.load(tmp_path / "ledger.json").entries
+
+
+def test_the_soonest_pending_post_is_the_one_tested(tmp_path):
+    ledger = ledger_of(
+        tmp_path,
+        ("v2", "later", datetime(2099, 8, 20, 10, tzinfo=ET), None),
+        ("v1", "sooner", datetime(2099, 8, 18, 10, tzinfo=ET), None),
+    )
+
+    assert jobs.next_pending(ledger).url_slug == "sooner"
+
+
+def test_a_published_post_is_not_offered_for_testing(tmp_path):
+    when = datetime(2020, 1, 1, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, ("v1", "done", when, when))
+
+    assert jobs.next_pending(ledger) is None
+
+
+def test_changing_status_keeps_the_body_and_the_date(tmp_path):
+    """A PUT is a replace - dropping either would blank or misdate the post."""
+    import json
+
+    payload = tmp_path / "p.json"
+    payload.write_text(json.dumps({"rawHTML": "<h1>A</h1>", "status": "SCHEDULED"}))
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    entry = ledger.record(
+        video_id="v1", title="A", url_slug="a", ghl_post_id="post1",
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET), payload_path=str(payload),
+    )
+    context = FakeGHL([])
+
+    jobs.set_status(context, entry, ghl.STATUS_PUBLISHED)
+
+    _post_id, body = context.updates[0]
+    assert body["status"] == "PUBLISHED"
+    assert body["rawHTML"] == "<h1>A</h1>"
+    assert body["publishedAt"] == "2099-08-18T14:00:00.000Z"

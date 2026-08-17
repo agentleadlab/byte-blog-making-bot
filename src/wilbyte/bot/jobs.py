@@ -241,6 +241,36 @@ def schedule_warnings(post: BlogPost) -> list[str]:
     return problems
 
 
+def next_pending(ledger: Ledger):
+    """The soonest post RYTE is still holding, or None."""
+    waiting = [
+        e for e in ledger.entries.values()
+        if not e.published_at and e.scheduled_at and e.ghl_post_id
+    ]
+    return min(waiting, key=lambda e: e.scheduled_at) if waiting else None
+
+
+def set_status(context: GHLContext, entry, status: str) -> datetime | None:
+    """Re-send a pending post under a different status, keeping its date.
+
+    Used to answer the one question that decides whether RYTE has to be awake
+    at 10am: does GHL's blog hide a PUBLISHED post whose date is in the future?
+    If it does, the date alone schedules the post and nothing needs to be
+    running. If it doesn't, the post appears early and this puts it straight
+    back.
+    """
+    from .. import publisher
+    from ..scheduler import parse_timestamp
+
+    payload = publisher.load_payload(entry)
+    payload[ghl.POST_FIELDS["status"]] = status
+    slot = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
+    if slot:
+        payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(slot)
+    context.client.update_post(entry.ghl_post_id, payload)
+    return slot
+
+
 def reconcile(context: GHLContext, ledger: Ledger) -> tuple[list, list, list[str]]:
     """Drop ledger entries whose post is no longer in GHL. (gone, kept, problems)
 

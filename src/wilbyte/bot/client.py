@@ -242,6 +242,12 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_reconcile(responder, config)
                 return
 
+            if request.action == "datetest":
+                await _send_date_test(
+                    responder, config, undo="undo" in (request.brief or "").lower()
+                )
+                return
+
             if request.action == "check":
                 await _send_check(responder, config, request.source)
                 return
@@ -688,6 +694,55 @@ async def _send_fields(responder: Responder, config: Config, token: int) -> None
     # has all of them either way.
     body = "\n".join(lines[:25])
     await responder.send(head + body, file=discord.File(str(path)))
+
+
+async def _send_date_test(responder: Responder, config: Config, undo: bool) -> None:
+    """Find out whether a future date alone is enough to schedule a post.
+
+    If GHL's blog hides a PUBLISHED post dated ahead of now, the date does the
+    scheduling and RYTE need not be awake at 10am at all. That is worth one
+    controlled experiment, because the alternative is a laptop that has to stay
+    running every night.
+    """
+    ledger = await asyncio.to_thread(Ledger.load)
+    entry = jobs.next_pending(ledger)
+    if entry is None:
+        await responder.send("Nothing pending to test with — schedule a post first.")
+        return
+
+    context = await _maybe_open_ghl(config)
+    if context is None:
+        await responder.send("I can't reach GoHighLevel right now.")
+        return
+
+    status = ghl.STATUS_SCHEDULED if undo else ghl.STATUS_PUBLISHED
+    try:
+        slot = await asyncio.to_thread(jobs.set_status, context, entry, status)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't change the post: {exc}"))
+        return
+    finally:
+        await asyncio.to_thread(context.close)
+
+    link = config.brand.canonical_link(entry.url_slug)
+    if undo:
+        await responder.send(
+            f"Put **{entry.title}** back to scheduled. I'll publish it at "
+            f"{slot.astimezone(ZoneInfo(config.schedule.timezone)):%a %b %d at %I:%M %p} as before."
+        )
+        return
+
+    await responder.send(
+        f"Marked **{entry.title}** as published, dated "
+        f"{slot.astimezone(ZoneInfo(config.schedule.timezone)):%a %b %d at %I:%M %p} — "
+        f"which is still in the future.\n\n"
+        f"**Now open {link}**\n"
+        f"• **404 / not found** → GoHighLevel hides future-dated posts. The date "
+        f"alone schedules it, and I don't need to be running at 10am at all. Tell me "
+        f"and I'll make that the default.\n"
+        f"• **The post is live** → it doesn't, so this went out early. Say "
+        f"`@RYTE datetest undo` and I'll put it straight back to its Aug 18 slot."
+    )
 
 
 async def _send_reconcile(responder: Responder, config: Config) -> None:

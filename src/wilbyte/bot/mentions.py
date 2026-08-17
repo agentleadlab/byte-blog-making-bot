@@ -56,6 +56,8 @@ ACTION_WORDS = {
     "fields": "fields",
     "raw": "fields",
     "inspect": "fields",
+    # One controlled experiment: does a future date alone schedule a post?
+    "datetest": "datetest",
     # Drop calendar days held by posts that were deleted in GHL.
     "cleanup": "reconcile",
     "reconcile": "reconcile",
@@ -135,6 +137,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action == "corpus":
         return MentionRequest(action="corpus")
+
+    if action == "datetest":
+        # `datetest undo` puts the post back rather than running it again.
+        return MentionRequest(action="datetest", brief=_strip_word(text, ("datetest",)))
 
     # "start" and "from" are ordinary words in a copy brief - "a script to start
     # the year strong" must not move the calendar. So they only count as the
