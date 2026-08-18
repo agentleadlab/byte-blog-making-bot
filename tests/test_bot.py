@@ -919,3 +919,122 @@ def test_a_renamed_slug_still_counts_as_posted(tmp_path):
 
 def test_no_output_directory_is_not_an_error(tmp_path):
     assert jobs.built_but_not_posted(tmp_path / "nothing-here", Ledger(path=tmp_path / "l.json")) == []
+
+
+# ------------------------------------------------- watching an announcements channel
+
+
+def announcement(channel_id, *, content="", embeds=(), author_is_bot=True):
+    return SimpleNamespace(
+        content=content,
+        embeds=list(embeds),
+        mentions=[],
+        mention_everyone=False,
+        channel=SimpleNamespace(id=channel_id),
+        author=SimpleNamespace(id=555, bot=author_is_bot),
+    )
+
+
+def embed(*, url=None, title=None, description=None):
+    return SimpleNamespace(url=url, title=title, description=description, author=None)
+
+
+def watching(config, *channel_ids):
+    secrets = replace(config.secrets, discord_watch_channel_ids=tuple(channel_ids))
+    return replace(config, secrets=secrets)
+
+
+def test_a_watched_channel_is_acted_on(config):
+    from wilbyte.bot.client import is_watched
+
+    assert is_watched(announcement("111"), watching(config, "111"))
+
+
+def test_other_channels_are_left_alone(config):
+    from wilbyte.bot.client import is_watched
+
+    assert not is_watched(announcement("222"), watching(config, "111"))
+
+
+def test_nothing_is_watched_by_default(config):
+    from wilbyte.bot.client import is_watched
+
+    assert not is_watched(announcement("111"), config)
+
+
+def test_a_bot_posting_the_announcement_still_counts(config):
+    """The whole point: the video is announced by another bot, and
+    is_direct_mention refuses bots on purpose."""
+    from wilbyte.bot.client import is_direct_mention, is_watched
+
+    message = announcement("111", content="New video https://youtu.be/abc123")
+
+    assert not is_direct_mention(message, BOT_USER)
+    assert is_watched(message, watching(config, "111"))
+
+
+def test_the_link_is_found_in_the_message_text():
+    from wilbyte.bot.client import watched_links
+
+    message = announcement("111", content="🎬 New video just dropped! https://youtu.be/abc123")
+
+    assert watched_links(message) == ("https://youtu.be/abc123",)
+
+
+def test_the_link_is_found_in_the_embed_discord_unfurled():
+    """An announcement bot posts a line of text and lets Discord unfurl it, so
+    the link is only in the embed."""
+    from wilbyte.bot.client import watched_links
+
+    message = announcement(
+        "111",
+        content="🎬 New video just dropped! @everyone — check it out 👇",
+        embeds=[embed(url="https://www.youtube.com/watch?v=abc123", title="How To Stop Blaming")],
+    )
+
+    assert watched_links(message) == ("https://www.youtube.com/watch?v=abc123",)
+
+
+def test_a_link_in_the_embed_description_is_found():
+    from wilbyte.bot.client import watched_links
+
+    message = announcement(
+        "111", embeds=[embed(description="Watch: https://youtu.be/abc123 for the full breakdown")]
+    )
+
+    assert watched_links(message) == ("https://youtu.be/abc123",)
+
+
+def test_the_same_link_in_text_and_embed_is_one_post():
+    from wilbyte.bot.client import watched_links
+
+    message = announcement(
+        "111",
+        content="New video https://youtu.be/abc123",
+        embeds=[embed(url="https://youtu.be/abc123")],
+    )
+
+    assert watched_links(message) == ("https://youtu.be/abc123",)
+
+
+def test_chatter_with_no_link_starts_nothing():
+    from wilbyte.bot.client import watched_links
+
+    assert watched_links(announcement("111", content="great episode today")) == ()
+
+
+def test_a_non_youtube_link_is_ignored():
+    from wilbyte.bot.client import watched_links
+
+    message = announcement("111", content="see https://agentleadlab.com/blog for more")
+
+    assert watched_links(message) == ()
+
+
+def test_anyone_can_approve_a_post_nobody_asked_for():
+    """Locking the buttons to whoever announced it would lock them to a bot."""
+    from wilbyte.bot.views import ApprovalView
+
+    view = ApprovalView(requester_id=None, timeout=1)
+
+    assert view.requester_id is None

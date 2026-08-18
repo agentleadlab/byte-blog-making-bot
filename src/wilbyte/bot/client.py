@@ -37,7 +37,12 @@ from ..state import Ledger
 from ..writer import WriterError
 from ..youtube import IngestError
 from . import embeds, jobs, mentions
-from .responders import InteractionResponder, MessageResponder, Responder
+from .responders import (
+    ChannelResponder,
+    InteractionResponder,
+    MessageResponder,
+    Responder,
+)
 from .views import ApprovalView, Decision
 
 log = logging.getLogger("wilbyte.bot")
@@ -64,7 +69,18 @@ def _intents() -> discord.Intents:
     intents = discord.Intents.default()
     if os.getenv("DISCORD_MESSAGE_CONTENT", "").strip().lower() in ("1", "true", "yes"):
         intents.message_content = True
+    # Watching a channel means reading messages that don't mention the bot, and
+    # Discord withholds their content and embeds without this. Asking for it
+    # here rather than making it a second thing to remember: a watcher that
+    # silently sees blank messages is worse than one that fails at login with a
+    # message naming the switch to flip.
+    if _id_list(os.getenv("DISCORD_WATCH_CHANNEL_IDS")):
+        intents.message_content = True
     return intents
+
+
+def _id_list(raw: str | None) -> list[str]:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()]
 
 
 def parse_guild_id(raw: str | None) -> int | None:
@@ -137,9 +153,13 @@ class WilByteBot(discord.Client):
         await _warn_if_stale(self)
 
     async def on_message(self, message: discord.Message) -> None:
-        if not is_direct_mention(message, self.user):
+        if self.user is not None and message.author.id == self.user.id:
             return
-        await handle_mention(self, message)
+        if is_direct_mention(message, self.user):
+            await handle_mention(self, message)
+            return
+        if is_watched(message, self.config):
+            await handle_watched(self, message)
 
 
 # ---------------------------------------------------------------- when to speak
@@ -167,6 +187,87 @@ def is_direct_mention(message, bot_user) -> bool:
     if bot_user not in message.mentions:
         return False
     return bool(re.search(rf"<@!?{bot_user.id}>", message.content or ""))
+
+
+# ------------------------------------------------------------- watching a channel
+
+
+def is_watched(message, config: Config) -> bool:
+    """True for a message in a channel RYTE was told to watch.
+
+    Deliberately not filtered by author. The whole point is that the video
+    announcement is posted by another bot, which `is_direct_mention` rejects on
+    purpose - a bot must not be able to make RYTE do things by mentioning it.
+    An allow-listed channel is a different kind of permission: someone chose
+    that channel, and everything in it is meant to be acted on.
+    """
+    watched = config.secrets.discord_watch_channel_ids
+    return bool(watched) and str(getattr(message, "channel", None) and message.channel.id) in watched
+
+
+def watched_links(message) -> tuple[str, ...]:
+    """Every YouTube link in a message, text and embeds alike.
+
+    An announcement bot posts a line of text and lets Discord unfurl the video,
+    so the link is often only in the embed - and a rich embed can carry it on
+    the embed url, its title link, or in the description.
+    """
+    parts = [getattr(message, "content", "") or ""]
+    for embed in getattr(message, "embeds", []) or []:
+        for value in (
+            getattr(embed, "url", None),
+            getattr(embed, "title", None),
+            getattr(embed, "description", None),
+        ):
+            if isinstance(value, str):
+                parts.append(value)
+        author = getattr(embed, "author", None)
+        if author is not None and isinstance(getattr(author, "url", None), str):
+            parts.append(author.url)
+    return mentions.find_sources("\n".join(parts))
+
+
+async def handle_watched(bot: "WilByteBot", message: discord.Message) -> None:
+    """A video was announced. Write the post for it.
+
+    Sends the review card to the working channel rather than answering in the
+    announcements feed, which is a broadcast channel and not somewhere to hold
+    a conversation about a draft.
+    """
+    links = watched_links(message)
+    if not links:
+        return
+
+    channel = _post_channel(bot) or message.channel
+    responder = ChannelResponder(channel)
+
+    if bot.run_lock.locked():
+        await responder.send(
+            "A new video just landed but I'm mid-run — I'll need telling again "
+            f"once this batch is done:\n```\n@RYTE {' '.join(links)}\n```"
+        )
+        return
+
+    await responder.send(f"📺 New video posted in <#{message.channel.id}> — writing it up.")
+    async with bot.run_lock:
+        await _execute_run(
+            bot, responder, links, len(links), "scheduled", force=False
+        )
+
+
+def _post_channel(bot: "WilByteBot"):
+    """Where the watcher works: the configured channel, else the first allowed one."""
+    configured = bot.config.secrets.discord_post_channel_id
+    for raw in ([configured] if configured else []) + list(
+        bot.config.secrets.discord_channel_ids
+    ):
+        try:
+            channel = bot.get_channel(int(raw))
+        except (TypeError, ValueError):
+            continue
+        if channel is not None:
+            return channel
+    return None
 
 
 # ------------------------------------------------------------------ permissions

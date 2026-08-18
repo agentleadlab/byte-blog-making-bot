@@ -12,7 +12,7 @@ import discord
 class Responder:
     """Where to send output, and who is allowed to press the buttons."""
 
-    requester_id: int
+    requester_id: int | None
     channel_id: int | None
 
     async def send(self, content=None, *, embed=None, file=None, view=None):
@@ -61,3 +61,22 @@ class MessageResponder(Responder):
             self._replied = True
             return await self.message.reply(**payload, mention_author=False)
         return await self.message.channel.send(**payload)
+
+
+class ChannelResponder(Responder):
+    """Talks to a channel directly, with no message to reply to.
+
+    The watcher has no request to answer - a video was announced somewhere else
+    and the work happens here - so it needs somewhere to put its output and
+    someone to own the approval buttons.
+    """
+
+    def __init__(self, channel, *, requester_id: int | None = None):
+        self.channel = channel
+        # None on purpose: anyone in this channel may approve a post that
+        # started from an announcement rather than from a request.
+        self.requester_id = requester_id
+        self.channel_id = getattr(channel, "id", None)
+
+    async def send(self, content=None, *, embed=None, file=None, view=None):
+        return await self.channel.send(**self._kwargs(content, embed, file, view))

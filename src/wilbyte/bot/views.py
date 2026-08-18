@@ -22,13 +22,18 @@ class ApprovalView(discord.ui.View):
     wrong slug is caught here rather than in the blog.
     """
 
-    def __init__(self, *, requester_id: int, timeout: float):
+    def __init__(self, *, requester_id: int | None, timeout: float):
         super().__init__(timeout=timeout)
         self.requester_id = requester_id
         self.decision: Decision = Decision.TIMEOUT
         self.decided_by: str | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # No requester means nobody asked for this run - it started because a
+        # video was announced. Locking the buttons to whoever posted the
+        # announcement would lock them to a bot, and nobody could approve.
+        if self.requester_id is None:
+            return True
         if interaction.user.id != self.requester_id:
             await interaction.response.send_message(
                 "Only the person who started this run can approve it.", ephemeral=True

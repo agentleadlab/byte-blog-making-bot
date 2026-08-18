@@ -147,6 +147,12 @@ class Secrets:
     discord_guild_id: str | None = None
     discord_channel_ids: tuple[str, ...] = ()
     discord_role_ids: tuple[str, ...] = ()
+    # Channels to watch for YouTube links posted by anyone - including other
+    # bots - so a new video becomes a blog post without anyone asking.
+    discord_watch_channel_ids: tuple[str, ...] = ()
+    # Where the watcher sends its review card. It cannot be the watched channel:
+    # that one is an announcements feed, not a place to work.
+    discord_post_channel_id: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -208,6 +214,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_guild_id=_env("DISCORD_GUILD_ID"),
                 discord_channel_ids=_id_list(_env("DISCORD_CHANNEL_IDS")),
                 discord_role_ids=_id_list(_env("DISCORD_ROLE_IDS")),
+                discord_watch_channel_ids=_id_list(_env("DISCORD_WATCH_CHANNEL_IDS")),
+                discord_post_channel_id=_env("DISCORD_POST_CHANNEL_ID"),
             ),
             path=config_path,
         )
