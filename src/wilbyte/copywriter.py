@@ -49,6 +49,19 @@ BLOG_PACKAGE_TOOL = {
                 "minItems": 3,
                 "maxItems": 3,
             },
+            "cover_kicker": {
+                "type": "string",
+                "description": (
+                    "2-5 words for the small highlighted label on the cover image. "
+                    "A complete standalone phrase naming the subject of the post, "
+                    "the way a magazine labels a section: 'AGED VS FRESH LEADS', "
+                    "'THE 10-MINUTE DRILL'. Never the opening words of a sentence "
+                    "or question - 'WHY YOUR LIFE INSURANCE INTRO' is wrong, it "
+                    "reads as a thought that got cut off. No trailing preposition, "
+                    "article or adjective. It sits above the headline, so it must "
+                    "not repeat it."
+                ),
+            },
             "meta_title": {"type": "string", "description": "<=60 characters."},
             "meta_description": {
                 "type": "string",
@@ -285,6 +298,7 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
             str(payload["meta_description"]).strip(), config.copy.meta_description_max
         ),
         url_slug=normalize_slug(str(payload["url_slug"])),
+        cover_kicker=_strip_label(str(payload.get("cover_kicker") or "")),
         keyword_map=str(payload.get("keyword_map") or "").strip(),
         internal_link_notes=str(payload.get("internal_link_notes") or "").strip(),
         word_count=int(payload.get("word_count") or 0),
@@ -292,6 +306,11 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
     if not package.word_count:
         package.word_count = _estimate_word_count(package.article_html)
     return package
+
+
+def _strip_label(text: str) -> str:
+    """Tidy the cover kicker: no wrapping quotes, no trailing punctuation."""
+    return text.strip().strip('"\'').strip().rstrip(":—–-,.").strip()
 
 
 def normalize_slug(slug: str) -> str:

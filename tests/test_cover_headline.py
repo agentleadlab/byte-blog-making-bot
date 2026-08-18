@@ -125,3 +125,134 @@ def test_a_kicker_does_not_end_on_a_joining_word(config):
 
     assert candidates
     assert not any(c.lower().split()[-1] in {"as", "the", "and", "of", "to"} for c in candidates)
+
+
+# ------------------------------------------------- the kicker has to mean something
+
+
+def cover_for(config, h1, options, written=""):
+    from wilbyte.selection import choose_title, plan_cover
+
+    copy = package(h1, *options)
+    copy.cover_kicker = written
+    title, _note = choose_title(copy)
+    return plan_cover(copy, title, config)
+
+
+def test_the_kicker_is_never_a_headline_cut_off_mid_thought(config):
+    """The reported bug: "WHY YOUR LIFE INSURANCE INTRO" above an unrelated line.
+
+    It came from taking the first five words of a headline, which is the first
+    five words of a sentence and reads as one someone interrupted.
+    """
+    plan = cover_for(
+        config,
+        "Aged or Fresh Leads? Answer One Question First",
+        [
+            "Why Your Life Insurance Intro Script Is Costing You Deals",
+            "Aged or Fresh Leads? Answer One Question First",
+            "The Intro Script That Decides Your Whole Call",
+        ],
+    )
+
+    assert plan.kicker == "LIFE INSURANCE INTRO SCRIPT"
+
+
+def test_a_kicker_written_for_the_post_is_used(config):
+    """The copywriter has read the article; a word-overlap rule hasn't."""
+    plan = cover_for(
+        config,
+        "Aged or Fresh Leads? Answer One Question First",
+        [
+            "Why Your Life Insurance Intro Script Is Costing You Deals",
+            "Aged or Fresh Leads? Answer One Question First",
+            "The Intro Script That Decides Your Whole Call",
+        ],
+        written="Your Intro Script",
+    )
+
+    assert plan.kicker == "YOUR INTRO SCRIPT"
+    assert plan.source_note == "kicker written for this post"
+
+
+def test_a_written_kicker_that_just_repeats_the_headline_is_refused(config):
+    """It sits directly above the headline; saying it twice is worse than none."""
+    plan = cover_for(
+        config,
+        "Stop Guessing Which Leads To Buy",
+        ["Stop Guessing Which Leads To Buy", "The Lead Type Playbook For New Agents"],
+        written="Stop Guessing Which Leads",
+    )
+
+    assert plan.kicker != "STOP GUESSING WHICH LEADS"
+
+
+@pytest.mark.parametrize(
+    "headline,expected",
+    [
+        ("Why Your Life Insurance Intro Script Is Costing You Deals",
+         "Life Insurance Intro Script"),
+        ("The Intro Script That Decides Your Whole Call", "Intro Script"),
+        ("Why Do New Agents Stall After Thirty Days?", "New Agents Stall"),
+        ("What To Sell First As A New Life Insurance Agent", "New Life Insurance Agent"),
+    ],
+)
+def test_a_headline_reduces_to_the_phrase_that_names_its_subject(config, headline, expected):
+    """Cut where the sentence stops naming and starts commenting - not at a word count."""
+    from wilbyte.selection import label_from
+
+    assert label_from(headline, config) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Why Your Life Insurance Intro",   # opens a question it never finishes
+        "The Intro Script That Decides",   # trails off on a verb wanting an object
+        "New Agents Stall After Thirty",   # one word short of the word that ends it
+        "How To Sell More",                # opens a clause
+        "Leads",                           # one word is a category, not a kicker
+    ],
+)
+def test_fragments_are_rejected_as_kickers(config, text):
+    from wilbyte.selection import reads_as_a_label
+
+    assert not reads_as_a_label(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Life Insurance Intro Script", "New Agents Stall", "Aged Vs Fresh Leads", "Stop Guessing"],
+)
+def test_real_phrases_are_accepted_as_kickers(config, text):
+    from wilbyte.selection import reads_as_a_label
+
+    assert reads_as_a_label(text)
+
+
+def test_every_kicker_from_a_batch_of_real_headlines_stands_alone(config):
+    """A sweep, because this failed in production on a post that looked fine."""
+    from wilbyte.selection import reads_as_a_label
+
+    posts = [
+        ("Aged or Fresh Leads? Answer One Question First",
+         ["Why Your Life Insurance Intro Script Is Costing You Deals",
+          "Aged or Fresh Leads? Answer One Question First",
+          "The Intro Script That Decides Your Whole Call"]),
+        ("I Lost $100,000 in Under a Month. Here's What Rebuilt It.",
+         ["5 Lessons From Losing $100K in My Agency",
+          "How I Rebuilt To $660K a Month After Losing Everything",
+          "What Failure Taught Me About Team, Focus and Routine"]),
+        ("Why Do New Agents Stall?",
+         ["Why Do New Agents Stall After Thirty Days?",
+          "How Do You Know If The Leads Are Bad?",
+          "What Should A New Agent Buy First?"]),
+        ("Fresh vs Aged Insurance Leads: When to Buy Each",
+         ["Why New Agents Should Only Work Aged Leads",
+          "Fresh vs Aged Insurance Leads: When to Buy Each",
+          "The Working Style Each Lead Type Demands"]),
+    ]
+
+    for h1, options in posts:
+        plan = cover_for(config, h1, options)
+        assert reads_as_a_label(plan.kicker), f"{plan.kicker!r} from {h1!r}"

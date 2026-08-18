@@ -60,6 +60,10 @@ class CopyPackage:
     keyword_map: str = ""
     internal_link_notes: str = ""
     word_count: int = 0
+    # A purpose-written label for the cover image. Slicing the first few words
+    # off a headline produced fragments like "WHY YOUR LIFE INSURANCE INTRO" -
+    # a question with its second half missing. Empty falls back to slicing.
+    cover_kicker: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

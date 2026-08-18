@@ -76,41 +76,92 @@ def _strip_trailing_punct(text: str) -> str:
     return text.strip().rstrip(":—–-,. ")
 
 
+def _strip_label_punct(text: str) -> str:
+    """As above, plus sentence enders. A big headline may ask a question; the
+    small label above it should not, and a trailing `?` there reads as debris."""
+    return _strip_trailing_punct(text).rstrip("?! ").rstrip(":—–-,. ")
+
+
 def _normalize(text: str) -> str:
     """Lowercase, punctuation-free form used for prefix comparisons."""
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9$ ]+", "", text.lower())).strip()
+
+
+# A kicker is a label, not the first half of a sentence. Any slice that opens
+# with one of these is the start of a question whose answer got cut off -
+# "Why Your Life Insurance Intro" - and on the image it reads as an
+# interrupted thought sitting above an unrelated headline.
+_CLAUSE_OPENERS = frozenset(
+    """why how what when where who which whether if is are was were do does did
+    can could should would will has have had""".split()
+)
+
+
+def reads_as_a_label(text: str) -> bool:
+    """True if this could sit on a cover as a phrase in its own right.
+
+    Three ways it fails, all of them seen on real covers: it opens a question
+    it never answers ("Why Your Life Insurance Intro"), it carries a clause it
+    never finishes ("The Intro Script That Decides", "New Agents Stall After
+    Thirty"), or it trails off on a joining word.
+
+    Coordinators are allowed through - "Team, Focus and Routine" is a list, not
+    an unfinished thought.
+    """
+    words = _strip_label_punct(text).split()
+    if len(words) < 2:
+        return False
+    if _bare(words[0]) in _CLAUSE_OPENERS:
+        return False
+    if any(_bare(w) in _FRAGMENT_MARKERS for w in words):
+        return False
+    # A sentence break inside the phrase means it spans two thoughts:
+    # "LEADS? ANSWER ONE QUESTION FIRST" is the end of one and the whole of
+    # the next.
+    if re.search(r"[?!.](?=\s)", _strip_label_punct(text)):
+        return False
+    return _bare(words[-1]) not in _STOPWORDS
 
 
 def kicker_candidates(copy: CopyPackage, config: Config) -> list[str]:
     """Short fragments usable as the highlighted line on the cover image.
 
     Preference order:
-      1. The segment before a colon/dash in a headline ("Aged, Fresh, Premium:").
-      2. The leading N words of a headline.
+      1. The kicker the copywriter wrote for this post.
+      2. The segment before a colon/dash in a headline ("Aged, Fresh, Premium:").
+      3. The leading N words of a headline, if that leaves a phrase that stands up.
+
+    Slicing words off a headline was the only source for a long time, and it
+    produces text that is grammatical nowhere: the cover said "WHY YOUR LIFE
+    INSURANCE INTRO" above a headline about aged versus fresh leads. Asking for
+    a purpose-written label removes the guesswork; the slices remain as a
+    fallback, now filtered so a fragment can't reach the image.
     """
     lo, hi = config.cover.kicker_min_words, config.cover.kicker_max_words
     candidates: list[str] = []
 
+    written = _strip_label_punct(copy.cover_kicker)
+    # Trust it on wording, not on length - an eight-word "kicker" would run off
+    # the highlight box whatever it says.
+    if written and len(written.split()) <= hi + 1:
+        candidates.append(written)
+
     for headline in copy.headline_options:
         text = headline.text
         head = re.split(r"[:—–]| - ", text, maxsplit=1)[0]
-        head = _strip_trailing_punct(head)
+        head = _strip_label_punct(head)
         if lo <= len(head.split()) <= hi:
             candidates.append(head)
 
+    # Deliberately *not* the leading N words of a headline. That was the only
+    # other source for a long time and it cannot work: the first five words of
+    # a sentence are the first five words of a sentence. It produced "WHY YOUR
+    # LIFE INSURANCE INTRO" and "THE INTRO SCRIPT THAT DECIDES" - each one a
+    # thought that stops before it arrives. Take the subject instead.
     for headline in copy.headline_options:
-        words = _strip_trailing_punct(headline.text).split()
-        for size in range(hi, lo - 1, -1):
-            if len(words) < size:
-                continue
-            # Taking the first N words can stop on a joining word - "What To
-            # Sell First As" reads as a sentence someone interrupted. Back off
-            # until it ends on a word that carries meaning.
-            take = list(words[:size])
-            while len(take) > lo and take[-1].lower() in _STOPWORDS:
-                take.pop()
-            candidates.append(" ".join(take))
-            break
+        label = label_from(headline.text, config)
+        if reads_as_a_label(label):
+            candidates.append(label)
 
     # De-duplicate case-insensitively while preserving order.
     seen: set[str] = set()
@@ -185,28 +236,27 @@ def plan_cover(copy: CopyPackage, title: Headline, config: Config) -> CoverPlan:
     The kicker must come from a *different* headline than the big line, so the
     cover never says the same thing twice.
     """
-    candidates = kicker_candidates(copy, config)
-    title_tokens = _tokens(title.text)
-    h1_normalized = _normalize(copy.article_h1)
+    # Sense first. A kicker that reads as a phrase but shares a word with the
+    # headline is a small blemish; one that stops mid-thought is the bug being
+    # fixed here, so anything that doesn't stand up is out before ranking.
+    written = _strip_label_punct(copy.cover_kicker)
+    if written and reads_as_a_label(written) and not _restates(written, title, copy):
+        return CoverPlan(
+            kicker=written.upper(),
+            headline=cover_headline(copy, title, config).upper(),
+            source_note="kicker written for this post",
+        )
 
-    kicker = ""
-    for candidate in candidates:
-        normalized = _normalize(candidate)
-        # Reject a kicker that just restates the opening of the article H1 - the
-        # cover would then say the same thing the page already says.
-        if h1_normalized.startswith(normalized):
-            continue
-        # Reject a kicker that is contained in the big headline below it.
-        if _normalize(title.text).startswith(normalized):
-            continue
-        if _tokens(candidate) <= title_tokens:
-            continue
-        kicker = candidate
-        break
+    candidates = [c for c in kicker_candidates(copy, config) if reads_as_a_label(c)]
+    distinct = [c for c in candidates if not _echoes(c, title, copy)]
+    kicker = next(iter(distinct), "") or next(iter(candidates), "")
 
-    note = "kicker from a different headline option"
     if not kicker:
-        kicker = candidates[0] if candidates else _fallback_kicker(copy, config)
+        kicker = _fallback_kicker(copy, config)
+        note = "no headline gave a usable kicker - worth a manual look"
+    elif kicker in distinct:
+        note = "kicker from a different headline option"
+    else:
         note = "kicker overlaps the cover headline - worth a manual look"
 
     return CoverPlan(
@@ -216,7 +266,100 @@ def plan_cover(copy: CopyPackage, title: Headline, config: Config) -> CoverPlan:
     )
 
 
+def _restates(candidate: str, title: Headline, copy: CopyPackage) -> bool:
+    """True if the kicker just repeats the opening of what is already on the page."""
+    normalized = _normalize(candidate)
+    if not normalized:
+        return True
+    return (
+        _normalize(copy.article_h1).startswith(normalized)
+        or _normalize(title.text).startswith(normalized)
+    )
+
+
+def _echoes(candidate: str, title: Headline, copy: CopyPackage) -> bool:
+    """True if this kicker would just restate what is already on the page."""
+    # The subset test is a *preference*, not a veto - it is why the written
+    # kicker is decided before this runs. A sensible kicker sharing two words
+    # with the headline beats a fragment that shares none.
+    return _restates(candidate, title, copy) or _tokens(candidate) <= _tokens(title.text)
+
+
+# Where a headline stops naming its subject and starts saying something about
+# it. Cutting here keeps a phrase whole; cutting at a word count does not.
+_CLAUSE_BOUNDARIES = frozenset(
+    """that which who whom whose when while after before because since so and but
+    or is are was were will can could should would has have had does do did""".split()
+)
+
+
+# The subset of those that mean a clause was started. A kicker containing one
+# is a sentence with its ending removed, however complete it looks. `and`/`or`/
+# `but` are excluded: they join list items rather than open a clause.
+_FRAGMENT_MARKERS = frozenset()  # filled in below, once both sets exist
+
+
+def _bare(word: str) -> str:
+    return re.sub(r"[^a-z]", "", word.lower())
+
+
+_FRAGMENT_MARKERS = _CLAUSE_BOUNDARIES - {"and", "or", "but"}
+
+
+def label_from(text: str, config: Config) -> str:
+    """Reduce a headline to the phrase naming its subject, or "" if it can't.
+
+    A headline is a sentence; a kicker is a label. Drop the interrogative
+    opening, then cut where the sentence starts commenting rather than naming:
+    "Why Your Life Insurance Intro Script Is Costing You Deals" -> "Life
+    Insurance Intro Script".
+
+    Never cuts to a word count. That is what produced "THE INTRO SCRIPT THAT
+    DECIDES" and "NEW AGENTS STALL AFTER THIRTY" - phrases chopped one word
+    before the word that finished them. Something too long to cut cleanly
+    returns nothing at all, and the caller uses the next candidate.
+    """
+    # One sentence only. A headline like "Aged or Fresh Leads? Answer One
+    # Question First" is two, and any phrase spanning the break reads as the
+    # tail of one stapled to the head of another.
+    text = re.split(r"[?!.](?:\s|$)", text, maxsplit=1)[0]
+
+    words = _strip_label_punct(text).split()
+    while words and _bare(words[0]) in (_CLAUSE_OPENERS | _STOPWORDS):
+        words.pop(0)
+
+    for index, word in enumerate(words):
+        # Never cut so early that nothing is left to name.
+        if index >= 2 and _bare(word) in _CLAUSE_BOUNDARIES:
+            words = words[:index]
+            break
+
+    while len(words) > 2 and _bare(words[-1]) in _STOPWORDS:
+        words.pop()
+
+    limit = config.cover.kicker_max_words
+    if len(words) <= limit:
+        return " ".join(words)
+
+    # No clause break to cut at, and too long to use whole - "Sell First As A
+    # New Life Insurance Agent". The subject is at the end of a sentence like
+    # this, so take the tail and drop whatever article it starts on.
+    tail = words[-limit:]
+    while len(tail) > 2 and _bare(tail[0]) in (_CLAUSE_OPENERS | _STOPWORDS):
+        tail.pop(0)
+    return " ".join(tail)
+
+
 def _fallback_kicker(copy: CopyPackage, config: Config) -> str:
-    """Last resort: the opening words of the article H1."""
-    words = _strip_trailing_punct(copy.article_h1).split()
-    return " ".join(words[: config.cover.kicker_max_words]) or "AGENT LEAD LAB"
+    """Last resort, when every other candidate was rejected.
+
+    The brand name is the only thing guaranteed to read correctly, so it is
+    what a post falls back to rather than a fragment of its own H1.
+    """
+    for source in (copy.cover_kicker, copy.article_h1):
+        if not source:
+            continue
+        label = label_from(source, config)
+        if reads_as_a_label(label):
+            return label
+    return "AGENT LEAD LAB"

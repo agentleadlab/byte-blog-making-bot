@@ -90,6 +90,15 @@ styles, no `<div>`, no `<html>`/`<body>` wrapper.
   - **Options 2 and 3 must be angled differently from the H1** — a different
     promise, a different hook. The blog listing title has to be able to differ
     from the H1 on the page.
+- **Cover kicker** — 2–5 words, the small highlighted label above the headline
+  on the cover image. It names the subject the way a magazine labels a section:
+  *Aged vs Fresh Leads*, *The 10-Minute Drill*, *Cost Per Booked Appointment*.
+  - It is **not** the first few words of a headline. "Why Your Life Insurance
+    Intro" is a question with its answer missing, and it went out on a real
+    cover looking exactly like that.
+  - No trailing preposition, article or verb — nothing that leaves the reader
+    waiting for the next word.
+  - It sits directly above the headline, so it must not repeat it.
 - **Meta title** — ≤60 characters, contains the primary keyword.
 - **Meta description** — 100–160 characters, benefit-forward, primary keyword
   present. Pasted verbatim into GHL's "Post description".
