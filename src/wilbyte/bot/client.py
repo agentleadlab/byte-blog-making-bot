@@ -238,7 +238,17 @@ async def handle_watched(bot: "WilByteBot", message: discord.Message) -> None:
     if not links:
         return
 
-    channel = _post_channel(bot) or message.channel
+    # Never fall back to the channel being watched. RYTE is a guest there: it
+    # reads the feed and says nothing, and a missing setting must not turn it
+    # into something that talks in front of clients.
+    channel = _post_channel(bot)
+    if channel is None:
+        log.error(
+            "A video was posted in %s but there is nowhere to send the review card. "
+            "Set DISCORD_POST_CHANNEL_ID to the channel RYTE should work in.",
+            message.channel.id,
+        )
+        return
     responder = ChannelResponder(channel)
 
     if bot.run_lock.locked():
@@ -301,10 +311,27 @@ async def guard(interaction: discord.Interaction, config: Config) -> bool:
 
 async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     config = bot.config
+
+    # A watched channel is read-only, always. Not "unless the allowlist is
+    # empty", not "unless someone asks nicely" - RYTE is in that server to see
+    # when a video goes up and for nothing else, and this is the one rule that
+    # cannot depend on a setting being filled in correctly.
+    if is_watched(message, config):
+        log.info("Mentioned in watched channel %s — staying quiet", message.channel.id)
+        return
+
     allowed, reason = is_allowed(
         channel_id=message.channel.id, user=message.author, config=config
     )
     if not allowed:
+        # Silent where a channel allowlist exists, because RYTE now sits in a
+        # server it is only there to read - an announcements feed with clients
+        # in it. "RYTE isn't enabled in this channel" is still chatter, and it
+        # would be posted in front of them. Where the refusal is about the
+        # person rather than the place, say so: they are somewhere RYTE speaks.
+        if config.secrets.discord_channel_ids and "channel" in reason:
+            log.info("Ignoring a mention in channel %s", message.channel.id)
+            return
         await message.reply(reason, mention_author=False)
         return
 

@@ -1038,3 +1038,50 @@ def test_anyone_can_approve_a_post_nobody_asked_for():
     view = ApprovalView(requester_id=None, timeout=1)
 
     assert view.requester_id is None
+
+
+def test_ryte_stays_silent_when_mentioned_in_a_watched_channel(config):
+    """It is a guest in that server: there to see new videos, nothing else."""
+    import asyncio
+
+    from wilbyte.bot.client import handle_mention
+
+    replies = []
+    message = SimpleNamespace(
+        content="<@999> what's the status?",
+        embeds=[],
+        mentions=[BOT_USER],
+        mention_everyone=False,
+        channel=SimpleNamespace(id="111"),
+        author=SimpleNamespace(id=7, bot=False),
+        reply=lambda *a, **k: replies.append(a),
+    )
+    bot = SimpleNamespace(config=watching(config, "111"), user=BOT_USER, run_lock=None)
+
+    asyncio.run(handle_mention(bot, message))
+
+    assert replies == []
+
+
+def test_a_blocked_channel_gets_no_public_refusal(config):
+    """"RYTE isn't enabled here" is still chatter, in front of clients."""
+    import asyncio
+
+    from wilbyte.bot.client import handle_mention
+
+    replies = []
+    secrets = replace(config.secrets, discord_channel_ids=("999",))
+    message = SimpleNamespace(
+        content="<@999> status",
+        embeds=[],
+        mentions=[BOT_USER],
+        mention_everyone=False,
+        channel=SimpleNamespace(id="222"),
+        author=SimpleNamespace(id=7, bot=False, roles=[]),
+        reply=lambda *a, **k: replies.append(a),
+    )
+    bot = SimpleNamespace(config=replace(config, secrets=secrets), user=BOT_USER, run_lock=None)
+
+    asyncio.run(handle_mention(bot, message))
+
+    assert replies == []
