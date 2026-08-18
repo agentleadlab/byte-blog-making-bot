@@ -821,3 +821,46 @@ def test_links_already_posted_are_counted_not_rebuilt(tmp_path, monkeypatch):
 
     assert [v.video_id for v in videos] == ["bbb"]
     assert done == 1
+
+
+# ------------------------------------------------- offering the leftovers back
+
+
+class Recorder:
+    def __init__(self):
+        self.messages = []
+
+    async def send(self, content=None, *, embed=None, file=None, view=None):
+        self.messages.append(content or "")
+
+
+def run_offer(videos):
+    import asyncio
+
+    from wilbyte.bot.client import _offer_retry
+
+    recorder = Recorder()
+    asyncio.run(_offer_retry(recorder, videos))
+    return recorder.messages
+
+
+def vid(video_id):
+    return Video(video_id=video_id, title=video_id, url=f"https://youtu.be/{video_id}")
+
+
+def test_the_leftovers_come_back_as_a_command_to_paste():
+    """"Skipped 4" says what happened and nothing about what to do next."""
+    (message,) = run_offer([vid("aaa"), vid("bbb")])
+
+    assert "2 didn't get posted" in message
+    assert "@RYTE https://youtu.be/aaa https://youtu.be/bbb force" in message
+
+
+def test_a_clean_run_offers_nothing():
+    assert run_offer([]) == []
+
+
+def test_the_same_video_is_only_offered_once():
+    (message,) = run_offer([vid("aaa"), vid("aaa")])
+
+    assert message.count("youtu.be/aaa") == 1

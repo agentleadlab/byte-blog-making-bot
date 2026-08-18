@@ -65,7 +65,10 @@ alt_text_source = "url_slug"
 # for an Approve click before anything is created in GHL.
 require_approval = true
 # How long an approval prompt stays live before the post is skipped.
-approval_timeout_minutes = 60
+# Long enough to survive stepping away: a batch started in the evening had four
+# posts expire unanswered overnight, and each one had already been written and
+# paid for by the time the buttons went dead.
+approval_timeout_minutes = 720
 # Max videos a single run may process, so one command can't burn the playlist.
 # A month of weekday posts is ~22, and links arrive by the fortnight rather
 # than one at a time - a cap that splits an ordinary paste in half is a nuisance

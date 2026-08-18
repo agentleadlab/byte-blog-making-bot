@@ -951,6 +951,30 @@ def publish_status(decision: Decision) -> str:
     return ghl.STATUS_DRAFT if decision is Decision.DRAFT else ghl.STATUS_SCHEDULED
 
 
+async def _offer_retry(responder: Responder, unfinished: list) -> None:
+    """Hand back a line that redoes exactly the videos that didn't make it.
+
+    "Created 1, Skipped 4, Failed 1" says what happened and nothing about what
+    to do next - the links are somewhere up the channel, and matching four
+    titles back to sixteen URLs by hand is the sort of thing that gets skipped
+    and then forgotten about.
+    """
+    if not unfinished:
+        return
+
+    seen: set[str] = set()
+    links = []
+    for video in unfinished:
+        if video.video_id not in seen:
+            seen.add(video.video_id)
+            links.append(video.short_url)
+
+    await responder.send(
+        f"**{len(links)} didn't get posted.** Send this to do just those:\n"
+        f"```\n@RYTE {' '.join(links)} force\n```"
+    )
+
+
 async def _execute_run(
     bot: WilByteBot,
     responder: Responder,
@@ -998,6 +1022,9 @@ async def _execute_run(
             return
 
     created = skipped = failed = 0
+    # Which videos didn't make it, so the retry doesn't mean hunting through
+    # the original message for the links that got no answer.
+    unfinished: list = []
     try:
         slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config, ledger)
         # Say what was left out. Ten links in and eight posts back looks like a
@@ -1021,6 +1048,7 @@ async def _execute_run(
                 )
             except PIPELINE_ERRORS as exc:
                 failed += 1
+                unfinished.append(video)
                 await responder.send(
                     embed=embeds.error(f"{video.title or video.short_url}\n{exc}")
                 )
@@ -1039,6 +1067,7 @@ async def _execute_run(
                 continue
             if decision is Decision.TIMEOUT:
                 skipped += 1
+                unfinished.append(video)
                 await responder.send(
                     f"No answer on **{post.title}** — skipped it. Files are in "
                     f"`{output_dir / post.url_slug}` if you want them."
@@ -1046,6 +1075,9 @@ async def _execute_run(
                 continue
             if decision is Decision.STOP:
                 skipped += 1
+                # Everything from here on was never looked at, so it all needs
+                # offering back - not just the post that was on screen.
+                unfinished.extend(videos[index - 1:])
                 await responder.send("Stopped.")
                 break
 
@@ -1082,6 +1114,7 @@ async def _execute_run(
                 )
             except PIPELINE_ERRORS as exc:
                 failed += 1
+                unfinished.append(video)
                 if status == ghl.STATUS_SCHEDULED and post.scheduled_at:
                     slot_pool.insert(0, post.scheduled_at)  # publishing failed, free the slot
                 await responder.send(
@@ -1093,6 +1126,8 @@ async def _execute_run(
     finally:
         if context:
             await asyncio.to_thread(context.close)
+
+    await _offer_retry(responder, unfinished)
 
     await responder.send(
         embed=embeds.result_summary(
