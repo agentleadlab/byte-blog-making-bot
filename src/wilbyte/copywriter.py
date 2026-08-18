@@ -121,7 +121,7 @@ def as_options(raw) -> list[str]:
         try:
             decoded = json.loads(text)
         except ValueError:
-            decoded = text.splitlines()
+            decoded = _salvage(text)
         raw = decoded if isinstance(decoded, list) else [text]
 
     options = []
@@ -132,6 +132,26 @@ def as_options(raw) -> list[str]:
         if cleaned:
             options.append(cleaned)
     return options
+
+
+def _salvage(text: str) -> list[str]:
+    """Read the headlines out of a list the model didn't finish writing.
+
+    A response cut short leaves `["A","B","C` - valid-looking right up to the
+    point it stops, and unparseable as JSON. Two complete headlines are still
+    two complete headlines, and throwing the post away over a missing bracket
+    costs a full regeneration.
+    """
+    if not text.lstrip().startswith("["):
+        return text.splitlines()
+
+    found = [m for m in re.findall(r'"((?:[^"\\]|\\.)*)"', text)]
+    # The item that was interrupted has an opening quote and no closing one.
+    # `]` in the tail means the list did finish, so there is nothing to add.
+    tail = re.search(r'"([^"\]]*)$', text)
+    if tail and tail.group(1).strip():
+        found.append(tail.group(1))
+    return found
 
 
 class CopywriterError(RuntimeError):
@@ -214,6 +234,16 @@ def generate_copy(
 
 
 def _extract_tool_input(response) -> dict:
+    # A response that ran out of room stops mid-sentence, and what comes back
+    # is a *partial* post: the article cut off, the headline list unclosed.
+    # It looks like a parsing problem further down and isn't one, so name it
+    # here rather than letting half an article reach the blog.
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise CopywriterError(
+            "The model ran out of room mid-post, so the article is incomplete. "
+            "Raise [copy] max_tokens in config/wilbyte.toml and run it again."
+        )
+
     for block in response.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "emit_blog_package":
             return dict(block.input)

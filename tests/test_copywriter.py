@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -262,3 +263,62 @@ def test_the_refusal_shows_what_the_model_actually_sent(config):
             },
             config,
         )
+
+
+def test_a_truncated_list_of_options_is_salvaged(config):
+    """The real failure: the response stopped mid-headline, so JSON wouldn't parse.
+
+    Two complete headlines are still two complete headlines. Throwing the post
+    away over a missing bracket costs a full regeneration.
+    """
+    package = copywriter.parse_copy_package(
+        {
+            "article_h1": "h",
+            "article_html": "<h1>x</h1>",
+            "headline_options": (
+                '["No Why, No Buy: Write Bigger Life Insurance Premium",'
+                '"Why Your Clients Keep Picking the Cheapest Option",'
+                '"The 10-Minute Drill That Kills Baby Premiums'
+            ),
+            "meta_title": "t",
+            "meta_description": "d",
+            "url_slug": "s",
+        },
+        config,
+    )
+
+    assert [h.text for h in package.headline_options] == [
+        "No Why, No Buy: Write Bigger Life Insurance Premium",
+        "Why Your Clients Keep Picking the Cheapest Option",
+        "The 10-Minute Drill That Kills Baby Premiums",
+    ]
+
+
+def test_a_complete_list_gains_no_phantom_final_option(config):
+    """The salvage must not read the closing bracket as a fourth headline."""
+    package = copywriter.parse_copy_package(
+        {
+            "article_h1": "h",
+            "article_html": "<h1>x</h1>",
+            # Trailing comma: valid-looking, but json.loads refuses it, so this
+            # takes the salvage path with a list that *did* finish.
+            "headline_options": '["The First Real Headline","The Second Real Headline",]',
+            "meta_title": "t",
+            "meta_description": "d",
+            "url_slug": "s",
+        },
+        config,
+    )
+
+    assert [h.text for h in package.headline_options] == [
+        "The First Real Headline",
+        "The Second Real Headline",
+    ]
+
+
+def test_running_out_of_room_is_reported_as_itself():
+    """Otherwise it surfaces as a confusing parse error three steps later."""
+    response = SimpleNamespace(stop_reason="max_tokens", content=[])
+
+    with pytest.raises(copywriter.CopywriterError, match="ran out of room"):
+        copywriter._extract_tool_input(response)
