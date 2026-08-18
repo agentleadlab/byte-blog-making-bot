@@ -66,8 +66,11 @@ alt_text_source = "url_slug"
 require_approval = true
 # How long an approval prompt stays live before the post is skipped.
 approval_timeout_minutes = 60
-# Max videos a single /run may process, so one command can't burn the playlist.
-max_batch = 10
+# Max videos a single run may process, so one command can't burn the playlist.
+# A month of weekday posts is ~22, and links arrive by the fortnight rather
+# than one at a time - a cap that splits an ordinary paste in half is a nuisance
+# rather than a safeguard. Every post still waits for an approval click.
+max_batch = 30
 
 [copy]
 model = "claude-opus-5"
