@@ -58,6 +58,12 @@ ACTION_WORDS = {
     "inspect": "fields",
     # One controlled experiment: does a future date alone schedule a post?
     "datetest": "datetest",
+    # Which posts were written but never made it to GHL.
+    "missed": "missed",
+    "missing": "missed",
+    "leftover": "missed",
+    "leftovers": "missed",
+    "unposted": "missed",
     # Drop calendar days held by posts that were deleted in GHL.
     "cleanup": "reconcile",
     "reconcile": "reconcile",
@@ -167,7 +173,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     sources = find_sources(text)
 
-    if action in ("status", "schedule", "help", "fields", "reconcile"):
+    if action in ("status", "schedule", "help", "fields", "reconcile", "missed"):
         return MentionRequest(action=action)
 
     if not sources:
@@ -311,6 +317,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
+> @RYTE **missed** — posts I wrote but never got an answer on
 
 If YouTube won't give me a transcript, paste it out of the video yourself and \
 attach it (`.txt` or `.vtt`) along with the link — I'll write from that.

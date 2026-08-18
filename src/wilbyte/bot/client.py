@@ -238,6 +238,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_earliest_day(responder, config, request.brief or "")
                 return
 
+            if request.action == "missed":
+                await _send_missed(responder, config)
+                return
+
             if request.action == "reconcile":
                 await _send_reconcile(responder, config)
                 return
@@ -761,6 +765,24 @@ async def _send_date_test(responder: Responder, config: Config, undo: bool) -> N
         f"and I'll make that the default.\n"
         f"• **The post is live** → it doesn't, so this went out early. Say "
         f"`@RYTE datetest undo` and I'll put it straight back to its Aug 18 slot."
+    )
+
+
+async def _send_missed(responder: Responder, config: Config) -> None:
+    """The posts RYTE wrote that never reached GHL, and the line to redo them."""
+    ledger = await asyncio.to_thread(Ledger.load)
+    leftovers = await asyncio.to_thread(
+        jobs.built_but_not_posted, DEFAULT_OUTPUT_DIR, ledger
+    )
+    if not leftovers:
+        await responder.send("Nothing missed — every post I've written made it to GHL.")
+        return
+
+    listed = "\n".join(f"• {title}" for title, _link in leftovers)
+    links = " ".join(link for _title, link in leftovers)
+    await responder.send(
+        f"**{len(leftovers)} written but never posted:**\n{listed}\n\n"
+        f"Send this to redo them:\n```\n@RYTE {links} force\n```"
     )
 
 

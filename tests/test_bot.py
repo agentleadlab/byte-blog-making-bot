@@ -864,3 +864,58 @@ def test_the_same_video_is_only_offered_once():
     (message,) = run_offer([vid("aaa"), vid("aaa")])
 
     assert message.count("youtu.be/aaa") == 1
+
+
+# --------------------------------------------- finding what was written but not posted
+
+
+def built_post(out_dir, slug, title, video_id):
+    """Mimic what a build writes before the approval prompt goes up."""
+    post_dir = out_dir / slug
+    post_dir.mkdir(parents=True)
+    (post_dir / "ghl-fields.txt").write_text(
+        f"Title:            {title}\n"
+        f"URL slug:         {slug}\n"
+        f"Source video:     https://youtu.be/{video_id}\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_post_that_timed_out_is_found_with_its_link(tmp_path):
+    """The ledger never hears about a skipped post; the files on disk do."""
+    out = tmp_path / "out"
+    built_post(out, "no-answer", "The Niche Lead Filter Every Agent Should Use", "abc123")
+    ledger = Ledger(path=tmp_path / "ledger.json")
+
+    assert jobs.built_but_not_posted(out, ledger) == [
+        ("The Niche Lead Filter Every Agent Should Use", "https://youtu.be/abc123")
+    ]
+
+
+def test_a_post_that_reached_ghl_is_not_offered_again(tmp_path):
+    out = tmp_path / "out"
+    built_post(out, "posted", "Already Live", "abc123")
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="abc123", title="Already Live", url_slug="posted",
+        scheduled_at=None, ghl_post_id="p1",
+    )
+
+    assert jobs.built_but_not_posted(out, ledger) == []
+
+
+def test_a_renamed_slug_still_counts_as_posted(tmp_path):
+    """Publishing can add -2 to avoid a clash, so folder names stop matching."""
+    out = tmp_path / "out"
+    built_post(out, "clashing-slug", "Already Live", "abc123")
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="abc123", title="Already Live", url_slug="clashing-slug-2",
+        scheduled_at=None, ghl_post_id="p1",
+    )
+
+    assert jobs.built_but_not_posted(out, ledger) == []
+
+
+def test_no_output_directory_is_not_an_error(tmp_path):
+    assert jobs.built_but_not_posted(tmp_path / "nothing-here", Ledger(path=tmp_path / "l.json")) == []

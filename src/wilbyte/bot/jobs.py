@@ -331,6 +331,41 @@ def set_status(context: GHLContext, entry, status: str) -> datetime | None:
     return slot
 
 
+def built_but_not_posted(output_dir: Path, ledger: Ledger) -> list[tuple[str, str]]:
+    """(title, video link) for posts RYTE wrote but never got an answer on.
+
+    Every build writes its files before the approval prompt goes up, so a post
+    that timed out is still on disk with its source link in `ghl-fields.txt`.
+    That is the only record of what a skipped post came from - the ledger only
+    learns about a post once it reaches GHL.
+
+    Matching is on the video id from the link, not the folder name: the slug can
+    be changed at publish time to avoid a clash, and then the two disagree.
+    """
+    found: list[tuple[str, str]] = []
+    if not output_dir.exists():
+        return found
+
+    for fields in sorted(output_dir.glob("*/ghl-fields.txt")):
+        title, link = "", ""
+        try:
+            for line in fields.read_text(encoding="utf-8").splitlines():
+                if line.startswith("Title:"):
+                    title = line.split(":", 1)[1].strip()
+                elif line.startswith("Source video:"):
+                    link = line.split(":", 1)[1].strip()
+        except OSError:
+            continue
+
+        if not link:
+            continue
+        video_id = link.rstrip("/").rsplit("/", 1)[-1]
+        if ledger.has(video_id):
+            continue
+        found.append((title or fields.parent.name, link))
+    return found
+
+
 def reconcile(context: GHLContext, ledger: Ledger) -> tuple[list, list, list[str]]:
     """Drop ledger entries whose post is no longer in GHL. (gone, kept, problems)
 
