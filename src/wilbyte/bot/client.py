@@ -134,6 +134,7 @@ class WilByteBot(discord.Client):
         # loops would race each other for the same posts.
         if self.publisher_task is None or self.publisher_task.done():
             self.publisher_task = self.loop.create_task(publisher_loop(self))
+        await _warn_if_stale(self)
 
     async def on_message(self, message: discord.Message) -> None:
         if not is_direct_mention(message, self.user):
@@ -328,6 +329,34 @@ async def _attached_transcript(message) -> str | None:
         if raw.strip():
             return raw
     return None
+
+
+async def _warn_if_stale(bot: "WilByteBot") -> None:
+    """Say in Discord when the launcher couldn't update.
+
+    Twice now a fix has looked like it didn't work because RYTE was answering
+    out of an older checkout. The launcher does print it, but that window
+    scrolls past in a second and nobody is watching it. This is the one place
+    the answer is actually read.
+    """
+    from ..state import _state_dir
+
+    marker = _state_dir() / "update-blocked"
+    if not marker.exists():
+        return
+
+    try:
+        reason = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+
+    log.warning("%s", reason)
+    channel = _announce_channel(bot)
+    if channel is not None:
+        await channel.send(
+            f"⚠ **I couldn't update myself.** {reason}\n"
+            f"-# Running `{version.code_version()}` — fixes pushed since then aren't in yet."
+        )
 
 
 # ------------------------------------------------------------------- publishing
