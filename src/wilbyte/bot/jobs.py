@@ -571,23 +571,34 @@ def zoom_transcript(config: Config, rec) -> str:
         from .. import recordings
 
         meetings = client.account_recordings(days=30)
+        # The share page names the recording. It is the only thing that ties
+        # the pasted link to a particular call, so it is worth one extra
+        # request.
+        page_topic = client.share_page_topic(rec.url)
         found, how = zoom.choose(
             meetings,
             link=rec.url,
             passcode=rec.passcode,
-            # The share page names the recording. It is the only thing that
-            # ties the pasted link to a particular call, so it is worth one
-            # extra request before falling back to a guess.
-            page_topic=client.share_page_topic(rec.url),
+            page_topic=page_topic,
             filed=recordings.filed_ids(),
         )
         if found is None:
-            # Say how many were looked at. "Couldn't find it" among 92
-            # recordings is a matching problem; among none it is a setup one,
-            # and the two need completely different fixes.
+            # Filed with the link and nothing else, on purpose. Guessing put a
+            # summary of somebody else's call on a card twice, and a summary
+            # under the wrong name is not visibly wrong to whoever reads it.
+            if rec.passcode:
+                why = (
+                    f"the passcode doesn't match any of the {len(meetings)} recordings "
+                    "on the account either"
+                )
+            else:
+                why = "and no passcode was posted with it"
+            seen = f" The share page called it “{page_topic}”." if page_topic else ""
             rec.note = (
-                f"None of the {len(meetings)} Zoom recording(s) from the last 30 days "
-                "looked like this call, so there's no transcript to summarise."
+                f"I can't tell which call this link points at, so I've filed it "
+                f"without a summary rather than guess — Zoom's API can't resolve "
+                f"share links, {why}.{seen} Post it again with the "
+                "`Passcode:` line under the link and I'll match it exactly."
             )
             return ""
 

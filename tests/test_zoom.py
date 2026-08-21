@@ -362,7 +362,10 @@ def test_the_link_still_wins_when_it_does_match():
     assert zoom.choose(meetings, link=REAL, passcode="U^M^s7Bw")[1] == "the link"
 
 
-def test_the_newest_unfiled_call_is_the_last_resort(monkeypatch):
+def test_an_unidentifiable_link_is_never_guessed_at(monkeypatch):
+    """Recency filed the wrong call twice - Arlene's, then Daniel's - under a
+    link that said Derrick. A summary of the wrong client is not visibly wrong
+    to whoever reads it, so no summary is the safer answer."""
     import datetime as real_datetime
 
     class Today(real_datetime.date):
@@ -372,53 +375,20 @@ def test_the_newest_unfiled_call_is_the_last_resort(monkeypatch):
 
     monkeypatch.setattr(zoom, "date", Today)
     meetings = [
-        call_meeting(uuid="old", topic="Older", start_time="2026-08-17T10:00:00Z"),
-        call_meeting(uuid="new", topic="Newest", start_time="2026-08-19T10:00:00Z"),
+        call_meeting(uuid="daniel", topic="Daniel Salcedo", start_time="2026-08-21T10:00:00Z"),
+        call_meeting(uuid="derrick", topic="Derrick Robison", start_time="2026-08-19T05:17:00Z"),
     ]
-
-    found, how = zoom.choose(meetings, link=REAL)
-
-    assert found.topic == "Newest"
-    assert "not filed yet" in how
-
-
-def test_a_call_already_filed_is_not_offered_again(monkeypatch):
-    import datetime as real_datetime
-
-    class Today(real_datetime.date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 8, 21)
-
-    monkeypatch.setattr(zoom, "date", Today)
-    meetings = [
-        call_meeting(uuid="old", topic="Older", start_time="2026-08-17T10:00:00Z"),
-        call_meeting(uuid="new", topic="Newest", start_time="2026-08-19T10:00:00Z"),
-    ]
-
-    found, _ = zoom.choose(meetings, link=REAL, filed={"new"})
-
-    assert found.topic == "Older"
-
-
-def test_a_recording_with_no_transcript_is_never_the_fallback():
-    """Picking one would file a card with no summary and no explanation."""
-    meetings = [call_meeting(recording_files=[])]
 
     assert zoom.choose(meetings, link=REAL) == (None, "")
 
 
-def test_nothing_recent_enough_means_no_guess(monkeypatch):
-    import datetime as real_datetime
+def test_a_named_recording_is_still_found_without_a_transcript():
+    """Knowing which call it is beats having its text - the card is right either way."""
+    meetings = [call_meeting(recording_files=[])]
 
-    class Today(real_datetime.date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 12, 1)
+    found, _ = zoom.choose(meetings, link=REAL, page_topic="Derrick Robison")
 
-    monkeypatch.setattr(zoom, "date", Today)
-
-    assert zoom.choose([call_meeting()], link=REAL) == (None, "")
+    assert found is not None and not found.has_transcript
 
 
 def test_the_meeting_carries_its_own_id():
@@ -488,3 +458,22 @@ def test_a_repeated_meeting_name_takes_the_most_recent_one():
 
 def test_a_name_that_matches_nothing_falls_through():
     assert zoom.match_topic([call_meeting()], "Nobody At All") is None
+
+
+def test_a_passcode_gated_page_still_gives_up_the_name():
+    """The player renders from a JSON blob, so markup alone may say only "Zoom"."""
+    html = '<html><head><title>Zoom</title></head><body><script>'
+    html += 'window.__data__ = {"topic":"Derrick Robison","fileId":"x"};</script></body></html>'
+
+    assert zoom.topic_from_page(html) == "Derrick Robison"
+
+
+def test_a_sentence_of_marketing_copy_is_not_a_recording_name():
+    """Zoom's generic description would otherwise match every link."""
+    html = (
+        '<meta name="description" content="Zoom is the leader in modern enterprise '
+        'video communications, with an easy, reliable cloud platform for video and '
+        'audio conferencing, chat, and webinars across mobile, desktop.">'
+    )
+
+    assert zoom.topic_from_page(html) == ""

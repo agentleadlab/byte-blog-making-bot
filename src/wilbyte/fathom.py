@@ -200,28 +200,6 @@ def meeting_id(meeting: dict) -> str:
     return share_key(str(first_of(meeting, URL_FIELDS) or ""))
 
 
-def newest_unfiled(
-    meetings: list[dict], filed: set[str] | frozenset[str], *, within_days: int = 14
-) -> FathomCall | None:
-    """The most recent call not already in the gallery.
-
-    The same fallback Zoom needed, for the same reason: a share link that
-    doesn't line up with what the API returns leaves the call unidentifiable,
-    and a card with no summary is the cost. A recording is posted within a day
-    or two of the call, so recency is a sound tiebreak.
-    """
-    cutoff = (date.today() - timedelta(days=within_days)).isoformat()
-    fresh = [
-        meeting for meeting in meetings or []
-        if meeting_id(meeting) not in (filed or set())
-        and str(as_call(meeting).started_at or "")[:10] >= cutoff
-    ]
-    if not fresh:
-        return None
-    fresh.sort(key=lambda meeting: str(as_call(meeting).started_at or ""), reverse=True)
-    return as_call(fresh[0])
-
-
 def choose(
     meetings: list[dict],
     *,
@@ -232,9 +210,9 @@ def choose(
     found = match_share_url(meetings, link)
     if found is not None:
         return found, "the link"
-    found = newest_unfiled(meetings, filed or set())
-    if found is not None:
-        return found, "it being the most recent call not filed yet"
+    # No recency fallback here either. Fathom's links do resolve, so this path
+    # means something is genuinely wrong - and the Zoom version of this guess
+    # filed two cards carrying a summary of a different client's call.
     return None, ""
 
 

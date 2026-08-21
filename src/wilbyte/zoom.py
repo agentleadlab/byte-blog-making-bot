@@ -325,32 +325,6 @@ def match_passcode(meetings: list[dict], passcode: str) -> ZoomRecording | None:
     return None
 
 
-def readable(meetings: list[dict]) -> list[dict]:
-    return [m for m in meetings or [] if pick_transcript((m or {}).get("recording_files") or [])]
-
-
-def newest_unfiled(
-    meetings: list[dict], filed: set[str] | frozenset[str], *, within_days: int = 14
-) -> ZoomRecording | None:
-    """The most recent readable recording that hasn't been filed yet.
-
-    The last resort, and a sound one: a call is posted within a day or two of
-    happening, and every earlier call is already in the gallery. Restricted to
-    recent recordings so a quiet week can't reach back and dredge up something
-    from last month.
-    """
-    cutoff = (date.today() - timedelta(days=within_days)).isoformat()
-    fresh = [
-        meeting for meeting in readable(meetings)
-        if meeting_id(meeting) not in (filed or set())
-        and str(meeting.get("start_time") or "")[:10] >= cutoff
-    ]
-    if not fresh:
-        return None
-    fresh.sort(key=lambda meeting: str(meeting.get("start_time") or ""), reverse=True)
-    return as_recording(fresh[0])
-
-
 # What Zoom appends to a recording's name on its share page. The topic in the
 # API has none of this, so it comes off before the two are compared.
 _PAGE_SUFFIXES = (
@@ -368,7 +342,20 @@ _PAGE_TITLE = re.compile(
     r"<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"'](?P<value>[^\"']+)",
     re.IGNORECASE,
 )
+_META_DESCRIPTION = re.compile(
+    r"<meta[^>]+name=[\"']description[\"'][^>]+content=[\"'](?P<value>[^\"']+)",
+    re.IGNORECASE,
+)
+# Zoom's player renders from a JSON blob in the page rather than from markup,
+# so on a passcode-gated page this is often the only place the name survives.
+_EMBEDDED_TOPIC = re.compile(r"[\"'](?:topic|meetingTopic|fileName)[\"']\s*:\s*[\"'](?P<value>[^\"']{2,120})")
 _HTML_TITLE = re.compile(r"<title[^>]*>(?P<value>.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+# Page text that names Zoom rather than the recording.
+_NOT_A_TOPIC = {
+    "zoom", "video conferencing", "zoom video", "sign in", "enter passcode",
+    "recording", "cloud recording", "zoom cloud recording",
+}
 
 
 def topic_from_page(html: str) -> str:
@@ -382,20 +369,26 @@ def topic_from_page(html: str) -> str:
     it the choice falls to recency, and recency filed a call with Arlene when
     the link said Derrick.
     """
-    for pattern in (_PAGE_TITLE, _HTML_TITLE):
-        match = pattern.search(html or "")
-        if not match:
-            continue
-        found = " ".join(match.group("value").split())
-        lowered = found.casefold()
-        for suffix in _PAGE_SUFFIXES:
-            if lowered.endswith(suffix):
-                found = found[: len(found) - len(suffix)]
-                break
-        found = found.strip()
-        if found and found.casefold() not in ("zoom", "video conferencing"):
-            return found
+    for pattern in (_PAGE_TITLE, _EMBEDDED_TOPIC, _META_DESCRIPTION, _HTML_TITLE):
+        for match in pattern.finditer(html or ""):
+            found = _clean_topic(match.group("value"))
+            if found:
+                return found
     return ""
+
+
+def _clean_topic(raw: str) -> str:
+    """A page's title reduced to the recording's own name, or "" if it isn't one."""
+    found = " ".join((raw or "").replace("\\u0026", "&").split())
+    lowered = found.casefold()
+    for suffix in _PAGE_SUFFIXES:
+        if lowered.endswith(suffix):
+            found = found[: len(found) - len(suffix)].strip()
+            break
+    if not found or found.casefold() in _NOT_A_TOPIC:
+        return ""
+    # A description is a sentence; a recording's name is not.
+    return "" if len(found) > 90 else found
 
 
 def match_topic(meetings: list[dict], topic: str) -> ZoomRecording | None:
@@ -446,10 +439,11 @@ def choose(
     if found is not None:
         return found, "its passcode"
 
-    found = newest_unfiled(meetings, filed or set())
-    if found is not None:
-        return found, "it being the most recent call not filed yet"
-
+    # No recency fallback. It was tried and it filed the wrong call twice - a
+    # link for Derrick's call got Arlene's, then Daniel's. A summary of the
+    # wrong customer is worse than no summary at all: it is not obviously
+    # wrong, it is filed under the right name, and somebody will read another
+    # client's objections as this one's. An empty summary is visibly empty.
     return None, ""
 
 

@@ -174,55 +174,8 @@ def test_the_link_is_used_when_it_matches():
     assert how == "the link"
 
 
-def test_the_newest_unfiled_call_is_the_fallback(monkeypatch):
-    import datetime as real_datetime
-
-    class Today(real_datetime.date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 8, 21)
-
-    monkeypatch.setattr(fathom, "date", Today)
-    meetings = [
-        fathom_meeting(id="old", title="Older", recording_start_time="2026-08-17T10:00:00Z"),
-        fathom_meeting(id="new", title="Newest", recording_start_time="2026-08-19T10:00:00Z"),
-    ]
-
-    found, how = fathom.choose(meetings, link="https://fathom.video/share/nope")
-
-    assert found.title == "Newest"
-    assert "not filed yet" in how
-
-
-def test_an_already_filed_call_is_skipped(monkeypatch):
-    import datetime as real_datetime
-
-    class Today(real_datetime.date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 8, 21)
-
-    monkeypatch.setattr(fathom, "date", Today)
-    meetings = [
-        fathom_meeting(id="old", title="Older", recording_start_time="2026-08-17T10:00:00Z"),
-        fathom_meeting(id="new", title="Newest", recording_start_time="2026-08-19T10:00:00Z"),
-    ]
-
-    found, _ = fathom.choose(meetings, link="https://fathom.video/share/nope", filed={"new"})
-
-    assert found.title == "Older"
-
-
-def test_nothing_recent_means_no_guess(monkeypatch):
-    import datetime as real_datetime
-
-    class Today(real_datetime.date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 12, 1)
-
-    monkeypatch.setattr(fathom, "date", Today)
-
+def test_a_link_that_matches_nothing_is_not_guessed_at():
+    """Fathom's links do resolve, so no match means something is actually wrong."""
     assert fathom.choose([fathom_meeting()], link="https://fathom.video/share/nope") == (None, "")
 
 

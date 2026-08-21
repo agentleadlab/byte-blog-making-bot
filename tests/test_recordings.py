@@ -317,9 +317,9 @@ def test_a_zoom_call_that_cannot_be_found_says_so(monkeypatch):
     rec = call(platform="Zoom")
 
     assert jobs.zoom_transcript(_zoom_config(), rec) == ""
-    assert "looked like this call" in rec.note.casefold()
-    # How many were looked at: none is a setup problem, 92 is a matching one.
-    assert "1 zoom recording" in rec.note.casefold()
+    assert "can't tell which call" in rec.note.casefold()
+    # And what to do about it, rather than just that it happened.
+    assert "passcode" in rec.note.casefold()
 
 
 def test_a_zoom_call_recorded_without_transcription_says_so(monkeypatch):
