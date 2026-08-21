@@ -1,4 +1,5 @@
 """Bot logic that can be tested without a gateway connection."""
+import asyncio
 
 from dataclasses import replace
 from datetime import date, datetime
@@ -1201,3 +1202,67 @@ def test_a_search_narrows_what_the_picker_shows():
 
     assert [c.topic for c in calls if c.matches("derrick")] == ["Derrick Robison"]
     assert len([c for c in calls if c.matches("")]) == 2
+
+
+# --------------------------- an optional setting must not take RYTE down
+
+# A server id RYTE has no access to raised 403 out of setup_hook and killed the
+# login before the bot ever connected. Slash commands are a convenience;
+# @mentions are the way in that matters.
+
+
+class _Tree:
+    def __init__(self, fails_on_guild=False, fails_always=False):
+        self.fails_on_guild = fails_on_guild
+        self.fails_always = fails_always
+        self.synced = []
+
+    def copy_global_to(self, *, guild):
+        pass
+
+    async def sync(self, *, guild=None):
+        import discord
+
+        if self.fails_always or (guild is not None and self.fails_on_guild):
+            raise discord.HTTPException(_Response(), "50001: Missing Access")
+        self.synced.append(guild)
+
+
+class _Response:
+    status = 403
+    reason = "Forbidden"
+
+
+async def _run_setup(tree, guild_id):
+    from types import SimpleNamespace
+
+    from wilbyte.bot.client import WilByteBot
+
+    bot = WilByteBot.__new__(WilByteBot)
+    bot.tree = tree
+    bot.config = SimpleNamespace(secrets=SimpleNamespace(discord_guild_id=guild_id))
+    import wilbyte.bot.client as client_mod
+
+    original = client_mod.register_commands
+    client_mod.register_commands = lambda _bot: None
+    try:
+        await WilByteBot.setup_hook(bot)
+    finally:
+        client_mod.register_commands = original
+
+
+def test_a_server_ryte_cannot_reach_falls_back_to_a_global_sync():
+    tree = _Tree(fails_on_guild=True)
+
+    asyncio.run(_run_setup(tree, "123456789012345678"))
+
+    assert tree.synced == [None], "the guild sync failed, the global one ran"
+
+
+def test_commands_failing_entirely_still_lets_the_bot_start():
+    tree = _Tree(fails_always=True)
+
+    # The point is that this returns rather than raising.
+    asyncio.run(_run_setup(tree, "123456789012345678"))
+
+    assert tree.synced == []

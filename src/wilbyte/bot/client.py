@@ -132,11 +132,27 @@ class WilByteBot(discord.Client):
             # Guild-scoped commands appear immediately; global ones take ~1 hour.
             guild = discord.Object(id=guild_id)
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            log.info("Slash commands synced to guild %s", guild_id)
-            return
+            try:
+                await self.tree.sync(guild=guild)
+            except discord.HTTPException as exc:
+                # An *optional* setting must never take the bot down, and this
+                # one did: a server id RYTE has no access to raised out of
+                # setup_hook and killed the login. Slash commands are a
+                # convenience; @mentions are the way in that matters.
+                log.error(
+                    "Couldn't register commands in server %s: %s. Either RYTE isn't "
+                    "in that server, or it was invited without the "
+                    "applications.commands scope - re-invite it from the developer "
+                    "portal with both `bot` and `applications.commands` ticked. "
+                    "Falling back to a global sync; everything else works as normal.",
+                    guild_id,
+                    exc,
+                )
+            else:
+                log.info("Slash commands synced to guild %s", guild_id)
+                return
 
-        if raw_guild_id:
+        if raw_guild_id and not guild_id:
             log.error(
                 "DISCORD_GUILD_ID is not a server id: %r. It should be ~18 digits, "
                 "copied from Discord with right-click your server -> Copy Server ID "
@@ -146,7 +162,13 @@ class WilByteBot(discord.Client):
             )
             log.warning("Falling back to a global command sync for now.")
 
-        await self.tree.sync()
+        try:
+            await self.tree.sync()
+        except discord.HTTPException as exc:
+            # Same reasoning: RYTE answers @mentions whether or not Discord
+            # accepted a single slash command.
+            log.error("Couldn't register slash commands at all: %s", exc)
+            return
         log.info("Slash commands synced globally (may take up to an hour to appear)")
 
     async def on_ready(self) -> None:
