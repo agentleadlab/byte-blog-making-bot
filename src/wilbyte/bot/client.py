@@ -407,6 +407,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_check(responder, config, request.source)
                 return
 
+            if request.action == "findcall":
+                await _send_cards(responder, config, request.brief or "")
+                return
+
             if request.action == "calls":
                 await _send_visible_calls(responder, config, link=request.brief or "")
                 return
@@ -1070,6 +1074,35 @@ async def _host_images(responder: Responder, config: Config, message) -> None:
             await responder.send(embed=embeds.error(f"Couldn't host {attachment.filename}\n{exc}"))
             continue
         await responder.send(f"🔗 `{attachment.filename}`\n{url}")
+
+
+async def _send_cards(responder: Responder, config: Config, asked: str) -> None:
+    """Hand back the gallery card somebody asked for."""
+    from .. import recordings
+
+    name = recordings.wanted_name(asked)
+    try:
+        found = await asyncio.to_thread(jobs.find_cards, config, name)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the Notion gallery\n{exc}"))
+        return
+
+    if not found:
+        await responder.send(
+            f"Nothing in the gallery for “{name}”." if name
+            else "There's nothing in the recordings gallery yet."
+        )
+        return
+
+    if len(found) == 1:
+        title, url = found[0]
+        await responder.send(f"📁 **{title}**\n{url}")
+        return
+
+    lines = [f"· **{title}**\n{url}" for title, url in found]
+    await responder.send(
+        (f"{len(found)} for “{name}”:" if name else "The most recent:") + "\n" + "\n".join(lines)
+    )
 
 
 def _words_beside_link(text: str, url: str) -> str:

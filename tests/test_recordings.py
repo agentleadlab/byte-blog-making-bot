@@ -574,3 +574,68 @@ def test_the_poster_stands_in_for_the_closer():
     rec.posted_by = "Santiago Villegas"
 
     assert recordings.call_title(rec) == "Sales Recording: Santiago Villegas"
+
+
+# ------------------------------------- getting a card back out again
+
+
+def notion_row(title, url="https://notion.so/x"):
+    return {
+        "url": url,
+        "properties": {"Name": {"type": "title", "title": [{"plain_text": title}]}},
+    }
+
+
+def test_the_asking_is_stripped_out_of_the_question():
+    assert recordings.wanted_name(
+        "<@1> need the sales recording for Derrick Robison call"
+    ) == "Derrick Robison"
+
+
+def test_a_link_in_the_question_is_not_part_of_the_name():
+    assert recordings.wanted_name("find the recording https://notion.so/abc") == ""
+
+
+def test_the_card_is_found_by_the_client_name():
+    rows = [
+        notion_row("Sales Recording: Santiago Villegas + Derrick Robison", "https://n/1"),
+        notion_row("Sales Recording: Santiago Villegas + Arlene Linares", "https://n/2"),
+    ]
+
+    assert recordings.matching_rows(rows, "Derrick Robison") == [
+        ("Sales Recording: Santiago Villegas + Derrick Robison", "https://n/1")
+    ]
+
+
+def test_the_closer_name_finds_all_of_their_calls():
+    rows = [
+        notion_row("Sales Recording: Santiago Villegas + Derrick Robison"),
+        notion_row("Sales Recording: Tre Tarpley + Brice Barker"),
+    ]
+
+    assert len(recordings.matching_rows(rows, "Santiago")) == 1
+
+
+def test_every_word_has_to_match_not_just_one():
+    """"derrick robison" must not also return every other Derrick."""
+    rows = [
+        notion_row("Sales Recording: Santi + Derrick Robison"),
+        notion_row("Sales Recording: Santi + Derrick Someone-Else"),
+    ]
+
+    assert len(recordings.matching_rows(rows, "derrick robison")) == 1
+
+
+def test_asking_for_nothing_in_particular_returns_everything():
+    """"send me the sales recordings" is a reasonable thing to say."""
+    rows = [notion_row("Sales Recording: A + B"), notion_row("Sales Recording: C + D")]
+
+    assert len(recordings.matching_rows(rows, "")) == 2
+
+
+def test_a_name_nobody_has_matches_nothing():
+    assert recordings.matching_rows([notion_row("Sales Recording: A + B")], "Nobody") == []
+
+
+def test_a_row_with_no_title_is_skipped():
+    assert recordings.matching_rows([{"url": "https://n/1", "properties": {}}], "") == []

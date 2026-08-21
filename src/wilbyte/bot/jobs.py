@@ -1426,3 +1426,28 @@ def record(ledger: Ledger, post: BlogPost) -> None:
         payload_path=post.ghl_payload_path,
     )
     ledger.save()
+
+
+def find_cards(config: Config, name: str, *, limit: int = 5) -> list[tuple[str, str]]:
+    """(title, url) for gallery cards matching a name somebody asked for.
+
+    Filing a recording is only half of it - the gallery exists to be asked. A
+    link somebody has to go and dig out by hand is most of the way back to not
+    having filed it at all.
+    """
+    from .. import notion, recordings
+
+    config.secrets.require("notion_token", "notion_recordings_page_id")
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        database_id = client.find_child_database(config.secrets.notion_recordings_page_id)
+        if not database_id:
+            return []
+        rows = client.query_database(database_id)
+    finally:
+        client.close()
+
+    found = recordings.matching_rows(rows, name)
+    # Newest last out of Notion, and the recent one is nearly always the one
+    # being asked about.
+    return list(reversed(found))[:limit]

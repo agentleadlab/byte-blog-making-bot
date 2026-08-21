@@ -360,3 +360,63 @@ def remember_filed(meeting_id: str, path=None) -> None:
     known.add(str(meeting_id))
     found.parent.mkdir(parents=True, exist_ok=True)
     found.write_text(json.dumps(sorted(known), indent=2), encoding="utf-8")
+
+
+# ------------------------------------------- finding a card again later
+
+# "@RYTE need the sales recording for Derrick Robison". The gallery is the
+# point of filing these, and a link somebody has to go and dig out by hand is
+# most of the way back to not having filed it.
+
+# Words that carry no information about *which* recording is wanted.
+_ASKING_WORDS = {
+    "a", "again", "and", "back", "call", "calls", "can", "could", "do", "find",
+    "for", "get", "give", "got", "have", "hey", "i", "is", "it", "link", "links",
+    "me", "my", "need", "notion", "of", "on", "one", "please", "pull", "recording",
+    "recordings", "ryte", "sales", "send", "share", "show", "that", "the", "to", "up",
+    "want", "was", "what", "where", "which", "with", "you", "your",
+}
+
+
+def wanted_name(text: str) -> str:
+    """What was asked for, once the asking is taken out.
+
+    "need the sales recording for Derrick Robison call" leaves "Derrick
+    Robison". Everything else is scaffolding around the one part that says
+    which recording.
+    """
+    from .bot.mentions import ANY_URL_RE, MENTION_RE, ROLE_MENTION_RE
+
+    cleaned = ANY_URL_RE.sub(" ", text or "")
+    cleaned = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", cleaned))
+    kept = [
+        word for word in re.split(r"[^\w'-]+", cleaned)
+        if word and word.casefold() not in _ASKING_WORDS
+    ]
+    return " ".join(kept).strip()
+
+
+def row_title(row: dict) -> str:
+    """The title text of one Notion row."""
+    for value in (row.get("properties") or {}).values():
+        if value.get("type") == "title":
+            return "".join(part.get("plain_text", "") for part in value.get("title") or [])
+    return ""
+
+
+def matching_rows(rows: list[dict], name: str) -> list[tuple[str, str]]:
+    """(title, url) for the cards whose title carries every word asked for.
+
+    Every word rather than any: "derrick robison" should not also return every
+    other Derrick. With nothing asked for, the newest handful - which is the
+    sensible reading of "send me the sales recordings".
+    """
+    found = [(row_title(row), str(row.get("url") or "")) for row in rows or []]
+    found = [(title, url) for title, url in found if title]
+    words = [word.casefold() for word in (name or "").split()]
+    if not words:
+        return found
+    return [
+        (title, url) for title, url in found
+        if all(word in title.casefold() for word in words)
+    ]

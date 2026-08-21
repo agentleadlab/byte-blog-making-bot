@@ -415,3 +415,44 @@ def test_calls_can_carry_a_link_to_diagnose():
 
 def test_calls_on_its_own_carries_no_link():
     assert parse(f"{BOT} calls").brief == ""
+
+
+# ------------------------------------- asking for a recording back again
+
+# Filing one and asking for one are the same words apart from a link. The
+# gallery exists to be asked, and a link somebody has to dig out by hand is
+# most of the way back to not having filed it.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "need the sales recording for Derrick Robison call",
+        "where is the recording for Arlene",
+        "send me the notion link for Derrick",
+        "can you find the sales call with Mayra",
+        "show me the recordings",
+    ],
+)
+def test_asking_for_a_card_is_a_lookup(text):
+    assert parse(f"{BOT} {text}").action == "findcall"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{bot} recording {link}",
+        "{bot} {link}",
+        "{bot} Sales: Derrick Robison {link}",
+        "{bot} need this recording filed {link}",
+    ],
+)
+def test_handing_one_over_still_files_it(text):
+    """The same words with a link mean the opposite thing."""
+    assert parse(text.format(bot=BOT, link=ZOOM_REC)).action == "recording"
+
+
+def test_a_lookup_needs_both_halves():
+    """"send me the link" alone could be about anything at all."""
+    assert parse(f"{BOT} send me the link").action != "findcall"
+    assert parse(f"{BOT} recording").action != "findcall"

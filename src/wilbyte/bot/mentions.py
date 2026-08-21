@@ -135,6 +135,21 @@ def _without_links(text: str) -> str:
     return ANY_URL_RE.sub(" ", text or "")
 
 
+# Asking for a filed recording back. Both halves are required: "recording"
+# alone is the filing command, and "send me the link" alone is about anything
+# at all.
+_WANTS = ("need", "find", "send", "share", "get", "where", "which", "show", "pull", "give", "want")
+_THE_THING = ("recording", "recordings", "sales call", "call link", "notion")
+
+
+def _asks_for_a_card(lowered: str) -> bool:
+    without_links = _without_links(lowered)
+    words = set(re.findall(r"[a-z]+", without_links))
+    return bool(words & set(_WANTS)) and any(
+        phrase in without_links for phrase in _THE_THING
+    )
+
+
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
     first = re.match(r"\s*([a-zA-Z]+)", text)
     return bool(first) and first.group(1).lower() in words
@@ -191,6 +206,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # command when they open the message, and everything after is the day.
     if _opens_with(text, START_WORDS):
         return MentionRequest(action="start", brief=_strip_word(text, START_WORDS))
+
+    # Asking *for* a recording, rather than handing one over. The difference is
+    # a link: "recording <link>" files one, "need the recording for Derrick"
+    # fetches one back out of the gallery.
+    if _asks_for_a_card(lowered) and not RECORDING_URL_RE.search(text):
+        return MentionRequest(action="findcall", brief=text)
 
     if _opens_with(text, RECORDING_WORDS):
         return MentionRequest(action="recording", brief=_strip_word(text, RECORDING_WORDS))
@@ -385,6 +406,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **recording** `<link>` — same thing, said out loud
 > Or reply to the message with the link and just say @RYTE **recording**
 > @RYTE **Sales: Derrick Robison** `<link>` — names the card and finds the call
+> @RYTE **need the recording for Derrick Robison** — I'll send the card back
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 
