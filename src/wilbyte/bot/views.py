@@ -15,6 +15,62 @@ class Decision(str, Enum):
     TIMEOUT = "timeout"
 
 
+class RecordingPicker(discord.ui.View):
+    """Pick which call a link refers to, when the link can't be matched.
+
+    Zoom's share tokens have not proved reliable to match against what its API
+    returns, and every failure costs a card with no summary. The person who
+    posted the link knows which call it is on sight, so asking is both faster
+    and more certain than another round of guessing at token formats.
+    """
+
+    def __init__(self, choices: list[tuple[str, str]], *, requester_id: int | None, timeout: float):
+        super().__init__(timeout=timeout)
+        self.chosen: int | None = None
+        self.requester_id = requester_id
+
+        # Discord allows 25 options, 100 characters of label, 100 of description.
+        options = [
+            discord.SelectOption(label=label[:100], description=note[:100], value=str(index))
+            for index, (label, note) in enumerate(choices[:25])
+        ]
+        self._select = discord.ui.Select(
+            placeholder="Which call is this?", options=options, min_values=1, max_values=1
+        )
+        self._select.callback = self._picked
+        self.add_item(self._select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.requester_id is None or interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            "Only the person who posted the link can pick the call.", ephemeral=True
+        )
+        return False
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        self.chosen = int(self._select.values[0])
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content="Reading that call…", view=self)
+        self.stop()
+
+    @discord.ui.button(label="None of these", style=discord.ButtonStyle.secondary, emoji="🚫")
+    async def none_of_these(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.chosen = None
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="Filed without a summary.", view=self
+        )
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        self.chosen = None
+        for child in self.children:
+            child.disabled = True
+
+
 class ApprovalView(discord.ui.View):
     """Approve / save as draft / skip / stop, restricted to the requester.
 

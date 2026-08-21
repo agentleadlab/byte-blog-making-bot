@@ -43,7 +43,7 @@ from .responders import (
     MessageResponder,
     Responder,
 )
-from .views import ApprovalView, Decision
+from .views import ApprovalView, Decision, RecordingPicker
 
 log = logging.getLogger("wilbyte.bot")
 
@@ -1102,6 +1102,13 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
             # A missing summary is a worse entry, not a failed one. File it.
             log.warning("Could not summarise %s: %s", found.url, exc)
 
+        # The link didn't match anything, but the call is almost certainly on
+        # the account - so ask rather than file an empty card. Whoever posted
+        # it recognises the call instantly, which no amount of token-format
+        # guessing has managed to.
+        if not summary and found.platform == "Zoom" and found.note:
+            summary = await _pick_the_call(responder, config, message, found)
+
     try:
         title, url = await asyncio.to_thread(jobs.file_recording, config, found, summary=summary)
     except PIPELINE_ERRORS as exc:
@@ -1119,6 +1126,54 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
     else:
         tail = " — no transcript was available"
     await responder.send(f"📁 **{title}** filed in Notion{tail}\n{url}")
+
+
+async def _pick_the_call(responder: Responder, config: Config, message, rec) -> str:
+    """Ask which recording a link means, then read that one.
+
+    Returns the summary, or "" if nobody picked. `rec` is updated in place with
+    the names and topic of whatever was chosen, so the card is titled properly
+    either way.
+    """
+    try:
+        candidates = await asyncio.to_thread(jobs.zoom_candidates, config)
+    except PIPELINE_ERRORS as exc:
+        log.warning("Couldn't list Zoom recordings to pick from: %s", exc)
+        return ""
+    if not candidates:
+        return ""
+
+    choices = [
+        (
+            item.topic or "(no topic)",
+            f"{(item.started_at or '')[:10]} · {item.host_email}"
+            f"{'' if item.has_transcript else ' · no transcript'}",
+        )
+        for item in candidates
+    ]
+    view = RecordingPicker(
+        choices,
+        requester_id=getattr(getattr(message, "author", None), "id", None),
+        timeout=300,
+    )
+    await responder.send(
+        "I couldn't match that link to a recording. Which call is it?", view=view
+    )
+    await view.wait()
+
+    if view.chosen is None:
+        return ""
+
+    picked = candidates[view.chosen]
+    # Picked by hand, so the earlier complaint about not finding it is stale.
+    rec.note = ""
+    try:
+        text = await asyncio.to_thread(jobs.zoom_read, config, rec, picked)
+        return await asyncio.to_thread(jobs.summarise_text, config, text)
+    except PIPELINE_ERRORS as exc:
+        log.warning("Could not read the picked call: %s", exc)
+        rec.note = f"Couldn't read “{picked.topic}”: {exc}"
+        return ""
 
 
 async def _replied_to(message):

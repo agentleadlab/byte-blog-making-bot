@@ -582,6 +582,47 @@ def zoom_transcript(config: Config, rec) -> str:
                 "summarise. `@RYTE calls <link>` shows what it was compared against."
             )
             return ""
+        return zoom_read(config, rec, found, client=client)
+    finally:
+        client.close()
+
+
+def zoom_candidates(config: Config, *, days: int = 30, limit: int = 25) -> list:
+    """Recent recordings, newest first, for picking one by hand.
+
+    The fallback for a link that can't be matched. Whoever posted it knows
+    which call it is on sight, and asking beats a third guess at Zoom's token
+    format.
+    """
+    from .. import zoom
+
+    client = zoom.ZoomClient(
+        config.secrets.zoom_account_id,
+        config.secrets.zoom_client_id,
+        config.secrets.zoom_client_secret,
+    )
+    try:
+        meetings = client.account_recordings(days=days)
+    finally:
+        client.close()
+
+    found = [zoom.as_recording(meeting) for meeting in meetings]
+    found.sort(key=lambda item: item.started_at or "", reverse=True)
+    return found[:limit]
+
+
+def zoom_read(config: Config, rec, found, *, client=None) -> str:
+    """Download one recording's transcript and take the card's names from it."""
+    from .. import zoom
+
+    owned = client is None
+    if owned:
+        client = zoom.ZoomClient(
+            config.secrets.zoom_account_id,
+            config.secrets.zoom_client_id,
+            config.secrets.zoom_client_secret,
+        )
+    try:
         if not found.has_transcript:
             rec.note = (
                 f"Zoom has no transcript for “{found.topic}”. Audio transcript has "
@@ -603,7 +644,10 @@ def zoom_transcript(config: Config, rec) -> str:
             rec.participants = tuple(part for part in (closer, *guests) if part)
         return text
     finally:
-        client.close()
+        # Only close what this call opened - the caller that passed a client in
+        # is still using it.
+        if owned:
+            client.close()
 
 
 def fathom_transcript(config: Config, rec) -> str:
@@ -666,7 +710,17 @@ def summarise_call(config: Config, rec) -> str:
     # team's own tool describes the call.
     if getattr(rec, "fathom_summary", ""):
         return rec.fathom_summary
-    if not text.strip():
+    return summarise_text(config, text)
+
+
+def summarise_text(config: Config, text: str) -> str:
+    """The write-up itself, given a transcript that has already been fetched.
+
+    Separate from `summarise_call` because a call picked by hand has its
+    transcript in hand already, and fetching it twice to summarise it once
+    would be silly.
+    """
+    if not (text or "").strip():
         return ""
 
     from anthropic import Anthropic

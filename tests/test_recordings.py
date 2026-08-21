@@ -406,3 +406,42 @@ def test_the_names_for_the_card_come_out_of_the_transcript(monkeypatch):
     assert recordings.call_title(rec, 2) == (
         "Sales Recording 2 - Santiago Villegas Derrick Robison"
     )
+
+
+# --------------------------------------------- picking the call by hand
+
+
+def test_a_picked_call_is_read_and_named(monkeypatch):
+    """The fallback when a link can't be matched: read the one that was chosen."""
+    from wilbyte import zoom
+    from wilbyte.bot import jobs
+
+    _use_fake(monkeypatch, [], text="Santiago Villegas: hi Derrick Robison: hey ")
+    picked = zoom.ZoomRecording(
+        topic="Derrick Robison",
+        share_url=ZOOM,
+        host_email="santi@agentleadlab.com",
+        transcript_url="https://x/t.vtt",
+    )
+    rec = call(platform="Zoom")
+
+    text = jobs.zoom_read(_zoom_config(), rec, picked)
+
+    assert "Derrick Robison" in text
+    assert rec.closer == "Santiago Villegas"
+    assert rec.guests == ("Derrick Robison",)
+    assert rec.topic == "Derrick Robison"
+
+
+def test_candidates_come_back_newest_first(monkeypatch):
+    from wilbyte.bot import jobs
+
+    _use_fake(monkeypatch, [
+        {"topic": "Older", "start_time": "2026-08-01T10:00:00Z"},
+        {"topic": "Newest", "start_time": "2026-08-19T10:00:00Z"},
+        {"topic": "Middle", "start_time": "2026-08-10T10:00:00Z"},
+    ])
+
+    found = jobs.zoom_candidates(_zoom_config())
+
+    assert [item.topic for item in found] == ["Newest", "Middle", "Older"]
