@@ -217,14 +217,14 @@ def test_the_people_are_the_title():
     rec = call(closer="Santiago Villegas", guests=("Derrick Robison",))
 
     assert recordings.call_title(rec) == (
-        "Sales Recording: Santiago Villegas Derrick Robison"
+        "Sales Recording: Santiago Villegas + Derrick Robison"
     )
 
 
 def test_the_first_guest_is_the_client():
     rec = call(closer="Santiago", guests=("Derrick Robison", "Someone Else"))
 
-    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago + Derrick Robison"
 
 
 def test_a_closer_with_no_client_still_names_the_card():
@@ -245,7 +245,7 @@ def test_a_call_with_no_names_at_all_still_reads_cleanly():
 def test_blank_guest_names_are_not_mistaken_for_a_client():
     rec = call(closer="Santiago", guests=("", "   ", "Derrick Robison"))
 
-    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago + Derrick Robison"
 
 
 # ------------------------------------- saying why there is no summary
@@ -380,7 +380,7 @@ def test_the_names_for_the_card_come_out_of_the_transcript(monkeypatch):
     assert rec.closer == "Santiago Villegas"
     assert rec.guests == ("Derrick Robison",)
     assert recordings.call_title(rec) == (
-        "Sales Recording: Santiago Villegas Derrick Robison"
+        "Sales Recording: Santiago Villegas + Derrick Robison"
     )
 
 
@@ -421,7 +421,7 @@ def test_a_sentence_can_never_become_the_title():
 def test_a_guest_that_is_a_sentence_is_skipped_for_one_that_is_not():
     rec = call(closer="Santiago", guests=("Well, here is the thing. Derrick", "Derrick Robison"))
 
-    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago + Derrick Robison"
 
 
 # ------------------------------------- remembering what has been filed

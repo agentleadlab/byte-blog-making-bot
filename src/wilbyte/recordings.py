@@ -114,7 +114,10 @@ def find_passcode(text: str) -> str:
 
 
 def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
-    """"Sales Recording: Santiago Villegas Derrick Robison".
+    """"Sales Recording: Santiago Villegas + Derrick Robison".
+
+    The `+` is part of the format, not decoration: two full names run together
+    read as one long name, and the gallery is scanned rather than read.
 
     The people are the title. A running number was tried first and was worse in
     both directions: it read the highest number already used out of the existing
@@ -129,7 +132,7 @@ def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
     closer = _as_a_name(rec.closer)
     client = next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
 
-    who = " ".join(part for part in (closer, client) if part)
+    who = " + ".join(part for part in (closer, client) if part)
     if not who:
         who = _as_a_name(rec.topic, words=8) or (rec.topic or "").strip()[:60]
     return f"{prefix}: {who}" if who else prefix
