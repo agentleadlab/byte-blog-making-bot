@@ -368,6 +368,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_earliest_day(responder, config, request.brief or "")
                 return
 
+            if request.action == "host":
+                await _host_images(responder, config, message)
+                return
+
             if request.action == "recording":
                 await _file_recording(responder, config, message)
                 return
@@ -928,6 +932,45 @@ async def _send_date_test(responder: Responder, config: Config, undo: bool) -> N
         f"• **The post is live** → it doesn't, so this went out early. Say "
         f"`@RYTE datetest undo` and I'll put it straight back to its Aug 18 slot."
     )
+
+
+# Images only, and small ones - this is for logos and banners, not video.
+HOST_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+MAX_HOST_BYTES = 10_000_000
+
+
+async def _host_images(responder: Responder, config: Config, message) -> None:
+    """Give an attached image a permanent public URL, via the GHL media library.
+
+    Notion only takes an external URL for a cover or icon and never re-hosts
+    it, so the link has to outlive the message. Discord's own attachment URLs
+    and Notion's S3 links both expire; GHL's media library is already
+    connected, already public, and already where the blog covers live.
+    """
+    attachments = [
+        a for a in getattr(message, "attachments", []) or []
+        if str(a.filename).lower().endswith(HOST_SUFFIXES)
+    ]
+    if not attachments:
+        await responder.send("Attach a PNG or JPG with `@RYTE host` and I'll give you a link.")
+        return
+
+    for attachment in attachments:
+        if attachment.size and attachment.size > MAX_HOST_BYTES:
+            await responder.send(f"`{attachment.filename}` is too big — 10MB max.")
+            continue
+
+        path = DEFAULT_OUTPUT_DIR / "hosted" / attachment.filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await attachment.save(path)
+        try:
+            url = await asyncio.to_thread(
+                jobs.host_image, config, path, name=attachment.filename
+            )
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(f"Couldn't host {attachment.filename}\n{exc}"))
+            continue
+        await responder.send(f"🔗 `{attachment.filename}`\n{url}")
 
 
 async def _file_recording(responder: Responder, config: Config, message) -> None:

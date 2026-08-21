@@ -105,7 +105,11 @@ START_WORDS = ("start", "starting", "resume", "from", "schedulefrom")
 # Also command-position only, and for a sharper reason than START_WORDS: a
 # YouTube link already means "write a blog post", so filing a recording has to
 # be asked for explicitly or the two are indistinguishable.
-RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording", "file")
+RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording")
+
+# Attach an image and get a permanent public URL back. Command-position only:
+# "host" and "upload" turn up in ordinary copy briefs.
+HOST_WORDS = ("host", "upload", "imageurl")
 
 
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
@@ -164,6 +168,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if _opens_with(text, RECORDING_WORDS):
         return MentionRequest(action="recording", brief=_strip_word(text, RECORDING_WORDS))
+
+    if _opens_with(text, HOST_WORDS):
+        return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))
 
     if action == "check":
         # A link is optional, but with one the check can prove YouTube works.
@@ -329,6 +336,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 **Sales call recordings**
 > @RYTE **recording** `<zoom/fathom/youtube link>` — file it in Notion
 > Or reply to the message with the link and just say @RYTE **recording**
+> @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 
 If YouTube won't give me a transcript, paste it out of the video yourself and \

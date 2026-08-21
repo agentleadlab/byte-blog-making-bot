@@ -158,6 +158,7 @@ class Secrets:
     notion_token: str | None = None
     notion_recordings_page_id: str | None = None
     notion_cover_url: str | None = None
+    notion_icon_url: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -224,6 +225,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 notion_token=_env("NOTION_TOKEN"),
                 notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
                 notion_cover_url=_env("NOTION_COVER_URL"),
+                notion_icon_url=_env("NOTION_ICON_URL"),
             ),
             path=config_path,
         )

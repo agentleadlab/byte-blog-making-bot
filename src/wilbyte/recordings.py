@@ -131,6 +131,63 @@ def database_schema(name_property: str = "Name") -> dict:
     }
 
 
+# What a column might be called, by what it holds. The gallery was built by
+# hand before RYTE saw it, so its column names are whatever made sense to the
+# person who made it - matching several spellings beats renaming their board.
+COLUMN_ALIASES = {
+    "link": ("link", "url", "video", "recording", "call"),
+    "passcode": ("passcode", "password", "code", "pwd"),
+    "description": ("description", "notes", "details", "summary"),
+}
+
+
+def map_properties(
+    schema: dict, recording: "Recording", title: str, *, description: str = ""
+) -> dict:
+    """Fill the columns this database actually has, and skip the ones it doesn't.
+
+    Writing a property Notion doesn't know about fails the whole create, so the
+    database's own schema decides what gets sent rather than a shape assumed
+    here.
+    """
+    properties: dict = {}
+    used: set[str] = set()
+
+    for column, spec in (schema or {}).items():
+        kind = spec.get("type")
+        key = " ".join(column.split()).casefold()
+
+        if kind == "title":
+            properties[column] = {"title": [{"type": "text", "text": {"content": title}}]}
+        elif kind == "url" and _matches(key, "link") and "link" not in used:
+            properties[column] = {"url": recording.url}
+            used.add("link")
+        elif kind == "date":
+            if recording.posted_on:
+                properties[column] = {"date": {"start": recording.posted_on.isoformat()}}
+        elif kind == "rich_text":
+            if _matches(key, "passcode") and recording.passcode:
+                properties[column] = _rich(recording.passcode)
+            elif _matches(key, "description") and description:
+                properties[column] = _rich(description)
+    return properties
+
+
+def _matches(column_key: str, role: str) -> bool:
+    return any(alias in column_key for alias in COLUMN_ALIASES[role])
+
+
+def _rich(text: str) -> dict:
+    return {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]}
+
+
+def description_for(recording: "Recording") -> str:
+    """The link, and the passcode when there is one - what the spec asked for."""
+    if recording.passcode:
+        return f"{recording.url}\nPasscode: {recording.passcode}"
+    return recording.url
+
+
 def page_properties(recording: Recording, title: str, *, name_property: str = "Name") -> dict:
     """The row itself. A blank passcode is left blank rather than filled with '-'."""
     properties: dict = {

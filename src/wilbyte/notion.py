@@ -84,13 +84,21 @@ class NotionClient:
             if not cursor:
                 return rows
 
-    def find_child_database(self, page_id: str, title: str) -> str | None:
-        """An existing database on the page, so a restart doesn't make a second one."""
+    def find_child_database(self, page_id: str, title: str | None = None) -> str | None:
+        """The database on the page to write into.
+
+        With a title, the one that matches. Without, the first one there - the
+        gallery already exists and is called whatever its owner called it
+        ("‼️ Recordings ‼️"), so matching on a name we invented would quietly
+        create a second one alongside it.
+        """
         data = self._request("GET", f"/blocks/{page_id}/children", params={"page_size": 100})
-        wanted = " ".join(title.split()).casefold()
+        wanted = " ".join(title.split()).casefold() if title else None
         for block in data.get("results") or []:
             if block.get("type") != "child_database":
                 continue
+            if wanted is None:
+                return block.get("id")
             found = (block.get("child_database") or {}).get("title") or ""
             if " ".join(found.split()).casefold() == wanted:
                 return block.get("id")
@@ -117,6 +125,7 @@ class NotionClient:
         *,
         children: list[dict] | None = None,
         cover_url: str | None = None,
+        icon_url: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {
             "parent": {"database_id": database_id},
@@ -126,8 +135,12 @@ class NotionClient:
             # Notion caps a create at 100 blocks; a call summary is nowhere near
             # that, and quietly dropping the rest would be worse than failing.
             body["children"] = children[:100]
+        # External URLs only. Notion will not fetch and re-host, so a link that
+        # expires - a Notion-hosted S3 URL, say - leaves every card blank later.
         if cover_url:
             body["cover"] = {"type": "external", "external": {"url": cover_url}}
+        if icon_url:
+            body["icon"] = {"type": "external", "external": {"url": icon_url}}
         return self._request("POST", "/pages", json=body)
 
 

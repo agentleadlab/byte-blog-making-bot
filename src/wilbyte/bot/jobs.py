@@ -428,10 +428,28 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
             recordings.page_properties(rec, title),
             children=recordings.page_blocks(rec, summary),
             cover_url=config.secrets.notion_cover_url,
+            icon_url=config.secrets.notion_icon_url,
         )
     finally:
         client.close()
     return title, str(created.get("url") or "")
+
+
+def host_image(config: Config, path: Path, *, name: str) -> str:
+    """Put an image somewhere with a permanent public URL, and return it.
+
+    Notion only accepts an external URL for a cover or icon - it never fetches
+    and re-hosts - so a link that expires leaves every card blank a week later.
+    The GHL media library is already connected, already public, and already
+    where the blog cover images live, so it is the obvious place rather than a
+    new account somewhere.
+    """
+    config.secrets.require("ghl_api_token", "ghl_location_id")
+    client = ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id)
+    try:
+        return client.upload_media(path, name=name)
+    finally:
+        client.close()
 
 
 def summarise_call(config: Config, rec) -> str:

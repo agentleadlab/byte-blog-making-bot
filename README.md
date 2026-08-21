@@ -4,6 +4,18 @@ Agent Lead Lab's copywriter. RYTE learns from copy you've already published,
 then writes new SMS, email, ads, scripts and landing pages in that voice — and
 turns YouTube videos into scheduled GoHighLevel blog posts.
 
+## What the parts are called
+
+One bot, several jobs. The names are how the team refers to them:
+
+| Name | What it does |
+|---|---|
+| **RYTE Blogger** | YouTube video → blog post → scheduled and published in GoHighLevel |
+| **RYTE Closer** | A sales-call recording posted in Discord → filed in the Notion gallery |
+
+More will follow. They are capabilities of the same bot and the same Discord
+account, not separate installs - one `.env`, one process, one restart.
+
 ## Copywriting
 
 Teach it your voice by attaching files:
@@ -486,3 +498,57 @@ then switch to the default scheduled mode.
 105 tests, no network or credentials required. The cover tests render real PNGs
 through Chromium, and the bot tests build real embeds and parse real mention
 text without a gateway connection.
+
+
+## Sales call recordings — RYTE Closer
+
+Someone posts a recording in Discord:
+
+```
+https://us06web.zoom.us/rec/share/qVQ0NLoG...
+Passcode: U^M^s7Bw
+```
+
+Reply to that message with `@RYTE recording`, or paste the link yourself:
+
+```
+@RYTE recording <zoom / fathom / youtube link>
+```
+
+It files the call in Notion as `Sales Recording 12` — link, passcode, date,
+and a summary of the call inside the card.
+
+**Why some of it is fussier than it looks.**
+
+The passcode is copied verbatim to the end of its line. `U^M^s7Bw` is typical,
+and a passcode that has been tidied up looks right and does not work, which is
+worse than no passcode at all. The label also has to open the line, or "I'll
+send the passcode over later" ends up in the field.
+
+Numbering follows the highest number already used rather than the row count, so
+deleting a row cannot make the next recording reuse a number that is written
+down somewhere else.
+
+Only YouTube recordings get summarised. A Zoom share link needs its passcode
+typed into a browser and Fathom needs a logged-in session, so those are filed
+with the link and nothing invented about what was said.
+
+### Setup
+
+1. **notion.so/my-integrations** → New connection → **Access token** → copy the
+   secret (`ntn_...`) into `NOTION_TOKEN`.
+2. Open the target page → **...** → **Connections** → add it. Skipping this
+   makes every call return 404, and Notion answers a page that is not shared
+   exactly the way it answers one that does not exist.
+3. Put the page id (the last part of its URL) in `NOTION_RECORDINGS_PAGE_ID`.
+
+### Cover and icon
+
+Notion accepts an **external URL** for a card's cover and icon and never
+re-hosts it, so a link that expires leaves every card blank later — which rules
+out Discord attachment URLs and Notion's own S3 links.
+
+`@RYTE host` solves that: attach a PNG or JPG and it comes back with a
+permanent public URL from the GoHighLevel media library, which is already
+connected and already where the blog covers live. Put those in
+`NOTION_COVER_URL` and `NOTION_ICON_URL`.
