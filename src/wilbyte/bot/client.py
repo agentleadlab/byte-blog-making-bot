@@ -1183,10 +1183,12 @@ async def _file_recording(
     if found.posted_on is not None:
         found.posted_on = found.posted_on.date()
 
-    # A name typed alongside the link - "@RYTE <link> derrick" - settles it
-    # before anything has to be worked out.
+    # "Sales: Derrick Robison <link>" settles it before anything is worked out.
+    # Zoom titles a recording after whoever was on it, so the name somebody
+    # typed to label the card is also the name that finds the call.
+    typed = found.client_hint or _words_beside_link(text, found.url)
     if not chosen_key:
-        chosen_key = await _key_from_words(config, _words_beside_link(text, found.url))
+        chosen_key = await _key_from_words(config, typed)
 
     summary = ""
     if not chosen_key and found.transcribable(config):
@@ -1200,9 +1202,7 @@ async def _file_recording(
     # Nothing identified it, so ask - and wait. Filing first and asking after
     # posts a card that is already wrong, which somebody then has to notice.
     if not summary and not chosen_key and found.note and found.platform in ("Zoom", "Fathom"):
-        chosen_key = await _ask_which_call(
-            responder, config, message, found, _words_beside_link(text, found.url)
-        )
+        chosen_key = await _ask_which_call(responder, config, message, found, typed)
 
     if chosen_key:
         try:

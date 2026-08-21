@@ -66,6 +66,9 @@ class Recording:
     # sometimes this is a judgement rather than a match - and a judgement gets
     # said out loud where somebody can correct it.
     matched_by: str = ""
+    # The client's name where it was typed into the message. Names the card on
+    # its own, so a call nobody can read still files under the right heading.
+    client_hint: str = ""
     # Fathom writes a summary of its own; used in preference to paying for one.
     fathom_summary: str = ""
 
@@ -98,8 +101,41 @@ def find_recording(text: str) -> Recording | None:
         match = pattern.search(text or "")
         if match:
             url = match.group(0).rstrip(".,;)>")
-            return Recording(url=url, platform=platform, passcode=find_passcode(text))
+            return Recording(
+                url=url,
+                platform=platform,
+                passcode=find_passcode(text),
+                client_hint=find_client(text),
+            )
     return None
+
+
+# "Sales: Derrick Robison <link>". The label is what separates a client's name
+# from any other words in the message, and it is how these get posted anyway.
+_CLIENT_LINE = re.compile(
+    r"(?:^|\s)(?:sales?|call|client|with|for)\s*[:\-–]\s*(?P<name>[^\n]+)",
+    re.IGNORECASE,
+)
+
+
+def find_client(text: str) -> str:
+    """The client's name where somebody typed it, or "".
+
+    Worth having twice over: it names the card without anything being read,
+    and - because Zoom titles a recording after whoever was on it - it is also
+    the search that finds the call, which is what makes the common case need no
+    dropdown at all.
+    """
+    from .bot.mentions import ANY_URL_RE, MENTION_RE, ROLE_MENTION_RE
+
+    cleaned = ANY_URL_RE.sub(" ", text or "")
+    cleaned = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", cleaned))
+    match = _CLIENT_LINE.search(cleaned)
+    if not match:
+        return ""
+    # A passcode line opens with its own label, so it can't land here - but a
+    # name still has to read like one rather than like half a sentence.
+    return _as_a_name(match.group("name"), words=6)
 
 
 def find_passcode(text: str) -> str:
@@ -129,8 +165,14 @@ def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
     labelled guest list - so the title degrades a piece at a time rather than
     trailing off after the colon.
     """
-    closer = _as_a_name(rec.closer)
-    client = next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
+    # Read from the call where it could be read; otherwise from what the person
+    # posting it already said. Whoever posts a recording is nearly always the
+    # closer who was on it, and the client's name is the one thing they type.
+    closer = _as_a_name(rec.closer) or _as_a_name(rec.posted_by)
+    client = (
+        next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
+        or _as_a_name(rec.client_hint)
+    )
 
     who = " + ".join(part for part in (closer, client) if part)
     if not who:

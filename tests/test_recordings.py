@@ -503,3 +503,74 @@ def test_the_label_and_value_fit_what_discord_allows():
 def test_the_platform_is_part_of_the_key():
     """Zoom and Fathom ids are unrelated and could collide."""
     assert a_call().key.startswith("zoom|")
+
+
+# ------------------------------------- the name typed into the message
+
+# "Sales: Derrick Robison <link>" is how these get posted anyway, and it earns
+# its keep twice: it names the card without anything being read, and because
+# Zoom titles a recording after whoever was on it, it is also the search that
+# finds the call - which is what makes the common case need no dropdown.
+
+LINK = "https://us06web.zoom.us/rec/share/abc.def"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Sales: Derrick Robison",
+        "sales - Derrick Robison",
+        "Sale: Derrick Robison",
+        "Client: Derrick Robison",
+        "call: Derrick Robison",
+        "with: Derrick Robison",
+    ],
+)
+def test_however_the_client_line_is_typed(line):
+    assert recordings.find_client(f"{line} {LINK}") == "Derrick Robison"
+
+
+def test_the_passcode_is_not_read_as_a_client():
+    assert recordings.find_client(f"{LINK}\nPasscode: U^M^s7Bw") == ""
+
+
+def test_a_link_on_its_own_names_nobody():
+    assert recordings.find_client(LINK) == ""
+
+
+def test_a_sentence_is_not_a_client_name():
+    """"call: I'll send it over later, thanks" is prose that happens to fit."""
+    assert recordings.find_client("call: I'll send this one over later, thanks all") == ""
+
+
+def test_the_url_is_never_part_of_the_name():
+    assert LINK not in recordings.find_client(f"Sales: Derrick Robison {LINK}")
+
+
+def test_the_typed_name_titles_the_card_with_nothing_read():
+    """A call that can't be read still files under the right heading."""
+    rec = recordings.find_recording(f"Sales: Derrick Robison {LINK}")
+    rec.posted_by = "Santiago Villegas"
+
+    assert recordings.call_title(rec) == (
+        "Sales Recording: Santiago Villegas + Derrick Robison"
+    )
+
+
+def test_names_read_off_the_call_beat_the_typed_ones():
+    """The transcript knows who was actually there; the message is a stand-in."""
+    rec = recordings.find_recording(f"Sales: Derrick R {LINK}")
+    rec.posted_by = "Franklin"
+    rec.closer, rec.guests = "Santiago Villegas", ("Derrick Robison",)
+
+    assert recordings.call_title(rec) == (
+        "Sales Recording: Santiago Villegas + Derrick Robison"
+    )
+
+
+def test_the_poster_stands_in_for_the_closer():
+    """Whoever posts a recording is nearly always the closer who was on it."""
+    rec = recordings.find_recording(LINK)
+    rec.posted_by = "Santiago Villegas"
+
+    assert recordings.call_title(rec) == "Sales Recording: Santiago Villegas"
