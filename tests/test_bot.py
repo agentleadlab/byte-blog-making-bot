@@ -1449,3 +1449,56 @@ def test_a_custom_status_carries_no_verb(monkeypatch):
 
     assert isinstance(found, discord.CustomActivity)
     assert found.name == "busy being cute 🐹"
+
+
+# ------------------------------- a message too long to send is not sent
+
+# The help text grew past Discord's 2000-character limit as commands were added
+# to it. Discord refuses the whole message, the exception is not one the
+# pipeline catches, and RYTE went silent on somebody mid-question.
+
+
+def test_a_short_message_is_sent_whole():
+    from wilbyte.bot.responders import split_message
+
+    assert split_message("hello") == ["hello"]
+
+
+def test_a_long_message_comes_apart_between_its_lines():
+    from wilbyte.bot.responders import MAX_MESSAGE, split_message
+
+    lines = "\n".join(f"· entry number {n}" for n in range(300))
+    pieces = split_message(lines)
+
+    assert len(pieces) > 1
+    assert all(len(piece) <= MAX_MESSAGE for piece in pieces)
+    assert all(not piece.startswith("ntry") for piece in pieces), "cut mid-word"
+
+
+def test_nothing_is_lost_in_the_splitting():
+    from wilbyte.bot.responders import split_message
+
+    lines = "\n".join(f"line {n}" for n in range(400))
+
+    assert "\n".join(split_message(lines)) == lines
+
+
+def test_one_enormous_line_is_cut_rather_than_refused():
+    """A very long URL still has to go out - refusing it entirely is worse."""
+    from wilbyte.bot.responders import MAX_MESSAGE, split_message
+
+    pieces = split_message("x" * 5000)
+
+    assert len(pieces) == 3
+    assert all(len(piece) <= MAX_MESSAGE for piece in pieces)
+
+
+def test_the_help_text_now_fits():
+    """This is the message that went silent."""
+    from wilbyte.bot import mentions
+    from wilbyte.bot.responders import MAX_MESSAGE, split_message
+
+    body = f"{mentions.HELP_TEXT}\n\n-# Running abc1234"
+
+    assert len(body) > MAX_MESSAGE, "still worth splitting"
+    assert all(len(piece) <= MAX_MESSAGE for piece in split_message(body))

@@ -544,3 +544,35 @@ def test_backfill_is_not_confused_with_the_recordings_sweep():
     """One reads a Discord channel's past; the other reads Zoom and Fathom."""
     assert parse(f"{BOT} sweep").action == "sweep"
     assert parse(f"{BOT} backfill").action == "backfill"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "how to set up a blog",
+        "how to upload blog posts",
+        "how do i buy a ghl number",
+        "walk me through the lead order",
+        "steps to set up ADP",
+        "where do i change the pricing",
+    ],
+)
+def test_how_people_actually_ask_for_a_procedure(text):
+    """"how do we" was recognised and "how to" was not, so "how to set up a
+    blog" fell through to the help text - which was itself too long to send."""
+    assert parse(f"{BOT} {text}").action == "findsop"
+
+
+def test_asking_how_to_write_something_still_wants_copy():
+    assert parse(f"{BOT} how to write an sms about the price drop").action == "write"
+
+
+def test_an_unambiguous_word_outranks_a_format_name():
+    """"what's the procedure for internal ads" says procedure. "ads" is
+    incidental, and letting it win sent the question to the copywriter."""
+    assert parse(f"{BOT} what's the procedure for internal ads").action == "findsop"
+
+
+def test_creating_something_is_still_a_procedure_question():
+    """"create" and "make" are ordinary words in a procedure question."""
+    assert parse(f"{BOT} how do we create a lead form").action == "findsop"

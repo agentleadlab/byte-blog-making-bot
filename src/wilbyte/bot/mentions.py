@@ -155,19 +155,6 @@ def _without_links(text: str) -> str:
 # at all.
 _WANTS = ("need", "find", "send", "share", "get", "where", "which", "show", "pull", "give", "want")
 
-# Asking the SOP library. "sop" is unambiguous enough to stand on its own -
-# nobody says it by accident - so unlike a recording this needs no second half.
-_SOP_WORDS = ("sop", "sops", "standard operating", "procedure", "how do we", "how do i")
-
-
-def _asks_for_an_sop(lowered: str) -> bool:
-    without_links = _without_links(lowered)
-    if not any(phrase in without_links for phrase in _SOP_WORDS):
-        return False
-    # "sop for the new hires <link>" with a link in it is somebody filing one.
-    return not ANY_URL_RE.search(lowered)
-
-
 _THE_THING = ("recording", "recordings", "sales call", "call link", "notion", "video", "videos")
 
 # Words that mean somebody wants copy written. "video" is an alias for the
@@ -177,6 +164,46 @@ _WRITING = {
     "write", "make", "draft", "create", "script", "copy", "hook", "vsl", "ad",
     "email", "sms", "post", "landing", "caption", "about",
 }
+
+
+# The formats RYTE can write. Naming one is what separates "how to write an
+# sms" from "how to set up a blog" - the verb doesn't, because procedures are
+# written and created too.
+_COPY_FORMATS = {
+    "sms", "email", "ad", "ads", "vsl", "script", "landing", "social",
+    "caption", "hook", "copy",
+}
+
+
+# Asking the SOP library. "sop" is unambiguous enough to stand on its own -
+# nobody says it by accident - so unlike a recording this needs no second half.
+# Nobody says these by accident, so they settle it on their own.
+_SOP_WORDS = ("sop", "sops", "standard operating", "procedure", "process for")
+
+# How people actually ask when they don't use the word. "how do we" was
+# recognised and "how to" was not, so "how to set up a blog" fell through to
+# the help text. These are less certain, so a named format outranks them.
+_ASKING_HOW = (
+    "how do we", "how do i", "how to", "how can i", "how does", "where do i",
+    "walk me through", "steps for", "steps to", "guide for", "guide to",
+)
+
+
+def _asks_for_an_sop(lowered: str) -> bool:
+    without_links = _without_links(lowered)
+    # "sop for the new hires <link>" with a link in it is somebody filing one.
+    if ANY_URL_RE.search(lowered):
+        return False
+
+    if any(phrase in without_links for phrase in _SOP_WORDS):
+        return True
+
+    if not any(phrase in without_links for phrase in _ASKING_HOW):
+        return False
+    # "how to write an sms" wants copy. Only a named format decides it -
+    # "create" and "make" are ordinary words in a procedure question, and
+    # "how do we create a lead form" is asking for the SOP.
+    return not set(re.findall(r"[a-z]+", without_links)) & _COPY_FORMATS
 
 
 def _asks_for_a_card(lowered: str) -> bool:
