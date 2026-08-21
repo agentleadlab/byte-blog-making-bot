@@ -153,6 +153,11 @@ class Secrets:
     # Where the watcher sends its review card. It cannot be the watched channel:
     # that one is an announcements feed, not a place to work.
     discord_post_channel_id: str | None = None
+    # Notion, for filing sales-call recordings. The token comes from
+    # notion.so/my-integrations and the page must be shared with it.
+    notion_token: str | None = None
+    notion_recordings_page_id: str | None = None
+    notion_cover_url: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -216,6 +221,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_role_ids=_id_list(_env("DISCORD_ROLE_IDS")),
                 discord_watch_channel_ids=_id_list(_env("DISCORD_WATCH_CHANNEL_IDS")),
                 discord_post_channel_id=_env("DISCORD_POST_CHANNEL_ID"),
+                notion_token=_env("NOTION_TOKEN"),
+                notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
+                notion_cover_url=_env("NOTION_COVER_URL"),
             ),
             path=config_path,
         )

@@ -102,6 +102,11 @@ FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 # Command-position only - see the note at the call site.
 START_WORDS = ("start", "starting", "resume", "from", "schedulefrom")
 
+# Also command-position only, and for a sharper reason than START_WORDS: a
+# YouTube link already means "write a blog post", so filing a recording has to
+# be asked for explicitly or the two are indistinguishable.
+RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording", "file")
+
 
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
     first = re.match(r"\s*([a-zA-Z]+)", text)
@@ -156,6 +161,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # command when they open the message, and everything after is the day.
     if _opens_with(text, START_WORDS):
         return MentionRequest(action="start", brief=_strip_word(text, START_WORDS))
+
+    if _opens_with(text, RECORDING_WORDS):
+        return MentionRequest(action="recording", brief=_strip_word(text, RECORDING_WORDS))
 
     if action == "check":
         # A link is optional, but with one the check can prove YouTube works.
@@ -317,6 +325,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
+
+**Sales call recordings**
+> @RYTE **recording** `<zoom/fathom/youtube link>` — file it in Notion
+> Or reply to the message with the link and just say @RYTE **recording**
 > @RYTE **missed** — posts I wrote but never got an answer on
 
 If YouTube won't give me a transcript, paste it out of the video yourself and \

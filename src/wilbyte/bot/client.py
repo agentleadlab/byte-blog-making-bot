@@ -26,7 +26,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, prefs, publisher, version, writer, youtube
+from .. import formats, ghl, notion, prefs, publisher, version, writer, youtube
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -51,6 +51,7 @@ log = logging.getLogger("wilbyte.bot")
 PIPELINE_ERRORS = (
     IngestError, CopywriterError, cover_mod.CoverError, ghl.GHLError,
     PipelineError, SchedulerError, ConfigError, WriterError, corpus.CorpusError,
+    notion.NotionError,
 )
 
 # Ingestion guards: one mention shouldn't be able to upload the world.
@@ -365,6 +366,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "start":
                 await _set_earliest_day(responder, config, request.brief or "")
+                return
+
+            if request.action == "recording":
+                await _file_recording(responder, config, message)
                 return
 
             if request.action == "missed":
@@ -923,6 +928,75 @@ async def _send_date_test(responder: Responder, config: Config, undo: bool) -> N
         f"• **The post is live** → it doesn't, so this went out early. Say "
         f"`@RYTE datetest undo` and I'll put it straight back to its Aug 18 slot."
     )
+
+
+async def _file_recording(responder: Responder, config: Config, message) -> None:
+    """File a posted sales call in the Notion gallery.
+
+    Reads the message that was replied to when the mention carries no link,
+    because the natural way to do this is to reply to whoever posted the
+    recording rather than paste their link again underneath it.
+    """
+    from .. import recordings
+
+    text = message.content or ""
+    found = recordings.find_recording(text)
+    poster = getattr(getattr(message, "author", None), "display_name", "") or ""
+
+    if found is None:
+        replied = await _replied_to(message)
+        if replied is not None:
+            found = recordings.find_recording(replied.content or "")
+            poster = getattr(getattr(replied, "author", None), "display_name", "") or poster
+
+    if found is None:
+        await responder.send(
+            "I can't see a recording link. Paste a Zoom, Fathom or YouTube link "
+            "after `recording`, or reply to the message that has it."
+        )
+        return
+
+    found.posted_by = poster
+    found.posted_on = getattr(message, "created_at", None)
+    if found.posted_on is not None:
+        found.posted_on = found.posted_on.date()
+
+    summary = ""
+    if found.transcribable:
+        await responder.send(f"Filing the {found.platform} recording — reading it first.")
+        try:
+            summary = await asyncio.to_thread(jobs.summarise_call, config, found)
+        except PIPELINE_ERRORS as exc:
+            # A missing summary is a worse entry, not a failed one. File it.
+            log.warning("Could not summarise %s: %s", found.url, exc)
+
+    try:
+        title, url = await asyncio.to_thread(jobs.file_recording, config, found, summary=summary)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't file it in Notion\n{exc}"))
+        return
+
+    note = " with a summary" if summary else ""
+    if not summary and not found.transcribable:
+        note = f" — {found.platform} recordings can't be read from here, so no summary"
+    await responder.send(f"📁 **{title}** filed in Notion{note}\n{url}")
+
+
+async def _replied_to(message):
+    """The message this one is a reply to, if it is one."""
+    reference = getattr(message, "reference", None)
+    if reference is None:
+        return None
+    resolved = getattr(reference, "resolved", None)
+    if resolved is not None and getattr(resolved, "content", None) is not None:
+        return resolved
+    message_id = getattr(reference, "message_id", None)
+    if message_id is None:
+        return None
+    try:
+        return await message.channel.fetch_message(message_id)
+    except Exception:  # deleted, or in a channel RYTE can't read back
+        return None
 
 
 async def _send_missed(responder: Responder, config: Config) -> None:

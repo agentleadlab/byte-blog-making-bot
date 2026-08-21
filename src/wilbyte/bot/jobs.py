@@ -399,6 +399,83 @@ def reconcile(context: GHLContext, ledger: Ledger) -> tuple[list, list, list[str
     return gone, kept, problems
 
 
+def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]:
+    """Put one recording in the Notion gallery. Returns (title, page url).
+
+    Creates the database on first use rather than making it a setup step: the
+    Sales Calls Recording page is empty, and a gallery view needs a database
+    behind it. A second run finds the one that's there instead of making
+    another.
+    """
+    from .. import notion, recordings
+
+    config.secrets.require("notion_token", "notion_recordings_page_id")
+    page_id = config.secrets.notion_recordings_page_id
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        database_id = client.find_child_database(page_id, recordings.TITLE_PREFIX + "s")
+        if not database_id:
+            database_id = client.create_database(
+                page_id, recordings.TITLE_PREFIX + "s", recordings.database_schema()
+            )
+
+        rows = client.query_database(database_id)
+        number = recordings.next_number(recordings.row_titles(rows))
+        title = recordings.title_for(number)
+
+        created = client.create_page(
+            database_id,
+            recordings.page_properties(rec, title),
+            children=recordings.page_blocks(rec, summary),
+            cover_url=config.secrets.notion_cover_url,
+        )
+    finally:
+        client.close()
+    return title, str(created.get("url") or "")
+
+
+def summarise_call(config: Config, rec) -> str:
+    """A short write-up of the call, where the recording can actually be read.
+
+    Only attempted for platforms whose transcript is reachable. A Zoom share
+    link needs its passcode typed into a browser and Fathom needs a session, so
+    those are filed with the link and nothing invented about what was said.
+    """
+    if not rec.transcribable:
+        return ""
+
+    from .. import youtube
+
+    video = youtube.video_from_link(rec.url)
+    transcript = youtube.fetch_transcript(video.video_id)
+
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=1200,
+        system=(
+            "You summarise sales calls for an insurance lead company's internal "
+            "library. Be specific and useful to a rep reading it later. Never "
+            "invent anything that wasn't said."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                "Summarise this sales call. Give a two-sentence overview, then "
+                "bullets for: what the prospect wanted, objections raised, how "
+                "they were handled, and what was agreed. Use '- ' for bullets.\n\n"
+                f"{transcript.text}"
+            ),
+        }],
+    )
+    return "".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+
+
 def raw_post_fields(config: Config, *, limit: int = 40) -> list[dict]:
     """Every post exactly as GHL returns it, with the article bodies elided.
 
