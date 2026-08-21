@@ -1491,10 +1491,10 @@ async def _send_sops(responder: Responder, config: Config, asked: str) -> None:
     # The pages written before RYTE existed are still the answer half the time,
     # and they are read from an index rather than from Notion - so this costs
     # nothing and can't fail.
-    seen = {title for title, _, _ in found}
-    for entry in sops.index_matches(sops.load_index(), topic):
-        if entry[0] not in seen:
-            found.append(entry)
+    seen = {hit.title for hit in found}
+    for hit in sops.index_matches(sops.load_index(), topic):
+        if hit.title not in seen:
+            found.append(hit)
 
     if not found:
         await responder.send(
@@ -1503,8 +1503,15 @@ async def _send_sops(responder: Responder, config: Config, asked: str) -> None:
         )
         return
 
-    lines = [f"📘 **{title}**\n{link or card}" for title, card, link in found]
-    head = f"{len(found)} SOP(s) for “{topic}”:" if topic else "The most recent:"
+    # One side of the library can answer the question outright while the other
+    # only comes close. When anything answers it, the near misses are noise.
+    if any(hit.exact for hit in found):
+        found = [hit for hit in found if hit.exact]
+        head = f"{len(found)} SOP(s) for “{topic}”:" if topic else "The most recent:"
+    else:
+        head = f"Nothing exact for “{topic}” - closest I have:"
+
+    lines = [f"📘 **{hit.title}**\n{hit.link or hit.card}" for hit in found]
     await responder.send(f"{head}\n" + "\n".join(lines))
 
 

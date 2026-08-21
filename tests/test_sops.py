@@ -516,3 +516,86 @@ def test_being_this_forgiving_still_finds_nothing_for_nothing():
     index = [{"id": "1", "title": "How To Setup Dedicated LP", "url": "https://n/1"}]
 
     assert sops.index_matches(index, sops.wanted_topic("do we have an SOP for payroll")) == []
+
+
+# ------------------------------------- the closest thing, rather than nothing
+
+# "@Ryte how to set up a blog" answered "nothing in the SOP library" with a page
+# called "How To Upload Blog Posts" sitting in it. The two share one word out of
+# two, so every word matching was never going to happen - and saying nothing is
+# the worse mistake when the page is right there.
+
+
+def test_the_closest_page_comes_back_when_nothing_matches_outright():
+    index = [{"id": "1", "title": "How To Upload Blog Posts", "url": "https://n/1"}]
+
+    found = sops.index_matches(index, sops.wanted_topic("how to set up a blog"))
+
+    assert [hit.title for hit in found] == ["How To Upload Blog Posts"]
+
+
+def test_a_close_page_is_marked_so_the_answer_can_say_so():
+    index = [{"id": "1", "title": "How To Upload Blog Posts", "url": "https://n/1"}]
+
+    assert sops.index_matches(index, "set blog")[0].exact is False
+    assert sops.index_matches(index, "blog posts")[0].exact is True
+
+
+def test_a_page_that_answers_the_question_hides_the_ones_that_nearly_do():
+    """A half-answer is what you get instead of nothing, never alongside the
+    whole answer."""
+    index = [
+        {"id": "1", "title": "How To Upload Blog Posts", "url": "https://n/1"},
+        {"id": "2", "title": "Blog Draft Review", "url": "https://n/2"},
+    ]
+
+    found = sops.index_matches(index, "upload blog")
+
+    assert [hit.title for hit in found] == ["How To Upload Blog Posts"]
+
+
+def test_the_closest_of_the_close_comes_first():
+    index = [
+        {"id": "1", "title": "Blog Cover Images", "url": "https://n/1"},
+        {"id": "2", "title": "How To Upload Blog Posts", "url": "https://n/2"},
+    ]
+
+    found = sops.index_matches(index, "upload blog posts monthly")
+
+    assert found[0].title == "How To Upload Blog Posts"
+
+
+def test_a_word_in_the_title_beats_the_same_word_in_a_summary():
+    index = [
+        {"id": "1", "title": "Weekly Numbers", "summary": "mentions blogs", "url": "https://n/1"},
+        {"id": "2", "title": "Blog Posts", "url": "https://n/2"},
+    ]
+
+    found = sops.index_matches(index, "blog payroll")
+
+    assert found[0].title == "Blog Posts"
+
+
+def test_the_gallery_search_gets_the_same_second_chance():
+    rows = [row("SOP: How To Upload Blog Posts")]
+
+    found = sops.matching_rows(rows, "set blog")
+
+    assert [hit.title for hit in found] == ["SOP: How To Upload Blog Posts"]
+    assert found[0].exact is False
+
+
+def test_a_close_match_still_has_to_be_close_to_something():
+    rows = [row("SOP: Lead Order Process")]
+
+    assert sops.matching_rows(rows, "payroll deductions") == []
+
+
+def test_a_hit_still_reads_as_title_card_link():
+    """Callers that only want the three fields shouldn't have to change."""
+    rows = [row("SOP: Lead Order Process", link=LOOM)]
+
+    title, card, link = sops.matching_rows(rows, "lead order")[0][:3]
+
+    assert (title, link) == ("SOP: Lead Order Process", LOOM)
+    assert card.startswith("https://")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from typing import NamedTuple
 
 TITLE_PREFIX = "SOP"
 
@@ -346,8 +347,21 @@ def wanted_topic(text: str) -> str:
     return " ".join(kept).strip()
 
 
-def matching_rows(rows: list[dict], topic: str, *, limit: int = 5) -> list[tuple[str, str, str]]:
-    """(title, card, link) for SOPs matching what was asked about.
+class Hit(NamedTuple):
+    """One SOP that answers a question, and whether it answers all of it.
+
+    It reads as (title, card, link) anywhere that only wants those, so the
+    extra flag costs the callers nothing.
+    """
+
+    title: str
+    card: str
+    link: str
+    exact: bool = True
+
+
+def matching_rows(rows: list[dict], topic: str, *, limit: int = 5) -> list[Hit]:
+    """SOPs matching what was asked about.
 
     Titles first, then summaries. Somebody asking about "lead forms" should get
     the card called "How to Create Internal Ads LeadForm" ahead of one that
@@ -357,26 +371,58 @@ def matching_rows(rows: list[dict], topic: str, *, limit: int = 5) -> list[tuple
     from . import recordings
 
     words = [word.casefold() for word in (topic or "").split()]
-    found = []
+    scored = []
     for row in rows or []:
         title = recordings.row_title(row)
         if not title:
             continue
-        entry = (title, str(row.get("url") or ""), _row_text(row, "link"))
-        if not words:
-            found.append((2, entry))
-            continue
-        haystack_title = _searchable(title)
-        haystack_all = _searchable(
+        in_title = _searchable(title)
+        in_all = _searchable(
             f"{title} {_row_text(row, 'summary')} {_row_text(row, 'kind')}"
         )
-        if all(_hit(word, haystack_title) for word in words):
-            found.append((0, entry))
-        elif all(_hit(word, haystack_all) for word in words):
-            found.append((1, entry))
+        rank = _rank(words, in_title, in_all)
+        if rank is None:
+            continue
+        scored.append((rank, title, str(row.get("url") or ""), _row_text(row, "link")))
 
-    found.sort(key=lambda pair: pair[0])
-    return [entry for _, entry in found][:limit]
+    return _best(scored, limit)
+
+
+def _rank(words: list[str], in_title: str, in_all: str) -> tuple[int, int, int] | None:
+    """How well one page answers a question, lower being better.
+
+    Every word in the title beats every word anywhere, which beats some of the
+    words. None means it answers none of it and shouldn't be shown at all.
+    """
+    if not words:
+        return (2, 0, 0)
+    if all(_hit(word, in_title) for word in words):
+        return (0, 0, 0)
+    if all(_hit(word, in_all) for word in words):
+        return (1, 0, 0)
+    # Near misses. "how to set up a blog" and "How To Upload Blog Posts" share
+    # one word out of two, and that page is still the answer - saying nothing
+    # when it is sitting right there is the worse mistake.
+    missed = sum(1 for word in words if not _hit(word, in_all))
+    if missed == len(words):
+        return None
+    in_the_title = sum(1 for word in words if _hit(word, in_title))
+    return (3, missed, -in_the_title)
+
+
+def _best(scored: list[tuple], limit: int) -> list[Hit]:
+    """The ranked matches, near misses only when nothing matched outright.
+
+    A page that answers the whole question is never shown alongside one that
+    answers half of it - the half-answer is what you get instead of nothing.
+    """
+    if any(rank[0] < 3 for rank, *_ in scored):
+        scored = [entry for entry in scored if entry[0][0] < 3]
+    scored.sort(key=lambda entry: entry[0])
+    return [
+        Hit(title, card, link, rank[0] < 3)
+        for rank, title, card, link in scored
+    ][:limit]
 
 
 def _searchable(text: str) -> str:
@@ -526,29 +572,25 @@ def merge_index(existing: list[dict], fresh: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
-def index_matches(index: list[dict], topic: str, *, limit: int = 5) -> list[tuple[str, str, str]]:
-    """(title, url, "") for indexed pages matching a topic.
+def index_matches(index: list[dict], topic: str, *, limit: int = 5) -> list[Hit]:
+    """Indexed pages matching a topic, with no link of their own to give.
 
-    The same rules the gallery search uses - titles first, then summaries, and
-    forgiving about plurals - so a question finds an old SOP and a new one
-    without being asked differently.
+    The same rules the gallery search uses - titles first, then summaries,
+    forgiving about plurals, and the closest thing when nothing matches
+    outright - so a question finds an old SOP and a new one without being
+    asked differently.
     """
     words = [word.casefold() for word in (topic or "").split()]
-    found = []
+    scored = []
     for entry in index or []:
         title = str(entry.get("title") or "")
         if not title:
             continue
-        item = (title, str(entry.get("url") or ""), "")
-        if not words:
-            found.append((2, item))
-            continue
         in_title = _searchable(title)
         in_all = _searchable(f"{title} {entry.get('summary', '')}")
-        if all(_hit(word, in_title) for word in words):
-            found.append((0, item))
-        elif all(_hit(word, in_all) for word in words):
-            found.append((1, item))
+        rank = _rank(words, in_title, in_all)
+        if rank is None:
+            continue
+        scored.append((rank, title, str(entry.get("url") or ""), ""))
 
-    found.sort(key=lambda pair: pair[0])
-    return [item for _, item in found][:limit]
+    return _best(scored, limit)

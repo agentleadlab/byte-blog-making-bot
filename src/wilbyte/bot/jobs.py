@@ -1867,7 +1867,7 @@ def file_sop(config: Config, sop, *, summary: str = "") -> tuple[str, str]:
     return title, str(created.get("url") or "")
 
 
-def find_sops(config: Config, topic: str, *, limit: int = 5) -> list[tuple[str, str, str]]:
+def find_sops(config: Config, topic: str, *, limit: int = 5) -> list["sops.Hit"]:
     """SOPs matching a topic somebody asked about."""
     from .. import notion, sops
 
