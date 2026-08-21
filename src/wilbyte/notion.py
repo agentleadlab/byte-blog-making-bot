@@ -126,6 +126,7 @@ class NotionClient:
         children: list[dict] | None = None,
         cover_url: str | None = None,
         icon_url: str | None = None,
+        icon_emoji: str | None = None,
     ) -> dict:
         body: dict[str, Any] = {
             "parent": {"database_id": database_id},
@@ -141,6 +142,10 @@ class NotionClient:
             body["cover"] = {"type": "external", "external": {"url": cover_url}}
         if icon_url:
             body["icon"] = {"type": "external", "external": {"url": icon_url}}
+        elif icon_emoji:
+            # An emoji is stored by Notion itself, so unlike a hosted image it
+            # cannot rot, cost anything, or need setting up.
+            body["icon"] = {"type": "emoji", "emoji": icon_emoji}
         return self._request("POST", "/pages", json=body)
 
 

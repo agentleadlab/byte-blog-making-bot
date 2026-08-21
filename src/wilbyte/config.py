@@ -159,11 +159,15 @@ class Secrets:
     notion_recordings_page_id: str | None = None
     notion_cover_url: str | None = None
     notion_icon_url: str | None = None
+    # Falls back to an emoji, which never expires and needs nothing hosted.
+    notion_icon_emoji: str | None = None
     # Zoom Server-to-Server OAuth, for reading a call the share link hides
     # behind a passcode.
     zoom_account_id: str | None = None
     zoom_client_id: str | None = None
     zoom_client_secret: str | None = None
+    # Fathom, for the closer it records instead of Zoom.
+    fathom_api_key: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -231,9 +235,11 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
                 notion_cover_url=_env("NOTION_COVER_URL"),
                 notion_icon_url=_env("NOTION_ICON_URL"),
+                notion_icon_emoji=_env("NOTION_ICON_EMOJI"),
                 zoom_account_id=_env("ZOOM_ACCOUNT_ID"),
                 zoom_client_id=_env("ZOOM_CLIENT_ID"),
                 zoom_client_secret=_env("ZOOM_CLIENT_SECRET"),
+                fathom_api_key=_env("FATHOM_API_KEY"),
             ),
             path=config_path,
         )

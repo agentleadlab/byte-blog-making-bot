@@ -422,17 +422,58 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
         rows = client.query_database(database_id)
         number = recordings.next_number(recordings.row_titles(rows))
         title = recordings.title_for(number)
+        cover_url = card_cover(config, rec, title)
 
         created = client.create_page(
             database_id,
             recordings.page_properties(rec, title),
             children=recordings.page_blocks(rec, summary),
-            cover_url=config.secrets.notion_cover_url,
+            cover_url=cover_url,
             icon_url=config.secrets.notion_icon_url,
+            icon_emoji=config.secrets.notion_icon_emoji or DEFAULT_CARD_ICON,
         )
     finally:
         client.close()
     return title, str(created.get("url") or "")
+
+
+# A gallery of identical banners is a gallery you can't skim, so each card gets
+# its own cover naming the call. The emoji is the fallback icon: Notion stores
+# it, so it never expires and needs nothing uploaded.
+DEFAULT_CARD_ICON = "🎙️"
+
+
+def card_cover(config: Config, rec, title: str) -> str:
+    """Render a cover for this call and return a permanent URL for it.
+
+    Uses the same renderer as the blog covers, so the gallery matches the
+    brand without anyone having to find and attach an image. Failing to make
+    one is not worth failing the card over - a plain card beats no card - so
+    this returns "" and lets the entry go in without it.
+    """
+    from .. import cover as cover_mod
+    from ..models import CoverPlan
+    from ..pipeline import DEFAULT_OUTPUT_DIR
+
+    if config.secrets.notion_cover_url:
+        return config.secrets.notion_cover_url
+
+    plan = CoverPlan(kicker="AGENT LEAD LAB", headline=(rec.topic or title).upper())
+    path = DEFAULT_OUTPUT_DIR / "recordings" / f"{_slug(title)}.png"
+    try:
+        cover_mod.render_cover(plan, config, path)
+        return host_image(config, path, name=path.name)
+    except Exception as exc:  # rendering or upload - neither should lose the card
+        import logging
+
+        logging.getLogger("wilbyte.bot").warning("No cover for %s: %s", title, exc)
+        return ""
+
+
+def _slug(text: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", (text or "card").lower()).strip("-") or "card"
 
 
 def host_image(config: Config, path: Path, *, name: str) -> str:
@@ -479,6 +520,35 @@ def zoom_transcript(config: Config, rec) -> str:
         client.close()
 
 
+def fathom_transcript(config: Config, rec) -> str:
+    """The transcript of a Fathom-recorded call, or "" when it can't be found.
+
+    Fathom is the better source where both exist: it sits in the meeting as a
+    notetaker, so there is no passcode and no transcription setting that might
+    have been off at the time.
+    """
+    from .. import fathom
+
+    client = fathom.FathomClient(config.secrets.fathom_api_key)
+    try:
+        found, seen = client.find(rec.url)
+        if found is None:
+            # Say what was actually there rather than "not found". A link that
+            # doesn't match is exactly when the response shape matters.
+            import logging
+
+            logging.getLogger("wilbyte.bot").warning(
+                "No Fathom call matched %s. %s", rec.url, fathom.describe(seen)
+            )
+            return ""
+        rec.topic = found.title
+        if found.participants:
+            rec.participants = found.participants
+        return fathom.transcript_text(found.raw or {})
+    finally:
+        client.close()
+
+
 def summarise_call(config: Config, rec) -> str:
     """A short write-up of the call, where the recording can actually be read.
 
@@ -489,7 +559,11 @@ def summarise_call(config: Config, rec) -> str:
     if not rec.transcribable(config):
         return ""
 
-    text = zoom_transcript(config, rec) if rec.platform == "Zoom" else None
+    text = None
+    if rec.platform == "Zoom":
+        text = zoom_transcript(config, rec)
+    elif rec.platform == "Fathom":
+        text = fathom_transcript(config, rec)
     if text is None:
         from .. import youtube
 

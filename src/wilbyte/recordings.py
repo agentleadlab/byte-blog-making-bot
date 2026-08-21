@@ -56,6 +56,7 @@ class Recording:
     # step and the title can both use it without fetching twice.
     topic: str = ""
     host_email: str = ""
+    participants: tuple[str, ...] = ()
 
     def transcribable(self, config=None) -> bool:
         """Whether the transcript can be reached at all.
@@ -67,12 +68,16 @@ class Recording:
         """
         if self.platform == "YouTube":
             return True
-        if self.platform == "Zoom" and config is not None:
+        if config is None:
+            return False
+        if self.platform == "Zoom":
             return bool(
                 config.secrets.zoom_account_id
                 and config.secrets.zoom_client_id
                 and config.secrets.zoom_client_secret
             )
+        if self.platform == "Fathom":
+            return bool(config.secrets.fathom_api_key)
         return False
 
 
