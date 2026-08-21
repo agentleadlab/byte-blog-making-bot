@@ -329,6 +329,9 @@ _ASKING = {
     "procedure", "pull", "ryte", "send", "share", "show", "sop", "sops",
     "standard", "the", "there", "to", "us", "want", "was", "we", "what",
     "where", "which", "with", "you", "your",
+    # Prepositions and articles. Every word has to match for a page to count,
+    # so a question carrying "up" or "in" was being asked to find them too.
+    "at", "by", "from", "in", "into", "on", "up", "as", "or", "that", "this",
 }
 
 
@@ -399,12 +402,31 @@ def _hit(word: str, haystack: str) -> bool:
         return True
     if word in haystack:
         return True
-    for suffix in ("s", "es", "ing", "ed"):
-        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
-            if word[: -len(suffix)] in haystack:
-                return True
+    for stem in _stems(word):
+        if stem in haystack:
+            return True
     # The other direction: "form" typed, "forms" written down.
     return any(f"{word}{suffix}" in haystack for suffix in ("s", "es"))
+
+
+def _stems(word: str) -> list[str]:
+    """A word with its ending taken off, the ways English takes them off.
+
+    English doubles the consonant before -ing, so "setting" reduces to "sett"
+    and then to "set" - which is what "Setup" is made of. Without that second
+    step, "an SOP setting up dedicated LP" missed a page called "How To Setup
+    Dedicated LP", which is the page.
+    """
+    found = []
+    for suffix in ("s", "es", "ing", "ed", "er"):
+        if not word.endswith(suffix) or len(word) - len(suffix) < 3:
+            continue
+        stem = word[: -len(suffix)]
+        found.append(stem)
+        # "sett" -> "set", "runn" -> "run", "stopp" -> "stop".
+        if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1].isalpha():
+            found.append(stem[:-1])
+    return found
 
 
 def _row_text(row: dict, role: str) -> str:

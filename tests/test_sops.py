@@ -469,3 +469,50 @@ def test_a_corrupt_index_is_treated_as_empty(tmp_path):
     store.write_text("{not json", encoding="utf-8")
 
     assert sops.load_index(store) == []
+
+
+# ------------------------------ nobody uses the word the page was titled with
+
+# "do we have an SOP setting up dedicated LP?" found nothing, with a page
+# called "How To Setup Dedicated LP" sitting in the library.
+
+
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "do we have an SOP setting up dedicated LP?",
+        "how do we set up a dedicated LP",
+        "dedicated lp",
+        "sop for the dedicated LP setup",
+    ],
+)
+def test_a_page_is_found_however_the_question_is_worded(asked):
+    index = [{"id": "1", "title": "How To Setup Dedicated LP", "url": "https://n/1"}]
+
+    assert sops.index_matches(index, sops.wanted_topic(asked)) != []
+
+
+@pytest.mark.parametrize(
+    "word,stem", [("setting", "set"), ("running", "run"), ("stopping", "stop")]
+)
+def test_english_doubles_the_consonant_before_ing(word, stem):
+    """"setting" reduces to "sett" and then to "set", which is what "Setup" is
+    made of. Without the second step the match never happens."""
+    assert stem in sops._stems(word)
+
+
+def test_uploading_finds_upload():
+    index = [{"id": "1", "title": "How To Upload Blog Posts", "url": "https://n/1"}]
+
+    assert sops.index_matches(index, "uploading blog posts") != []
+
+
+def test_a_preposition_is_not_something_to_search_for():
+    """Every word has to match, so "up" was being asked to find itself."""
+    assert "up" not in sops.wanted_topic("how do we set up the dedicated LP").split()
+
+
+def test_being_this_forgiving_still_finds_nothing_for_nothing():
+    index = [{"id": "1", "title": "How To Setup Dedicated LP", "url": "https://n/1"}]
+
+    assert sops.index_matches(index, sops.wanted_topic("do we have an SOP for payroll")) == []
