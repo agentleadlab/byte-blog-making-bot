@@ -744,3 +744,43 @@ def test_a_passcode_with_asterisks_survives_the_card_body():
     )
 
     assert "a*b*c" in detail
+
+
+# ------------------------------------ a Discord name is not a person's name
+
+# Whoever posts a recording stands in for the closer, so their display name
+# ends up on a card - and Discord names carry job titles, teams and emoji.
+# "Sales Recording: Franklin 🐻| General Manager" is what that looked like.
+
+
+@pytest.mark.parametrize(
+    "display,expected",
+    [
+        ("Franklin 🐻| General Manager", "Franklin"),
+        ("tre | Closer", "tre"),
+        ("Luna · the whole thing", "Luna"),
+        ("Tre - Closer", "Tre"),
+        ("Kiki ✨", "Kiki"),
+        ("Santiago Villegas", "Santiago Villegas"),
+    ],
+)
+def test_the_decoration_comes_off_a_display_name(display, expected):
+    assert recordings.person_name(display) == expected
+
+
+@pytest.mark.parametrize("name", ["Mary-Jane O'Brien", "Jean-Luc", "Ann-Marie"])
+def test_a_hyphen_inside_a_name_survives(name):
+    """A dash only separates when it stands alone with spaces around it."""
+    assert recordings.person_name(name) == name
+
+
+def test_an_empty_display_name_is_not_a_name():
+    assert recordings.person_name("") == ""
+    assert recordings.person_name("🐻") == ""
+
+
+def test_the_card_title_uses_the_cleaned_poster_name():
+    rec = call(client_hint="Derrick Robison")
+    rec.posted_by = "Franklin 🐻| General Manager"
+
+    assert recordings.call_title(rec) == "Sales Recording: Franklin + Derrick Robison"

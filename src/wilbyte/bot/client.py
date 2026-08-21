@@ -1183,9 +1183,14 @@ async def _ask_which_call(responder: Responder, config: Config, message, rec, ty
         requester_id=getattr(getattr(message, "author", None), "id", None),
         timeout=600,
     )
-    await responder.send(
-        f"Which call is this? ({len(near)} to choose from)", view=view
+    # The names go in the message as well as in the menu. A collapsed dropdown
+    # shows its placeholder and nothing else, so the one thing somebody needs
+    # in order to answer was the one thing they had to click to see.
+    shown = "\n".join(
+        f"· **{item.topic or '(no topic)'}** — {item.when[:10]}" for item in near[:10]
     )
+    more = f"\n-# …and {len(near) - 10} more in the menu" if len(near) > 10 else ""
+    await responder.send(f"Which call is this?\n{shown}{more}", view=view)
     await view.wait()
     return view.chosen
 

@@ -168,7 +168,7 @@ def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
     # Read from the call where it could be read; otherwise from what the person
     # posting it already said. Whoever posts a recording is nearly always the
     # closer who was on it, and the client's name is the one thing they type.
-    closer = _as_a_name(rec.closer) or _as_a_name(rec.posted_by)
+    closer = _as_a_name(rec.closer) or _as_a_name(person_name(rec.posted_by))
     client = (
         next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
         or _as_a_name(rec.client_hint)
@@ -178,6 +178,31 @@ def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
     if not who:
         who = _as_a_name(rec.topic, words=8) or (rec.topic or "").strip()[:60]
     return f"{prefix}: {who}" if who else prefix
+
+
+# Where a Discord display name stops being a name. People decorate them with
+# a role, a team, an emoji - "Franklin 🐻| General Manager" - and all of it
+# ended up on a card title.
+# A dash only separates when it stands alone: "Mary-Jane O'Brien" is one name,
+# "Tre - Closer" is a name with a job title after it.
+_DECORATION = re.compile(r"\s*(?:[|/\u00b7\u2022]|\s[-\u2013\u2014]\s).*$")
+
+
+def person_name(display: str) -> str:
+    """`Franklin 🐻| General Manager` -> `Franklin`.
+
+    Whoever posts a recording stands in for the closer on the card, so their
+    Discord name is read as a person's name - and Discord names carry job
+    titles, pronouns and emoji that a card title has no use for.
+    """
+    found = _DECORATION.sub("", " ".join((display or "").split()))
+    # Emoji and symbols, but not letters, digits, spaces or ordinary name
+    # punctuation - an apostrophe or a hyphen inside a name has to survive.
+    kept = "".join(
+        ch for ch in found
+        if ch.isalnum() or ch.isspace() or ch in "'-."
+    )
+    return " ".join(kept.split()).strip(" .-")
 
 
 # A guard, not a parser. Names arrive from a transcript's speaker labels, and
