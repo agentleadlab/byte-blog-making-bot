@@ -656,3 +656,91 @@ def test_a_card_with_no_link_still_comes_back():
 
     title, card, link = recordings.matching_rows(rows, "derrick")[0]
     assert card and not link
+
+
+# ---------------------------------------- the summary as a readable page
+
+# The model writes markdown and Notion has never heard of it, so "**What the
+# prospect wanted**" arrived on the card as literal asterisks.
+
+
+def kinds_and_text(blocks):
+    out = []
+    for block in blocks:
+        kind = block["type"]
+        text = "".join(run["text"]["content"] for run in block[kind]["rich_text"])
+        out.append((kind, text))
+    return out
+
+
+def test_bold_inside_a_line_becomes_a_mark_not_asterisks():
+    blocks = recordings.summary_blocks("**Overview:** They bought 25 leads.")
+    runs = blocks[0]["paragraph"]["rich_text"]
+
+    assert runs[0]["text"]["content"] == "Overview:"
+    assert runs[0]["annotations"] == {"bold": True}
+    assert "*" not in "".join(run["text"]["content"] for run in runs)
+
+
+def test_a_line_that_is_only_a_bold_phrase_is_a_heading():
+    """It was being used as a section title, so make it one."""
+    assert kinds_and_text(recordings.summary_blocks("**What the prospect wanted**")) == [
+        ("heading_3", "What the prospect wanted")
+    ]
+
+
+def test_a_trailing_colon_on_a_section_title_comes_off():
+    assert kinds_and_text(recordings.summary_blocks("**Objections raised:**")) == [
+        ("heading_3", "Objections raised")
+    ]
+
+
+def test_markdown_headings_are_headings_too():
+    blocks = kinds_and_text(recordings.summary_blocks("## Summary\n### Detail"))
+
+    assert blocks == [("heading_2", "Summary"), ("heading_3", "Detail")]
+
+
+def test_bullets_and_numbers_each_get_their_own_kind():
+    blocks = recordings.summary_blocks("- first\n1. second\n2) third")
+
+    assert [k for k, _ in kinds_and_text(blocks)] == [
+        "bulleted_list_item", "numbered_list_item", "numbered_list_item"
+    ]
+
+
+def test_the_numbering_marker_is_not_repeated_in_the_text():
+    """Notion numbers the item itself; leaving "1." in prints "1. 1. ...""."""
+    assert kinds_and_text(recordings.summary_blocks("1. Trial batch of 25 leads")) == [
+        ("numbered_list_item", "Trial batch of 25 leads")
+    ]
+
+
+def test_italics_survive_as_italics():
+    runs = recordings.summary_blocks("He was *very* clear.")[0]["paragraph"]["rich_text"]
+
+    assert any(run.get("annotations") == {"italic": True} for run in runs)
+
+
+def test_a_lone_asterisk_is_left_alone():
+    """"$35/lead * 25" is arithmetic, not emphasis."""
+    text = "".join(
+        run["text"]["content"]
+        for run in recordings.summary_blocks("$35/lead * 25")[0]["paragraph"]["rich_text"]
+    )
+
+    assert text == "$35/lead * 25"
+
+
+def test_blank_lines_do_not_become_empty_blocks():
+    assert len(recordings.summary_blocks("one\n\n\ntwo")) == 2
+
+
+def test_a_passcode_with_asterisks_survives_the_card_body():
+    """`a*b*c` read as emphasis becomes `abc` - right-looking and useless."""
+    blocks = recordings.page_blocks(recording(passcode="a*b*c"))
+    detail = "".join(
+        run["text"]["content"] for run in blocks[1]["paragraph"]["rich_text"]
+    )
+
+    assert "a*b*c" in detail

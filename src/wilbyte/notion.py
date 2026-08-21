@@ -12,6 +12,7 @@ shared with the integration (page -> ... -> Connections) or every call returns
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -183,8 +184,20 @@ def heading(text: str) -> dict:
     }
 
 
-def paragraph(text: str) -> dict:
-    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": _text(text)}}
+def paragraph(text: str, *, markdown: bool = True) -> dict:
+    """A paragraph. `markdown=False` when the text must survive character for
+    character - a passcode like `a*b*c` would otherwise be read as emphasis and
+    come out as `abc`, which looks right and does not work."""
+    runs = _text(text) if markdown else _literal(text)
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": runs}}
+
+
+def _literal(text: str) -> list[dict]:
+    body = text or ""
+    return [
+        {"type": "text", "text": {"content": body[i : i + 2000]}}
+        for i in range(0, max(len(body), 1), 2000)
+    ]
 
 
 def bullet(text: str) -> dict:
@@ -199,10 +212,60 @@ def bookmark(url: str) -> dict:
     return {"object": "block", "type": "bookmark", "bookmark": {"url": url}}
 
 
-def _text(text: str) -> list[dict]:
-    """Notion caps a single rich-text run at 2000 characters."""
+# `**bold**` and `*italic*`, the two things a written summary actually uses.
+# Notion has no idea what markdown is - it wants the emphasis as an annotation
+# on the run, so asterisks sent as text stay asterisks on the page forever.
+_MARKUP = re.compile(r"\*\*(?P<bold>.+?)\*\*|(?<!\*)\*(?P<italic>[^*\n]+?)\*(?!\*)", re.DOTALL)
+
+
+def _runs(text: str) -> list[tuple[str, dict]]:
+    """(content, annotations) for each stretch of differently-marked text."""
     body = text or ""
-    return [
-        {"type": "text", "text": {"content": body[i : i + 2000]}}
-        for i in range(0, max(len(body), 1), 2000)
-    ]
+    found: list[tuple[str, dict]] = []
+    at = 0
+    for match in _MARKUP.finditer(body):
+        if match.start() > at:
+            found.append((body[at : match.start()], {}))
+        if match.group("bold") is not None:
+            found.append((match.group("bold"), {"bold": True}))
+        else:
+            found.append((match.group("italic"), {"italic": True}))
+        at = match.end()
+    if at < len(body):
+        found.append((body[at:], {}))
+    return found or [(body, {})]
+
+
+def _text(text: str) -> list[dict]:
+    """One Notion rich-text array, with markdown emphasis turned into marks.
+
+    Notion caps a single run at 2000 characters, so a long stretch is split -
+    which is also why this builds a list rather than one object.
+    """
+    runs: list[dict] = []
+    for content, marks in _runs(text):
+        if not content:
+            continue
+        for start in range(0, len(content), 2000):
+            piece = {"type": "text", "text": {"content": content[start : start + 2000]}}
+            if marks:
+                piece["annotations"] = marks
+            runs.append(piece)
+    return runs or [{"type": "text", "text": {"content": ""}}]
+
+
+def subheading(text: str) -> dict:
+    """A section inside the summary. Smaller than the card's own headings."""
+    return {
+        "object": "block",
+        "type": "heading_3",
+        "heading_3": {"rich_text": _text(text)},
+    }
+
+
+def numbered(text: str) -> dict:
+    return {
+        "object": "block",
+        "type": "numbered_list_item",
+        "numbered_list_item": {"rich_text": _text(text)},
+    }

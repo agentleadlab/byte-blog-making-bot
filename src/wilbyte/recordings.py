@@ -303,18 +303,54 @@ def page_blocks(recording: Recording, summary: str = "") -> list[dict]:
         details.append(f"Passcode: {recording.passcode}")
     if recording.posted_by:
         details.append(f"Posted by: {recording.posted_by}")
-    blocks.append(notion.paragraph(" · ".join(details)))
+    # Verbatim: a passcode can contain asterisks, and reading those as
+    # emphasis would drop them from the line people copy.
+    blocks.append(notion.paragraph(" · ".join(details), markdown=False))
 
     if summary.strip():
         blocks.append(notion.heading("Summary"))
-        for line in summary.strip().splitlines():
-            text = line.strip()
-            if not text:
-                continue
-            if text.startswith(("- ", "• ", "* ")):
-                blocks.append(notion.bullet(text[2:].strip()))
-            else:
-                blocks.append(notion.paragraph(text))
+        blocks.extend(summary_blocks(summary))
+    return blocks
+
+
+# "1. " or "2) " opening a line.
+_NUMBERED_LINE = re.compile(r"^\d{1,2}[.)]\s+")
+# A whole line wrapped in asterisks - a section title, not a bold sentence.
+_ALL_BOLD = re.compile(r"^\*\*(?P<text>[^*]+?)\*\*:?$")
+
+
+def summary_blocks(summary: str) -> list[dict]:
+    """A written summary turned into Notion blocks that read like a document.
+
+    The model writes markdown, and Notion has never heard of it - so `**What
+    the prospect wanted**` arrived on the card as literal asterisks. Emphasis
+    inside a line becomes a real mark; a line that is nothing but a bold phrase
+    becomes a heading, because that is what it was being used as.
+    """
+    from . import notion
+
+    blocks: list[dict] = []
+    for line in (summary or "").strip().splitlines():
+        text = line.strip()
+        if not text:
+            continue
+
+        if text.startswith("### "):
+            blocks.append(notion.subheading(text[4:].strip()))
+        elif text.startswith(("## ", "# ")):
+            blocks.append(notion.heading(text.lstrip("#").strip()))
+        elif _ALL_BOLD.match(text):
+            # The colon usually sits inside the asterisks - "**Objections
+            # raised:**" - so it has to come off after unwrapping, not before.
+            blocks.append(
+                notion.subheading(_ALL_BOLD.match(text).group("text").strip().rstrip(":").strip())
+            )
+        elif text.startswith(("- ", "• ", "* ")):
+            blocks.append(notion.bullet(text[2:].strip()))
+        elif _NUMBERED_LINE.match(text):
+            blocks.append(notion.numbered(_NUMBERED_LINE.sub("", text)))
+        else:
+            blocks.append(notion.paragraph(text))
     return blocks
 
 
