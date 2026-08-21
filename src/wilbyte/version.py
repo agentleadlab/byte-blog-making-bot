@@ -20,14 +20,38 @@ def code_version() -> str:
     return f"{fields}{' +local edits' if _git('status', '--porcelain') else ''}"
 
 
-def _git(*args: str) -> str:
+def update_waiting() -> str:
+    """The one-line summary of a newer commit on the remote, or "".
+
+    Only ever reports a *fast-forward*: local commits or a diverged history
+    mean someone is working in this checkout, and pulling out from under them
+    would be rude at best.
+    """
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    if not branch or branch == "HEAD":
+        return ""
+    # A network round trip, so it gets longer than the local commands do. A
+    # failed fetch just means no news - the next check tries again.
+    _git("fetch", "--quiet", "origin", branch, check=False, timeout=30)
+    behind = _git("rev-list", "--count", f"HEAD..origin/{branch}")
+    ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD")
+    if not behind.isdigit() or int(behind) == 0:
+        return ""
+    if ahead.isdigit() and int(ahead) > 0:
+        return ""
+    return _git("log", "-1", "--format=%h %s", f"origin/{branch}")
+
+
+def _git(*args: str, check: bool = True, timeout: float = 5) -> str:
     try:
         result = subprocess.run(
             ["git", "-C", str(REPO_ROOT), *args],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
+    if result.returncode != 0:
+        return "" if check else "ok"
+    return result.stdout.strip() or ("" if check else "ok")

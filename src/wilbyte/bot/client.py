@@ -113,6 +113,7 @@ class WilByteBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
         self.publisher_task: asyncio.Task | None = None
+        self.updater_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         register_commands(self)
@@ -151,6 +152,8 @@ class WilByteBot(discord.Client):
         # loops would race each other for the same posts.
         if self.publisher_task is None or self.publisher_task.done():
             self.publisher_task = self.loop.create_task(publisher_loop(self))
+        if self.updater_task is None or self.updater_task.done():
+            self.updater_task = self.loop.create_task(updater_loop(self))
         await _warn_if_stale(self)
 
     async def on_message(self, message: discord.Message) -> None:
@@ -494,6 +497,48 @@ async def _warn_if_stale(bot: "WilByteBot") -> None:
             f"⚠ **I couldn't update myself.** {reason}\n"
             f"-# Running `{version.code_version()}` — fixes pushed since then aren't in yet."
         )
+
+
+# Exit code the launcher watches for. Any other exit means RYTE stopped or
+# crashed, and the launcher deliberately does not loop on those.
+RESTART_EXIT_CODE = 42
+
+# Often enough that a fix lands the same morning, rarely enough that it isn't
+# a git fetch every minute for the rest of the year.
+UPDATE_CHECK_SECONDS = 900
+
+
+async def updater_loop(bot: "WilByteBot") -> None:
+    """Restart onto a new version, but never in the middle of something.
+
+    Updates have been landing several times a day, and each one needed someone
+    to notice and restart by hand - which is how RYTE spent a day answering out
+    of a checkout five commits old.
+
+    It waits for a quiet moment. A run holds the lock through every approval
+    click, so restarting while one is open would drop posts a person is halfway
+    through reviewing.
+    """
+    while not bot.is_closed():
+        await asyncio.sleep(UPDATE_CHECK_SECONDS)
+        try:
+            waiting = await asyncio.to_thread(version.update_waiting)
+        except Exception:
+            log.exception("Update check failed; trying again later")
+            continue
+        if not waiting:
+            continue
+
+        if bot.run_lock.locked():
+            log.info("Update %s is waiting, but a run is open - leaving it", waiting)
+            continue
+
+        channel = _announce_channel(bot)
+        if channel is not None:
+            await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
+        log.info("Restarting onto %s", waiting)
+        await bot.close()
+        os._exit(RESTART_EXIT_CODE)
 
 
 # ------------------------------------------------------------------- publishing

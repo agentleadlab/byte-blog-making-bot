@@ -22,5 +22,26 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# RYTE exits with this code when it has spotted an update and wants to come
+# back on the new version. Any other exit means it stopped or crashed, and
+# looping on a crash would just spin.
+RESTART_CODE=42
+
+# Ctrl-C should stop RYTE, not restart it.
+trap 'printf "\n\033[1mStopped.\033[0m\n"; exit 0' INT
+
 printf '\n\033[1mStarting RYTE\033[0m — leave this window open. Ctrl-C to stop.\n\n'
-exec ./.venv/bin/wilbyte bot
+
+while true; do
+  set +e
+  ./.venv/bin/wilbyte bot
+  code=$?
+  set -e
+
+  if [ "$code" -ne "$RESTART_CODE" ]; then
+    exit "$code"
+  fi
+
+  printf '\n\033[1mUpdate found — restarting.\033[0m\n\n'
+  bash scripts/update.sh
+done

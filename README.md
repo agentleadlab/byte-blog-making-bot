@@ -16,6 +16,27 @@ One bot, several jobs. The names are how the team refers to them:
 More will follow. They are capabilities of the same bot and the same Discord
 account, not separate installs - one `.env`, one process, one restart.
 
+## Starting and stopping
+
+Double-click **Start RYTE** on the Desktop. It kills any copy already running
+before it starts, so double-clicking it again is how you restart - there is no
+need to close the window first, and no second launcher for the other jobs.
+
+There is only ever one process. RYTE Blogger and RYTE Closer are two jobs of
+one bot, sharing one Discord account and one `.env`; a second launcher would
+start a second copy on the same token and every message would be answered
+twice.
+
+It also restarts itself. Every fifteen minutes it checks whether a newer
+version has been pushed, and when one has it says so in Discord and comes back
+on it - but only when nothing is open, because a run holds its lock through
+every approval click and restarting mid-review would drop posts someone is
+halfway through.
+
+Ctrl-C in that window stops it for good. Blog posts already scheduled still go
+out only while RYTE is running - it publishes them itself, because GoHighLevel
+does not.
+
 ## Copywriting
 
 Teach it your voice by attaching files:

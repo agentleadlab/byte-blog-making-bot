@@ -1085,3 +1085,27 @@ def test_a_blocked_channel_gets_no_public_refusal(config):
     asyncio.run(handle_mention(bot, message))
 
     assert replies == []
+
+
+# ------------------------------------------------- restarting onto a new version
+
+
+def test_the_restart_code_is_the_one_the_launcher_watches_for():
+    """scripts/start.sh loops on exactly this and nothing else."""
+    from pathlib import Path
+
+    from wilbyte.bot.client import RESTART_EXIT_CODE
+
+    launcher = Path(__file__).resolve().parents[1] / "scripts" / "start.sh"
+
+    assert f"RESTART_CODE={RESTART_EXIT_CODE}" in launcher.read_text()
+
+
+def test_the_launcher_does_not_loop_on_a_crash():
+    """Restarting forever on a broken build is worse than staying down."""
+    from pathlib import Path
+
+    launcher = (Path(__file__).resolve().parents[1] / "scripts" / "start.sh").read_text()
+
+    assert 'if [ "$code" -ne "$RESTART_CODE" ]; then' in launcher
+    assert 'exit "$code"' in launcher
