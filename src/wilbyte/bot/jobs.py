@@ -729,6 +729,98 @@ def check_ghl(config: Config) -> list[tuple[bool, str]]:
     return results
 
 
+def check_recordings(config: Config) -> list[tuple[bool, str]]:
+    """Actually call Notion, Zoom and Fathom, rather than checking a key is present.
+
+    A key that is set but wrong looks identical to a working one right up until
+    a real recording is posted, which is the worst moment to find out. Each of
+    these makes one small request and reports what came back.
+    """
+    results: list[tuple[bool, str]] = []
+    results.extend(_check_notion(config))
+    results.extend(_check_zoom(config))
+    results.extend(_check_fathom(config))
+    return results
+
+
+def _check_notion(config: Config) -> list[tuple[bool, str]]:
+    from .. import notion
+
+    if not config.secrets.notion_token:
+        return [(None, "Notion not configured — recordings won't be filed")]
+    if not config.secrets.notion_recordings_page_id:
+        return [(False, "NOTION_TOKEN is set but NOTION_RECORDINGS_PAGE_ID isn't")]
+
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        database_id = client.find_child_database(config.secrets.notion_recordings_page_id)
+        if not database_id:
+            return [(
+                False,
+                "Notion page reachable, but there's no database on it. The gallery "
+                "needs to be a database view, not an empty page.",
+            )]
+        schema = (client.database(database_id).get("properties") or {})
+        columns = ", ".join(sorted(schema)) or "(none)"
+        return [(True, f"Notion gallery found — columns: {columns}")]
+    except Exception as exc:
+        return [(False, f"Notion: {_short(exc)}")]
+    finally:
+        client.close()
+
+
+def _check_zoom(config: Config) -> list[tuple[bool, str]]:
+    from .. import zoom
+
+    secrets = config.secrets
+    if not (secrets.zoom_account_id and secrets.zoom_client_id and secrets.zoom_client_secret):
+        return [(None, "Zoom not configured — Zoom calls filed without a summary")]
+
+    client = zoom.ZoomClient(
+        secrets.zoom_account_id, secrets.zoom_client_id, secrets.zoom_client_secret
+    )
+    try:
+        meetings = client.account_recordings(days=30)
+    except Exception as exc:
+        return [(False, f"Zoom: {_short(exc)}")]
+    finally:
+        client.close()
+
+    with_text = [m for m in meetings if zoom.pick_transcript(m.get("recording_files") or [])]
+    rows = [(True, f"Zoom connected — {len(meetings)} recording(s) in the last 30 days")]
+    if meetings and not with_text:
+        rows.append((
+            False,
+            "None of them has a transcript. Turn on Settings -> Recording -> "
+            "Advanced cloud recording -> Create audio transcript. It only applies "
+            "to calls recorded after it is switched on.",
+        ))
+    elif with_text:
+        rows.append((True, f"{len(with_text)} of them have transcripts RYTE can read"))
+    return rows
+
+
+def _check_fathom(config: Config) -> list[tuple[bool, str]]:
+    from .. import fathom
+
+    if not config.secrets.fathom_api_key:
+        return [(None, "Fathom not configured — Fathom calls filed without a summary")]
+
+    client = fathom.FathomClient(config.secrets.fathom_api_key)
+    try:
+        meetings = client.meetings(limit=25)
+    except Exception as exc:
+        return [(False, f"Fathom: {_short(exc)}")]
+    finally:
+        client.close()
+
+    if not meetings:
+        return [(False, "Fathom connected, but it returned no calls at all.")]
+    # The field names matter more than the count: this integration was written
+    # without a key to try it against, so the first real response is evidence.
+    return [(True, f"Fathom connected — {fathom.describe(meetings)}")]
+
+
 def check_anthropic(config: Config) -> list[tuple[bool, str]]:
     """Actually call the API, rather than just confirming a key is present.
 

@@ -846,6 +846,7 @@ async def _send_check(responder: Responder, config: Config, source: str | None) 
     claude_rows = await asyncio.to_thread(jobs.check_anthropic, config)
     ghl_rows = await asyncio.to_thread(jobs.check_ghl, config)
     youtube_rows = await asyncio.to_thread(jobs.check_youtube, source)
+    recording_rows = await asyncio.to_thread(jobs.check_recordings, config)
 
     await responder.send(
         embed=embeds.check_report(
@@ -853,6 +854,11 @@ async def _send_check(responder: Responder, config: Config, source: str | None) 
             ghl=ghl_rows, youtube=youtube_rows,
         )
     )
+    lines = [
+        f"{'✅' if ok else ('⚠' if ok is None else '❌')} {note}"
+        for ok, note in recording_rows
+    ]
+    await responder.send("**RYTE Closer**\n" + "\n".join(lines))
 
 
 async def _send_write(
