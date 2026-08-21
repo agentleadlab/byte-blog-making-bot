@@ -163,23 +163,59 @@ EXTRA_COLUMNS = {
     "Link": {"url": {}},
     "Kind": {"rich_text": {}},
     "Summary": {"rich_text": {}},
+    "Date": {"date": {}},
 }
 
 
+def map_properties(schema: dict, sop: "Sop", title: str, *, summary: str = "") -> dict:
+    """Fill the columns this database actually has, and skip the ones it doesn't.
+
+    The library is usually made by hand before RYTE sees it, so its columns are
+    whatever made sense to whoever built it. Writing a property Notion doesn't
+    know about fails the entire create - which is exactly what "Date is not a
+    property that exists" was - so the database's own schema decides what gets
+    sent rather than a shape assumed here.
+    """
+    properties: dict = {}
+    used: set[str] = set()
+
+    for column, spec in (schema or {}).items():
+        # Notion answers with {"type": "rich_text", "rich_text": {...}}, but the
+        # shape used to *create* a database is just {"rich_text": {}}. Reading
+        # both means this works against a real library and against our own spec.
+        kind = spec.get("type") or next(iter(spec), "")
+        key = " ".join(column.split()).casefold()
+
+        if kind == "title":
+            properties[column] = {"title": [{"type": "text", "text": {"content": title[:2000]}}]}
+        elif kind == "url" and _is(key, "link") and "link" not in used:
+            if sop.url:
+                properties[column] = {"url": sop.url}
+                used.add("link")
+        elif kind == "date":
+            if sop.posted_on:
+                properties[column] = {"date": {"start": sop.posted_on.isoformat()}}
+        elif kind == "rich_text":
+            if _is(key, "kind") and sop.kind and "kind" not in used:
+                properties[column] = _rich(sop.kind)
+                used.add("kind")
+            elif _is(key, "summary") and summary.strip() and "summary" not in used:
+                # Capped at 2000 by Notion, and the point of this column is
+                # being searchable rather than complete.
+                properties[column] = _rich(_plain(summary)[:1900])
+                used.add("summary")
+    return properties
+
+
+def _is(column_key: str, role: str) -> bool:
+    from . import recordings
+
+    return any(alias in column_key for alias in recordings.COLUMN_ALIASES.get(role, (role,)))
+
+
 def page_properties(sop: "Sop", title: str, *, summary: str = "") -> dict:
-    """The row itself. Only columns with something in them are written."""
-    props: dict = {"Name": {"title": [{"type": "text", "text": {"content": title[:2000]}}]}}
-    if sop.url:
-        props["Link"] = {"url": sop.url}
-    if sop.kind:
-        props["Kind"] = _rich(sop.kind)
-    if summary.strip():
-        # Notion caps a property at 2000 characters, and the whole point of
-        # this column is being searchable rather than complete.
-        props["Summary"] = _rich(_plain(summary)[:1900])
-    if sop.posted_on:
-        props["Date"] = {"date": {"start": sop.posted_on.isoformat()}}
-    return props
+    """The row against the schema RYTE would have made. For tests and previews."""
+    return map_properties(database_schema(), sop, title, summary=summary)
 
 
 def _rich(text: str) -> dict:

@@ -1840,7 +1840,12 @@ def file_sop(config: Config, sop, *, summary: str = "") -> tuple[str, str]:
         cover_url, icon_url = gallery_art(config, client, page_id)
         created = client.create_page(
             database_id,
-            sops.page_properties(sop, title, summary=summary),
+            sops.map_properties(
+                (client.database(database_id).get("properties") or {}),
+                sop,
+                title,
+                summary=summary,
+            ),
             children=sops.page_blocks(sop, summary),
             cover_url=cover_url,
             icon_url=icon_url,

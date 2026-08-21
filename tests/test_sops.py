@@ -212,3 +212,43 @@ def test_asking_about_nothing_in_particular_returns_the_library():
 
 def test_a_topic_nobody_has_written_up_matches_nothing():
     assert sops.matching_rows([row("SOP: Lead Order Process")], "payroll") == []
+
+
+def test_a_column_the_library_does_not_have_is_never_written():
+    """"Date is not a property that exists" failed an entire create. The
+    database's own schema decides what gets sent, not a shape assumed here."""
+    made_by_hand = {
+        "Name": {"type": "title", "title": {}},
+        "Link": {"type": "url", "url": {}},
+    }
+
+    props = sops.map_properties(
+        made_by_hand, sop_for(posted_on=__import__("datetime").date(2026, 8, 21)),
+        "SOP: x", summary="anything",
+    )
+
+    assert set(props) == {"Name", "Link"}
+
+
+def test_both_shapes_of_schema_are_understood():
+    """Notion answers with {"type": "url", ...}; creating one sends {"url": {}}."""
+    answered = {"Name": {"type": "title", "title": {}}, "Link": {"type": "url", "url": {}}}
+    sent = {"Name": {"title": {}}, "Link": {"url": {}}}
+
+    assert sops.map_properties(answered, sop_for(), "SOP: x") == (
+        sops.map_properties(sent, sop_for(), "SOP: x")
+    )
+
+
+def test_a_column_someone_called_something_else_is_still_used():
+    """The library is made by hand, so columns are matched by what they hold."""
+    theirs = {
+        "Title": {"type": "title", "title": {}},
+        "Video": {"type": "url", "url": {}},
+        "Notes": {"type": "rich_text", "rich_text": {}},
+    }
+
+    props = sops.map_properties(theirs, sop_for(), "SOP: x", summary="what it covers")
+
+    assert props["Video"]["url"] == LOOM
+    assert props["Notes"]["rich_text"][0]["text"]["content"] == "what it covers"
