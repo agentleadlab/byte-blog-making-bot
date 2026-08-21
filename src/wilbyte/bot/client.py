@@ -446,6 +446,17 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _file_new_recordings(bot)
                 return
 
+            if request.action == "board":
+                lines = await asyncio.to_thread(jobs.board_today, config)
+                await responder.send("\n".join(lines) or "The board is empty.")
+                return
+
+            if request.action == "rollover":
+                await responder.send("Reading the board — nothing will move.")
+                report = await asyncio.to_thread(jobs.rollover_plan, config)
+                await responder.send(report)
+                return
+
             if request.action == "findcall":
                 await _send_cards(responder, config, request.brief or "")
                 return

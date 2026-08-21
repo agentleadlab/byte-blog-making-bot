@@ -160,6 +160,11 @@ class Secrets:
     # which deserve a card, so filing everything found would fill the
     # gallery with calls they had already decided against.
     recordings_autofile: bool = False
+    # The daily board. Key and token from trello.com/power-ups/admin; the board
+    # id is the short code in its URL.
+    trello_key: str | None = None
+    trello_token: str | None = None
+    trello_board_id: str | None = None
     # Notion, for filing sales-call recordings. The token comes from
     # notion.so/my-integrations and the page must be shared with it.
     notion_token: str | None = None
@@ -241,6 +246,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_recordings_channel_id=_env("DISCORD_RECORDINGS_CHANNEL_ID"),
                 recordings_autofile=(_env("RECORDINGS_AUTOFILE") or "").strip().lower()
                 in ("1", "true", "yes"),
+                trello_key=_env("TRELLO_KEY"),
+                trello_token=_env("TRELLO_TOKEN"),
+                trello_board_id=_env("TRELLO_BOARD_ID"),
                 notion_token=_env("NOTION_TOKEN"),
                 notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
                 notion_cover_url=_env("NOTION_COVER_URL"),

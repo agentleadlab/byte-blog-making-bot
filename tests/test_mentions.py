@@ -483,3 +483,24 @@ def test_asking_for_the_video_is_a_lookup(text):
 )
 def test_asking_for_copy_about_a_video_still_writes(text):
     assert parse(f"{BOT} {text}").action == "write"
+
+
+# --------------------------------------------- the daily Trello board
+
+
+@pytest.mark.parametrize("word", ["board", "trello"])
+def test_board_words_need_no_link(word):
+    request = parse(f"{BOT} {word}")
+
+    assert request.action == "board"
+    assert request.source is None
+
+
+@pytest.mark.parametrize("word", ["rollover", "carryover"])
+def test_rollover_words_are_their_own_thing(word):
+    """Different questions: what's on the board vs what tonight would move."""
+    assert parse(f"{BOT} {word}").action == "rollover"
+
+
+def test_a_board_word_inside_a_link_is_not_the_command():
+    assert parse(f"{BOT} https://trello.com/b/abc/board").action != "board"

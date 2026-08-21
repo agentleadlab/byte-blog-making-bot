@@ -1581,3 +1581,107 @@ def _day_of(when: str):
         return _dt.fromisoformat((when or "").replace("Z", "+00:00")).date()
     except ValueError:
         return None
+
+
+# ------------------------------------------------------ the daily board
+
+def open_trello(config: Config):
+    """A Trello session, or a clear refusal about what is missing."""
+    from ..config import ConfigError
+    from ..trello import TrelloClient
+
+    secrets = config.secrets
+    missing = [
+        name for name, value in (
+            ("TRELLO_KEY", secrets.trello_key),
+            ("TRELLO_TOKEN", secrets.trello_token),
+            ("TRELLO_BOARD_ID", secrets.trello_board_id),
+        ) if not value
+    ]
+    if missing:
+        raise ConfigError(
+            f"The board needs {', '.join(missing)} in .env. The key and token come "
+            "from trello.com/power-ups/admin; the board id is the short code in the "
+            "board's own URL."
+        )
+    return TrelloClient(secrets.trello_key, secrets.trello_token)
+
+
+def board_today(config: Config, *, day=None) -> list[str]:
+    """What the board looks like right now: which lists hold which day's cards."""
+    from .. import dailyops, trello
+
+    day = day or date.today()
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        lines = []
+        for board_list in lists:
+            cards = client.list_cards(str(board_list.get("id") or ""))
+            dated = dailyops.daily_cards(cards)
+            named = [
+                f"{dailyops.CARD_KINDS.get(kind, kind)} {when:%m/%d}"
+                for (kind, when) in sorted(dated, key=lambda pair: (pair[1], pair[0]))
+            ]
+            label = str(board_list.get("name") or "(unnamed)")
+            lines.append(f"**{label}** — {', '.join(named) if named else 'nothing dated'}")
+
+        missing = dailyops.missing_kinds(
+            [card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))], day
+        )
+        if missing:
+            lines.append(
+                "⚠ No card for today: "
+                + ", ".join(dailyops.CARD_KINDS.get(kind, kind) for kind in missing)
+            )
+        return lines
+    finally:
+        client.close()
+
+
+def rollover_plan(config: Config, *, day=None) -> str:
+    """What the 9pm rollover *would* move, without moving anything.
+
+    Read-only on purpose. The board is the team's day, and a rollover that
+    guesses wrong scatters somebody's unfinished work across the wrong
+    checklists - which is worse than having done it by hand.
+    """
+    from .. import dailyops
+
+    day = day or date.today()
+    tomorrow = dailyops.next_day(day)
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        cards = [
+            card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
+        ]
+        today_cards = dailyops.cards_for(cards, day)
+        tomorrow_cards = dailyops.cards_for(cards, tomorrow)
+
+        plans = []
+        for kind, card in today_cards.items():
+            target = tomorrow_cards.get(kind)
+            if target is None:
+                continue
+            plans.append(
+                dailyops.plan_rollover(
+                    kind,
+                    source_card=card,
+                    source_checklists=client.card_checklists(str(card.get("id") or "")),
+                    target_card=target,
+                    target_checklists=client.card_checklists(str(target.get("id") or "")),
+                )
+            )
+
+        missing = [
+            dailyops.CARD_KINDS.get(kind, kind)
+            for kind in today_cards
+            if kind not in tomorrow_cards
+        ]
+        report = dailyops.summarise(plans)
+        if missing:
+            report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
+        return report
+    finally:
+        client.close()
