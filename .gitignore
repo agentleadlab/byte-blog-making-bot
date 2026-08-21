@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 .env
+# A YouTube login in a file. Never committed, for the same reason .env isn't.
+cookies.txt
+yt-cookies-*.txt
 *.egg-info/
 build/
 dist/
