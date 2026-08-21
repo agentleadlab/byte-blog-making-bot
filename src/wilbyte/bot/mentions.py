@@ -139,12 +139,22 @@ def _without_links(text: str) -> str:
 # alone is the filing command, and "send me the link" alone is about anything
 # at all.
 _WANTS = ("need", "find", "send", "share", "get", "where", "which", "show", "pull", "give", "want")
-_THE_THING = ("recording", "recordings", "sales call", "call link", "notion")
+_THE_THING = ("recording", "recordings", "sales call", "call link", "notion", "video", "videos")
+
+# Words that mean somebody wants copy written. "video" is an alias for the
+# script format, so "need the video of Derrick Robison" came back as a written
+# script about him - these are what tell the two apart.
+_WRITING = {
+    "write", "make", "draft", "create", "script", "copy", "hook", "vsl", "ad",
+    "email", "sms", "post", "landing", "caption", "about",
+}
 
 
 def _asks_for_a_card(lowered: str) -> bool:
     without_links = _without_links(lowered)
     words = set(re.findall(r"[a-z]+", without_links))
+    if words & _WRITING:
+        return False
     return bool(words & set(_WANTS)) and any(
         phrase in without_links for phrase in _THE_THING
     )

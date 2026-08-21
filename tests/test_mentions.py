@@ -456,3 +456,30 @@ def test_a_lookup_needs_both_halves():
     """"send me the link" alone could be about anything at all."""
     assert parse(f"{BOT} send me the link").action != "findcall"
     assert parse(f"{BOT} recording").action != "findcall"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "need the video of Derrick Robison",
+        "send me the video for Arlene",
+        "where's the video of the Mayra call",
+    ],
+)
+def test_asking_for_the_video_is_a_lookup(text):
+    """"video" is an alias for the script format, so this came back as a written
+    script about Derrick Robison rather than his recording."""
+    assert parse(f"{BOT} {text}").action == "findcall"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "write a script about the new video",
+        "make a vsl for aged leads",
+        "I want a hook for the video",
+        "script for the video on lead costs",
+    ],
+)
+def test_asking_for_copy_about_a_video_still_writes(text):
+    assert parse(f"{BOT} {text}").action == "write"

@@ -404,19 +404,34 @@ def row_title(row: dict) -> str:
     return ""
 
 
-def matching_rows(rows: list[dict], name: str) -> list[tuple[str, str]]:
-    """(title, url) for the cards whose title carries every word asked for.
+def row_link(row: dict) -> str:
+    """The recording's own URL off a card, where the gallery has one.
+
+    "Need the video of Derrick Robison" wants the video. Handing back only the
+    Notion page makes somebody open it and click again.
+    """
+    for name, value in (row.get("properties") or {}).items():
+        if value.get("type") == "url" and name.strip().casefold() in COLUMN_ALIASES["link"]:
+            return str(value.get("url") or "")
+    return ""
+
+
+def matching_rows(rows: list[dict], name: str) -> list[tuple[str, str, str]]:
+    """(title, card, recording) for cards whose title carries every word asked for.
 
     Every word rather than any: "derrick robison" should not also return every
     other Derrick. With nothing asked for, the newest handful - which is the
     sensible reading of "send me the sales recordings".
     """
-    found = [(row_title(row), str(row.get("url") or "")) for row in rows or []]
-    found = [(title, url) for title, url in found if title]
+    found = [
+        (row_title(row), str(row.get("url") or ""), row_link(row))
+        for row in rows or []
+    ]
+    found = [entry for entry in found if entry[0]]
     words = [word.casefold() for word in (name or "").split()]
     if not words:
         return found
     return [
-        (title, url) for title, url in found
-        if all(word in title.casefold() for word in words)
+        entry for entry in found
+        if all(word in entry[0].casefold() for word in words)
     ]

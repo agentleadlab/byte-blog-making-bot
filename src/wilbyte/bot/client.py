@@ -1095,11 +1095,18 @@ async def _send_cards(responder: Responder, config: Config, asked: str) -> None:
         return
 
     if len(found) == 1:
-        title, url = found[0]
-        await responder.send(f"📁 **{title}**\n{url}")
+        title, card, link = found[0]
+        # The recording first: "need the video of Derrick" wants the video, and
+        # sending only the page makes somebody open it and click again.
+        body = f"📁 **{title}**"
+        if link:
+            body += f"\n{link}"
+        await responder.send(f"{body}\n-# Card: {card}" if card else body)
         return
 
-    lines = [f"· **{title}**\n{url}" for title, url in found]
+    lines = [
+        f"· **{title}**\n{link or card}" for title, card, link in found
+    ]
     await responder.send(
         (f"{len(found)} for “{name}”:" if name else "The most recent:") + "\n" + "\n".join(lines)
     )

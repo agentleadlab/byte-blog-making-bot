@@ -579,10 +579,13 @@ def test_the_poster_stands_in_for_the_closer():
 # ------------------------------------- getting a card back out again
 
 
-def notion_row(title, url="https://notion.so/x"):
+def notion_row(title, url="https://notion.so/x", link=""):
     return {
         "url": url,
-        "properties": {"Name": {"type": "title", "title": [{"plain_text": title}]}},
+        "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": title}]},
+            "Link": {"type": "url", "url": link},
+        },
     }
 
 
@@ -603,7 +606,7 @@ def test_the_card_is_found_by_the_client_name():
     ]
 
     assert recordings.matching_rows(rows, "Derrick Robison") == [
-        ("Sales Recording: Santiago Villegas + Derrick Robison", "https://n/1")
+        ("Sales Recording: Santiago Villegas + Derrick Robison", "https://n/1", "")
     ]
 
 
@@ -639,3 +642,17 @@ def test_a_name_nobody_has_matches_nothing():
 
 def test_a_row_with_no_title_is_skipped():
     assert recordings.matching_rows([{"url": "https://n/1", "properties": {}}], "") == []
+
+
+def test_the_recording_link_comes_back_with_the_card():
+    """"Need the video of Derrick" wants the video, not a page to click through."""
+    rows = [notion_row("Sales Recording: Santi + Derrick", link="https://zoom.us/rec/share/x")]
+
+    assert recordings.matching_rows(rows, "derrick")[0][2] == "https://zoom.us/rec/share/x"
+
+
+def test_a_card_with_no_link_still_comes_back():
+    rows = [notion_row("Sales Recording: Santi + Derrick")]
+
+    title, card, link = recordings.matching_rows(rows, "derrick")[0]
+    assert card and not link
