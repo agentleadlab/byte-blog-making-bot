@@ -450,3 +450,83 @@ def remember(message_id, *, path=None) -> None:
     from . import recordings
 
     recordings.remember_filed(message_key(message_id), path)
+
+
+# ------------------------------------- the SOPs that were already written
+
+# The old library is a Notion page with a great deal inside it, and none of it
+# needs to be held at once. Each page is read once, reduced to a title, a link
+# and a couple of lines, and that index is what questions are matched against.
+# Answering then costs a local lookup and nothing else.
+
+INDEX_NAME = "sop-index.json"
+
+
+def _index_path(path=None):
+    from pathlib import Path
+
+    from .state import _state_dir
+
+    return Path(path) if path else _state_dir() / INDEX_NAME
+
+
+def load_index(path=None) -> list[dict]:
+    import json
+
+    found = _index_path(path)
+    if not found.exists():
+        return []
+    try:
+        data = json.loads(found.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def save_index(entries: list[dict], path=None) -> None:
+    import json
+
+    found = _index_path(path)
+    found.parent.mkdir(parents=True, exist_ok=True)
+    found.write_text(json.dumps(entries, indent=1), encoding="utf-8")
+
+
+def merge_index(existing: list[dict], fresh: list[dict]) -> list[dict]:
+    """Newly read pages replace what was there, by page id.
+
+    Re-reading the library should update it rather than double it, and a page
+    that was edited since last time should end up with the newer summary.
+    """
+    by_id = {entry.get("id"): entry for entry in existing if entry.get("id")}
+    for entry in fresh:
+        if entry.get("id"):
+            by_id[entry["id"]] = entry
+    return list(by_id.values())
+
+
+def index_matches(index: list[dict], topic: str, *, limit: int = 5) -> list[tuple[str, str, str]]:
+    """(title, url, "") for indexed pages matching a topic.
+
+    The same rules the gallery search uses - titles first, then summaries, and
+    forgiving about plurals - so a question finds an old SOP and a new one
+    without being asked differently.
+    """
+    words = [word.casefold() for word in (topic or "").split()]
+    found = []
+    for entry in index or []:
+        title = str(entry.get("title") or "")
+        if not title:
+            continue
+        item = (title, str(entry.get("url") or ""), "")
+        if not words:
+            found.append((2, item))
+            continue
+        in_title = _searchable(title)
+        in_all = _searchable(f"{title} {entry.get('summary', '')}")
+        if all(_hit(word, in_title) for word in words):
+            found.append((0, item))
+        elif all(_hit(word, in_all) for word in words):
+            found.append((1, item))
+
+    found.sort(key=lambda pair: pair[0])
+    return [item for _, item in found][:limit]

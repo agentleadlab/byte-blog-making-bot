@@ -403,3 +403,69 @@ def test_an_html_entity_never_reaches_a_card_title():
     assert html.unescape("Buying Your GHL Phone Number &amp; Calling Numbers") == (
         "Buying Your GHL Phone Number & Calling Numbers"
     )
+
+
+# ------------------------ the SOPs that were written before RYTE existed
+
+# The old library holds a great deal, and the point of the index is that none
+# of it is ever held at once: each page is read once, reduced to a title, a
+# link and two lines, and that is what questions are matched against.
+
+
+def entry(title, summary="", url="https://notion.so/x", id="1"):
+    return {"id": id, "title": title, "url": url, "summary": summary}
+
+
+def test_an_old_page_is_found_by_its_title():
+    index = [entry("Lead Order Process", id="a")]
+
+    assert sops.index_matches(index, "lead order")[0][0] == "Lead Order Process"
+
+
+def test_an_old_page_is_found_by_what_it_covers():
+    """The title alone is often not what somebody would think to ask."""
+    index = [entry("Sales Playbook", summary="objection handling and the pitch", id="b")]
+
+    assert sops.index_matches(index, "objections") != []
+
+
+def test_the_index_search_is_as_forgiving_as_the_gallery_one():
+    index = [entry("LeadForm Setup", id="c")]
+
+    assert sops.index_matches(index, "lead forms") != []
+
+
+def test_an_unrelated_question_matches_nothing():
+    assert sops.index_matches([entry("Lead Order Process")], "payroll") == []
+
+
+def test_reading_the_library_twice_updates_rather_than_doubles():
+    """A page edited since last time should end up with the newer summary."""
+    was = [entry("Lead Order Process", summary="old", id="a")]
+    now = [entry("Lead Order Process", summary="new", id="a")]
+
+    merged = sops.merge_index(was, now)
+
+    assert len(merged) == 1
+    assert merged[0]["summary"] == "new"
+
+
+def test_a_new_page_is_added_alongside_the_old_ones():
+    merged = sops.merge_index([entry("One", id="a")], [entry("Two", id="b")])
+
+    assert {item["title"] for item in merged} == {"One", "Two"}
+
+
+def test_the_index_survives_a_restart(tmp_path):
+    store = tmp_path / "index.json"
+    sops.save_index([entry("Lead Order Process", id="a")], store)
+
+    assert sops.load_index(store)[0]["title"] == "Lead Order Process"
+
+
+def test_a_corrupt_index_is_treated_as_empty(tmp_path):
+    """Better to re-read the library than to refuse to answer anything."""
+    store = tmp_path / "index.json"
+    store.write_text("{not json", encoding="utf-8")
+
+    assert sops.load_index(store) == []

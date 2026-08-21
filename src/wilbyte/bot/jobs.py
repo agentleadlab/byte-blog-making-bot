@@ -1881,3 +1881,129 @@ def find_sops(config: Config, topic: str, *, limit: int = 5) -> list[tuple[str, 
     finally:
         client.close()
     return sops.matching_rows(rows, topic, limit=limit)
+
+
+# --------------------------------- reading the SOPs that already existed
+
+# The old library holds a great deal, and none of it needs to be held at once.
+# Each page is read once, reduced to a couple of lines, and the index is what
+# questions are matched against afterwards.
+
+INDEX_MAX_PAGES = 150
+INDEX_MAX_DEPTH = 3
+
+
+def walk_library(client, page_id: str, *, depth: int = 0, seen=None) -> list[tuple[str, str]]:
+    """(page id, title) for every page under a Notion page, breadth first.
+
+    Bounded on both axes. A library that nests four deep and runs to hundreds
+    of pages is a library where the top three levels are the useful ones, and
+    an unbounded walk is how a one-off read turns into an afternoon.
+    """
+    from .. import notion
+
+    seen = seen if seen is not None else set()
+    found: list[tuple[str, str]] = []
+    if depth > INDEX_MAX_DEPTH or len(seen) >= INDEX_MAX_PAGES:
+        return found
+
+    for block in client.children(page_id):
+        if len(seen) >= INDEX_MAX_PAGES:
+            break
+        kind = block.get("type")
+        block_id = str(block.get("id") or "")
+
+        if kind == "child_page" and block_id not in seen:
+            seen.add(block_id)
+            title = str((block.get("child_page") or {}).get("title") or "").strip()
+            found.append((block_id, title or "(untitled)"))
+            found.extend(walk_library(client, block_id, depth=depth + 1, seen=seen))
+
+        elif kind == "child_database":
+            for row in client.query_database(block_id):
+                row_id = str(row.get("id") or "")
+                if not row_id or row_id in seen:
+                    continue
+                seen.add(row_id)
+                found.append((row_id, notion.page_title(row).strip() or "(untitled)"))
+
+    return found
+
+
+def summarise_page(config: Config, title: str, text: str) -> str:
+    """Two lines saying what a page covers, for matching a question against.
+
+    Short on purpose. This is an index entry, not a replacement for the page -
+    somebody who asks gets the link and reads the real thing.
+    """
+    from ..copywriter import CopywriterError
+
+    if not (text or "").strip():
+        return ""
+
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    try:
+        response = client.messages.create(
+            model=config.copy.model,
+            max_tokens=300,
+            system=(
+                "You write one-line index entries for an internal SOP library. "
+                "Say what the document covers and when somebody would need it. "
+                "Two sentences at most. No preamble."
+            ),
+            messages=[{"role": "user", "content": f"Page title: {title}\n\n{text[:12000]}"}],
+        )
+    except Exception as exc:
+        raise CopywriterError(f"Claude couldn't read “{title}”: {_short(exc)}") from exc
+
+    return "".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+
+
+def index_library(config: Config, page_id: str, *, limit: int = 40) -> tuple[int, int, int]:
+    """Read the old SOP page and index what's in it.
+
+    Returns (indexed, skipped, remaining). Pages already indexed are skipped,
+    so this can be run again to carry on where it stopped.
+    """
+    from .. import notion, sops
+
+    config.secrets.require("notion_token")
+    index = sops.load_index()
+    known = {entry.get("id") for entry in index}
+
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        pages = walk_library(client, page_id)
+        todo = [(pid, title) for pid, title in pages if pid not in known]
+
+        fresh: list[dict] = []
+        for page_id_, title in todo[:limit]:
+            try:
+                text = client.page_text(page_id_)
+                summary = summarise_page(config, title, text) if text.strip() else ""
+            except Exception as exc:
+                log_warning(f"Couldn't index “{title}”: {_short(exc)}")
+                continue
+            fresh.append({
+                "id": page_id_,
+                "title": title,
+                "url": f"https://www.notion.so/{page_id_.replace('-', '')}",
+                "summary": summary,
+            })
+    finally:
+        client.close()
+
+    if fresh:
+        sops.save_index(sops.merge_index(index, fresh))
+    return len(fresh), len(pages) - len(todo), max(0, len(todo) - limit)
+
+
+def log_warning(message: str) -> None:
+    import logging
+
+    logging.getLogger("wilbyte.bot").warning("%s", message)

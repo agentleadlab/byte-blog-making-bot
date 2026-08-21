@@ -578,6 +578,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _file_new_recordings(bot)
                 return
 
+            if request.action == "index":
+                await _index_library(responder, config)
+                return
+
             if request.action == "backfill":
                 await _backfill_sops(bot, responder, message)
                 return
@@ -1444,6 +1448,35 @@ def _first_sop_channel(bot: WilByteBot):
     return None
 
 
+async def _index_library(responder: Responder, config: Config) -> None:
+    """Read the old SOP page once, so questions can be answered on it too."""
+    page_id = config.secrets.notion_library_page_id or config.secrets.notion_sop_page_id
+    if not page_id:
+        await responder.send("I don't have a library page set, so there's nothing to index.")
+        return
+
+    await responder.send("Reading the SOP library — this takes a few minutes the first time.")
+    try:
+        indexed, already, remaining = await asyncio.to_thread(
+            jobs.index_library, config, page_id
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the library\n{exc}"))
+        return
+
+    lines = [f"📚 Read {indexed} page(s)."]
+    if already:
+        lines.append(f"-# {already} already indexed — skipped.")
+    if remaining:
+        lines.append(f"-# {remaining} still to go. Say `index` again to carry on.")
+    if not indexed and not already:
+        lines.append(
+            "-# Nothing found. The page has to be shared with RYTE — "
+            "open it, `⋯ → Connections`, add Ryte."
+        )
+    await responder.send("\n".join(lines))
+
+
 async def _send_sops(responder: Responder, config: Config, asked: str) -> None:
     """Answer "do we have an SOP for X" out of the Notion library."""
     from .. import sops
@@ -1454,6 +1487,14 @@ async def _send_sops(responder: Responder, config: Config, asked: str) -> None:
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the SOP library\n{exc}"))
         return
+
+    # The pages written before RYTE existed are still the answer half the time,
+    # and they are read from an index rather than from Notion - so this costs
+    # nothing and can't fail.
+    seen = {title for title, _, _ in found}
+    for entry in sops.index_matches(sops.load_index(), topic):
+        if entry[0] not in seen:
+            found.append(entry)
 
     if not found:
         await responder.send(

@@ -88,6 +88,45 @@ class NotionClient:
             if not cursor:
                 return rows
 
+    def children(self, block_id: str, *, limit: int = 200) -> list[dict]:
+        """A block's children, following the cursor."""
+        found: list[dict] = []
+        cursor = None
+        while len(found) < limit:
+            params: dict[str, Any] = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            data = self._request("GET", f"/blocks/{block_id}/children", params=params)
+            found.extend(data.get("results") or [])
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                break
+        return found[:limit]
+
+    def page_text(self, page_id: str, *, limit: int = 12000) -> str:
+        """A page flattened to plain text, deep enough to be worth summarising.
+
+        Capped: a long SOP page is read once to write a one-line summary, and
+        the first few thousand words say what it is about. Reading all of
+        everything would be the thing this design exists to avoid.
+        """
+        out: list[str] = []
+
+        def walk(block_id: str, depth: int) -> None:
+            if depth > 3 or sum(len(line) for line in out) >= limit:
+                return
+            for block in self.children(block_id):
+                if sum(len(line) for line in out) >= limit:
+                    return
+                text = block_text(block)
+                if text:
+                    out.append(text)
+                if block.get("has_children") and block.get("type") != "child_page":
+                    walk(str(block.get("id") or ""), depth + 1)
+
+        walk(page_id, 0)
+        return "\n".join(out)[:limit]
+
     def find_child_database(self, page_id: str, title: str | None = None) -> str | None:
         """The database on the page to write into.
 
@@ -278,3 +317,32 @@ def image(url: str) -> dict:
         "type": "image",
         "image": {"type": "external", "external": {"url": url}},
     }
+
+
+# Every block type that carries words, and where each one keeps them. Notion
+# nests the rich text under a key named after the block's own type.
+TEXT_BLOCKS = (
+    "paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item",
+    "numbered_list_item", "to_do", "toggle", "quote", "callout", "code",
+)
+
+
+def block_text(block: dict) -> str:
+    """The words in one block, or "" for one that carries none."""
+    kind = (block or {}).get("type") or ""
+    if kind == "child_page":
+        return str((block.get("child_page") or {}).get("title") or "")
+    if kind == "child_database":
+        return str((block.get("child_database") or {}).get("title") or "")
+    if kind not in TEXT_BLOCKS:
+        return ""
+    runs = (block.get(kind) or {}).get("rich_text") or []
+    return "".join(run.get("plain_text", "") for run in runs).strip()
+
+
+def page_title(page: dict) -> str:
+    """A page's own title, whatever its title property is called."""
+    for value in (page.get("properties") or {}).values():
+        if value.get("type") == "title":
+            return "".join(part.get("plain_text", "") for part in value.get("title") or [])
+    return ""

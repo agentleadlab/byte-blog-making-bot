@@ -82,6 +82,9 @@ ACTION_WORDS = {
     # was watching it.
     "backfill": "backfill",
     "history": "backfill",
+    # Read the SOP page that existed before RYTE did.
+    "index": "index",
+    "reindex": "index",
     # The daily Trello board, and what the 9pm rollover would move.
     "board": "board",
     "trello": "board",
@@ -282,7 +285,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
-        "board", "rollover", "backfill",
+        "board", "rollover", "backfill", "index",
     ):
         return MentionRequest(action=action)
 
@@ -451,7 +454,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **need the recording for Derrick Robison** — I'll send the card back
 > New calls file themselves every 15 minutes — @RYTE **sweep** does it now
 
-**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n\n**The daily board**
+**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
 > @RYTE **board** — what's on Trello today, and what's missing
 > @RYTE **rollover** — what tonight's carry-over would move (shows only)
 > @RYTE **host** — attach an image, get a permanent public link back
