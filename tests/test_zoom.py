@@ -215,23 +215,64 @@ def test_an_unmatched_link_is_explained_with_the_real_tokens():
 
 # --------------------------------------------- who was actually on the call
 
-TRANSCRIPT = (
-    "Santiago Villegas Agent Lead Lab: Derrick, what's going on, brother? "
-    "Derrick Robison: Hey man, good morning, how are you? "
-    "Santiago Villegas Agent Lead Lab: Can you hear me okay? "
+# A real Zoom transcript, in the shape Zoom actually writes it. The names live
+# at the start of a cue line, and that is the only thing that makes them names.
+TRANSCRIPT = """WEBVTT
+
+1
+00:00:08.000 --> 00:00:10.000
+Santiago Villegas Agent Lead Lab: Derrick, what's going on, brother? How are you? Good morning.
+
+2
+00:00:10.500 --> 00:00:12.000
+Derrick Robison: Hey man, good morning, how are you?
+
+3
+00:00:12.500 --> 00:00:14.000
+Santiago Villegas Agent Lead Lab: Can you hear me okay?
+"""
+
+
+# The same call flattened into prose - what the speaker reader used to be given.
+FLATTENED = (
+    "Santiago Villegas Agent Lead Lab: Derrick, what's going on, brother? How "
+    "are you? Good morning. Derrick Robison: Hey man, good morning, how are you?"
 )
+
+
+def test_a_sentence_is_never_read_as_a_name():
+    """This exact string reached a real card: "... Good morning. Derrick Robison"."""
+    for name in zoom.speakers(FLATTENED):
+        assert "?" not in name and "." not in name
+
+
+def test_the_company_suffix_comes_off_a_display_name():
+    """Everyone on the team has it, on every card, forever."""
+    assert zoom.strip_org(
+        "Santiago Villegas Agent Lead Lab", "santi@agentleadlab.com"
+    ) == "Santiago Villegas"
+
+
+def test_a_name_without_the_company_is_left_alone():
+    assert zoom.strip_org("Derrick Robison", "santi@agentleadlab.com") == "Derrick Robison"
+
+
+def test_a_cue_that_is_a_sentence_with_a_colon_is_not_a_speaker():
+    vtt = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nSo here's the thing: it worked.\n"
+
+    assert zoom.speakers(vtt) == ()
 
 
 def test_the_speakers_come_out_in_the_order_they_spoke():
     assert zoom.speakers(TRANSCRIPT) == (
         "Santiago Villegas Agent Lead Lab", "Derrick Robison"
-    )
+    ), "speakers() reports the labels verbatim; the company comes off later"
 
 
 def test_the_host_is_the_one_whose_name_matches_the_account():
     closer, guests = zoom.host_and_guests(TRANSCRIPT, "santi@agentleadlab.com")
 
-    assert closer == "Santiago Villegas Agent Lead Lab"
+    assert closer == "Santiago Villegas"
     assert guests == ("Derrick Robison",)
 
 
@@ -240,7 +281,7 @@ def test_an_unrecognised_host_leaves_everyone_a_guest():
     closer, guests = zoom.host_and_guests(TRANSCRIPT, "nobody@example.com")
 
     assert closer == ""
-    assert len(guests) == 2
+    assert guests == ("Santiago Villegas Agent Lead Lab", "Derrick Robison")
 
 
 def test_a_transcript_with_no_speaker_labels_names_nobody():

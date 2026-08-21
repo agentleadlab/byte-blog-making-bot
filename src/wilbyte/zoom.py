@@ -137,25 +137,90 @@ def pick_transcript(recording_files: list[dict]) -> str:
     return ""
 
 
-def speakers(transcript: str) -> tuple[str, ...]:
+def speakers(vtt: str) -> tuple[str, ...]:
     """Who spoke, in the order they first did.
 
-    Zoom's transcript labels every turn with a display name, which is the only
-    place a Zoom recording says who was actually on the call - the API gives a
-    host email and a topic and nothing else. So the names for the card come
-    from here.
+    Read from the *raw* VTT, one cue line at a time. Zoom writes each cue as
+    "Display Name: what they said", and a name only means anything at the start
+    of its own line. Run over the flattened prose instead and the pattern walks
+    straight through a sentence: "Santiago Villegas Agent Lead Lab: Derrick,
+    what's going on? How are you? Good morning. Derrick Robison: Hey man" gives
+    up "How are you? Good morning. Derrick Robison" as somebody's name, which is
+    exactly what ended up on a card.
     """
     found: list[str] = []
-    for match in _SPEAKER_LINE.finditer(transcript or ""):
+    for line in (vtt or "").splitlines():
+        line = line.strip()
+        if not line or "-->" in line or line.isdigit():
+            continue
+        if line.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
+            continue
+        match = _CUE_SPEAKER.match(line)
+        if not match:
+            continue
         name = " ".join(match.group("name").split())
-        if name and name not in found:
+        if _reads_as_a_name(name) and name not in found:
             found.append(name)
     return tuple(found)
 
 
-# "Santiago Villegas: hello" - a name, then a colon. Bounded to a handful of
-# words so a sentence containing a colon isn't read as somebody's name.
-_SPEAKER_LINE = re.compile(r"(?:^|\s)(?P<name>[A-Z][^:\n]{0,60}?):\s")
+# A cue line opening with "Name: ". Anchored to the start of the line, and the
+# name may not run past a sentence boundary.
+_CUE_SPEAKER = re.compile(r"^(?P<name>[^:]{1,48}):\s+\S")
+
+MAX_NAME_WORDS = 6
+
+
+# Words that sit inside a real name without being capitalised.
+_NAME_CONNECTORS = {"of", "and", "the", "de", "del", "la", "van", "von", "da", "di"}
+
+
+def _reads_as_a_name(text: str) -> bool:
+    """Whether a cue's label is plausibly somebody's display name.
+
+    Zoom names carry company suffixes and job titles, so word count alone can't
+    decide it. What does decide it is capitalisation: a display name is
+    capitalised throughout, and "So here's the thing: it worked" is not - which
+    is the shape of an ordinary sentence that happens to contain a colon.
+    """
+    if not text or any(mark in text for mark in ".?!"):
+        return False
+    words = text.split()
+    if not 1 <= len(words) <= MAX_NAME_WORDS:
+        return False
+    return all(
+        word[:1].isupper() or word[:1].isdigit() or word.casefold() in _NAME_CONNECTORS
+        for word in words
+    )
+
+
+def org_words(email: str) -> list[str]:
+    """`santi@agentleadlab.com` -> `["agent", "lead", "lab"]`, best effort.
+
+    Only the squashed domain is known - `agentleadlab` - so this can't split it
+    into words on its own. It doesn't need to: the caller compares against a
+    name with its spaces removed.
+    """
+    domain = (email or "").split("@")[-1].split(".")[0]
+    return [domain.casefold()] if domain else []
+
+
+def strip_org(name: str, host_email: str) -> str:
+    """`Santiago Villegas Agent Lead Lab` -> `Santiago Villegas`.
+
+    Everyone on the team has the company bolted onto their Zoom display name.
+    On a card titled after the people on the call it is noise, and it is the
+    same noise every time.
+    """
+    squashed_domain = "".join(org_words(host_email))
+    if not squashed_domain:
+        return name
+    words = name.split()
+    for take in range(1, len(words)):
+        tail = "".join(words[len(words) - take :]).casefold()
+        if tail == squashed_domain:
+            return " ".join(words[: len(words) - take])
+    return name
 
 
 def name_from_email(email: str) -> str:
@@ -163,13 +228,14 @@ def name_from_email(email: str) -> str:
     return (email or "").split("@")[0].replace(".", " ").replace("_", " ").strip().casefold()
 
 
-def host_and_guests(transcript: str, host_email: str) -> tuple[str, tuple[str, ...]]:
-    """(the closer, everyone else) from a transcript.
+def host_and_guests(vtt: str, host_email: str) -> tuple[str, tuple[str, ...]]:
+    """(the closer, everyone else) from a raw VTT transcript.
 
     The host is whoever's display name lines up with the account the recording
     is on. Everyone else was on the other side of the call.
     """
-    people = speakers(transcript)
+    people = [strip_org(person, host_email) for person in speakers(vtt)]
+    people = [person for person in people if person]
     if not people:
         return "", ()
 
@@ -350,7 +416,18 @@ class ZoomClient:
         return match_share_url(self.account_recordings(days=days), share_url)
 
     def transcript(self, recording: ZoomRecording) -> str:
-        """Fetch the VTT transcript and return it as plain text."""
+        """The transcript as plain prose, for summarising."""
+        from .youtube import parse_captions
+
+        return parse_captions(self.transcript_vtt(recording))
+
+    def transcript_vtt(self, recording: ZoomRecording) -> str:
+        """The transcript exactly as Zoom wrote it, speaker labels intact.
+
+        The labels are the only record of who was on the call, and flattening
+        them into prose first loses the line boundaries that make a name a
+        name.
+        """
         if not recording.has_transcript:
             return ""
         try:
@@ -365,7 +442,4 @@ class ZoomClient:
             raise ZoomError(
                 f"Transcript download -> HTTP {response.status_code}: {response.text[:200]}"
             )
-
-        from .youtube import parse_captions
-
-        return parse_captions(response.text)
+        return response.text

@@ -632,10 +632,15 @@ def zoom_read(config: Config, rec, found, *, client=None) -> str:
         rec.topic = found.topic
         rec.host_email = found.host_email
 
-        text = client.transcript(found)
+        from ..youtube import parse_captions
+
+        # Downloaded once, read two ways: the raw cues carry the speaker labels
+        # that name the card, and the flattened prose is what gets summarised.
+        vtt = client.transcript_vtt(found)
+        text = parse_captions(vtt)
         # Zoom's API gives a host email and a topic and nothing else, so the
         # names on the card come out of the transcript, which labels every turn.
-        closer, guests = zoom.host_and_guests(text, found.host_email)
+        closer, guests = zoom.host_and_guests(vtt, found.host_email)
         if closer:
             rec.closer = closer
         if guests:

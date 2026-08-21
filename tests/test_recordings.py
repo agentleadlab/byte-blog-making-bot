@@ -309,7 +309,7 @@ class _FakeZoom:
     def account_recordings(self, **kwargs):
         return type(self).meetings
 
-    def transcript(self, recording):
+    def transcript_vtt(self, recording):
         return type(self).text
 
     def close(self):
@@ -324,6 +324,20 @@ def _zoom_config():
             zoom_account_id="a", zoom_client_id="b", zoom_client_secret="c"
         )
     )
+
+
+# Zoom writes one speaker per cue line. Flattened prose was what broke the
+# names in the first place, so the fake serves the real shape.
+_VTT = """WEBVTT
+
+1
+00:00:08.000 --> 00:00:10.000
+Santiago Villegas: Derrick, what's going on, brother? Good morning.
+
+2
+00:00:10.500 --> 00:00:12.000
+Derrick Robison: Hey man, good morning.
+"""
 
 
 def _use_fake(monkeypatch, meetings, text=""):
@@ -372,7 +386,7 @@ def test_a_call_that_worked_carries_no_complaint(monkeypatch):
                 {"file_type": "TRANSCRIPT", "download_url": "https://x/t.vtt"}
             ],
         }],
-        text="Santiago Villegas: hello there Derrick Robison: hey man ",
+        text=_VTT,
     )
     rec = call(platform="Zoom")
 
@@ -395,7 +409,7 @@ def test_the_names_for_the_card_come_out_of_the_transcript(monkeypatch):
                 {"file_type": "TRANSCRIPT", "download_url": "https://x/t.vtt"}
             ],
         }],
-        text="Santiago Villegas: morning Derrick Robison: hey man ",
+        text=_VTT,
     )
     rec = call(platform="Zoom")
 
@@ -416,7 +430,7 @@ def test_a_picked_call_is_read_and_named(monkeypatch):
     from wilbyte import zoom
     from wilbyte.bot import jobs
 
-    _use_fake(monkeypatch, [], text="Santiago Villegas: hi Derrick Robison: hey ")
+    _use_fake(monkeypatch, [], text=_VTT)
     picked = zoom.ZoomRecording(
         topic="Derrick Robison",
         share_url=ZOOM,
@@ -445,3 +459,18 @@ def test_candidates_come_back_newest_first(monkeypatch):
     found = jobs.zoom_candidates(_zoom_config())
 
     assert [item.topic for item in found] == ["Newest", "Middle", "Older"]
+
+
+def test_a_sentence_can_never_become_the_title():
+    """This shipped: "Sales Recording 1 - Santiago Villegas Agent Lead Lab How
+    are you? Good morning. Derrick Robison". The reader is fixed upstream; this
+    is the guard that stops the next variant reaching a card."""
+    rec = call(closer="Santiago Villegas Agent Lead Lab How are you? Good morning.")
+
+    assert recordings.call_title(rec, 1) == "Sales Recording 1"
+
+
+def test_a_guest_that_is_a_sentence_is_skipped_for_one_that_is_not():
+    rec = call(closer="Santiago", guests=("Well, here is the thing. Derrick", "Derrick Robison"))
+
+    assert recordings.call_title(rec, 1) == "Sales Recording 1 - Santiago Derrick Robison"

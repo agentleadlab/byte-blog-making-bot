@@ -120,13 +120,25 @@ def call_title(rec: "Recording", number: int, *, prefix: str = TITLE_PREFIX) -> 
     "Sales Recording 3 -  " with nothing after the dash.
     """
     base = f"{prefix} {number}"
-    closer = (rec.closer or "").strip()
-    client = next((name.strip() for name in rec.guests if name and name.strip()), "")
+    closer = _as_a_name(rec.closer)
+    client = next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
 
     who = " ".join(part for part in (closer, client) if part)
     if not who:
-        who = (rec.topic or "").strip()
+        who = _as_a_name(rec.topic, words=8) or (rec.topic or "").strip()[:60]
     return f"{base} - {who}" if who else base
+
+
+# A guard, not a parser. Names arrive from a transcript's speaker labels, and
+# when that reading goes wrong it goes wrong by swallowing a sentence - which
+# is how a card ended up titled "... How are you? Good morning. Derrick
+# Robison". The upstream fix is the real one; this is what stops the next
+# variant of it reaching a title.
+def _as_a_name(text: str | None, *, words: int = 5, chars: int = 48) -> str:
+    found = " ".join((text or "").split())
+    if not found or len(found) > chars or len(found.split()) > words:
+        return ""
+    return "" if any(mark in found for mark in ".?!") else found
 
 
 def next_number(existing_titles, *, prefix: str = TITLE_PREFIX) -> int:
