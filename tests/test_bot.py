@@ -1133,3 +1133,74 @@ def test_an_emoji_icon_has_no_url_to_copy():
 
 def test_a_page_with_no_cover_is_not_an_error():
     assert jobs._asset_url(None) == ""
+
+
+# ------------------------------------- naming a call in the message itself
+
+# No menu and no slash command. A name typed beside the link settles which
+# recording it is, and a name typed on its own answers RYTE when it asks.
+
+
+def test_a_name_beside_the_link_is_kept():
+    from wilbyte.bot.client import _words_beside_link
+
+    text = "<@123> https://us06web.zoom.us/rec/share/abc.def derrick"
+
+    assert _words_beside_link(text, "https://us06web.zoom.us/rec/share/abc.def") == "derrick"
+
+
+def test_the_passcode_line_is_not_mistaken_for_a_name():
+    from wilbyte.bot.client import _words_beside_link
+
+    text = "https://us06web.zoom.us/rec/share/abc.def\nPasscode: U^M^s7Bw"
+
+    assert _words_beside_link(text, "https://us06web.zoom.us/rec/share/abc.def") == ""
+
+
+def test_the_command_word_is_not_hunted_for_as_a_name():
+    from wilbyte.bot.client import _words_beside_link
+
+    text = "<@123> recording https://fathom.video/calls/1 arnold"
+
+    assert _words_beside_link(text, "https://fathom.video/calls/1") == "arnold"
+
+
+def test_a_link_with_nothing_beside_it_names_nobody():
+    from wilbyte.bot.client import _words_beside_link
+
+    assert _words_beside_link("https://fathom.video/calls/1", "https://fathom.video/calls/1") == ""
+
+
+def test_a_bare_name_is_read_as_an_answer():
+    """"derrick" on its own must not come back as the help text."""
+    from wilbyte.bot.client import _words_beside_link
+
+    assert _words_beside_link("<@123> derrick robison", "") == "derrick robison"
+
+
+def test_the_question_expires_rather_than_answering_something_else(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    message = SimpleNamespace(channel=SimpleNamespace(id=7))
+    client._AWAITING_NAME[7] = ("rec", 0.0)
+    monkeypatch.setattr(
+        "time.monotonic", lambda: client.NAME_REPLY_WINDOW_SECONDS + 10
+    )
+
+    assert client.awaiting_name(message) is False
+    assert 7 not in client._AWAITING_NAME
+
+
+def test_an_unanswered_question_is_live_until_it_expires(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    message = SimpleNamespace(channel=SimpleNamespace(id=8))
+    monkeypatch.setattr("time.monotonic", lambda: 100.0)
+    client._AWAITING_NAME[8] = ("rec", 99.0)
+
+    assert client.awaiting_name(message) is True
+    client._AWAITING_NAME.pop(8, None)

@@ -597,9 +597,7 @@ def zoom_transcript(config: Config, rec) -> str:
             rec.note = (
                 f"I can't tell which call this link points at, so I've filed it "
                 f"without a summary rather than guess — Zoom's API can't resolve "
-                f"share links, {why}.{seen}\n"
-                "Delete this card and use `/recording` — start typing a name in "
-                "the **call** box and pick it from the list."
+                f"share links, {why}.{seen}"
             )
             return ""
 
@@ -1078,6 +1076,18 @@ def find_choice(config: Config, key: str) -> Call | None:
         if item.key == key:
             return item
     return None
+
+
+def search_calls(config: Config, typed: str, *, limit: int = 8) -> list[Call]:
+    """Recordings whose name contains what somebody typed, newest first.
+
+    The search is the same one a picker would do; it just happens in the
+    message rather than in a menu. Typing "derrick" is faster than scrolling
+    ninety recordings, and it is the thing people reach for anyway.
+    """
+    if not (typed or "").strip():
+        return []
+    return [item for item in call_choices(config) if item.matches(typed)][:limit]
 
 
 def read_chosen(config: Config, rec, call: Call) -> str:

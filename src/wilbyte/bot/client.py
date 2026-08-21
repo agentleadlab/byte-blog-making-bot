@@ -349,6 +349,13 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         await message.reply(reason, mention_author=False)
         return
 
+    # RYTE asked which call a link was, and this is the answer. Checked before
+    # parsing so a bare name - "derrick" - isn't read as a request for help.
+    if awaiting_name(message) and not mentions.RECORDING_URL_RE.search(message.content or ""):
+        async with message.channel.typing():
+            await _answer_which_call(bot, message)
+        return
+
     request = mentions.parse(message.content, max_batch=config.discord.max_batch)
     responder = MessageResponder(message)
 
@@ -726,46 +733,6 @@ def register_commands(bot: WilByteBot) -> None:
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(str(exc)))
 
-    @bot.tree.command(name="recording", description="File a sales call in the Notion gallery")
-    @app_commands.describe(
-        link="The Zoom or Fathom link to put on the card",
-        call="Start typing a name to pick the exact call — only needed if the link can't be matched",
-        passcode="The recording's passcode, if it has one",
-    )
-    async def recording_cmd(
-        interaction: discord.Interaction,
-        link: str,
-        call: str | None = None,
-        passcode: str | None = None,
-    ):
-        if not await guard(interaction, config):
-            return
-        await interaction.response.defer(thinking=True)
-        responder = InteractionResponder(interaction)
-        try:
-            await _file_recording(
-                responder, config, _AsMessage(interaction, link, passcode), chosen_key=call
-            )
-        except PIPELINE_ERRORS as exc:
-            await responder.send(embed=embeds.error(str(exc)))
-
-    @recording_cmd.autocomplete("call")
-    async def recording_call_options(interaction: discord.Interaction, typed: str):
-        """Type-to-search over the recordings RYTE can actually read.
-
-        Discord allows three seconds here, which is not enough to ask Zoom for
-        ninety recordings - so this filters a list kept warm in the background
-        and never fetches on the keystroke.
-        """
-        try:
-            found = jobs.call_choices(config)
-        except Exception:  # an autocomplete must never raise at the user
-            return []
-        matching = [item for item in found if item.matches(typed)][:25]
-        return [
-            app_commands.Choice(name=item.label, value=item.key) for item in matching
-        ]
-
     @bot.tree.command(name="corpus", description="What past copy RYTE has learned")
     async def corpus_cmd(interaction: discord.Interaction):
         if not await guard(interaction, config):
@@ -1112,17 +1079,135 @@ async def _host_images(responder: Responder, config: Config, message) -> None:
         await responder.send(f"🔗 `{attachment.filename}`\n{url}")
 
 
-class _AsMessage:
-    """A slash command dressed up as the message the filing code expects.
+# A recording waiting to be told which call it is, per channel. Kept in memory
+# on purpose: it is a question RYTE just asked out loud, and if it restarts
+# before anyone answers, the right outcome is to ask again rather than act on
+# a stale one.
+_AWAITING_NAME: dict[int, tuple] = {}
+NAME_REPLY_WINDOW_SECONDS = 900
 
-    `/recording` and a pasted link do exactly the same work, so they share one
-    path rather than growing a second copy of it that drifts.
+
+def _pending_key(message) -> int:
+    channel = getattr(message, "channel", None)
+    return getattr(channel, "id", 0) or 0
+
+
+def awaiting_name(message) -> bool:
+    """Whether RYTE has an unanswered "which call?" in this channel."""
+    from time import monotonic
+
+    found = _AWAITING_NAME.get(_pending_key(message))
+    if not found:
+        return False
+    if monotonic() - found[1] > NAME_REPLY_WINDOW_SECONDS:
+        _AWAITING_NAME.pop(_pending_key(message), None)
+        return False
+    return True
+
+
+def _words_beside_link(text: str, url: str) -> str:
+    """Whatever was typed around the link, minus the link and the passcode line.
+
+    "@RYTE <link> derrick" leaves "derrick", which is a search. The command
+    words themselves are dropped so `recording` isn't hunted for as a name.
     """
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        if line.strip().casefold().startswith(("passcode", "password", "pwd", "code")):
+            continue
+        kept.append(line)
+    remainder = " ".join(kept)
+    # Guarded: "".replace("", " ") inserts a space between every character, so
+    # an answer with no link in it came back as nothing at all.
+    if url:
+        remainder = remainder.replace(url, " ")
+    remainder = mentions.ANY_URL_RE.sub(" ", remainder)
+    remainder = mentions.MENTION_RE.sub(" ", mentions.ROLE_MENTION_RE.sub(" ", remainder))
+    words = [
+        word for word in remainder.split()
+        if word.casefold() not in mentions.RECORDING_WORDS and len(word) > 1
+    ]
+    return " ".join(words).strip()
 
-    def __init__(self, interaction, link: str, passcode: str | None):
-        self.content = f"{link}\nPasscode: {passcode}" if passcode else link
-        self.author = interaction.user
-        self.created_at = interaction.created_at
+
+async def _key_from_words(config: Config, typed: str) -> str | None:
+    """The one call those words name, or None if they name none or several."""
+    if not typed:
+        return None
+    try:
+        matches = await asyncio.to_thread(jobs.search_calls, config, typed)
+    except PIPELINE_ERRORS as exc:
+        log.warning("Couldn't search the call list: %s", exc)
+        return None
+    return matches[0].key if len(matches) == 1 else None
+
+
+async def _ask_which_call(responder: Responder, config: Config, message, rec, typed: str) -> None:
+    """Say which calls the words could mean, and wait for a plain-text answer.
+
+    No menu and no slash command: the answer is the next thing typed in the
+    channel. Searching by name beats scrolling ninety recordings, and typing a
+    name is what people reach for anyway.
+    """
+    from time import monotonic
+
+    try:
+        near = await asyncio.to_thread(jobs.search_calls, config, typed or "")
+        if not near:
+            near = (await asyncio.to_thread(jobs.call_choices, config))[:8]
+    except PIPELINE_ERRORS as exc:
+        log.warning("Couldn't list calls to ask about: %s", exc)
+        return
+
+    if not near:
+        return
+
+    _AWAITING_NAME[_pending_key(message)] = (rec, monotonic())
+    lines = [f"· **{item.topic or '(no topic)'}** — {item.when[:10]}" for item in near]
+    await responder.send(
+        ("Several of these could be it:" if typed else "Which call is this?")
+        + "\n" + "\n".join(lines)
+        + "\n\nSay `@RYTE` and enough of the name to tell them apart — "
+        "`@RYTE derrick` — and I'll read that one."
+    )
+
+
+async def _answer_which_call(bot, message) -> None:
+    """Take a plain-text name as the answer to RYTE's own question."""
+    from time import monotonic
+
+    key = _pending_key(message)
+    rec, asked_at = _AWAITING_NAME.get(key, (None, 0.0))
+    if rec is None or monotonic() - asked_at > NAME_REPLY_WINDOW_SECONDS:
+        _AWAITING_NAME.pop(key, None)
+        return
+
+    responder = MessageResponder(message)
+    typed = _words_beside_link(message.content or "", "")
+    matches = await asyncio.to_thread(jobs.search_calls, bot.config, typed)
+
+    if not matches:
+        await responder.send(f"Nothing here matches “{typed}”. Try another word from the name.")
+        return
+    if len(matches) > 1:
+        lines = [f"· **{item.topic}** — {item.when[:10]}" for item in matches]
+        await responder.send("Still more than one:\n" + "\n".join(lines))
+        return
+
+    _AWAITING_NAME.pop(key, None)
+    await _file_recording(
+        responder, bot.config, _Answered(message, rec), chosen_key=matches[0].key
+    )
+
+
+class _Answered:
+    """The original link, carried back with the name that was just typed."""
+
+    def __init__(self, message, rec):
+        self.content = rec.url if not rec.passcode else f"{rec.url}\nPasscode: {rec.passcode}"
+        self.author = message.author
+        self.created_at = message.created_at
+        self.channel = message.channel
         self.reference = None
 
 
@@ -1159,18 +1244,19 @@ async def _file_recording(
     if found.posted_on is not None:
         found.posted_on = found.posted_on.date()
 
+    # A name typed alongside the link - "@RYTE <link> derrick" - settles it
+    # before anything has to be worked out.
+    if not chosen_key:
+        chosen_key = await _key_from_words(config, _words_beside_link(text, found.url))
+
     summary = ""
     if chosen_key:
-        # Named explicitly, so there is nothing to work out. This is the way
-        # through when a link can't be resolved - and it is exact.
-        await responder.send("Reading the call you picked…")
+        # Named explicitly, so there is nothing to work out - and it is exact.
+        await responder.send("Reading that call…")
         try:
             picked = await asyncio.to_thread(jobs.find_choice, config, chosen_key)
             if picked is None:
-                await responder.send(
-                    "I don't have that call in my list any more — run the command "
-                    "again and pick from the fresh one."
-                )
+                await responder.send("I've lost track of that one — post the link again.")
                 return
             text = await asyncio.to_thread(jobs.read_chosen, config, found, picked)
             summary = found.fathom_summary or await asyncio.to_thread(
@@ -1186,6 +1272,14 @@ async def _file_recording(
         except PIPELINE_ERRORS as exc:
             # A missing summary is a worse entry, not a failed one. File it.
             log.warning("Could not summarise %s: %s", found.url, exc)
+
+    # Nothing identified the call, so ask before filing rather than after. A
+    # card with the wrong summary has to be spotted and deleted; a question
+    # only has to be answered.
+    if not summary and not chosen_key and found.note and found.platform in ("Zoom", "Fathom"):
+        await _ask_which_call(
+            responder, config, message, found, _words_beside_link(text, found.url)
+        )
 
     try:
         title, url = await asyncio.to_thread(jobs.file_recording, config, found, summary=summary)

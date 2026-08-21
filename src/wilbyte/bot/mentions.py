@@ -384,7 +384,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Paste a Zoom or Fathom link — I'll file it in Notion
 > @RYTE **recording** `<link>` — same thing, said out loud
 > Or reply to the message with the link and just say @RYTE **recording**
-> `/recording` — pick the exact call by typing its name, when a link won't match
+> @RYTE `<link>` **derrick** — add a name if I can't tell which call it is
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 
