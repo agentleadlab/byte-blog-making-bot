@@ -784,3 +784,78 @@ def test_the_card_title_uses_the_cleaned_poster_name():
     rec.posted_by = "Franklin 🐻| General Manager"
 
     assert recordings.call_title(rec) == "Sales Recording: Franklin + Derrick Robison"
+
+
+# ------------------------------- an empty summary always explains itself
+
+# Three cards have been filed with no summary and no reason given, and each
+# time the cause turned out to be somewhere different. Every way this can come
+# back empty now says which one it was.
+
+
+def test_an_empty_transcript_says_so_rather_than_returning_nothing():
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+    from wilbyte.copywriter import CopywriterError
+
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k"))
+
+    with pytest.raises(CopywriterError) as caught:
+        jobs.summarise_text(config, "   ")
+
+    assert "nothing to summarise" in str(caught.value)
+
+
+def test_a_refusal_from_claude_becomes_a_readable_reason(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+    from wilbyte.copywriter import CopywriterError
+
+    class Boom:
+        def __init__(self, **kwargs):
+            self.messages = self
+
+        def create(self, **kwargs):
+            raise RuntimeError("overloaded_error: server is busy")
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", Boom)
+    config = SimpleNamespace(
+        secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+        copy=SimpleNamespace(model="claude"),
+    )
+
+    with pytest.raises(CopywriterError) as caught:
+        jobs.summarise_text(config, "Santiago: hello. Derrick: hi.")
+
+    assert "overloaded" in str(caught.value)
+
+
+def test_claude_returning_nothing_is_reported_with_its_stop_reason(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+    from wilbyte.copywriter import CopywriterError
+
+    class Empty:
+        def __init__(self, **kwargs):
+            self.messages = self
+
+        def create(self, **kwargs):
+            return SimpleNamespace(content=[], stop_reason="max_tokens")
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", Empty)
+    config = SimpleNamespace(
+        secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+        copy=SimpleNamespace(model="claude"),
+    )
+
+    with pytest.raises(CopywriterError) as caught:
+        jobs.summarise_text(config, "Santiago: hello. Derrick: hi.")
+
+    assert "max_tokens" in str(caught.value)

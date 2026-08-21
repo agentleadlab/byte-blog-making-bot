@@ -1241,8 +1241,11 @@ async def _file_recording(
         try:
             summary = await asyncio.to_thread(jobs.summarise_call, config, found)
         except PIPELINE_ERRORS as exc:
-            # A missing summary is a worse entry, not a failed one. File it.
+            # A missing summary is a worse entry, not a failed one - so file it,
+            # but say why. Three cards have now been filed silently without one,
+            # and each time the reason turned out to be somewhere else.
             log.warning("Could not summarise %s: %s", found.url, exc)
+            found.note = found.note or f"No summary — {exc}"
 
     # Nothing identified it, so ask - and wait. Filing first and asking after
     # posts a card that is already wrong, which somebody then has to notice.
@@ -1263,7 +1266,7 @@ async def _file_recording(
             )
         except PIPELINE_ERRORS as exc:
             log.warning("Could not read the chosen call: %s", exc)
-            found.note = f"Couldn't read that call: {exc}"
+            found.note = f"No summary — {exc}"
 
     try:
         title, url = await asyncio.to_thread(jobs.file_recording, config, found, summary=summary)

@@ -748,35 +748,54 @@ def summarise_text(config: Config, text: str) -> str:
     Separate from `summarise_call` because a call picked by hand has its
     transcript in hand already, and fetching it twice to summarise it once
     would be silly.
+
+    Every way this can come back empty is turned into something that says so.
+    A card filed with no summary and no explanation has now happened three
+    times, and each time the reason was somewhere else entirely.
     """
+    from ..copywriter import CopywriterError
+
     if not (text or "").strip():
-        return ""
+        raise CopywriterError("the transcript came back empty, so there was nothing to summarise")
 
     from anthropic import Anthropic
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
-    response = client.messages.create(
-        model=config.copy.model,
-        max_tokens=1200,
-        system=(
-            "You summarise sales calls for an insurance lead company's internal "
-            "library. Be specific and useful to a rep reading it later. Never "
-            "invent anything that wasn't said."
-        ),
-        messages=[{
-            "role": "user",
-            "content": (
-                "Summarise this sales call. Give a two-sentence overview, then "
-                "bullets for: what the prospect wanted, objections raised, how "
-                "they were handled, and what was agreed. Use '- ' for bullets.\n\n"
-                f"{text}"
+    try:
+        response = client.messages.create(
+            model=config.copy.model,
+            # A 45-minute call summarised properly runs past 1200, and Claude
+            # stops mid-sentence rather than shortening itself.
+            max_tokens=4000,
+            system=(
+                "You summarise sales calls for an insurance lead company's internal "
+                "library. Be specific and useful to a rep reading it later. Never "
+                "invent anything that wasn't said."
             ),
-        }],
-    )
-    return "".join(
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Summarise this sales call. Give a two-sentence overview, then "
+                    "sections for: what the prospect wanted, objections raised, how "
+                    "they were handled, and what was agreed. Put each section title "
+                    "on its own line in **bold**, and use '- ' for bullets.\n\n"
+                    f"{text}"
+                ),
+            }],
+        )
+    except Exception as exc:  # anthropic's errors are not ours to enumerate
+        raise CopywriterError(f"Claude couldn't summarise the call: {_short(exc)}") from exc
+
+    written = "".join(
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
+    if not written:
+        raise CopywriterError(
+            "Claude returned nothing for that transcript "
+            f"(stop reason: {getattr(response, 'stop_reason', 'unknown')})"
+        )
+    return written
 
 
 def raw_post_fields(config: Config, *, limit: int = 40) -> list[dict]:
