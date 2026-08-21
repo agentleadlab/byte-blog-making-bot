@@ -147,6 +147,18 @@ def _without_links(text: str) -> str:
 # alone is the filing command, and "send me the link" alone is about anything
 # at all.
 _WANTS = ("need", "find", "send", "share", "get", "where", "which", "show", "pull", "give", "want")
+
+# Asking the SOP library. "sop" is unambiguous enough to stand on its own -
+# nobody says it by accident - so unlike a recording this needs no second half.
+_SOP_WORDS = ("sop", "sops", "standard operating", "procedure", "how do we", "how do i")
+
+
+def _asks_for_an_sop(lowered: str) -> bool:
+    without_links = _without_links(lowered)
+    if not any(phrase in without_links for phrase in _SOP_WORDS):
+        return False
+    # "sop for the new hires <link>" with a link in it is somebody filing one.
+    return not ANY_URL_RE.search(lowered)
 _THE_THING = ("recording", "recordings", "sales call", "call link", "notion", "video", "videos")
 
 # Words that mean somebody wants copy written. "video" is an alias for the
@@ -228,6 +240,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Asking *for* a recording, rather than handing one over. The difference is
     # a link: "recording <link>" files one, "need the recording for Derrick"
     # fetches one back out of the gallery.
+    if _asks_for_an_sop(lowered):
+        return MentionRequest(action="findsop", brief=text)
+
     if _asks_for_a_card(lowered) and not RECORDING_URL_RE.search(text):
         return MentionRequest(action="findcall", brief=text)
 
@@ -430,7 +445,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **need the recording for Derrick Robison** — I'll send the card back
 > New calls file themselves every 15 minutes — @RYTE **sweep** does it now
 
-**The daily board**
+**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n\n**The daily board**
 > @RYTE **board** — what's on Trello today, and what's missing
 > @RYTE **rollover** — what tonight's carry-over would move (shows only)
 > @RYTE **host** — attach an image, get a permanent public link back

@@ -1685,3 +1685,183 @@ def rollover_plan(config: Config, *, day=None) -> str:
         return report
     finally:
         client.close()
+
+
+# ---------------------------------------------------------- the SOP library
+
+SOP_ICON = "📘"
+
+
+def sop_summary(config: Config, sop) -> str:
+    """A short write-up of what an SOP covers, from whatever can be read.
+
+    The summary is not decoration here - it is what "do we have an SOP about
+    lead forms" gets matched against, so a card without one is a card nobody
+    finds. Every source that can be read is read; the ones that can't say so.
+    """
+    from ..copywriter import CopywriterError
+
+    material: list[str] = []
+    if sop.body.strip():
+        material.append(f"What was written with it:\n{sop.body.strip()}")
+
+    if sop.kind == "YouTube":
+        try:
+            video = youtube.video_from_link(sop.url)
+            material.append(youtube.fetch_transcript(video.video_id).text)
+        except Exception as exc:
+            sop.note = f"Couldn't read the video: {_short(exc)}"
+    elif sop.url:
+        described = describe_page(sop.url)
+        if described:
+            material.append(f"What the page says about itself:\n{described}")
+        elif not sop.body.strip() and not sop.images:
+            sop.note = (
+                f"{sop.kind} pages can't be read from here, so this is filed under "
+                "its title and link."
+            )
+
+    if sop.audio and not material:
+        sop.note = "A voice note can't be transcribed from here — filed under its title."
+
+    if not material and not sop.images:
+        return ""
+
+    try:
+        return write_sop_summary(config, sop, "\n\n".join(material))
+    except CopywriterError as exc:
+        sop.note = f"No summary — {exc}"
+        return ""
+
+
+def describe_page(url: str, *, timeout: float = 15.0) -> str:
+    """A page's own title and description, for a link that can't be read properly.
+
+    Loom, Drive and the rest all publish og: tags. It is not a transcript, but
+    "Creating Lead Form (Internal Strategy)" is a great deal more findable than
+    a bare URL.
+    """
+    import re as _re
+
+    import httpx
+
+    try:
+        response = httpx.get(
+            url,
+            follow_redirects=True,
+            timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; RYTE/1.0)", "Accept": "text/html"},
+        )
+    except httpx.HTTPError:
+        return ""
+    if response.status_code >= 400:
+        return ""
+
+    found = []
+    for prop in ("og:title", "og:description", "description"):
+        match = _re.search(
+            rf"<meta[^>]+(?:property|name)=[\"']{prop}[\"'][^>]+content=[\"']([^\"']+)",
+            response.text,
+            _re.IGNORECASE,
+        )
+        if match:
+            text = " ".join(match.group(1).split())
+            if text and text.casefold() not in ("undefined", "none") and text not in found:
+                found.append(text)
+    return "\n".join(found)[:2000]
+
+
+def write_sop_summary(config: Config, sop, material: str) -> str:
+    """Ask Claude what this procedure covers, reading screenshots where there are any."""
+    from ..copywriter import CopywriterError
+
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+
+    content: list[dict] = []
+    for url in sop.images[:4]:
+        content.append({"type": "image", "source": {"type": "url", "url": url}})
+    content.append({
+        "type": "text",
+        "text": (
+            f"This was posted in our team's SOP channel, titled “{sop.title}” "
+            f"({sop.kind}).\n\n{material}\n\n"
+            "Write a short entry for an internal SOP library. Open with one or "
+            "two sentences saying what this procedure is for and when somebody "
+            "would need it, then '- ' bullets for the steps or key points. Put "
+            "any section title on its own line in **bold**. Say only what the "
+            "material supports — if it is thin, keep the entry short rather "
+            "than inventing steps."
+        ),
+    })
+
+    try:
+        response = client.messages.create(
+            model=config.copy.model,
+            max_tokens=2000,
+            system=(
+                "You write entries for an internal SOP library at a lead-generation "
+                "company. Be concrete and practical. Never invent a step that isn't "
+                "in the material you were given."
+            ),
+            messages=[{"role": "user", "content": content}],
+        )
+    except Exception as exc:
+        raise CopywriterError(f"Claude couldn't read it: {_short(exc)}") from exc
+
+    written = "".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+    if not written:
+        raise CopywriterError(
+            f"Claude returned nothing (stop reason: {getattr(response, 'stop_reason', 'unknown')})"
+        )
+    return written
+
+
+def file_sop(config: Config, sop, *, summary: str = "") -> tuple[str, str]:
+    """Put one SOP in the Notion library. Returns (title, page url)."""
+    from .. import notion, sops
+
+    config.secrets.require("notion_token", "notion_sop_page_id")
+    page_id = config.secrets.notion_sop_page_id
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        database_id = client.find_child_database(page_id)
+        if not database_id:
+            database_id = client.create_database(
+                page_id, "SOPs", sops.database_schema()
+            )
+        client.add_columns(database_id, sops.EXTRA_COLUMNS)
+
+        title = sops.card_title(sop)
+        cover_url, icon_url = gallery_art(config, client, page_id)
+        created = client.create_page(
+            database_id,
+            sops.page_properties(sop, title, summary=summary),
+            children=sops.page_blocks(sop, summary),
+            cover_url=cover_url,
+            icon_url=icon_url,
+            icon_emoji=None if icon_url else SOP_ICON,
+        )
+    finally:
+        client.close()
+    return title, str(created.get("url") or "")
+
+
+def find_sops(config: Config, topic: str, *, limit: int = 5) -> list[tuple[str, str, str]]:
+    """SOPs matching a topic somebody asked about."""
+    from .. import notion, sops
+
+    config.secrets.require("notion_token", "notion_sop_page_id")
+    client = notion.NotionClient(config.secrets.notion_token)
+    try:
+        database_id = client.find_child_database(config.secrets.notion_sop_page_id)
+        if not database_id:
+            return []
+        rows = client.query_database(database_id)
+    finally:
+        client.close()
+    return sops.matching_rows(rows, topic, limit=limit)

@@ -240,7 +240,9 @@ def database_schema(name_property: str = "Name") -> dict:
 COLUMN_ALIASES = {
     "link": ("link", "url", "video", "recording", "call"),
     "passcode": ("passcode", "password", "code", "pwd"),
-    "description": ("description", "notes", "details", "summary"),
+    "description": ("description", "notes", "details"),
+    "summary": ("summary", "notes", "description", "what it covers"),
+    "kind": ("kind", "type", "format", "source"),
 }
 
 

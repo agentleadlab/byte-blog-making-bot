@@ -269,3 +269,12 @@ def numbered(text: str) -> dict:
         "type": "numbered_list_item",
         "numbered_list_item": {"rich_text": _text(text)},
     }
+
+
+def image(url: str) -> dict:
+    """An external image block. Notion never re-hosts, so the URL has to last."""
+    return {
+        "object": "block",
+        "type": "image",
+        "image": {"type": "external", "external": {"url": url}},
+    }

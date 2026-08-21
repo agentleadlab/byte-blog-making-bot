@@ -82,7 +82,9 @@ def _intents() -> discord.Intents:
     # here rather than making it a second thing to remember: a watcher that
     # silently sees blank messages is worse than one that fails at login with a
     # message naming the switch to flip.
-    if _id_list(os.getenv("DISCORD_WATCH_CHANNEL_IDS")):
+    if _id_list(os.getenv("DISCORD_WATCH_CHANNEL_IDS")) or _id_list(
+        os.getenv("DISCORD_SOP_CHANNEL_IDS")
+    ):
         intents.message_content = True
     return intents
 
@@ -204,6 +206,9 @@ class WilByteBot(discord.Client):
             return
         if is_watched(message, self.config):
             await handle_watched(self, message)
+            return
+        if is_sop_channel(message, self.config):
+            await handle_sop_post(self, message)
 
 
 # ---------------------------------------------------------------- when to speak
@@ -247,6 +252,73 @@ def is_watched(message, config: Config) -> bool:
     """
     watched = config.secrets.discord_watch_channel_ids
     return bool(watched) and str(getattr(message, "channel", None) and message.channel.id) in watched
+
+
+def is_sop_channel(message, config: Config) -> bool:
+    """True for a message in a channel that feeds the SOP library.
+
+    Unlike the watched announcement channel, this one is ours: RYTE files what
+    lands here and says so, because a library nobody can see being filled is
+    one nobody trusts.
+    """
+    channels = config.secrets.discord_sop_channel_ids
+    return bool(channels) and str(
+        getattr(message, "channel", None) and message.channel.id
+    ) in channels
+
+
+def message_files(message) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(images, audio) attached to a message, by what Discord says they are."""
+    images: list[str] = []
+    audio: list[str] = []
+    for attachment in getattr(message, "attachments", None) or []:
+        kind = str(getattr(attachment, "content_type", "") or "").casefold()
+        url = str(getattr(attachment, "url", "") or "")
+        if not url:
+            continue
+        if kind.startswith("image/"):
+            images.append(url)
+        elif kind.startswith("audio/") or url.endswith(".ogg"):
+            audio.append(url)
+    return tuple(images), tuple(audio)
+
+
+async def handle_sop_post(bot: WilByteBot, message) -> None:
+    """File what somebody posted in the SOP channel."""
+    from .. import sops
+
+    if getattr(message.author, "bot", False):
+        return
+
+    images, audio = message_files(message)
+    sop = sops.find_sop(message.content or "", images=images, audio=audio)
+    if sop is None:
+        # Chatter. Filing it is how a library stops being worth searching.
+        return
+
+    sop.posted_by = getattr(message.author, "display_name", "") or ""
+    posted = getattr(message, "created_at", None)
+    sop.posted_on = posted.date() if posted is not None else None
+
+    responder = MessageResponder(message)
+    async with message.channel.typing():
+        summary = ""
+        try:
+            summary = await asyncio.to_thread(jobs.sop_summary, bot.config, sop)
+        except PIPELINE_ERRORS as exc:
+            log.warning("Couldn't read the SOP %s: %s", sop.title, exc)
+            sop.note = sop.note or f"No summary — {exc}"
+
+        try:
+            title, url = await asyncio.to_thread(
+                jobs.file_sop, bot.config, sop, summary=summary
+            )
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(f"Couldn't file that SOP\n{exc}"))
+            return
+
+    tail = " with a summary" if summary else (f"\n⚠ {sop.note}" if sop.note else "")
+    await responder.send(f"📘 **{title}** filed{tail}\n{url}")
 
 
 def watched_links(message) -> tuple[str, ...]:
@@ -444,6 +516,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                     await responder.send("Nothing new — everything recent is already filed.")
                     return
                 await _file_new_recordings(bot)
+                return
+
+            if request.action == "findsop":
+                await _send_sops(responder, config, request.brief or "")
                 return
 
             if request.action == "board":
@@ -1178,6 +1254,29 @@ async def _host_images(responder: Responder, config: Config, message) -> None:
             await responder.send(embed=embeds.error(f"Couldn't host {attachment.filename}\n{exc}"))
             continue
         await responder.send(f"🔗 `{attachment.filename}`\n{url}")
+
+
+async def _send_sops(responder: Responder, config: Config, asked: str) -> None:
+    """Answer "do we have an SOP for X" out of the Notion library."""
+    from .. import sops
+
+    topic = sops.wanted_topic(asked)
+    try:
+        found = await asyncio.to_thread(jobs.find_sops, config, topic)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the SOP library\n{exc}"))
+        return
+
+    if not found:
+        await responder.send(
+            f"Nothing in the SOP library for “{topic}” yet." if topic
+            else "The SOP library is empty so far."
+        )
+        return
+
+    lines = [f"📘 **{title}**\n{link or card}" for title, card, link in found]
+    head = f"{len(found)} SOP(s) for “{topic}”:" if topic else "The most recent:"
+    await responder.send(f"{head}\n" + "\n".join(lines))
 
 
 async def _send_cards(responder: Responder, config: Config, asked: str) -> None:

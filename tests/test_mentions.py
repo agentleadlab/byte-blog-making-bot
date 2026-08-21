@@ -504,3 +504,32 @@ def test_rollover_words_are_their_own_thing(word):
 
 def test_a_board_word_inside_a_link_is_not_the_command():
     assert parse(f"{BOT} https://trello.com/b/abc/board").action != "board"
+
+
+# ------------------------------------------------ asking the SOP library
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "do we have any SOP about lead forms?",
+        "sop for trending music",
+        "what's the procedure for internal ads",
+        "how do we create a lead form",
+        "is there a standard operating procedure for lead orders",
+    ],
+)
+def test_asking_about_an_sop_is_a_lookup(text):
+    assert parse(f"{BOT} {text}").action == "findsop"
+
+
+def test_posting_an_sop_with_a_link_is_not_a_question():
+    """"SOP for the new hires <link>" is somebody filing one."""
+    request = parse(f"{BOT} sop for onboarding https://loom.com/share/abc")
+
+    assert request.action != "findsop"
+
+
+def test_a_recording_question_is_still_a_recording_question():
+    """Both are lookups; they read different libraries."""
+    assert parse(f"{BOT} need the sales recording for Derrick").action == "findcall"

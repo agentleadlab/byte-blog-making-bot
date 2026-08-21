@@ -1,0 +1,214 @@
+"""Filing what lands in the SOP channel, and finding it again later.
+
+The posts look like this - a heading somebody typed, then the thing itself:
+
+    **How to Create Internal Ads LeadForm**
+    https://www.loom.com/share/56abe3196b4f482caa68363e00355377
+
+The filing is not the point. Being able to ask "do we have an SOP for lead
+forms?" three weeks later is.
+"""
+
+import pytest
+
+from wilbyte import sops
+
+LOOM = "https://www.loom.com/share/56abe3196b4f482caa68363e00355377"
+TUBE = "https://www.youtube.com/watch?v=abc123"
+
+
+# ------------------------------------------------------ reading the post
+
+
+def test_the_heading_above_the_link_names_the_card():
+    sop = sops.find_sop(f"**How to Create Internal Ads LeadForm**\n{LOOM}")
+
+    assert sop.title == "How to Create Internal Ads LeadForm"
+    assert sop.kind == "Loom"
+    assert sop.url == LOOM
+
+
+def test_markdown_around_the_heading_is_not_part_of_it():
+    """People bold or italicise the heading far more often than not."""
+    assert sops.find_sop(f"*How to Find Trending Music*\n{TUBE}").title == (
+        "How to Find Trending Music"
+    )
+
+
+def test_a_mention_is_not_mistaken_for_the_heading():
+    sop = sops.find_sop(f"<@123> **Lead Order Process**\n{LOOM}")
+
+    assert sop.title == "Lead Order Process"
+
+
+@pytest.mark.parametrize(
+    "text,kind",
+    [
+        (f"x {LOOM}", "Loom"),
+        (f"x {TUBE}", "YouTube"),
+        ("x https://docs.google.com/document/d/1", "Drive"),
+        ("x https://example.com/how-to", "Link"),
+    ],
+)
+def test_each_source_is_recognised(text, kind):
+    assert sops.find_sop(text).kind == kind
+
+
+def test_a_screenshot_with_no_link_is_still_an_sop():
+    sop = sops.find_sop("Where the retarget toggle lives", images=("https://cdn/x.png",))
+
+    assert sop.kind == "Screenshot"
+    assert sop.images == ("https://cdn/x.png",)
+
+
+def test_a_voice_note_is_still_an_sop():
+    sop = sops.find_sop("how I do the handoff", audio=("https://cdn/x.ogg",))
+
+    assert sop.kind == "Voice note"
+
+
+def test_something_written_out_in_full_needs_no_link_at_all():
+    written = (
+        "To pull the weekly numbers: open the Auto-Deploys sheet, filter to last "
+        "week, copy the totals column into the Monday card."
+    )
+
+    assert sops.find_sop(written).kind == "Written"
+
+
+def test_chatter_is_not_filed():
+    """A library full of "nice one" is a library nobody searches twice."""
+    for text in ("nice one", "🔥", "thanks!", "will do", ""):
+        assert sops.find_sop(text) is None
+
+
+def test_a_link_on_its_own_still_gets_a_name():
+    """An untitled SOP is one nobody finds again, so it gets the best we have."""
+    assert sops.find_sop(LOOM).title
+
+
+def test_the_card_is_titled_for_the_library():
+    sop = sops.find_sop(f"**Lead Order Process**\n{LOOM}")
+
+    assert sops.card_title(sop) == "SOP: Lead Order Process"
+
+
+# ------------------------------------------------------------- the card
+
+
+def sop_for(**kwargs):
+    base = {"title": "Lead Order Process", "kind": "Loom", "url": LOOM}
+    return sops.Sop(**{**base, **kwargs})
+
+
+def test_the_summary_is_a_column_not_only_page_content():
+    """Notion won't search inside a page's blocks, and the summary is what
+    "do we have an SOP about X" is matched against."""
+    props = sops.page_properties(sop_for(), "SOP: Lead Order Process", summary="Covers **forms**.")
+
+    assert props["Summary"]["rich_text"][0]["text"]["content"] == "Covers forms."
+    assert props["Link"]["url"] == LOOM
+    assert props["Kind"]["rich_text"][0]["text"]["content"] == "Loom"
+
+
+def test_an_empty_summary_leaves_the_column_alone():
+    assert "Summary" not in sops.page_properties(sop_for(), "SOP: x", summary="   ")
+
+
+def test_the_card_opens_with_the_link_and_its_details():
+    blocks = sops.page_blocks(sop_for(posted_by="K2"))
+
+    assert blocks[0]["bookmark"]["url"] == LOOM
+    detail = "".join(
+        run["text"]["content"] for run in blocks[1]["paragraph"]["rich_text"]
+    )
+    assert "Loom" in detail and "K2" in detail
+
+
+def test_screenshots_go_into_the_card():
+    blocks = sops.page_blocks(sop_for(kind="Screenshot", url="", images=("https://cdn/a.png",)))
+
+    assert any(block["type"] == "image" for block in blocks)
+
+
+def test_a_card_with_no_summary_says_why_rather_than_going_quiet():
+    blocks = sops.page_blocks(sop_for(note="A voice note can't be transcribed from here."))
+    text = "".join(
+        run["text"]["content"]
+        for block in blocks if block["type"] == "paragraph"
+        for run in block["paragraph"]["rich_text"]
+    )
+
+    assert "voice note" in text.casefold()
+
+
+def test_what_was_typed_is_kept_verbatim_under_its_own_heading():
+    blocks = sops.page_blocks(sop_for(body="Open the sheet, filter to last week."))
+    kinds = [block["type"] for block in blocks]
+
+    assert "heading_2" in kinds
+
+
+# ----------------------------------------------------- asking for one back
+
+
+def test_the_asking_is_stripped_to_leave_the_topic():
+    assert sops.wanted_topic("<@1> hey Ryte do we have any SOP about lead forms?") == (
+        "lead forms"
+    )
+
+
+def test_a_how_do_we_question_reduces_to_its_subject():
+    assert sops.wanted_topic("how do we create internal ads") == "create internal ads"
+
+
+def row(title, summary="", link="", url="https://notion.so/x"):
+    return {
+        "url": url,
+        "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": title}]},
+            "Summary": {"type": "rich_text", "rich_text": [{"plain_text": summary}]},
+            "Link": {"type": "url", "url": link},
+        },
+    }
+
+
+def test_a_title_match_comes_before_a_summary_match():
+    """Somebody asking about lead forms wants the SOP called that, first."""
+    rows = [
+        row("SOP: Weekly Numbers", summary="mentions the lead form in passing"),
+        row("SOP: How to Create Internal Ads LeadForm"),
+    ]
+
+    found = sops.matching_rows(rows, "lead form")
+
+    assert found[0][0] == "SOP: How to Create Internal Ads LeadForm"
+    assert len(found) == 2, "the passing mention is still an answer half the time"
+
+
+def test_the_summary_is_searched_not_just_the_title():
+    rows = [row("SOP: Weekly Numbers", summary="how to export the retargeting audience")]
+
+    assert sops.matching_rows(rows, "retargeting") != []
+
+
+def test_every_word_has_to_match():
+    rows = [row("SOP: Lead Order Process"), row("SOP: Ad Order Process")]
+
+    assert len(sops.matching_rows(rows, "lead order")) == 1
+
+
+def test_the_recording_link_comes_back_so_nobody_has_to_click_through():
+    rows = [row("SOP: Lead Order Process", link=LOOM)]
+
+    assert sops.matching_rows(rows, "lead order")[0][2] == LOOM
+
+
+def test_asking_about_nothing_in_particular_returns_the_library():
+    rows = [row("SOP: One"), row("SOP: Two")]
+
+    assert len(sops.matching_rows(rows, "")) == 2
+
+
+def test_a_topic_nobody_has_written_up_matches_nothing():
+    assert sops.matching_rows([row("SOP: Lead Order Process")], "payroll") == []
