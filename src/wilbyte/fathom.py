@@ -16,6 +16,7 @@ print what actually arrived when something doesn't match.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -178,6 +179,53 @@ def match_share_url(meetings: list[dict], share_url: str) -> FathomCall | None:
             if share_key(str((meeting or {}).get(field) or "")) == wanted:
                 return as_call(meeting)
     return None
+
+
+def meeting_id(meeting: dict) -> str:
+    """A stable identity for one Fathom call."""
+    for field in ("id", "recording_id", "meeting_id", "uuid"):
+        value = (meeting or {}).get(field)
+        if value:
+            return str(value)
+    return share_key(str(first_of(meeting, URL_FIELDS) or ""))
+
+
+def newest_unfiled(
+    meetings: list[dict], filed: set[str] | frozenset[str], *, within_days: int = 14
+) -> FathomCall | None:
+    """The most recent call not already in the gallery.
+
+    The same fallback Zoom needed, for the same reason: a share link that
+    doesn't line up with what the API returns leaves the call unidentifiable,
+    and a card with no summary is the cost. A recording is posted within a day
+    or two of the call, so recency is a sound tiebreak.
+    """
+    cutoff = (date.today() - timedelta(days=within_days)).isoformat()
+    fresh = [
+        meeting for meeting in meetings or []
+        if meeting_id(meeting) not in (filed or set())
+        and str(as_call(meeting).started_at or "")[:10] >= cutoff
+    ]
+    if not fresh:
+        return None
+    fresh.sort(key=lambda meeting: str(as_call(meeting).started_at or ""), reverse=True)
+    return as_call(fresh[0])
+
+
+def choose(
+    meetings: list[dict],
+    *,
+    link: str = "",
+    filed: set[str] | frozenset[str] | None = None,
+) -> tuple[FathomCall | None, str]:
+    """Which call was posted, and how that was decided."""
+    found = match_share_url(meetings, link)
+    if found is not None:
+        return found, "the link"
+    found = newest_unfiled(meetings, filed or set())
+    if found is not None:
+        return found, "it being the most recent call not filed yet"
+    return None, ""
 
 
 def describe(meetings: list[dict], limit: int = 3) -> str:

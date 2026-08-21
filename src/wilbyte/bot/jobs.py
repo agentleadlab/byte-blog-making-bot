@@ -649,9 +649,12 @@ def fathom_transcript(config: Config, rec) -> str:
     """
     from .. import fathom
 
+    from .. import recordings
+
     client = fathom.FathomClient(config.secrets.fathom_api_key)
     try:
-        found, seen = client.find(rec.url)
+        seen = client.meetings()
+        found, how = fathom.choose(seen, link=rec.url, filed=recordings.filed_ids())
         if found is None:
             # Say what was actually there rather than "not found". A link that
             # doesn't match is exactly when the response shape matters.
@@ -662,6 +665,9 @@ def fathom_transcript(config: Config, rec) -> str:
             )
             rec.note = f"I couldn't find that call in Fathom. {fathom.describe(seen)}"
             return ""
+
+        rec.matched_by = how
+        recordings.remember_filed(fathom.meeting_id(found.raw or {}))
         rec.topic = found.title
         rec.closer = found.recorded_by
         rec.guests = found.guests

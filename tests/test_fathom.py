@@ -147,3 +147,84 @@ def test_a_missed_match_can_report_what_came_back():
 
 def test_an_empty_response_says_so_plainly():
     assert "no calls at all" in fathom.describe([])
+
+
+# ------------------------------- identifying a call when the link won't
+
+# Zoom taught this the hard way: a share link that doesn't line up with what
+# the API returns leaves the call unidentifiable, and the cost is a card with
+# no summary. Fathom gets the same fallback rather than waiting to find out.
+
+
+def fathom_meeting(**extra):
+    base = {
+        "id": "m1",
+        "title": "Strategy Session — Brice Barker",
+        "url": "https://fathom.video/share/abc123",
+        "recording_start_time": "2026-08-19T10:00:00Z",
+        "recorded_by": {"name": "Tre Tarpley"},
+    }
+    return {**base, **extra}
+
+
+def test_the_link_is_used_when_it_matches():
+    found, how = fathom.choose([fathom_meeting()], link="https://fathom.video/share/abc123")
+
+    assert found.title == "Strategy Session — Brice Barker"
+    assert how == "the link"
+
+
+def test_the_newest_unfiled_call_is_the_fallback(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 21)
+
+    monkeypatch.setattr(fathom, "date", Today)
+    meetings = [
+        fathom_meeting(id="old", title="Older", recording_start_time="2026-08-17T10:00:00Z"),
+        fathom_meeting(id="new", title="Newest", recording_start_time="2026-08-19T10:00:00Z"),
+    ]
+
+    found, how = fathom.choose(meetings, link="https://fathom.video/share/nope")
+
+    assert found.title == "Newest"
+    assert "not filed yet" in how
+
+
+def test_an_already_filed_call_is_skipped(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 21)
+
+    monkeypatch.setattr(fathom, "date", Today)
+    meetings = [
+        fathom_meeting(id="old", title="Older", recording_start_time="2026-08-17T10:00:00Z"),
+        fathom_meeting(id="new", title="Newest", recording_start_time="2026-08-19T10:00:00Z"),
+    ]
+
+    found, _ = fathom.choose(meetings, link="https://fathom.video/share/nope", filed={"new"})
+
+    assert found.title == "Older"
+
+
+def test_nothing_recent_means_no_guess(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 12, 1)
+
+    monkeypatch.setattr(fathom, "date", Today)
+
+    assert fathom.choose([fathom_meeting()], link="https://fathom.video/share/nope") == (None, "")
+
+
+def test_a_call_carries_an_id_even_without_an_id_field():
+    assert fathom.meeting_id({"url": "https://fathom.video/share/abc123"}) == "abc123"
