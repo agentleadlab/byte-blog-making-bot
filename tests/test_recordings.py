@@ -246,3 +246,44 @@ def test_the_gallery_has_the_columns_that_were_asked_for():
     assert set(schema) == {"Name", "Link", "Passcode", "Date"}
     assert schema["Name"] == {"title": {}}
     assert schema["Link"] == {"url": {}}
+
+
+# ------------------------------------------------------ naming the card
+
+
+def call(**kwargs):
+    return recordings.Recording(**{"url": ZOOM, "platform": "Fathom", **kwargs})
+
+
+def test_the_card_is_named_after_the_closer_and_the_agent():
+    """Matching how these were named by hand, so the gallery reads the same."""
+    rec = call(closer="Santiago Villegas", guests=("Derrick Robison",))
+
+    assert recordings.call_title(rec, "Sales Recording 12") == (
+        "Santiago Villegas and Derrick Robison"
+    )
+
+
+def test_the_first_guest_is_the_agent():
+    rec = call(closer="Santiago", guests=("Derrick Robison", "Someone Else"))
+
+    assert recordings.call_title(rec, "x") == "Santiago and Derrick Robison"
+
+
+def test_a_closer_with_no_guest_still_names_the_card():
+    assert recordings.call_title(call(closer="Santiago"), "x") == "Santiago"
+
+
+def test_the_meeting_title_is_the_next_best_thing():
+    assert recordings.call_title(call(topic="Daily Team Call"), "x") == "Daily Team Call"
+
+
+def test_a_call_with_no_names_at_all_falls_back_to_the_number():
+    """A card called "Sales Recording 12" is findable; one called "" is not."""
+    assert recordings.call_title(call(), "Sales Recording 12") == "Sales Recording 12"
+
+
+def test_blank_guest_names_are_not_mistaken_for_an_agent():
+    rec = call(closer="Santiago", guests=("", "   ", "Derrick Robison"))
+
+    assert recordings.call_title(rec, "x") == "Santiago and Derrick Robison"

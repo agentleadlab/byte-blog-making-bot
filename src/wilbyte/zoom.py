@@ -183,7 +183,12 @@ class ZoomClient:
                 }
                 if token:
                     params["next_page_token"] = token
-                data = self._get(f"/accounts/{self._account_id}/recordings", **params)
+                # `me` rather than the account id on purpose. Zoom reads a
+                # literal account id as a master-account operation and demands
+                # the `:master` scope; `me` is the same account through the
+                # `:admin` scope that an ordinary Server-to-Server app is
+                # granted.
+                data = self._get("/accounts/me/recordings", **params)
                 meetings.extend(data.get("meetings") or [])
                 token = data.get("next_page_token")
                 if not token:

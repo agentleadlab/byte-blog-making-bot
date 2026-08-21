@@ -29,7 +29,7 @@ class FathomError(RuntimeError):
 
 # Where a value might live, in the order worth trying.
 TITLE_FIELDS = ("title", "meeting_title", "name", "topic")
-URL_FIELDS = ("url", "share_url", "recording_url", "share_link", "permalink")
+URL_FIELDS = ("url", "share_url", "meeting_url", "recording_url", "share_link", "permalink")
 TRANSCRIPT_FIELDS = ("transcript", "transcript_text", "segments", "transcript_segments")
 SPEAKER_FIELDS = ("speaker", "speaker_name", "display_name", "name")
 
@@ -65,11 +65,48 @@ class FathomCall:
     url: str
     started_at: str = ""
     participants: tuple[str, ...] = ()
+    recorded_by: str = ""
+    guests: tuple[str, ...] = ()
+    summary: str = ""
     raw: dict | None = None
+
+
+def recorded_by(meeting: dict) -> str:
+    """Whose Fathom recorded the call - the closer, for naming the card."""
+    value = (meeting or {}).get("recorded_by")
+    if isinstance(value, dict):
+        return str(first_of(value, SPEAKER_FIELDS) or value.get("email") or "").strip()
+    return str(value or "").strip()
+
+
+def guests(meeting: dict) -> tuple[str, ...]:
+    """Everyone on the call who isn't from Agent Lead Lab.
+
+    Fathom labels each invitee internal or external, which is what separates
+    the agent from the closer without having to know either name in advance.
+    """
+    found: list[str] = []
+    for entry in (meeting or {}).get("calendar_invitees") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("is_external") is False:
+            continue
+        kind = str(entry.get("domain_type") or entry.get("type") or "").casefold()
+        if kind and "internal" in kind:
+            continue
+        name = str(first_of(entry, SPEAKER_FIELDS) or entry.get("email") or "").strip()
+        if name and name not in found:
+            found.append(name)
+    return tuple(found)
 
 
 def as_call(meeting: dict) -> FathomCall:
     return FathomCall(
+        recorded_by=recorded_by(meeting),
+        guests=guests(meeting),
+        # Fathom writes its own summary. Using it costs nothing and describes
+        # the call in the platform's own terms; ours is the fallback.
+        summary=str(first_of(meeting, ("default_summary", "summary")) or "").strip(),
         title=str(first_of(meeting, TITLE_FIELDS) or "").strip(),
         url=str(first_of(meeting, URL_FIELDS) or ""),
         started_at=str(
@@ -87,7 +124,9 @@ def participants(meeting: dict) -> tuple[str, ...]:
     created, and each entry is sometimes a string and sometimes an object.
     """
     found: list[str] = []
-    for key in ("invitees", "participants", "attendees", "external_invitees"):
+    for key in (
+        "calendar_invitees", "invitees", "participants", "attendees", "external_invitees"
+    ):
         for entry in (meeting or {}).get(key) or []:
             if isinstance(entry, str):
                 name = entry

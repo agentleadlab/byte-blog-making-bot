@@ -57,6 +57,11 @@ class Recording:
     topic: str = ""
     host_email: str = ""
     participants: tuple[str, ...] = ()
+    # Who recorded it, and who from outside was on it. These name the card.
+    closer: str = ""
+    guests: tuple[str, ...] = ()
+    # Fathom writes a summary of its own; used in preference to paying for one.
+    fathom_summary: str = ""
 
     def transcribable(self, config=None) -> bool:
         """Whether the transcript can be reached at all.
@@ -100,6 +105,26 @@ def find_passcode(text: str) -> str:
     """
     match = _PASSCODE.search(text or "")
     return match.group("value").strip() if match else ""
+
+
+def call_title(rec: "Recording", fallback: str) -> str:
+    """"Santiago and Derrick Robison" - closer first, then the agent.
+
+    Matching how these were being named by hand, so the gallery reads the same
+    before and after RYTE took the job over. Falls back through the meeting
+    title to a numbered name, because a card called "Sales Recording 12" is
+    findable and one called "" is not.
+    """
+    closer = (rec.closer or "").strip()
+    agent = next((name.strip() for name in rec.guests if name and name.strip()), "")
+
+    if closer and agent:
+        return f"{closer} and {agent}"
+    if closer:
+        return closer
+    if agent:
+        return agent
+    return (rec.topic or "").strip() or fallback
 
 
 def next_number(existing_titles, *, prefix: str = TITLE_PREFIX) -> int:
@@ -155,6 +180,15 @@ COLUMN_ALIASES = {
     "link": ("link", "url", "video", "recording", "call"),
     "passcode": ("passcode", "password", "code", "pwd"),
     "description": ("description", "notes", "details", "summary"),
+}
+
+
+# Added to the gallery when it doesn't have them. Additive and reversible;
+# dropping the two things a recording *is* would not be.
+EXTRA_COLUMNS = {
+    "Link": {"url": {}},
+    "Passcode": {"rich_text": {}},
+    "Description": {"rich_text": {}},
 }
 
 

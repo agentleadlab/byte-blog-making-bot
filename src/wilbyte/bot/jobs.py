@@ -419,14 +419,23 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
                 page_id, recordings.TITLE_PREFIX + "s", recordings.database_schema()
             )
 
+        # The link and the passcode are what a recording *is*, so make sure
+        # there is somewhere to put them before writing the row.
+        client.add_columns(database_id, recordings.EXTRA_COLUMNS)
+
         rows = client.query_database(database_id)
         number = recordings.next_number(recordings.row_titles(rows))
-        title = recordings.title_for(number)
+        title = recordings.call_title(rec, recordings.title_for(number))
         cover_url = card_cover(config, rec, title)
 
         created = client.create_page(
             database_id,
-            recordings.page_properties(rec, title),
+            recordings.map_properties(
+                (client.database(database_id).get("properties") or {}),
+                rec,
+                title,
+                description=recordings.description_for(rec),
+            ),
             children=recordings.page_blocks(rec, summary),
             cover_url=cover_url,
             icon_url=config.secrets.notion_icon_url,
@@ -542,8 +551,14 @@ def fathom_transcript(config: Config, rec) -> str:
             )
             return ""
         rec.topic = found.title
+        rec.closer = found.recorded_by
+        rec.guests = found.guests
         if found.participants:
             rec.participants = found.participants
+        # Fathom writes its own summary. Prefer it: it costs nothing, and it
+        # describes the call the way the platform the team already reads does.
+        if found.summary:
+            rec.fathom_summary = found.summary
         return fathom.transcript_text(found.raw or {})
     finally:
         client.close()
@@ -569,6 +584,10 @@ def summarise_call(config: Config, rec) -> str:
 
         video = youtube.video_from_link(rec.url)
         text = youtube.fetch_transcript(video.video_id).text
+    # Fathom already wrote one. Using it costs nothing and reads the way the
+    # team's own tool describes the call.
+    if getattr(rec, "fathom_summary", ""):
+        return rec.fathom_summary
     if not text.strip():
         return ""
 

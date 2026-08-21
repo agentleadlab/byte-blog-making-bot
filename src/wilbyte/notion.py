@@ -118,6 +118,26 @@ class NotionClient:
         )
         return str(data.get("id") or "")
 
+    def add_columns(self, database_id: str, wanted: dict) -> list[str]:
+        """Add any of `wanted` the database doesn't already have.
+
+        The gallery was made by hand with Name, Created and Tags, so the link
+        and passcode had nowhere to go. Adding a column is additive and
+        reversible; silently dropping the two things a recording *is* would not
+        be. Existing columns are matched by role rather than by exact name, so
+        a "Recording URL" someone already made is used rather than duplicated.
+        """
+        existing = (self.database(database_id).get("properties") or {})
+        have = {" ".join(name.split()).casefold() for name in existing}
+        missing = {
+            name: spec for name, spec in wanted.items()
+            if " ".join(name.split()).casefold() not in have
+        }
+        if not missing:
+            return []
+        self._request("PATCH", f"/databases/{database_id}", json={"properties": missing})
+        return sorted(missing)
+
     def create_page(
         self,
         database_id: str,
