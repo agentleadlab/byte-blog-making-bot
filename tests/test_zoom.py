@@ -130,3 +130,118 @@ def test_a_link_that_is_not_a_share_link_keeps_its_shape():
 @pytest.mark.parametrize("url", ["", "   ", None])
 def test_junk_reduces_to_nothing(url):
     assert zoom.share_key(url) == ""
+
+
+# ------------------------------------ the same recording, two different links
+
+# A share token comes as `<token>.<suffix>`, and the suffix changes between the
+# link the API reports and the one someone copies out of the browser. Comparing
+# the whole string called those two different recordings - which is why a call
+# that was plainly on the account, with a transcript, came back "not found".
+
+REAL = (
+    "https://us06web.zoom.us/rec/share/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
+    "RWEnkaraH75-X_WNCVYqV8cl.VeLdfj6Y0jsbRemx"
+)
+SAME_CALL_OTHER_TAIL = (
+    "https://us06web.zoom.us/rec/share/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
+    "RWEnkaraH75-X_WNCVYqV8cl.aBcDeF9Z0jsbXxYz"
+)
+
+
+def test_a_link_matches_itself():
+    assert zoom.same_recording(REAL, REAL) is True
+
+
+def test_the_tail_after_the_dot_is_not_the_identity():
+    assert zoom.same_recording(REAL, SAME_CALL_OTHER_TAIL) is True
+
+
+def test_a_query_string_does_not_break_the_match():
+    assert zoom.same_recording(REAL, f"{REAL}?pwd=abc123") is True
+
+
+def test_two_different_recordings_still_do_not_match():
+    other = "https://us06web.zoom.us/rec/share/zzzzzzzzzzzzzzzzzzzzzzzzzzzz.VeLdfj6Y"
+
+    assert zoom.same_recording(REAL, other) is False
+
+
+def test_a_short_token_is_not_matched_loosely():
+    """A loose rule on a short token would match half the account."""
+    assert zoom.same_recording(
+        "https://us06web.zoom.us/rec/share/abc.one",
+        "https://us06web.zoom.us/rec/share/abcdefghijklmnop.two",
+    ) is False
+
+
+def test_a_missing_link_matches_nothing():
+    assert zoom.same_recording("", REAL) is False
+
+
+def test_the_meeting_is_found_by_a_forwarded_link():
+    meetings = [
+        {"topic": "Someone Else", "share_url": "https://us06web.zoom.us/rec/share/other.x"},
+        {"topic": "Derrick Robison", "share_url": REAL, "host_email": "santi@agentleadlab.com"},
+    ]
+
+    found = zoom.match_share_url(meetings, SAME_CALL_OTHER_TAIL)
+
+    assert found is not None
+    assert found.topic == "Derrick Robison"
+
+
+def test_a_per_file_player_link_also_finds_the_meeting():
+    """A link copied from the player belongs to the file, not the meeting."""
+    meetings = [{
+        "topic": "Derrick Robison",
+        "share_url": "https://us06web.zoom.us/rec/share/meeting-level-token-here.aa",
+        "recording_files": [{"file_type": "MP4", "play_url": REAL}],
+    }]
+
+    assert zoom.match_share_url(meetings, REAL).topic == "Derrick Robison"
+
+
+def test_an_unmatched_link_is_explained_with_the_real_tokens():
+    """"Not found" is useless; the strings that were compared are not."""
+    meetings = [{"topic": "Derrick Robison", "share_url": REAL, "start_time": "2026-08-19T05:17:00Z"}]
+
+    report = zoom.describe_match(meetings, "https://us06web.zoom.us/rec/share/nope.x")
+
+    assert "nope" in report
+    assert "Derrick Robison" in report
+    assert "2026-08-19" in report
+
+
+# --------------------------------------------- who was actually on the call
+
+TRANSCRIPT = (
+    "Santiago Villegas Agent Lead Lab: Derrick, what's going on, brother? "
+    "Derrick Robison: Hey man, good morning, how are you? "
+    "Santiago Villegas Agent Lead Lab: Can you hear me okay? "
+)
+
+
+def test_the_speakers_come_out_in_the_order_they_spoke():
+    assert zoom.speakers(TRANSCRIPT) == (
+        "Santiago Villegas Agent Lead Lab", "Derrick Robison"
+    )
+
+
+def test_the_host_is_the_one_whose_name_matches_the_account():
+    closer, guests = zoom.host_and_guests(TRANSCRIPT, "santi@agentleadlab.com")
+
+    assert closer == "Santiago Villegas Agent Lead Lab"
+    assert guests == ("Derrick Robison",)
+
+
+def test_an_unrecognised_host_leaves_everyone_a_guest():
+    """Better no closer than the wrong one on the card."""
+    closer, guests = zoom.host_and_guests(TRANSCRIPT, "nobody@example.com")
+
+    assert closer == ""
+    assert len(guests) == 2
+
+
+def test_a_transcript_with_no_speaker_labels_names_nobody():
+    assert zoom.host_and_guests("just some words with no labels", "santi@x.com") == ("", ())

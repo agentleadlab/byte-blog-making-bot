@@ -214,7 +214,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     sources = find_sources(text)
 
-    if action in ("status", "schedule", "help", "fields", "reconcile", "missed", "calls"):
+    if action == "calls":
+        # With a link it answers the sharper question: not "what can you see"
+        # but "why don't you recognise this one".
+        found = RECORDING_URL_RE.search(text)
+        return MentionRequest(action="calls", brief=found.group(0).rstrip(".,;)>") if found else "")
+
+    if action in ("status", "schedule", "help", "fields", "reconcile", "missed"):
         return MentionRequest(action=action)
 
     # No YouTube link, but a call link: file it. Checked after the blog sources

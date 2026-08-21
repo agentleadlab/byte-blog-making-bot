@@ -398,7 +398,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "calls":
-                await _send_visible_calls(responder, config)
+                await _send_visible_calls(responder, config, link=request.brief or "")
                 return
 
             if request.action == "learn":
@@ -865,16 +865,22 @@ async def _send_check(responder: Responder, config: Config, source: str | None) 
     await responder.send("**RYTE Closer**\n" + "\n".join(lines))
 
 
-async def _send_visible_calls(responder: Responder, config: Config) -> None:
+async def _send_visible_calls(responder: Responder, config: Config, *, link: str = "") -> None:
     """What Zoom and Fathom will actually hand over, listed.
 
     A recording that was shared with the account rather than recorded on it is
     invisible to the API, and from Discord that is indistinguishable from a
     broken app. Seeing the list is what tells them apart.
     """
-    await responder.send("Asking Zoom and Fathom what they'll show me…")
+    await responder.send(
+        "Checking that link against Zoom…" if link
+        else "Asking Zoom and Fathom what they'll show me…"
+    )
     try:
-        lines = await asyncio.to_thread(jobs.visible_calls, config)
+        if link:
+            lines = await asyncio.to_thread(jobs.diagnose_link, config, link)
+        else:
+            lines = await asyncio.to_thread(jobs.visible_calls, config)
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(str(exc)))
         return

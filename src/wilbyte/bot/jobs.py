@@ -570,11 +570,16 @@ def zoom_transcript(config: Config, rec) -> str:
         config.secrets.zoom_client_secret,
     )
     try:
-        found = client.find(rec.url)
+        meetings = client.account_recordings(days=30)
+        found = zoom.match_share_url(meetings, rec.url)
         if found is None:
+            # Say how many were looked at. "Couldn't find it" among 92
+            # recordings is a matching problem; among none it is a setup one,
+            # and the two need completely different fixes.
             rec.note = (
-                "I couldn't find that call in Zoom's recordings from the last 30 "
-                "days, so there's no transcript to summarise."
+                f"That link didn't match any of the {len(meetings)} Zoom recording(s) "
+                "on the account from the last 30 days, so there's no transcript to "
+                "summarise. `@RYTE calls <link>` shows what it was compared against."
             )
             return ""
         if not found.has_transcript:
@@ -585,7 +590,18 @@ def zoom_transcript(config: Config, rec) -> str:
         # Carry the meeting details back for the title and the card details.
         rec.topic = found.topic
         rec.host_email = found.host_email
-        return client.transcript(found)
+
+        text = client.transcript(found)
+        # Zoom's API gives a host email and a topic and nothing else, so the
+        # names on the card come out of the transcript, which labels every turn.
+        closer, guests = zoom.host_and_guests(text, found.host_email)
+        if closer:
+            rec.closer = closer
+        if guests:
+            rec.guests = guests
+        if closer or guests:
+            rec.participants = tuple(part for part in (closer, *guests) if part)
+        return text
     finally:
         client.close()
 
@@ -879,6 +895,42 @@ def _check_zoom(config: Config) -> list[tuple[bool, str]]:
     elif with_text:
         rows.append((True, f"{len(with_text)} of them have transcripts RYTE can read"))
     return rows
+
+
+def diagnose_link(config: Config, link: str) -> list[str]:
+    """Whether a pasted link matches a recording, and the tokens compared if not.
+
+    The list of visible calls answers "can RYTE see it". This answers the next
+    question, which turned out to be the real one: it can see the call and
+    still not recognise the link as pointing at it.
+    """
+    from .. import zoom
+
+    secrets = config.secrets
+    if not (secrets.zoom_account_id and secrets.zoom_client_id and secrets.zoom_client_secret):
+        return ["Zoom isn't configured, so there's nothing to match against."]
+
+    client = zoom.ZoomClient(
+        secrets.zoom_account_id, secrets.zoom_client_id, secrets.zoom_client_secret
+    )
+    try:
+        meetings = client.account_recordings(days=30)
+    except Exception as exc:
+        return [f"Couldn't ask Zoom: {_short(exc)}"]
+    finally:
+        client.close()
+
+    found = zoom.match_share_url(meetings, link)
+    if found is not None:
+        mark = "has a transcript" if found.has_transcript else "has **no** transcript"
+        return [
+            f"✅ That link is **{found.topic or '(no topic)'}** "
+            f"({(found.started_at or '')[:10]}, {found.host_email}) — it {mark}.",
+        ]
+    return [
+        f"❌ No match among {len(meetings)} recording(s).",
+        zoom.describe_match(meetings, link),
+    ]
 
 
 def visible_calls(config: Config, *, limit: int = 15) -> list[str]:

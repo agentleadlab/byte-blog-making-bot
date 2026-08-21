@@ -21,6 +21,7 @@ afterwards.
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -71,6 +72,40 @@ def share_key(url: str) -> str:
     return text.split("?")[0].split("#")[0].strip("/").casefold()
 
 
+def share_root(url_or_key: str) -> str:
+    """The share token with its trailing segment dropped.
+
+    Zoom share tokens come as `<token>.<suffix>`, and the suffix is not stable:
+    the same recording handed out twice, or opened from a forwarded link, comes
+    back with a different tail on the same token. Comparing whole strings calls
+    those two different recordings when they are plainly the same one.
+    """
+    key = share_key(url_or_key) if "/" in (url_or_key or "") else (url_or_key or "").casefold()
+    return key.split(".")[0]
+
+
+def same_recording(one: str, other: str) -> bool:
+    """Whether two share links point at the same recording.
+
+    Exact first, then the token without its tail, then one containing the
+    other - a link copied from the browser address bar is sometimes the token
+    plus extra, and sometimes the token cut short.
+    """
+    left, right = share_key(one), share_key(other)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+
+    left_root, right_root = share_root(left), share_root(right)
+    # Guard the length: a short root would match half the account by accident.
+    if len(left_root) >= 12 and left_root == right_root:
+        return True
+    if len(left_root) >= 12 and (left_root in right or right_root in left):
+        return True
+    return False
+
+
 def pick_transcript(recording_files: list[dict]) -> str:
     """The download URL of the transcript, or "" when Zoom made none.
 
@@ -85,6 +120,55 @@ def pick_transcript(recording_files: list[dict]) -> str:
     return ""
 
 
+def speakers(transcript: str) -> tuple[str, ...]:
+    """Who spoke, in the order they first did.
+
+    Zoom's transcript labels every turn with a display name, which is the only
+    place a Zoom recording says who was actually on the call - the API gives a
+    host email and a topic and nothing else. So the names for the card come
+    from here.
+    """
+    found: list[str] = []
+    for match in _SPEAKER_LINE.finditer(transcript or ""):
+        name = " ".join(match.group("name").split())
+        if name and name not in found:
+            found.append(name)
+    return tuple(found)
+
+
+# "Santiago Villegas: hello" - a name, then a colon. Bounded to a handful of
+# words so a sentence containing a colon isn't read as somebody's name.
+_SPEAKER_LINE = re.compile(r"(?:^|\s)(?P<name>[A-Z][^:\n]{0,60}?):\s")
+
+
+def name_from_email(email: str) -> str:
+    """`santi@agentleadlab.com` -> `santi`. Only used to spot the host."""
+    return (email or "").split("@")[0].replace(".", " ").replace("_", " ").strip().casefold()
+
+
+def host_and_guests(transcript: str, host_email: str) -> tuple[str, tuple[str, ...]]:
+    """(the closer, everyone else) from a transcript.
+
+    The host is whoever's display name lines up with the account the recording
+    is on. Everyone else was on the other side of the call.
+    """
+    people = speakers(transcript)
+    if not people:
+        return "", ()
+
+    handle = name_from_email(host_email)
+    host = ""
+    if handle:
+        parts = [part for part in handle.split() if part]
+        for person in people:
+            lowered = person.casefold()
+            if any(part and part in lowered for part in parts):
+                host = person
+                break
+    guests = tuple(person for person in people if person != host)
+    return host, guests
+
+
 def as_recording(meeting: dict) -> ZoomRecording:
     return ZoomRecording(
         topic=str(meeting.get("topic") or "").strip(),
@@ -95,15 +179,48 @@ def as_recording(meeting: dict) -> ZoomRecording:
     )
 
 
+def links_on(meeting: dict) -> list[str]:
+    """Every URL a meeting carries that could be the one someone pasted.
+
+    The meeting's own `share_url` is the usual answer, but a link copied from
+    the player is a per-file URL, and those live on the recording files rather
+    than the meeting. Both are worth comparing against before giving up.
+    """
+    found = [str((meeting or {}).get(field) or "") for field in ("share_url", "play_url")]
+    for entry in (meeting or {}).get("recording_files") or []:
+        if not isinstance(entry, dict):
+            continue
+        found.extend(str(entry.get(field) or "") for field in ("play_url", "download_url"))
+    return [url for url in found if url]
+
+
 def match_share_url(meetings: list[dict], share_url: str) -> ZoomRecording | None:
     """Find the meeting behind a link someone pasted into Discord."""
-    wanted = share_key(share_url)
-    if not wanted:
+    if not share_key(share_url):
         return None
     for meeting in meetings or []:
-        if share_key(str(meeting.get("share_url") or "")) == wanted:
+        if any(same_recording(url, share_url) for url in links_on(meeting)):
             return as_recording(meeting)
     return None
+
+
+def describe_match(meetings: list[dict], share_url: str, limit: int = 6) -> str:
+    """Why a link didn't match, in terms of the strings actually compared.
+
+    A link that doesn't match is exactly the moment the real shapes matter, and
+    guessing at one cost three publish days once already. So this prints the
+    token from the pasted link beside the tokens Zoom returned, rather than
+    reporting "not found" and leaving it there.
+    """
+    wanted = share_key(share_url)
+    lines = [f"Pasted token: `{wanted or '(none)'}`", "Zoom's tokens for the newest recordings:"]
+    for meeting in (meetings or [])[:limit]:
+        found = as_recording(meeting)
+        token = share_key(found.share_url) or "(no share_url)"
+        lines.append(f"· {(found.started_at or '')[:10]} {found.topic or '(no topic)'} → `{token}`")
+    if not meetings:
+        lines.append("· (none)")
+    return "\n".join(lines)
 
 
 class ZoomClient:

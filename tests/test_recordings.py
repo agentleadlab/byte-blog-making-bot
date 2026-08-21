@@ -298,18 +298,19 @@ def test_blank_guest_names_are_not_mistaken_for_a_client():
 
 
 class _FakeZoom:
-    """Stands in for ZoomClient. `found` is what the link resolves to."""
+    """Stands in for ZoomClient. `meetings` is what the account holds."""
 
-    found = None
+    meetings: list = []
+    text = ""
 
     def __init__(self, *args, **kwargs):
         pass
 
-    def find(self, url):
-        return type(self).found
+    def account_recordings(self, **kwargs):
+        return type(self).meetings
 
     def transcript(self, recording):
-        return ""
+        return type(self).text
 
     def close(self):
         pass
@@ -325,25 +326,31 @@ def _zoom_config():
     )
 
 
-def test_a_zoom_call_that_cannot_be_found_says_so(monkeypatch):
+def _use_fake(monkeypatch, meetings, text=""):
     from wilbyte import zoom
+
+    _FakeZoom.meetings = meetings
+    _FakeZoom.text = text
+    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+
+
+def test_a_zoom_call_that_cannot_be_found_says_so(monkeypatch):
     from wilbyte.bot import jobs
 
-    _FakeZoom.found = None
-    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+    _use_fake(monkeypatch, [{"topic": "Someone else", "share_url": "https://z/rec/share/xx.y"}])
     rec = call(platform="Zoom")
 
     assert jobs.zoom_transcript(_zoom_config(), rec) == ""
-    assert "couldn't find" in rec.note.casefold()
+    assert "didn't match" in rec.note.casefold()
+    # How many were looked at: none is a setup problem, 92 is a matching one.
+    assert "1 zoom recording" in rec.note.casefold()
 
 
 def test_a_zoom_call_recorded_without_transcription_says_so(monkeypatch):
     """The trap: everything configured right, and the setting was off that day."""
-    from wilbyte import zoom
     from wilbyte.bot import jobs
 
-    _FakeZoom.found = zoom.ZoomRecording(topic="Discovery Call", share_url=ZOOM)
-    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+    _use_fake(monkeypatch, [{"topic": "Discovery Call", "share_url": ZOOM}])
     rec = call(platform="Zoom")
 
     assert jobs.zoom_transcript(_zoom_config(), rec) == ""
@@ -353,15 +360,49 @@ def test_a_zoom_call_recorded_without_transcription_says_so(monkeypatch):
 
 
 def test_a_call_that_worked_carries_no_complaint(monkeypatch):
-    from wilbyte import zoom
     from wilbyte.bot import jobs
 
-    _FakeZoom.found = zoom.ZoomRecording(
-        topic="Discovery Call", share_url=ZOOM, transcript_url="https://x/t.vtt"
+    _use_fake(
+        monkeypatch,
+        [{
+            "topic": "Discovery Call",
+            "share_url": ZOOM,
+            "host_email": "santi@agentleadlab.com",
+            "recording_files": [
+                {"file_type": "TRANSCRIPT", "download_url": "https://x/t.vtt"}
+            ],
+        }],
+        text="Santiago Villegas: hello there Derrick Robison: hey man ",
     )
-    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
     rec = call(platform="Zoom")
 
     jobs.zoom_transcript(_zoom_config(), rec)
 
     assert rec.note == ""
+
+
+def test_the_names_for_the_card_come_out_of_the_transcript(monkeypatch):
+    """Zoom's API gives a host email and a topic; the people are in the words."""
+    from wilbyte.bot import jobs
+
+    _use_fake(
+        monkeypatch,
+        [{
+            "topic": "Derrick Robison",
+            "share_url": ZOOM,
+            "host_email": "santi@agentleadlab.com",
+            "recording_files": [
+                {"file_type": "TRANSCRIPT", "download_url": "https://x/t.vtt"}
+            ],
+        }],
+        text="Santiago Villegas: morning Derrick Robison: hey man ",
+    )
+    rec = call(platform="Zoom")
+
+    jobs.zoom_transcript(_zoom_config(), rec)
+
+    assert rec.closer == "Santiago Villegas"
+    assert rec.guests == ("Derrick Robison",)
+    assert recordings.call_title(rec, 2) == (
+        "Sales Recording 2 - Santiago Villegas Derrick Robison"
+    )

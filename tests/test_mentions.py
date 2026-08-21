@@ -404,3 +404,14 @@ def test_a_command_word_inside_a_url_is_not_a_command():
 
 def test_a_typed_command_word_still_wins_over_a_link():
     assert parse(f"{BOT} status https://agentleadlab.com/blog/x").action == "status"
+
+
+def test_calls_can_carry_a_link_to_diagnose():
+    request = parse(f"{BOT} calls {ZOOM_REC}")
+
+    assert request.action == "calls"
+    assert request.brief == ZOOM_REC
+
+
+def test_calls_on_its_own_carries_no_link():
+    assert parse(f"{BOT} calls").brief == ""
