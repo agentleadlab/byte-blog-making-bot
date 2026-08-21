@@ -1070,10 +1070,17 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
         await responder.send(embed=embeds.error(f"Couldn't file it in Notion\n{exc}"))
         return
 
-    note = " with a summary" if summary else ""
-    if not summary and not found.transcribable(config):
-        note = f" — {found.platform} recordings can't be read from here, so no summary"
-    await responder.send(f"📁 **{title}** filed in Notion{note}\n{url}")
+    if summary:
+        tail = " with a summary"
+    elif found.note:
+        # Filed without a summary *and why*. Silence here reads as "nothing to
+        # say about the call" rather than "I never found it".
+        tail = f"\n⚠ {found.note}"
+    elif not found.transcribable(config):
+        tail = f" — {found.platform} recordings can't be read from here, so no summary"
+    else:
+        tail = " — no transcript was available"
+    await responder.send(f"📁 **{title}** filed in Notion{tail}\n{url}")
 
 
 async def _replied_to(message):

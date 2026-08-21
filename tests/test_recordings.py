@@ -255,35 +255,113 @@ def call(**kwargs):
     return recordings.Recording(**{"url": ZOOM, "platform": "Fathom", **kwargs})
 
 
-def test_the_card_is_named_after_the_closer_and_the_agent():
-    """Matching how these were named by hand, so the gallery reads the same."""
+def test_the_number_leads_and_the_names_follow():
+    """The asked-for shape: Sales Recording (number) - (closer) (client)."""
     rec = call(closer="Santiago Villegas", guests=("Derrick Robison",))
 
-    assert recordings.call_title(rec, "Sales Recording 12") == (
-        "Santiago Villegas and Derrick Robison"
+    assert recordings.call_title(rec, 3) == (
+        "Sales Recording 3 - Santiago Villegas Derrick Robison"
     )
 
 
-def test_the_first_guest_is_the_agent():
+def test_the_first_guest_is_the_client():
     rec = call(closer="Santiago", guests=("Derrick Robison", "Someone Else"))
 
-    assert recordings.call_title(rec, "x") == "Santiago and Derrick Robison"
+    assert recordings.call_title(rec, 4) == "Sales Recording 4 - Santiago Derrick Robison"
 
 
-def test_a_closer_with_no_guest_still_names_the_card():
-    assert recordings.call_title(call(closer="Santiago"), "x") == "Santiago"
+def test_a_closer_with_no_client_still_names_the_card():
+    assert recordings.call_title(call(closer="Santiago"), 4) == "Sales Recording 4 - Santiago"
 
 
 def test_the_meeting_title_is_the_next_best_thing():
-    assert recordings.call_title(call(topic="Daily Team Call"), "x") == "Daily Team Call"
+    assert recordings.call_title(call(topic="Discovery Call"), 5) == (
+        "Sales Recording 5 - Discovery Call"
+    )
 
 
-def test_a_call_with_no_names_at_all_falls_back_to_the_number():
-    """A card called "Sales Recording 12" is findable; one called "" is not."""
-    assert recordings.call_title(call(), "Sales Recording 12") == "Sales Recording 12"
+def test_a_call_with_no_names_at_all_is_still_the_number():
+    """A card called "Sales Recording 6" is findable; one ending in " - " is not."""
+    assert recordings.call_title(call(), 6) == "Sales Recording 6"
 
 
-def test_blank_guest_names_are_not_mistaken_for_an_agent():
+def test_blank_guest_names_are_not_mistaken_for_a_client():
     rec = call(closer="Santiago", guests=("", "   ", "Derrick Robison"))
 
-    assert recordings.call_title(rec, "x") == "Santiago and Derrick Robison"
+    assert recordings.call_title(rec, 7) == "Sales Recording 7 - Santiago Derrick Robison"
+
+
+# ------------------------------------- saying why there is no summary
+
+# A card filed with no summary and no explanation reads as "nothing was said on
+# that call". These are the two ordinary reasons, and both have to reach Discord.
+
+
+class _FakeZoom:
+    """Stands in for ZoomClient. `found` is what the link resolves to."""
+
+    found = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def find(self, url):
+        return type(self).found
+
+    def transcript(self, recording):
+        return ""
+
+    def close(self):
+        pass
+
+
+def _zoom_config():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        secrets=SimpleNamespace(
+            zoom_account_id="a", zoom_client_id="b", zoom_client_secret="c"
+        )
+    )
+
+
+def test_a_zoom_call_that_cannot_be_found_says_so(monkeypatch):
+    from wilbyte import zoom
+    from wilbyte.bot import jobs
+
+    _FakeZoom.found = None
+    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+    rec = call(platform="Zoom")
+
+    assert jobs.zoom_transcript(_zoom_config(), rec) == ""
+    assert "couldn't find" in rec.note.casefold()
+
+
+def test_a_zoom_call_recorded_without_transcription_says_so(monkeypatch):
+    """The trap: everything configured right, and the setting was off that day."""
+    from wilbyte import zoom
+    from wilbyte.bot import jobs
+
+    _FakeZoom.found = zoom.ZoomRecording(topic="Discovery Call", share_url=ZOOM)
+    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+    rec = call(platform="Zoom")
+
+    assert jobs.zoom_transcript(_zoom_config(), rec) == ""
+    assert "transcript" in rec.note.casefold()
+    # Found, so the meeting details still come back for the title.
+    assert rec.topic == "Discovery Call"
+
+
+def test_a_call_that_worked_carries_no_complaint(monkeypatch):
+    from wilbyte import zoom
+    from wilbyte.bot import jobs
+
+    _FakeZoom.found = zoom.ZoomRecording(
+        topic="Discovery Call", share_url=ZOOM, transcript_url="https://x/t.vtt"
+    )
+    monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
+    rec = call(platform="Zoom")
+
+    jobs.zoom_transcript(_zoom_config(), rec)
+
+    assert rec.note == ""

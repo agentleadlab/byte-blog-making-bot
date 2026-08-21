@@ -60,6 +60,9 @@ class Recording:
     # Who recorded it, and who from outside was on it. These name the card.
     closer: str = ""
     guests: tuple[str, ...] = ()
+    # Why there is no summary, when there isn't one. Silence here reads as
+    # "nothing to say about the call" rather than "I never found it".
+    note: str = ""
     # Fathom writes a summary of its own; used in preference to paying for one.
     fathom_summary: str = ""
 
@@ -107,24 +110,23 @@ def find_passcode(text: str) -> str:
     return match.group("value").strip() if match else ""
 
 
-def call_title(rec: "Recording", fallback: str) -> str:
-    """"Santiago and Derrick Robison" - closer first, then the agent.
+def call_title(rec: "Recording", number: int, *, prefix: str = TITLE_PREFIX) -> str:
+    """"Sales Recording 3 - Santiago Villegas Derrick Robison".
 
-    Matching how these were being named by hand, so the gallery reads the same
-    before and after RYTE took the job over. Falls back through the meeting
-    title to a numbered name, because a card called "Sales Recording 12" is
-    findable and one called "" is not.
+    The number leads so the gallery sorts and stays countable however the names
+    come out; the people follow so a card can be found by who was on it. Either
+    name may be missing - Zoom gives a meeting topic rather than a labelled
+    guest list - and the title degrades a piece at a time rather than reading
+    "Sales Recording 3 -  " with nothing after the dash.
     """
+    base = f"{prefix} {number}"
     closer = (rec.closer or "").strip()
-    agent = next((name.strip() for name in rec.guests if name and name.strip()), "")
+    client = next((name.strip() for name in rec.guests if name and name.strip()), "")
 
-    if closer and agent:
-        return f"{closer} and {agent}"
-    if closer:
-        return closer
-    if agent:
-        return agent
-    return (rec.topic or "").strip() or fallback
+    who = " ".join(part for part in (closer, client) if part)
+    if not who:
+        who = (rec.topic or "").strip()
+    return f"{base} - {who}" if who else base
 
 
 def next_number(existing_titles, *, prefix: str = TITLE_PREFIX) -> int:

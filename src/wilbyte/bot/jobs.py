@@ -428,7 +428,7 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
 
         rows = client.query_database(database_id)
         number = recordings.next_number(recordings.row_titles(rows))
-        title = recordings.call_title(rec, recordings.title_for(number))
+        title = recordings.call_title(rec, number)
         cover_url, icon_url = gallery_art(config, client, page_id)
 
         created = client.create_page(
@@ -572,7 +572,16 @@ def zoom_transcript(config: Config, rec) -> str:
     try:
         found = client.find(rec.url)
         if found is None:
+            rec.note = (
+                "I couldn't find that call in Zoom's recordings from the last 30 "
+                "days, so there's no transcript to summarise."
+            )
             return ""
+        if not found.has_transcript:
+            rec.note = (
+                f"Zoom has no transcript for “{found.topic}”. Audio transcript has "
+                "to be on *before* a call is recorded — it can't be made afterwards."
+            )
         # Carry the meeting details back for the title and the card details.
         rec.topic = found.topic
         rec.host_email = found.host_email
@@ -601,6 +610,7 @@ def fathom_transcript(config: Config, rec) -> str:
             logging.getLogger("wilbyte.bot").warning(
                 "No Fathom call matched %s. %s", rec.url, fathom.describe(seen)
             )
+            rec.note = f"I couldn't find that call in Fathom. {fathom.describe(seen)}"
             return ""
         rec.topic = found.title
         rec.closer = found.recorded_by
