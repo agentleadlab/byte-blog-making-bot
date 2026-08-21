@@ -204,12 +204,37 @@ def test_no_summary_means_no_empty_heading():
     assert "heading_2" not in kinds
 
 
-def test_only_youtube_can_be_summarised_for_now():
-    """A Zoom share link needs its passcode typed into a browser; Fathom needs a
-    logged-in session. Claiming otherwise makes entries that never get one."""
-    assert recordings.Recording(url=ZOOM, platform="Zoom").transcribable is False
-    assert recordings.Recording(url="x", platform="Fathom").transcribable is False
-    assert recordings.Recording(url="x", platform="YouTube").transcribable is True
+def test_youtube_can_always_be_read():
+    assert recordings.Recording(url="x", platform="YouTube").transcribable(None) is True
+
+
+def test_zoom_can_be_read_once_the_api_app_exists():
+    """The share link is a browser door with a passcode on it; the API isn't."""
+    from types import SimpleNamespace
+
+    configured = SimpleNamespace(
+        secrets=SimpleNamespace(
+            zoom_account_id="a", zoom_client_id="b", zoom_client_secret="c"
+        )
+    )
+    rec = recordings.Recording(url=ZOOM, platform="Zoom")
+
+    assert rec.transcribable(configured) is True
+
+
+def test_zoom_without_credentials_is_filed_without_a_summary():
+    """Better a card with the link than a card with an invented summary."""
+    from types import SimpleNamespace
+
+    bare = SimpleNamespace(
+        secrets=SimpleNamespace(zoom_account_id=None, zoom_client_id=None, zoom_client_secret=None)
+    )
+
+    assert recordings.Recording(url=ZOOM, platform="Zoom").transcribable(bare) is False
+
+
+def test_fathom_is_not_wired_up_yet():
+    assert recordings.Recording(url="x", platform="Fathom").transcribable(None) is False
 
 
 # ------------------------------------------------------------- the schema

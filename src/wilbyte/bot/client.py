@@ -1005,7 +1005,7 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
         found.posted_on = found.posted_on.date()
 
     summary = ""
-    if found.transcribable:
+    if found.transcribable(config):
         await responder.send(f"Filing the {found.platform} recording — reading it first.")
         try:
             summary = await asyncio.to_thread(jobs.summarise_call, config, found)
@@ -1020,7 +1020,7 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
         return
 
     note = " with a summary" if summary else ""
-    if not summary and not found.transcribable:
+    if not summary and not found.transcribable(config):
         note = f" — {found.platform} recordings can't be read from here, so no summary"
     await responder.send(f"📁 **{title}** filed in Notion{note}\n{url}")
 

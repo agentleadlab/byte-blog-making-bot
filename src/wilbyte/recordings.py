@@ -52,16 +52,28 @@ class Recording:
     posted_by: str = ""
     posted_on: date | None = None
 
-    @property
-    def transcribable(self) -> bool:
-        """Whether a summary can be attempted.
+    # Filled in once the platform has been asked for the call, so the summary
+    # step and the title can both use it without fetching twice.
+    topic: str = ""
+    host_email: str = ""
 
-        Only YouTube for now. A Zoom share link needs its passcode entered in a
-        browser and Fathom needs a logged-in session, so neither can be read
-        from here - and claiming otherwise would produce entries that quietly
-        never get summarised.
+    def transcribable(self, config=None) -> bool:
+        """Whether the transcript can be reached at all.
+
+        YouTube always. Zoom only with a Server-to-Server OAuth app configured -
+        the share link itself is a browser door with a passcode on it, and the
+        API is the way round that. Fathom needs its own key and isn't wired up
+        yet, so it is filed with the link and nothing invented about the call.
         """
-        return self.platform == "YouTube"
+        if self.platform == "YouTube":
+            return True
+        if self.platform == "Zoom" and config is not None:
+            return bool(
+                config.secrets.zoom_account_id
+                and config.secrets.zoom_client_id
+                and config.secrets.zoom_client_secret
+            )
+        return False
 
 
 def find_recording(text: str) -> Recording | None:

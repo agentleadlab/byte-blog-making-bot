@@ -452,6 +452,33 @@ def host_image(config: Config, path: Path, *, name: str) -> str:
         client.close()
 
 
+def zoom_transcript(config: Config, rec) -> str:
+    """The transcript behind a Zoom share link, or "" when there isn't one.
+
+    An empty answer is the ordinary case, not a failure: Zoom only writes a
+    transcript when audio transcript was enabled *at the time of recording*, so
+    a correctly configured account still returns nothing for calls made before
+    the setting was turned on.
+    """
+    from .. import zoom
+
+    client = zoom.ZoomClient(
+        config.secrets.zoom_account_id,
+        config.secrets.zoom_client_id,
+        config.secrets.zoom_client_secret,
+    )
+    try:
+        found = client.find(rec.url)
+        if found is None:
+            return ""
+        # Carry the meeting details back for the title and the card details.
+        rec.topic = found.topic
+        rec.host_email = found.host_email
+        return client.transcript(found)
+    finally:
+        client.close()
+
+
 def summarise_call(config: Config, rec) -> str:
     """A short write-up of the call, where the recording can actually be read.
 
@@ -459,13 +486,17 @@ def summarise_call(config: Config, rec) -> str:
     link needs its passcode typed into a browser and Fathom needs a session, so
     those are filed with the link and nothing invented about what was said.
     """
-    if not rec.transcribable:
+    if not rec.transcribable(config):
         return ""
 
-    from .. import youtube
+    text = zoom_transcript(config, rec) if rec.platform == "Zoom" else None
+    if text is None:
+        from .. import youtube
 
-    video = youtube.video_from_link(rec.url)
-    transcript = youtube.fetch_transcript(video.video_id)
+        video = youtube.video_from_link(rec.url)
+        text = youtube.fetch_transcript(video.video_id).text
+    if not text.strip():
+        return ""
 
     from anthropic import Anthropic
 
@@ -485,7 +516,7 @@ def summarise_call(config: Config, rec) -> str:
                 "Summarise this sales call. Give a two-sentence overview, then "
                 "bullets for: what the prospect wanted, objections raised, how "
                 "they were handled, and what was agreed. Use '- ' for bullets.\n\n"
-                f"{transcript.text}"
+                f"{text}"
             ),
         }],
     )
