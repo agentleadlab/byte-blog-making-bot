@@ -426,9 +426,7 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
         # there is somewhere to put them before writing the row.
         client.add_columns(database_id, recordings.EXTRA_COLUMNS)
 
-        rows = client.query_database(database_id)
-        number = recordings.next_number(recordings.row_titles(rows))
-        title = recordings.call_title(rec, number)
+        title = recordings.call_title(rec)
         cover_url, icon_url = gallery_art(config, client, page_id)
 
         created = client.create_page(
@@ -577,6 +575,10 @@ def zoom_transcript(config: Config, rec) -> str:
             meetings,
             link=rec.url,
             passcode=rec.passcode,
+            # The share page names the recording. It is the only thing that
+            # ties the pasted link to a particular call, so it is worth one
+            # extra request before falling back to a guess.
+            page_topic=client.share_page_topic(rec.url),
             filed=recordings.filed_ids(),
         )
         if found is None:

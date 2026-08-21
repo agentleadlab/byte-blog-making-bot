@@ -39,7 +39,6 @@ _PASSCODE = re.compile(
 )
 
 TITLE_PREFIX = "Sales Recording"
-_NUMBERED = re.compile(rf"^\s*{TITLE_PREFIX}\s*\(?\s*(\d+)\s*\)?\s*$", re.IGNORECASE)
 
 
 @dataclass
@@ -114,23 +113,26 @@ def find_passcode(text: str) -> str:
     return match.group("value").strip() if match else ""
 
 
-def call_title(rec: "Recording", number: int, *, prefix: str = TITLE_PREFIX) -> str:
-    """"Sales Recording 3 - Santiago Villegas Derrick Robison".
+def call_title(rec: "Recording", *, prefix: str = TITLE_PREFIX) -> str:
+    """"Sales Recording: Santiago Villegas Derrick Robison".
 
-    The number leads so the gallery sorts and stays countable however the names
-    come out; the people follow so a card can be found by who was on it. Either
-    name may be missing - Zoom gives a meeting topic rather than a labelled
-    guest list - and the title degrades a piece at a time rather than reading
-    "Sales Recording 3 -  " with nothing after the dash.
+    The people are the title. A running number was tried first and was worse in
+    both directions: it read the highest number already used out of the existing
+    titles, which stopped working the moment names were appended to them, and a
+    number tells you nothing about a call you are trying to find. Who was on it
+    does.
+
+    Either name may be missing - Zoom gives a meeting topic rather than a
+    labelled guest list - so the title degrades a piece at a time rather than
+    trailing off after the colon.
     """
-    base = f"{prefix} {number}"
     closer = _as_a_name(rec.closer)
     client = next((found for found in (_as_a_name(g) for g in rec.guests) if found), "")
 
     who = " ".join(part for part in (closer, client) if part)
     if not who:
         who = _as_a_name(rec.topic, words=8) or (rec.topic or "").strip()[:60]
-    return f"{base} - {who}" if who else base
+    return f"{prefix}: {who}" if who else prefix
 
 
 # A guard, not a parser. Names arrive from a transcript's speaker labels, and
@@ -143,35 +145,6 @@ def _as_a_name(text: str | None, *, words: int = 5, chars: int = 48) -> str:
     if not found or len(found) > chars or len(found.split()) > words:
         return ""
     return "" if any(mark in found for mark in ".?!") else found
-
-
-def next_number(existing_titles, *, prefix: str = TITLE_PREFIX) -> int:
-    """One past the highest number already used.
-
-    Highest rather than a count: a deleted row must not make the next recording
-    reuse a number that is already written down somewhere else.
-    """
-    highest = 0
-    for title in existing_titles or []:
-        match = _NUMBERED.match(str(title or ""))
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return highest + 1
-
-
-def title_for(number: int, *, prefix: str = TITLE_PREFIX) -> str:
-    return f"{prefix} {number}"
-
-
-def row_titles(rows: list[dict]) -> list[str]:
-    """Pull the title text out of Notion database rows."""
-    titles = []
-    for row in rows or []:
-        for value in (row.get("properties") or {}).values():
-            if value.get("type") != "title":
-                continue
-            titles.append("".join(part.get("plain_text", "") for part in value.get("title") or []))
-    return titles
 
 
 # ----------------------------------------------------------- the database

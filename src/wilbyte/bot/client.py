@@ -1132,7 +1132,13 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
     # can correct.
     aside = ""
     if summary and found.matched_by and found.matched_by != "the link":
-        aside = f"\n-# Matched by {found.matched_by}. Wrong call? Delete the card and say `recording` with the passcode."
+        # Name the call, not just the method. "Matched by recency" gave no way
+        # to notice that a link saying Derrick had filed a call with Arlene.
+        which = f" — read **{found.topic}**" if found.topic else ""
+        aside = (
+            f"\n-# Identified by {found.matched_by}{which}. "
+            "Wrong call? Delete the card and post the link again with its passcode."
+        )
     await responder.send(f"📁 **{title}** filed in Notion{tail}{aside}\n{url}")
 
 

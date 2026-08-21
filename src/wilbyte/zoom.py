@@ -351,11 +351,76 @@ def newest_unfiled(
     return as_recording(fresh[0])
 
 
+# What Zoom appends to a recording's name on its share page. The topic in the
+# API has none of this, so it comes off before the two are compared.
+_PAGE_SUFFIXES = (
+    " - shared screen with speaker view",
+    " - shared screen with gallery view",
+    " - shared screen",
+    " - speaker view",
+    " - gallery view",
+    " - audio only",
+    " | zoom",
+    " - zoom",
+)
+
+_PAGE_TITLE = re.compile(
+    r"<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"'](?P<value>[^\"']+)",
+    re.IGNORECASE,
+)
+_HTML_TITLE = re.compile(r"<title[^>]*>(?P<value>.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def topic_from_page(html: str) -> str:
+    """The recording's name, read off its own share page.
+
+    Zoom's API cannot resolve a share link, but the page behind that link says
+    plainly which recording it is - it is what the browser tab shows. The
+    passcode gates playback, not the page, so this is readable without one.
+
+    This is the only thing that ties a pasted link to a specific call. Without
+    it the choice falls to recency, and recency filed a call with Arlene when
+    the link said Derrick.
+    """
+    for pattern in (_PAGE_TITLE, _HTML_TITLE):
+        match = pattern.search(html or "")
+        if not match:
+            continue
+        found = " ".join(match.group("value").split())
+        lowered = found.casefold()
+        for suffix in _PAGE_SUFFIXES:
+            if lowered.endswith(suffix):
+                found = found[: len(found) - len(suffix)]
+                break
+        found = found.strip()
+        if found and found.casefold() not in ("zoom", "video conferencing"):
+            return found
+    return ""
+
+
+def match_topic(meetings: list[dict], topic: str) -> ZoomRecording | None:
+    """The meeting named on the share page, newest first if a name repeats.
+
+    A recurring call carries the same topic every week, so ties are broken by
+    recency - among calls that genuinely share a name, which is a far narrower
+    guess than recency across the whole account.
+    """
+    wanted = " ".join((topic or "").split()).casefold()
+    if not wanted:
+        return None
+    hits = [m for m in meetings or [] if str(m.get("topic") or "").strip().casefold() == wanted]
+    if not hits:
+        return None
+    hits.sort(key=lambda meeting: str(meeting.get("start_time") or ""), reverse=True)
+    return as_recording(hits[0])
+
+
 def choose(
     meetings: list[dict],
     *,
     link: str = "",
     passcode: str = "",
+    page_topic: str = "",
     filed: set[str] | frozenset[str] | None = None,
 ) -> tuple[ZoomRecording | None, str]:
     """Which recording was posted, and how that was decided.
@@ -372,6 +437,10 @@ def choose(
     found = match_share_url(meetings, link)
     if found is not None:
         return found, "the link"
+
+    found = match_topic(meetings, page_topic)
+    if found is not None:
+        return found, f"the recording being called “{found.topic}”"
 
     found = match_passcode(meetings, passcode)
     if found is not None:
@@ -511,6 +580,36 @@ class ZoomClient:
 
     def find(self, share_url: str, *, days: int = DEFAULT_LOOKBACK_DAYS) -> ZoomRecording | None:
         return match_share_url(self.account_recordings(days=days), share_url)
+
+    def share_page_topic(self, share_url: str) -> str:
+        """Ask the share page what recording it is. "" if it won't say.
+
+        Deliberately unauthenticated and deliberately forgiving: this is a web
+        page, not an API, and it is allowed to change or refuse. Everything
+        downstream works without it - it just works better with it.
+        """
+        if not (share_url or "").strip():
+            return ""
+        try:
+            response = self._client.get(
+                share_url,
+                follow_redirects=True,
+                headers={
+                    # Zoom serves a barer page to something that doesn't look
+                    # like a browser, and the name is what we came for.
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+                    ),
+                    "Accept": "text/html",
+                },
+                timeout=20.0,
+            )
+        except httpx.HTTPError:
+            return ""
+        if response.status_code >= 400:
+            return ""
+        return topic_from_page(response.text)
 
     def transcript(self, recording: ZoomRecording) -> str:
         """The transcript as plain prose, for summarising."""

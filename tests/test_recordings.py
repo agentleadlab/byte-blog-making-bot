@@ -102,49 +102,6 @@ def test_the_word_passcode_mid_sentence_is_not_a_passcode():
     assert recordings.find_passcode(f"{ZOOM}\nI'll send the passcode over later") == ""
 
 
-# ------------------------------------------------------------- the numbering
-
-
-def test_numbering_starts_at_one_on_an_empty_gallery():
-    assert recordings.next_number([]) == 1
-
-
-def test_the_next_number_follows_the_highest_used():
-    titles = ["Sales Recording 1", "Sales Recording 2", "Sales Recording 3"]
-
-    assert recordings.next_number(titles) == 4
-
-
-def test_a_deleted_row_does_not_free_up_its_number():
-    """Reusing a number breaks every reference to the old one."""
-    titles = ["Sales Recording 1", "Sales Recording 7"]
-
-    assert recordings.next_number(titles) == 8
-
-
-def test_rows_named_anything_else_are_ignored():
-    titles = ["Kickoff call notes", "Sales Recording 4", "Sales Recording (old)"]
-
-    assert recordings.next_number(titles) == 5
-
-
-def test_a_parenthesised_number_still_counts():
-    assert recordings.next_number(["Sales Recording (9)"]) == 10
-
-
-def test_titles_are_read_out_of_notion_rows():
-    rows = [
-        {"properties": {"Name": {"type": "title", "title": [{"plain_text": "Sales Recording 3"}]}}},
-        {"properties": {"Link": {"type": "url", "url": "https://x"}}},
-    ]
-
-    assert recordings.row_titles(rows) == ["Sales Recording 3"]
-
-
-def test_the_title_reads_the_way_it_was_asked_for():
-    assert recordings.title_for(12) == "Sales Recording 12"
-
-
 # ------------------------------------------------------------ the notion row
 
 
@@ -255,40 +212,40 @@ def call(**kwargs):
     return recordings.Recording(**{"url": ZOOM, "platform": "Fathom", **kwargs})
 
 
-def test_the_number_leads_and_the_names_follow():
-    """The asked-for shape: Sales Recording (number) - (closer) (client)."""
+def test_the_people_are_the_title():
+    """The asked-for shape: Sales Recording: (closer) (client)."""
     rec = call(closer="Santiago Villegas", guests=("Derrick Robison",))
 
-    assert recordings.call_title(rec, 3) == (
-        "Sales Recording 3 - Santiago Villegas Derrick Robison"
+    assert recordings.call_title(rec) == (
+        "Sales Recording: Santiago Villegas Derrick Robison"
     )
 
 
 def test_the_first_guest_is_the_client():
     rec = call(closer="Santiago", guests=("Derrick Robison", "Someone Else"))
 
-    assert recordings.call_title(rec, 4) == "Sales Recording 4 - Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
 
 
 def test_a_closer_with_no_client_still_names_the_card():
-    assert recordings.call_title(call(closer="Santiago"), 4) == "Sales Recording 4 - Santiago"
+    assert recordings.call_title(call(closer="Santiago")) == "Sales Recording: Santiago"
 
 
 def test_the_meeting_title_is_the_next_best_thing():
-    assert recordings.call_title(call(topic="Discovery Call"), 5) == (
-        "Sales Recording 5 - Discovery Call"
+    assert recordings.call_title(call(topic="Discovery Call")) == (
+        "Sales Recording: Discovery Call"
     )
 
 
-def test_a_call_with_no_names_at_all_is_still_the_number():
-    """A card called "Sales Recording 6" is findable; one ending in " - " is not."""
-    assert recordings.call_title(call(), 6) == "Sales Recording 6"
+def test_a_call_with_no_names_at_all_still_reads_cleanly():
+    """A title trailing off after the colon looks broken. This just stops."""
+    assert recordings.call_title(call()) == "Sales Recording"
 
 
 def test_blank_guest_names_are_not_mistaken_for_a_client():
     rec = call(closer="Santiago", guests=("", "   ", "Derrick Robison"))
 
-    assert recordings.call_title(rec, 7) == "Sales Recording 7 - Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
 
 
 # ------------------------------------- saying why there is no summary
@@ -302,12 +259,16 @@ class _FakeZoom:
 
     meetings: list = []
     text = ""
+    page_topic = ""
 
     def __init__(self, *args, **kwargs):
         pass
 
     def account_recordings(self, **kwargs):
         return type(self).meetings
+
+    def share_page_topic(self, url):
+        return type(self).page_topic
 
     def transcript_vtt(self, recording):
         return type(self).text
@@ -340,11 +301,12 @@ Derrick Robison: Hey man, good morning.
 """
 
 
-def _use_fake(monkeypatch, meetings, text=""):
+def _use_fake(monkeypatch, meetings, text="", page_topic=""):
     from wilbyte import zoom
 
     _FakeZoom.meetings = meetings
     _FakeZoom.text = text
+    _FakeZoom.page_topic = page_topic
     monkeypatch.setattr(zoom, "ZoomClient", _FakeZoom)
 
 
@@ -417,8 +379,8 @@ def test_the_names_for_the_card_come_out_of_the_transcript(monkeypatch):
 
     assert rec.closer == "Santiago Villegas"
     assert rec.guests == ("Derrick Robison",)
-    assert recordings.call_title(rec, 2) == (
-        "Sales Recording 2 - Santiago Villegas Derrick Robison"
+    assert recordings.call_title(rec) == (
+        "Sales Recording: Santiago Villegas Derrick Robison"
     )
 
 
@@ -453,13 +415,13 @@ def test_a_sentence_can_never_become_the_title():
     is the guard that stops the next variant reaching a card."""
     rec = call(closer="Santiago Villegas Agent Lead Lab How are you? Good morning.")
 
-    assert recordings.call_title(rec, 1) == "Sales Recording 1"
+    assert recordings.call_title(rec) == "Sales Recording"
 
 
 def test_a_guest_that_is_a_sentence_is_skipped_for_one_that_is_not():
     rec = call(closer="Santiago", guests=("Well, here is the thing. Derrick", "Derrick Robison"))
 
-    assert recordings.call_title(rec, 1) == "Sales Recording 1 - Santiago Derrick Robison"
+    assert recordings.call_title(rec) == "Sales Recording: Santiago Derrick Robison"
 
 
 # ------------------------------------- remembering what has been filed

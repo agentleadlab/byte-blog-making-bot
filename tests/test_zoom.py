@@ -423,3 +423,68 @@ def test_nothing_recent_enough_means_no_guess(monkeypatch):
 
 def test_the_meeting_carries_its_own_id():
     assert zoom.as_recording(call_meeting()).uid == "abc=="
+
+
+# --------------------------------- the share page says which recording it is
+
+# Zoom's API can't resolve a share link, but the page behind that link is
+# titled with the recording's name - it is what the browser tab shows. Without
+# it the choice fell to recency, and recency filed a call with Arlene when the
+# link plainly said Derrick.
+
+PAGE = (
+    '<html><head><title>Derrick Robison - Shared screen with speaker view</title>'
+    '</head><body></body></html>'
+)
+OG_PAGE = (
+    '<html><head><meta property="og:title" content="Arnold Tarpley III - Audio only">'
+    '<title>Zoom</title></head></html>'
+)
+
+
+def test_the_recording_name_is_read_off_the_page():
+    assert zoom.topic_from_page(PAGE) == "Derrick Robison"
+
+
+def test_the_open_graph_title_is_preferred_over_the_tab_title():
+    assert zoom.topic_from_page(OG_PAGE) == "Arnold Tarpley III"
+
+
+def test_a_page_that_says_nothing_useful_gives_nothing():
+    assert zoom.topic_from_page("<html><head><title>Zoom</title></head></html>") == ""
+    assert zoom.topic_from_page("") == ""
+
+
+def test_the_named_recording_beats_the_most_recent_one(monkeypatch):
+    """The exact failure: a link saying Derrick filed a call with Arlene."""
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 21)
+
+    monkeypatch.setattr(zoom, "date", Today)
+    meetings = [
+        call_meeting(uuid="arlene", topic="Arlene Linares", start_time="2026-08-21T10:00:00Z"),
+        call_meeting(uuid="derrick", topic="Derrick Robison", start_time="2026-08-19T05:17:00Z"),
+    ]
+
+    found, how = zoom.choose(meetings, link=REAL, page_topic="Derrick Robison")
+
+    assert found.topic == "Derrick Robison"
+    assert "Derrick Robison" in how
+
+
+def test_a_repeated_meeting_name_takes_the_most_recent_one():
+    """A weekly call carries the same topic every time."""
+    meetings = [
+        call_meeting(uuid="a", topic="Daily Team Call", start_time="2026-08-18T10:00:00Z"),
+        call_meeting(uuid="b", topic="Daily Team Call", start_time="2026-08-21T10:00:00Z"),
+    ]
+
+    assert zoom.match_topic(meetings, "Daily Team Call").uid == "b"
+
+
+def test_a_name_that_matches_nothing_falls_through():
+    assert zoom.match_topic([call_meeting()], "Nobody At All") is None
