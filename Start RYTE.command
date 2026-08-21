@@ -11,9 +11,6 @@ cd "$(dirname "$0")"
 # message twice - so clear any that are already running before starting.
 pkill -f "wilbyte bot" 2>/dev/null && sleep 1
 
-# Pull first. Forgetting this has twice looked like a fix that didn't work,
-# because the bot was still answering out of last week's code. Non-fatal by
-# design: if the update can't run, RYTE still starts.
-bash scripts/update.sh
-
+# start.sh pulls before it launches, so both ways in - double-click and
+# `bash scripts/start.sh` in a terminal - come up on the latest code.
 exec bash scripts/start.sh

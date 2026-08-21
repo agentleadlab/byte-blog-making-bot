@@ -30,6 +30,12 @@ RESTART_CODE=42
 # Ctrl-C should stop RYTE, not restart it.
 trap 'printf "\n\033[1mStopped.\033[0m\n"; exit 0' INT
 
+# Pull before starting, not only after a restart-exit. Ctrl-C and re-run is how
+# a restart actually happens in a terminal, and without this that route came
+# back up on the same old code - which looks exactly like a fix that didn't
+# work. Non-fatal by design: a failed update still starts the copy you have.
+bash scripts/update.sh
+
 printf '\n\033[1mStarting RYTE\033[0m — leave this window open. Ctrl-C to stop.\n\n'
 
 while true; do
