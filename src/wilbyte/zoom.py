@@ -62,14 +62,31 @@ def share_key(url: str) -> str:
     Zoom hands out the same recording under several dressings - with `?pwd=`
     appended, with a trailing slash, sometimes with a different regional host -
     so comparing the raw strings misses matches that are obviously the same
-    call. The token after `/rec/share/` is the identity.
+    call. The token after the path is the identity.
+
+    The path itself varies too, and that is not cosmetic: a browser link is
+    `/rec/share/`, while the API answers with `/recording/share/`. Knowing only
+    the first meant every link the API returned kept its whole URL as its
+    "token" and matched nothing.
     """
     text = (url or "").strip()
-    marker = "/rec/share/"
-    found = text.casefold().find(marker)
-    if found >= 0:
-        text = text[found + len(marker) :]
+    lowered = text.casefold()
+    for marker in _SHARE_MARKERS:
+        found = lowered.find(marker)
+        if found >= 0:
+            text = text[found + len(marker) :]
+            break
     return text.split("?")[0].split("#")[0].strip("/").casefold()
+
+
+# Longest first: `/recording/share/` contains no other marker, but checking a
+# shorter one first would cut a URL at the wrong place.
+_SHARE_MARKERS = (
+    "/recording/share/",
+    "/recording/play/",
+    "/rec/share/",
+    "/rec/play/",
+)
 
 
 def share_root(url_or_key: str) -> str:
@@ -213,13 +230,30 @@ def describe_match(meetings: list[dict], share_url: str, limit: int = 6) -> str:
     reporting "not found" and leaving it there.
     """
     wanted = share_key(share_url)
-    lines = [f"Pasted token: `{wanted or '(none)'}`", "Zoom's tokens for the newest recordings:"]
+    lines = [
+        f"Pasted link: `{(share_url or '')[:120]}`",
+        f"Its token: `{wanted or '(none)'}`",
+        "",
+        "What Zoom returns for the newest recordings:",
+    ]
     for meeting in (meetings or [])[:limit]:
         found = as_recording(meeting)
-        token = share_key(found.share_url) or "(no share_url)"
-        lines.append(f"· {(found.started_at or '')[:10]} {found.topic or '(no topic)'} → `{token}`")
+        lines.append(f"· **{found.topic or '(no topic)'}** {(found.started_at or '')[:10]}")
+        urls = links_on(meeting)
+        if not urls:
+            lines.append("    (no links of any kind on this one)")
+        for url in urls[:3]:
+            lines.append(f"    `{url[:110]}`")
     if not meetings:
         lines.append("· (none)")
+
+    # Which fields exist at all matters as much as their values: a share_url
+    # that is simply absent from the account listing fails identically to one
+    # that doesn't match, and only one of those is fixed by better matching.
+    if meetings:
+        sample = meetings[0]
+        if isinstance(sample, dict):
+            lines += ["", f"Fields on a meeting: {', '.join(sorted(sample))}"]
     return "\n".join(lines)
 
 

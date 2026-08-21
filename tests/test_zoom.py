@@ -245,3 +245,33 @@ def test_an_unrecognised_host_leaves_everyone_a_guest():
 
 def test_a_transcript_with_no_speaker_labels_names_nobody():
     assert zoom.host_and_guests("just some words with no labels", "santi@x.com") == ("", ())
+
+
+# ------------------------------------------ the API and the browser disagree
+
+# A browser share link is `/rec/share/<token>`; the API answers with
+# `/recording/share/<token>`. Knowing only the first meant every link Zoom
+# returned kept its whole URL as its "token" and matched nothing at all.
+
+API_FORM = "https://zoom.us/recording/share/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
+BROWSER_FORM = "https://us06web.zoom.us/rec/share/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
+
+
+def test_the_api_path_is_stripped_too():
+    assert zoom.share_key(API_FORM) == zoom.share_key(BROWSER_FORM)
+
+
+def test_the_two_forms_are_the_same_recording():
+    assert zoom.same_recording(API_FORM, BROWSER_FORM) is True
+
+
+def test_a_meeting_listed_in_the_api_form_is_found_from_a_browser_link():
+    meetings = [{"topic": "Derrick Robison", "share_url": API_FORM}]
+
+    assert zoom.match_share_url(meetings, BROWSER_FORM).topic == "Derrick Robison"
+
+
+def test_a_play_link_reduces_to_the_same_token():
+    play = "https://us06web.zoom.us/rec/play/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
+
+    assert zoom.share_key(play) == zoom.share_key(BROWSER_FORM)
