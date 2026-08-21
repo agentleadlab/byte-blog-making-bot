@@ -1109,3 +1109,27 @@ def test_the_launcher_does_not_loop_on_a_crash():
 
     assert 'if [ "$code" -ne "$RESTART_CODE" ]; then' in launcher
     assert 'exit "$code"' in launcher
+
+
+# --------------------------------------------- artwork taken from the page
+
+
+def test_a_notion_uploaded_image_is_found():
+    assert jobs._asset_url({"type": "file", "file": {"url": "https://s3/x.png"}}) == (
+        "https://s3/x.png"
+    )
+
+
+def test_an_external_image_is_found():
+    assert jobs._asset_url({"type": "external", "external": {"url": "https://x/y.png"}}) == (
+        "https://x/y.png"
+    )
+
+
+def test_an_emoji_icon_has_no_url_to_copy():
+    """A page wearing an emoji has no image, and that is not an error."""
+    assert jobs._asset_url({"type": "emoji", "emoji": "🎙️"}) == ""
+
+
+def test_a_page_with_no_cover_is_not_an_error():
+    assert jobs._asset_url(None) == ""

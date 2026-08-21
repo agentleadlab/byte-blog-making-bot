@@ -65,6 +65,9 @@ class NotionClient:
 
     # ------------------------------------------------------------- reading
 
+    def page(self, page_id: str) -> dict:
+        return self._request("GET", f"/pages/{page_id}")
+
     def database(self, database_id: str) -> dict:
         return self._request("GET", f"/databases/{database_id}")
 

@@ -413,7 +413,10 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
     page_id = config.secrets.notion_recordings_page_id
     client = notion.NotionClient(config.secrets.notion_token)
     try:
-        database_id = client.find_child_database(page_id, recordings.TITLE_PREFIX + "s")
+        # No name: write into the gallery that is already on the page,
+        # whatever its owner called it. Asking for one named after our own
+        # convention is how a second database appeared beside "‼️ Recordings ‼️".
+        database_id = client.find_child_database(page_id)
         if not database_id:
             database_id = client.create_database(
                 page_id, recordings.TITLE_PREFIX + "s", recordings.database_schema()
@@ -426,7 +429,7 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
         rows = client.query_database(database_id)
         number = recordings.next_number(recordings.row_titles(rows))
         title = recordings.call_title(rec, recordings.title_for(number))
-        cover_url = card_cover(config, rec, title)
+        cover_url, icon_url = gallery_art(config, client, page_id)
 
         created = client.create_page(
             database_id,
@@ -438,8 +441,10 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
             ),
             children=recordings.page_blocks(rec, summary),
             cover_url=cover_url,
-            icon_url=config.secrets.notion_icon_url,
-            icon_emoji=config.secrets.notion_icon_emoji or DEFAULT_CARD_ICON,
+            icon_url=icon_url,
+            icon_emoji=None if icon_url else (
+                config.secrets.notion_icon_emoji or DEFAULT_CARD_ICON
+            ),
         )
     finally:
         client.close()
@@ -452,37 +457,84 @@ def file_recording(config: Config, rec, *, summary: str = "") -> tuple[str, str]
 DEFAULT_CARD_ICON = "🎙️"
 
 
-def card_cover(config: Config, rec, title: str) -> str:
-    """Render a cover for this call and return a permanent URL for it.
+def gallery_art(config: Config, client, page_id: str) -> tuple[str, str]:
+    """(cover, icon) for a card, taken from the page the gallery lives on.
 
-    Uses the same renderer as the blog covers, so the gallery matches the
-    brand without anyone having to find and attach an image. Failing to make
-    one is not worth failing the card over - a plain card beats no card - so
-    this returns "" and lets the entry go in without it.
+    The rest of the workspace already looks a particular way - the SOP cards
+    all carry the Headquarters banner - and a card that matches belongs in the
+    gallery in a way a bespoke one doesn't. So rather than inventing artwork or
+    asking for a file, take what the page itself is wearing.
+
+    The catch is that Notion serves its own uploads from URLs that expire
+    within the hour, and a card cover set to one of those is blank by tomorrow.
+    So the image is copied once into the GHL media library, which is public and
+    permanent, and the result is remembered.
     """
-    from .. import cover as cover_mod
-    from ..models import CoverPlan
-    from ..pipeline import DEFAULT_OUTPUT_DIR
+    import logging
 
-    if config.secrets.notion_cover_url:
-        return config.secrets.notion_cover_url
+    from .. import prefs
 
-    plan = CoverPlan(kicker="AGENT LEAD LAB", headline=(rec.topic or title).upper())
-    path = DEFAULT_OUTPUT_DIR / "recordings" / f"{_slug(title)}.png"
+    log = logging.getLogger("wilbyte.bot")
+    saved = prefs.load()
+    cover = config.secrets.notion_cover_url or saved.get("recording_cover_url") or ""
+    icon = config.secrets.notion_icon_url or saved.get("recording_icon_url") or ""
+    if cover and icon:
+        return cover, icon
+
     try:
-        cover_mod.render_cover(plan, config, path)
-        return host_image(config, path, name=path.name)
-    except Exception as exc:  # rendering or upload - neither should lose the card
-        import logging
+        page = client.page(page_id)
+    except Exception as exc:
+        log.warning("Couldn't read the page's artwork: %s", exc)
+        return cover, icon
 
-        logging.getLogger("wilbyte.bot").warning("No cover for %s: %s", title, exc)
+    changed = False
+    if not cover:
+        cover = _rehost(config, _asset_url(page.get("cover")), "recordings-cover.png")
+        if cover:
+            saved["recording_cover_url"] = cover
+            changed = True
+    if not icon:
+        icon = _rehost(config, _asset_url(page.get("icon")), "recordings-icon.png")
+        if icon:
+            saved["recording_icon_url"] = icon
+            changed = True
+    if changed:
+        prefs.save(saved)
+    return cover, icon
+
+
+def _asset_url(block) -> str:
+    """The URL inside a Notion cover/icon object, whichever kind it is."""
+    if not isinstance(block, dict):
+        return ""
+    for key in ("external", "file"):
+        url = (block.get(key) or {}).get("url")
+        if url:
+            return str(url)
+    return ""
+
+
+def _rehost(config: Config, url: str, name: str) -> str:
+    """Copy an image to somewhere permanent. Returns "" if it can't be done."""
+    if not url:
         return ""
 
+    import logging
 
-def _slug(text: str) -> str:
-    import re
+    import httpx
 
-    return re.sub(r"[^a-z0-9]+", "-", (text or "card").lower()).strip("-") or "card"
+    from ..pipeline import DEFAULT_OUTPUT_DIR
+
+    path = DEFAULT_OUTPUT_DIR / "recordings" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        response = httpx.get(url, timeout=60, follow_redirects=True)
+        response.raise_for_status()
+        path.write_bytes(response.content)
+        return host_image(config, path, name=name)
+    except Exception as exc:  # artwork is never worth failing a card over
+        logging.getLogger("wilbyte.bot").warning("Couldn't re-host %s: %s", name, exc)
+        return ""
 
 
 def host_image(config: Config, path: Path, *, name: str) -> str:
