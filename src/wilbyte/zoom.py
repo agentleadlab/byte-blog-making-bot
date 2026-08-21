@@ -50,6 +50,9 @@ class ZoomRecording:
     started_at: str = ""
     transcript_url: str = ""
     participants: tuple[str, ...] = ()
+    # Zoom's own identity for the meeting, so a call filed once isn't offered
+    # again when the next link can't be matched.
+    uid: str = ""
 
     @property
     def has_transcript(self) -> bool:
@@ -259,6 +262,7 @@ def as_recording(meeting: dict) -> ZoomRecording:
         host_email=str(meeting.get("host_email") or ""),
         started_at=str(meeting.get("start_time") or ""),
         transcript_url=pick_transcript(meeting.get("recording_files") or []),
+        uid=meeting_id(meeting),
     )
 
 
@@ -285,6 +289,99 @@ def match_share_url(meetings: list[dict], share_url: str) -> ZoomRecording | Non
         if any(same_recording(url, share_url) for url in links_on(meeting)):
             return as_recording(meeting)
     return None
+
+
+def meeting_id(meeting: dict) -> str:
+    """A stable identity for one recorded meeting.
+
+    Zoom's uuid is the real one. The fallback exists because an identity that
+    is sometimes absent is worse than a slightly weaker one that always works.
+    """
+    uuid = str((meeting or {}).get("uuid") or "").strip()
+    if uuid:
+        return uuid
+    return f"{(meeting or {}).get('id', '')}@{(meeting or {}).get('start_time', '')}"
+
+
+# Where Zoom puts the passcode a viewer types to play a recording. It is the
+# line people paste under the link, and unlike the link it appears in the API.
+PASSCODE_FIELDS = ("recording_play_passcode", "password", "recording_password")
+
+
+def match_passcode(meetings: list[dict], passcode: str) -> ZoomRecording | None:
+    """The meeting whose play passcode is the one pasted under the link.
+
+    Compared verbatim - `U^M^s7Bw` is eight random characters, so an exact hit
+    is as good as an identifier. Zoom's share link is not resolvable through
+    the API at all, which makes this the only exact match available.
+    """
+    wanted = (passcode or "").strip()
+    if len(wanted) < 4:
+        return None
+    for meeting in meetings or []:
+        for field in PASSCODE_FIELDS:
+            if str((meeting or {}).get(field) or "").strip() == wanted:
+                return as_recording(meeting)
+    return None
+
+
+def readable(meetings: list[dict]) -> list[dict]:
+    return [m for m in meetings or [] if pick_transcript((m or {}).get("recording_files") or [])]
+
+
+def newest_unfiled(
+    meetings: list[dict], filed: set[str] | frozenset[str], *, within_days: int = 14
+) -> ZoomRecording | None:
+    """The most recent readable recording that hasn't been filed yet.
+
+    The last resort, and a sound one: a call is posted within a day or two of
+    happening, and every earlier call is already in the gallery. Restricted to
+    recent recordings so a quiet week can't reach back and dredge up something
+    from last month.
+    """
+    cutoff = (date.today() - timedelta(days=within_days)).isoformat()
+    fresh = [
+        meeting for meeting in readable(meetings)
+        if meeting_id(meeting) not in (filed or set())
+        and str(meeting.get("start_time") or "")[:10] >= cutoff
+    ]
+    if not fresh:
+        return None
+    fresh.sort(key=lambda meeting: str(meeting.get("start_time") or ""), reverse=True)
+    return as_recording(fresh[0])
+
+
+def choose(
+    meetings: list[dict],
+    *,
+    link: str = "",
+    passcode: str = "",
+    filed: set[str] | frozenset[str] | None = None,
+) -> tuple[ZoomRecording | None, str]:
+    """Which recording was posted, and how that was decided.
+
+    Zoom's API returns a different share token than its web interface does, so
+    the link someone pastes cannot be resolved to a meeting - not by better
+    matching, not at all. Other developers have hit the same wall. So the link
+    is tried, and then the things that *are* comparable take over.
+
+    The reason comes back with the answer so RYTE can say which one it used.
+    Deciding by recency is a judgement, and a judgement stated out loud is one
+    somebody can correct.
+    """
+    found = match_share_url(meetings, link)
+    if found is not None:
+        return found, "the link"
+
+    found = match_passcode(meetings, passcode)
+    if found is not None:
+        return found, "its passcode"
+
+    found = newest_unfiled(meetings, filed or set())
+    if found is not None:
+        return found, "it being the most recent call not filed yet"
+
+    return None, ""
 
 
 def describe_match(meetings: list[dict], share_url: str, limit: int = 6) -> str:

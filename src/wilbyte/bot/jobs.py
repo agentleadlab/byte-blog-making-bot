@@ -570,45 +570,30 @@ def zoom_transcript(config: Config, rec) -> str:
         config.secrets.zoom_client_secret,
     )
     try:
+        from .. import recordings
+
         meetings = client.account_recordings(days=30)
-        found = zoom.match_share_url(meetings, rec.url)
+        found, how = zoom.choose(
+            meetings,
+            link=rec.url,
+            passcode=rec.passcode,
+            filed=recordings.filed_ids(),
+        )
         if found is None:
             # Say how many were looked at. "Couldn't find it" among 92
             # recordings is a matching problem; among none it is a setup one,
             # and the two need completely different fixes.
             rec.note = (
-                f"That link didn't match any of the {len(meetings)} Zoom recording(s) "
-                "on the account from the last 30 days, so there's no transcript to "
-                "summarise. `@RYTE calls <link>` shows what it was compared against."
+                f"None of the {len(meetings)} Zoom recording(s) from the last 30 days "
+                "looked like this call, so there's no transcript to summarise."
             )
             return ""
+
+        rec.matched_by = how
+        recordings.remember_filed(found.uid)
         return zoom_read(config, rec, found, client=client)
     finally:
         client.close()
-
-
-def zoom_candidates(config: Config, *, days: int = 30, limit: int = 25) -> list:
-    """Recent recordings, newest first, for picking one by hand.
-
-    The fallback for a link that can't be matched. Whoever posted it knows
-    which call it is on sight, and asking beats a third guess at Zoom's token
-    format.
-    """
-    from .. import zoom
-
-    client = zoom.ZoomClient(
-        config.secrets.zoom_account_id,
-        config.secrets.zoom_client_id,
-        config.secrets.zoom_client_secret,
-    )
-    try:
-        meetings = client.account_recordings(days=days)
-    finally:
-        client.close()
-
-    found = [zoom.as_recording(meeting) for meeting in meetings]
-    found.sort(key=lambda item: item.started_at or "", reverse=True)
-    return found[:limit]
 
 
 def zoom_read(config: Config, rec, found, *, client=None) -> str:

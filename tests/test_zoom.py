@@ -316,3 +316,110 @@ def test_a_play_link_reduces_to_the_same_token():
     play = "https://us06web.zoom.us/rec/play/qVQ0NLoGrnVQQZbM-EnD-1J-hOD6vtmUqV9fya1x"
 
     assert zoom.share_key(play) == zoom.share_key(BROWSER_FORM)
+
+
+# ------------------------------------- identifying a call without the link
+
+# Zoom's API returns a different share token than its website does, so a pasted
+# /rec/share/ link cannot be resolved to a meeting. Not by better matching -
+# at all. Everything below is what identifies a call once that is accepted.
+
+
+def call_meeting(**extra):
+    base = {
+        "uuid": "abc==", "topic": "Derrick Robison",
+        "start_time": "2026-08-19T05:17:00Z",
+        "host_email": "santi@agentleadlab.com",
+        "recording_files": [transcript_file()],
+    }
+    return {**base, **extra}
+
+
+def test_the_passcode_under_the_link_identifies_the_call():
+    """Eight random characters. An exact hit is as good as an id."""
+    meetings = [
+        call_meeting(uuid="other", topic="Someone Else", recording_play_passcode="zzzz"),
+        call_meeting(recording_play_passcode="U^M^s7Bw"),
+    ]
+
+    found, how = zoom.choose(meetings, link=REAL, passcode="U^M^s7Bw")
+
+    assert found.topic == "Derrick Robison"
+    assert how == "its passcode"
+
+
+def test_a_short_passcode_is_not_trusted_as_an_identifier():
+    meetings = [call_meeting(recording_play_passcode="abc")]
+
+    found, how = zoom.choose(meetings, link=REAL, passcode="abc")
+
+    assert how != "its passcode"
+
+
+def test_the_link_still_wins_when_it_does_match():
+    meetings = [call_meeting(share_url=REAL, recording_play_passcode="U^M^s7Bw")]
+
+    assert zoom.choose(meetings, link=REAL, passcode="U^M^s7Bw")[1] == "the link"
+
+
+def test_the_newest_unfiled_call_is_the_last_resort(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 21)
+
+    monkeypatch.setattr(zoom, "date", Today)
+    meetings = [
+        call_meeting(uuid="old", topic="Older", start_time="2026-08-17T10:00:00Z"),
+        call_meeting(uuid="new", topic="Newest", start_time="2026-08-19T10:00:00Z"),
+    ]
+
+    found, how = zoom.choose(meetings, link=REAL)
+
+    assert found.topic == "Newest"
+    assert "not filed yet" in how
+
+
+def test_a_call_already_filed_is_not_offered_again(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 8, 21)
+
+    monkeypatch.setattr(zoom, "date", Today)
+    meetings = [
+        call_meeting(uuid="old", topic="Older", start_time="2026-08-17T10:00:00Z"),
+        call_meeting(uuid="new", topic="Newest", start_time="2026-08-19T10:00:00Z"),
+    ]
+
+    found, _ = zoom.choose(meetings, link=REAL, filed={"new"})
+
+    assert found.topic == "Older"
+
+
+def test_a_recording_with_no_transcript_is_never_the_fallback():
+    """Picking one would file a card with no summary and no explanation."""
+    meetings = [call_meeting(recording_files=[])]
+
+    assert zoom.choose(meetings, link=REAL) == (None, "")
+
+
+def test_nothing_recent_enough_means_no_guess(monkeypatch):
+    import datetime as real_datetime
+
+    class Today(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 12, 1)
+
+    monkeypatch.setattr(zoom, "date", Today)
+
+    assert zoom.choose([call_meeting()], link=REAL) == (None, "")
+
+
+def test_the_meeting_carries_its_own_id():
+    assert zoom.as_recording(call_meeting()).uid == "abc=="

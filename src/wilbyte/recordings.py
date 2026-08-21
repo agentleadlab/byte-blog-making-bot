@@ -63,6 +63,10 @@ class Recording:
     # Why there is no summary, when there isn't one. Silence here reads as
     # "nothing to say about the call" rather than "I never found it".
     note: str = ""
+    # How the call was identified. Zoom's API can't resolve a share link, so
+    # sometimes this is a judgement rather than a match - and a judgement gets
+    # said out loud where somebody can correct it.
+    matched_by: str = ""
     # Fathom writes a summary of its own; used in preference to paying for one.
     fathom_summary: str = ""
 
@@ -294,3 +298,47 @@ def page_blocks(recording: Recording, summary: str = "") -> list[dict]:
             else:
                 blocks.append(notion.paragraph(text))
     return blocks
+
+
+# ------------------------------------------------ which calls are already in
+
+# Zoom's API cannot resolve a share link to a recording, so when neither the
+# link nor a passcode identifies one, RYTE falls back to "the most recent call
+# not filed yet". That answer is only right if it knows what it has filed.
+
+FILED_PATH_NAME = "filed-recordings.json"
+
+
+def _filed_path(path=None):
+    from pathlib import Path
+
+    from .state import _state_dir
+
+    return Path(path) if path else _state_dir() / FILED_PATH_NAME
+
+
+def filed_ids(path=None) -> set[str]:
+    """Zoom meeting ids already written to the gallery."""
+    import json
+
+    found = _filed_path(path)
+    if not found.exists():
+        return set()
+    try:
+        data = json.loads(found.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {str(item) for item in data} if isinstance(data, list) else set()
+
+
+def remember_filed(meeting_id: str, path=None) -> None:
+    """Note that a call is in the gallery, so it isn't offered again."""
+    import json
+
+    if not meeting_id:
+        return
+    found = _filed_path(path)
+    known = filed_ids(path)
+    known.add(str(meeting_id))
+    found.parent.mkdir(parents=True, exist_ok=True)
+    found.write_text(json.dumps(sorted(known), indent=2), encoding="utf-8")

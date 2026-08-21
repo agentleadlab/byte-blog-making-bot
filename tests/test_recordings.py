@@ -355,7 +355,7 @@ def test_a_zoom_call_that_cannot_be_found_says_so(monkeypatch):
     rec = call(platform="Zoom")
 
     assert jobs.zoom_transcript(_zoom_config(), rec) == ""
-    assert "didn't match" in rec.note.casefold()
+    assert "looked like this call" in rec.note.casefold()
     # How many were looked at: none is a setup problem, 92 is a matching one.
     assert "1 zoom recording" in rec.note.casefold()
 
@@ -447,20 +447,6 @@ def test_a_picked_call_is_read_and_named(monkeypatch):
     assert rec.topic == "Derrick Robison"
 
 
-def test_candidates_come_back_newest_first(monkeypatch):
-    from wilbyte.bot import jobs
-
-    _use_fake(monkeypatch, [
-        {"topic": "Older", "start_time": "2026-08-01T10:00:00Z"},
-        {"topic": "Newest", "start_time": "2026-08-19T10:00:00Z"},
-        {"topic": "Middle", "start_time": "2026-08-10T10:00:00Z"},
-    ])
-
-    found = jobs.zoom_candidates(_zoom_config())
-
-    assert [item.topic for item in found] == ["Newest", "Middle", "Older"]
-
-
 def test_a_sentence_can_never_become_the_title():
     """This shipped: "Sales Recording 1 - Santiago Villegas Agent Lead Lab How
     are you? Good morning. Derrick Robison". The reader is fixed upstream; this
@@ -474,3 +460,32 @@ def test_a_guest_that_is_a_sentence_is_skipped_for_one_that_is_not():
     rec = call(closer="Santiago", guests=("Well, here is the thing. Derrick", "Derrick Robison"))
 
     assert recordings.call_title(rec, 1) == "Sales Recording 1 - Santiago Derrick Robison"
+
+
+# ------------------------------------- remembering what has been filed
+
+def test_a_filed_call_is_remembered(tmp_path):
+    store = tmp_path / "filed.json"
+
+    assert recordings.filed_ids(store) == set()
+
+    recordings.remember_filed("abc==", store)
+    recordings.remember_filed("def==", store)
+
+    assert recordings.filed_ids(store) == {"abc==", "def=="}
+
+
+def test_remembering_the_same_call_twice_is_harmless(tmp_path):
+    store = tmp_path / "filed.json"
+    recordings.remember_filed("abc==", store)
+    recordings.remember_filed("abc==", store)
+
+    assert recordings.filed_ids(store) == {"abc=="}
+
+
+def test_a_corrupt_store_is_treated_as_empty(tmp_path):
+    """Better to re-offer a call than to refuse to file anything."""
+    store = tmp_path / "filed.json"
+    store.write_text("{not json", encoding="utf-8")
+
+    assert recordings.filed_ids(store) == set()
