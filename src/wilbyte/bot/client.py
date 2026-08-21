@@ -397,6 +397,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_check(responder, config, request.source)
                 return
 
+            if request.action == "calls":
+                await _send_visible_calls(responder, config)
+                return
+
             if request.action == "learn":
                 await _handle_learn(responder, message, request.format_key)
                 return
@@ -859,6 +863,34 @@ async def _send_check(responder: Responder, config: Config, source: str | None) 
         for ok, note in recording_rows
     ]
     await responder.send("**RYTE Closer**\n" + "\n".join(lines))
+
+
+async def _send_visible_calls(responder: Responder, config: Config) -> None:
+    """What Zoom and Fathom will actually hand over, listed.
+
+    A recording that was shared with the account rather than recorded on it is
+    invisible to the API, and from Discord that is indistinguishable from a
+    broken app. Seeing the list is what tells them apart.
+    """
+    await responder.send("Asking Zoom and Fathom what they'll show me…")
+    try:
+        lines = await asyncio.to_thread(jobs.visible_calls, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+
+    # Discord refuses anything over 2000 characters, and a busy account's list
+    # goes past that - so send it in pieces rather than losing the tail.
+    chunk: list[str] = []
+    size = 0
+    for line in lines:
+        if size + len(line) > 1800 and chunk:
+            await responder.send("\n".join(chunk))
+            chunk, size = [], 0
+        chunk.append(line)
+        size += len(line) + 1
+    if chunk:
+        await responder.send("\n".join(chunk))
 
 
 async def _send_write(

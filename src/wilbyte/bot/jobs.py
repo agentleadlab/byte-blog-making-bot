@@ -881,6 +881,65 @@ def _check_zoom(config: Config) -> list[tuple[bool, str]]:
     return rows
 
 
+def visible_calls(config: Config, *, limit: int = 15) -> list[str]:
+    """Every call RYTE can actually reach, newest first.
+
+    "I couldn't find that call" has two very different causes that look
+    identical from Discord: the app is misconfigured, or the recording lives on
+    someone else's Zoom account and was only *shared* with us. A list settles
+    it - an empty one is a configuration problem, a list that simply doesn't
+    include the call you posted is an ownership one.
+    """
+    from .. import fathom, zoom
+
+    lines: list[str] = []
+    secrets = config.secrets
+
+    if secrets.zoom_account_id and secrets.zoom_client_id and secrets.zoom_client_secret:
+        client = zoom.ZoomClient(
+            secrets.zoom_account_id, secrets.zoom_client_id, secrets.zoom_client_secret
+        )
+        try:
+            meetings = client.account_recordings(days=30)
+        except Exception as exc:
+            meetings = []
+            lines.append(f"**Zoom** — couldn't ask: {_short(exc)}")
+        finally:
+            client.close()
+        if meetings:
+            lines.append(f"**Zoom** — {len(meetings)} recording(s) on this account:")
+            for meeting in meetings[:limit]:
+                found = zoom.as_recording(meeting)
+                mark = "📝" if found.has_transcript else "—"
+                day = (found.started_at or "")[:10]
+                lines.append(f"{mark} {day}  {found.topic or '(no topic)'}  ·  {found.host_email}")
+            if len(meetings) > limit:
+                lines.append(f"…and {len(meetings) - limit} more")
+        elif not any(line.startswith("**Zoom** — couldn't") for line in lines):
+            lines.append(
+                "**Zoom** — no recordings at all on this account in the last 30 days."
+            )
+
+    if secrets.fathom_api_key:
+        client = fathom.FathomClient(secrets.fathom_api_key)
+        try:
+            meetings = client.meetings(include_transcript=False, limit=limit)
+        except Exception as exc:
+            meetings = []
+            lines.append(f"**Fathom** — couldn't ask: {_short(exc)}")
+        finally:
+            client.close()
+        if meetings:
+            lines.append(f"**Fathom** — {len(meetings)} call(s):")
+            for meeting in meetings[:limit]:
+                call = fathom.as_call(meeting)
+                lines.append(f"📝 {(call.started_at or '')[:10]}  {call.title or '(untitled)'}")
+
+    if not lines:
+        return ["Neither Zoom nor Fathom is configured, so there's nothing to look in."]
+    return lines
+
+
 def _check_fathom(config: Config) -> list[tuple[bool, str]]:
     from .. import fathom
 

@@ -69,6 +69,12 @@ ACTION_WORDS = {
     "reconcile": "reconcile",
     "tidy": "reconcile",
     "sync": "reconcile",
+    # What Zoom and Fathom will actually hand over. A call that can't be found
+    # looks the same whether the app is misconfigured or the recording simply
+    # belongs to someone else's account - this is what tells the two apart.
+    "calls": "calls",
+    "zoom": "calls",
+    "visible": "calls",
     # Note: "test" stays a MODE word (preview), not a check alias.
     "check": "check",
     "diagnose": "check",
@@ -120,6 +126,15 @@ RECORDING_URL_RE = re.compile(
 )
 
 
+# Any link at all, not just the ones we act on - the point is to stop a URL's
+# insides being read as instructions, whatever it points at.
+ANY_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _without_links(text: str) -> str:
+    return ANY_URL_RE.sub(" ", text or "")
+
+
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
     first = re.match(r"\s*([a-zA-Z]+)", text)
     return bool(first) and first.group(1).lower() in words
@@ -147,7 +162,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
     lowered = text.lower()
-    action = _first_action_word(lowered)
+    # Command words are looked for in what was *typed*, not in the links. A
+    # Zoom share link contains "zoom" and a blog URL can contain "status" or
+    # "check" - words inside a URL are addresses, not instructions.
+    action = _first_action_word(_without_links(lowered))
 
     # `cover` takes free text, so handle it before the link/number extraction.
     if action == "cover":
@@ -196,7 +214,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     sources = find_sources(text)
 
-    if action in ("status", "schedule", "help", "fields", "reconcile", "missed"):
+    if action in ("status", "schedule", "help", "fields", "reconcile", "missed", "calls"):
         return MentionRequest(action=action)
 
     # No YouTube link, but a call link: file it. Checked after the blog sources
@@ -351,6 +369,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **status** — what's posted, what's next
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
+> @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL

@@ -382,3 +382,25 @@ def test_a_format_word_inside_any_link_is_not_a_format_word():
 
 def test_a_typed_format_word_still_wins():
     assert parse(f"{BOT} email about https://agentleadlab.com/x").action == "write"
+
+
+# ------------------------------------------- what RYTE can actually read
+
+
+@pytest.mark.parametrize("word", ["calls", "zoom", "visible"])
+def test_asking_what_recordings_are_visible(word):
+    assert parse(f"{BOT} {word}").action == "calls"
+
+
+def test_a_zoom_link_is_still_a_recording_to_file():
+    """`zoom.us` contains "zoom", which is now also a command word."""
+    assert parse(f"{BOT} {ZOOM_REC}\nPasscode: U^M^s7Bw").action == "recording"
+
+
+def test_a_command_word_inside_a_url_is_not_a_command():
+    """A link is an address. Its insides are not instructions."""
+    assert parse(f"{BOT} https://agentleadlab.com/blog/lead-status-check").action == "help"
+
+
+def test_a_typed_command_word_still_wins_over_a_link():
+    assert parse(f"{BOT} status https://agentleadlab.com/blog/x").action == "status"
