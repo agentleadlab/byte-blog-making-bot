@@ -15,6 +15,64 @@ class Decision(str, Enum):
     TIMEOUT = "timeout"
 
 
+class RecordingPicker(discord.ui.View):
+    """Pick which call a link refers to.
+
+    Zoom's API returns a different share token than its website does, so a
+    pasted link cannot be resolved to a meeting - not by better matching, not
+    at all. Everything else tried here either guessed wrong or asked people to
+    leave the conversation. Whoever posted the link knows the call on sight.
+    """
+
+    def __init__(self, choices: list[tuple[str, str, str]], *, requester_id: int | None, timeout: float):
+        super().__init__(timeout=timeout)
+        self.chosen: str | None = None
+        self.answered = False
+        self.requester_id = requester_id
+
+        # Discord's limits: 25 options, 100 characters of label, 100 of value.
+        self._select = discord.ui.Select(
+            placeholder="Which call is this?",
+            options=[
+                discord.SelectOption(label=label[:100], description=note[:100], value=key[:100])
+                for label, note, key in choices[:25]
+            ],
+            min_values=1,
+            max_values=1,
+        )
+        self._select.callback = self._picked
+        self.add_item(self._select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.requester_id is None or interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            "Only the person who posted the link can pick the call.", ephemeral=True
+        )
+        return False
+
+    async def _done(self, interaction: discord.Interaction, note: str) -> None:
+        self.answered = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content=note, view=self)
+        self.stop()
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        self.chosen = self._select.values[0]
+        await self._done(interaction, "Reading that call…")
+
+    @discord.ui.button(label="None of these", style=discord.ButtonStyle.secondary, emoji="🚫")
+    async def none_of_these(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.chosen = None
+        await self._done(interaction, "Filing it with the link only.")
+
+    async def on_timeout(self) -> None:
+        self.chosen = None
+        for child in self.children:
+            child.disabled = True
+
+
 class ApprovalView(discord.ui.View):
     """Approve / save as draft / skip / stop, restricted to the requester.
 

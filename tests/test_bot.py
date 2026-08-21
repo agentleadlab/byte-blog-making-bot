@@ -1178,29 +1178,26 @@ def test_a_bare_name_is_read_as_an_answer():
     assert _words_beside_link("<@123> derrick robison", "") == "derrick robison"
 
 
-def test_the_question_expires_rather_than_answering_something_else(monkeypatch):
-    from types import SimpleNamespace
+def test_zooms_marketing_title_is_not_a_recording_name():
+    """It was served for every gated link, so it matched every link posted."""
+    from wilbyte import zoom
 
-    from wilbyte.bot import client
-
-    message = SimpleNamespace(channel=SimpleNamespace(id=7))
-    client._AWAITING_NAME[7] = ("rec", 0.0)
-    monkeypatch.setattr(
-        "time.monotonic", lambda: client.NAME_REPLY_WINDOW_SECONDS + 10
+    html = (
+        '<meta property="og:title" content="Video Conferencing, Web Conferencing, '
+        'Webinars, Screen Sharing">'
     )
 
-    assert client.awaiting_name(message) is False
-    assert 7 not in client._AWAITING_NAME
+    assert zoom.topic_from_page(html) == ""
 
 
-def test_an_unanswered_question_is_live_until_it_expires(monkeypatch):
-    from types import SimpleNamespace
+def test_a_search_narrows_what_the_picker_shows():
+    """Typing a name beside the link should shorten the list, not replace it."""
+    from wilbyte.bot import jobs
 
-    from wilbyte.bot import client
+    calls = [
+        jobs.Call("zoom", "a", "Derrick Robison", "2026-08-19T05:17:00Z", "santi@x.com"),
+        jobs.Call("zoom", "b", "Arlene Linares", "2026-08-21T10:00:00Z", "santi@x.com"),
+    ]
 
-    message = SimpleNamespace(channel=SimpleNamespace(id=8))
-    monkeypatch.setattr("time.monotonic", lambda: 100.0)
-    client._AWAITING_NAME[8] = ("rec", 99.0)
-
-    assert client.awaiting_name(message) is True
-    client._AWAITING_NAME.pop(8, None)
+    assert [c.topic for c in calls if c.matches("derrick")] == ["Derrick Robison"]
+    assert len([c for c in calls if c.matches("")]) == 2

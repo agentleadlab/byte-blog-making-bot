@@ -355,6 +355,9 @@ _HTML_TITLE = re.compile(r"<title[^>]*>(?P<value>.*?)</title>", re.IGNORECASE | 
 _NOT_A_TOPIC = {
     "zoom", "video conferencing", "zoom video", "sign in", "enter passcode",
     "recording", "cloud recording", "zoom cloud recording",
+    # Zoom's own marketing title, served on any page that won't name the
+    # recording. It matched every link posted until it was listed here.
+    "video conferencing, web conferencing, webinars, screen sharing",
 }
 
 
