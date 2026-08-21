@@ -393,3 +393,13 @@ def test_a_bare_link_is_marked_as_needing_a_name():
 def test_asking_for_an_sop_is_not_filing_one(text):
     """Length alone can't tell these from a procedure. Who they address can."""
     assert sops.find_sop(text) is None
+
+
+def test_an_html_entity_never_reaches_a_card_title():
+    """og: tags are HTML, so "&" arrives as "&amp;" — and a card came out
+    called "Buying Your GHL Phone Number &amp; Calling Numbers"."""
+    import html
+
+    assert html.unescape("Buying Your GHL Phone Number &amp; Calling Numbers") == (
+        "Buying Your GHL Phone Number & Calling Numbers"
+    )

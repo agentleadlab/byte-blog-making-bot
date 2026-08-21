@@ -283,6 +283,10 @@ def message_files(message) -> tuple[tuple[str, ...], tuple[str, ...]]:
     return tuple(images), tuple(audio)
 
 
+# What RYTE leaves on a post he has filed, in place of a message.
+SOP_FILED_REACTION = "📘"
+
+
 async def handle_sop_post(bot: WilByteBot, message) -> None:
     """File what somebody posted in the SOP channel."""
     from .. import sops
@@ -304,25 +308,33 @@ async def handle_sop_post(bot: WilByteBot, message) -> None:
     sop.posted_on = posted.date() if posted is not None else None
 
     responder = MessageResponder(message)
-    async with message.channel.typing():
-        summary = ""
-        try:
-            summary = await asyncio.to_thread(jobs.sop_summary, bot.config, sop)
-        except PIPELINE_ERRORS as exc:
-            log.warning("Couldn't read the SOP %s: %s", sop.title, exc)
-            sop.note = sop.note or f"No summary — {exc}"
+    summary = ""
+    try:
+        summary = await asyncio.to_thread(jobs.sop_summary, bot.config, sop)
+    except PIPELINE_ERRORS as exc:
+        log.warning("Couldn't read the SOP %s: %s", sop.title, exc)
+        sop.note = sop.note or f"No summary — {exc}"
 
-        try:
-            title, url = await asyncio.to_thread(
-                jobs.file_sop, bot.config, sop, summary=summary
-            )
-        except PIPELINE_ERRORS as exc:
-            await responder.send(embed=embeds.error(f"Couldn't file that SOP\n{exc}"))
-            return
+    try:
+        title, url = await asyncio.to_thread(jobs.file_sop, bot.config, sop, summary=summary)
+    except PIPELINE_ERRORS as exc:
+        # Failure is the one thing worth saying out loud. Filing quietly and
+        # failing quietly are not the same promise.
+        await responder.send(embed=embeds.error(f"Couldn't file that SOP\n{exc}"))
+        return
 
     sops.remember(getattr(message, "id", ""))
-    tail = " with a summary" if summary else (f"\n⚠ {sop.note}" if sop.note else "")
-    await responder.send(f"📘 **{title}** filed{tail}\n{url}")
+    log.info("Filed %s", title)
+
+    # A reaction rather than a reply. The channel is for procedures, not for
+    # RYTE announcing that he noticed one - but a post that filed and a post
+    # that was passed over as chatter should not look the same afterwards.
+    try:
+        await message.add_reaction(SOP_FILED_REACTION)
+    except discord.HTTPException:
+        # Adding reactions is its own permission, and not having it is not a
+        # reason to think the SOP failed.
+        pass
 
 
 def watched_links(message) -> tuple[str, ...]:

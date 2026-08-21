@@ -1748,6 +1748,7 @@ def describe_page(url: str, *, timeout: float = 15.0) -> str:
     "Creating Lead Form (Internal Strategy)" is a great deal more findable than
     a bare URL.
     """
+    import html as _html
     import re as _re
 
     import httpx
@@ -1772,7 +1773,10 @@ def describe_page(url: str, *, timeout: float = 15.0) -> str:
             _re.IGNORECASE,
         )
         if match:
-            text = " ".join(match.group(1).split())
+            # og: tags are HTML, so "&" arrives as "&amp;" - and went straight
+            # onto a card called "Buying Your GHL Phone Number &amp; Calling
+            # Numbers".
+            text = " ".join(_html.unescape(match.group(1)).split())
             if text and text.casefold() not in ("undefined", "none") and text not in found:
                 found.append(text)
     return "\n".join(found)[:2000]
