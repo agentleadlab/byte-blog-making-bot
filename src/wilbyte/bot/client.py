@@ -162,7 +162,12 @@ class WilByteBot(discord.Client):
             self.publisher_task = self.loop.create_task(publisher_loop(self))
         if self.updater_task is None or self.updater_task.done():
             self.updater_task = self.loop.create_task(updater_loop(self))
-        if self.recordings_task is None or self.recordings_task.done():
+        # Only when asked for. Calls are reviewed before they earn a card, so
+        # filing everything found would fill the gallery with the ones that
+        # were looked at and turned down.
+        if self.config.secrets.recordings_autofile and (
+            self.recordings_task is None or self.recordings_task.done()
+        ):
             self.recordings_task = self.loop.create_task(recordings_loop(self))
         # Fill the call list before anyone types into it. Discord allows an
         # autocomplete three seconds, which is not enough to ask Zoom.
@@ -1229,7 +1234,7 @@ async def _ask_which_call(responder: Responder, config: Config, message, rec, ty
     try:
         near = await asyncio.to_thread(jobs.search_calls, config, typed or "", limit=25)
         if not near:
-            near = (await asyncio.to_thread(jobs.call_choices, config))[:25]
+            near = await asyncio.to_thread(jobs.picker_choices, config)
     except PIPELINE_ERRORS as exc:
         log.warning("Couldn't list calls to ask about: %s", exc)
         return None

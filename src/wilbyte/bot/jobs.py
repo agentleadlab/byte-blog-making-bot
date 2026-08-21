@@ -1090,6 +1090,26 @@ def call_choices(config: Config, *, force: bool = False) -> list[Call]:
     return found
 
 
+def picker_choices(config: Config, *, limit: int = 25) -> list[Call]:
+    """The calls worth offering, newest first.
+
+    Discord allows twenty-five options and a busy day fills them, so what gets
+    left out matters as much as what goes in. A call from two days ago fell off
+    the end behind standups and calls that were already filed.
+
+    So: nothing already in the gallery, nothing recurring and internal, and
+    nothing without a transcript - a card made from one of those has no summary
+    anyway. That is thirty-odd rows of noise cleared out of twenty-five slots.
+    """
+    from .. import recordings
+
+    filed = recordings.filed_ids()
+    return [
+        call for call in call_choices(config)
+        if call.uid not in filed and not is_internal(call.topic) and _has_text(call)
+    ][:limit]
+
+
 def find_choice(config: Config, key: str) -> Call | None:
     for item in call_choices(config):
         if item.key == key:

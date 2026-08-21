@@ -938,3 +938,34 @@ def test_the_sweep_skips_what_is_filed_internal_or_old(monkeypatch, tmp_path):
     found = jobs.new_recordings(None)
 
     assert [call.topic for call in found] == ["Derrick Robison"]
+
+
+def test_the_picker_clears_noise_out_of_its_twenty_five_slots(monkeypatch):
+    """Derrick's call from two days ago fell off the end behind standups and
+    calls that were already filed. Discord allows 25 options and a busy day
+    fills them, so what gets left out matters as much as what goes in."""
+    from wilbyte.bot import jobs
+
+    calls = [
+        a_zoom_call("Emily Cordova", "2026-08-21T18:00:00Z"),
+        a_zoom_call("Daily Team Call: 🙏", "2026-08-21T17:00:00Z"),
+        a_zoom_call("Already Filed", "2026-08-21T16:00:00Z"),
+        a_zoom_call("No Transcript", "2026-08-21T15:00:00Z", transcript=False),
+        a_zoom_call("Derrick Robison", "2026-08-19T05:17:00Z"),
+    ]
+    monkeypatch.setattr(jobs, "call_choices", lambda config, force=False: calls)
+    monkeypatch.setattr(recordings, "filed_ids", lambda path=None: {"uid-Already Filed"})
+
+    assert [c.topic for c in jobs.picker_choices(None)] == [
+        "Emily Cordova", "Derrick Robison"
+    ]
+
+
+def test_the_picker_still_respects_discords_limit(monkeypatch):
+    from wilbyte.bot import jobs
+
+    many = [a_zoom_call(f"Client {n}", "2026-08-21T10:00:00Z") for n in range(40)]
+    monkeypatch.setattr(jobs, "call_choices", lambda config, force=False: many)
+    monkeypatch.setattr(recordings, "filed_ids", lambda path=None: set())
+
+    assert len(jobs.picker_choices(None)) == 25
