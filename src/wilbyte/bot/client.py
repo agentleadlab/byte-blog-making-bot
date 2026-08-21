@@ -402,7 +402,12 @@ def _post_channel(bot: "WilByteBot"):
 def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, str]:
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
-    if channels and str(channel_id) not in channels:
+    # A channel named as an SOP source is already an explicit permission for
+    # that channel - RYTE files what lands in it. Making somebody add it to a
+    # second list as well is a trap: he answers everywhere except the one room
+    # the library is kept in.
+    allowed_anyway = set(config.secrets.discord_sop_channel_ids)
+    if channels and str(channel_id) not in set(channels) | allowed_anyway:
         return False, "RYTE isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids

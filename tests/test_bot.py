@@ -1266,3 +1266,19 @@ def test_commands_failing_entirely_still_lets_the_bot_start():
     asyncio.run(_run_setup(tree, "123456789012345678"))
 
     assert tree.synced == []
+
+
+def test_the_sop_channel_is_allowed_without_being_listed_twice():
+    """RYTE files what lands in the SOP channel, then couldn't answer a question
+    in it - the channel allowlist didn't know about it."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot.client import is_allowed
+
+    config = SimpleNamespace(secrets=SimpleNamespace(
+        discord_channel_ids=("111",), discord_sop_channel_ids=("222",), discord_role_ids=(),
+    ))
+
+    assert is_allowed(channel_id=222, user=None, config=config)[0] is True
+    assert is_allowed(channel_id=111, user=None, config=config)[0] is True
+    assert is_allowed(channel_id=333, user=None, config=config)[0] is False

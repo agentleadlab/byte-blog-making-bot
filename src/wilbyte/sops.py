@@ -306,15 +306,48 @@ def matching_rows(rows: list[dict], topic: str, *, limit: int = 5) -> list[tuple
         if not words:
             found.append((2, entry))
             continue
-        haystack_title = title.casefold()
-        haystack_all = f"{title} {_row_text(row, 'summary')} {_row_text(row, 'kind')}".casefold()
-        if all(word in haystack_title for word in words):
+        haystack_title = _searchable(title)
+        haystack_all = _searchable(
+            f"{title} {_row_text(row, 'summary')} {_row_text(row, 'kind')}"
+        )
+        if all(_hit(word, haystack_title) for word in words):
             found.append((0, entry))
-        elif all(word in haystack_all for word in words):
+        elif all(_hit(word, haystack_all) for word in words):
             found.append((1, entry))
 
     found.sort(key=lambda pair: pair[0])
     return [entry for _, entry in found][:limit]
+
+
+def _searchable(text: str) -> str:
+    """Text flattened so a search can find words inside a run-on name.
+
+    "LeadForm" is one word to a human and two to a search, so the haystack
+    carries both: the text as written, and the text with its separators
+    removed. Without it "lead forms" misses a card called "How to Create
+    Internal Ads LeadForm", which is the card.
+    """
+    lowered = " ".join((text or "").split()).casefold()
+    return f"{lowered} {re.sub(r'[^a-z0-9]', '', lowered)}"
+
+
+def _hit(word: str, haystack: str) -> bool:
+    """Whether a word appears, give or take the plural.
+
+    Nobody types the exact form somebody else used. "lead forms" has to find
+    "lead form", and "SOP for lead ordering" has to find "Lead Order".
+    """
+    word = word.strip()
+    if not word:
+        return True
+    if word in haystack:
+        return True
+    for suffix in ("s", "es", "ing", "ed"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            if word[: -len(suffix)] in haystack:
+                return True
+    # The other direction: "form" typed, "forms" written down.
+    return any(f"{word}{suffix}" in haystack for suffix in ("s", "es"))
 
 
 def _row_text(row: dict, role: str) -> str:

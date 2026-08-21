@@ -252,3 +252,45 @@ def test_a_column_someone_called_something_else_is_still_used():
 
     assert props["Video"]["url"] == LOOM
     assert props["Notes"]["rich_text"][0]["text"]["content"] == "what it covers"
+
+
+# ------------------------------------- nobody types the exact words back
+
+# "do we have an SOP for lead forms?" found nothing, with a card sitting there
+# called "How to Create Internal Ads LeadForm". Two reasons at once: a run-on
+# name is one word to a person and two to a search, and nobody matches the
+# plural somebody else used.
+
+
+@pytest.mark.parametrize(
+    "asked", ["lead forms", "lead form", "leadform", "LeadForm", "internal ads", "forms"]
+)
+def test_a_question_finds_the_card_however_it_is_phrased(asked):
+    rows = [
+        row(
+            "SOP: How to Create Internal Ads LeadForm",
+            summary="walks through creating a lead form using our internal strategy",
+        )
+    ]
+
+    assert sops.matching_rows(rows, asked) != []
+
+
+def test_a_run_on_name_is_still_searchable_word_by_word():
+    assert sops.matching_rows([row("SOP: LeadForm Setup")], "lead form") != []
+
+
+def test_a_plural_typed_finds_a_singular_written():
+    assert sops.matching_rows([row("SOP: Lead Order Process")], "lead orders") != []
+
+
+def test_a_singular_typed_finds_a_plural_written():
+    assert sops.matching_rows([row("SOP: Lead Orders Process")], "lead order") != []
+
+
+def test_being_forgiving_does_not_make_it_match_anything():
+    """A search that always hits is the same as no search at all."""
+    rows = [row("SOP: How to Create Internal Ads LeadForm")]
+
+    assert sops.matching_rows(rows, "payroll") == []
+    assert sops.matching_rows(rows, "zoom recording") == []
