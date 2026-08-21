@@ -75,6 +75,9 @@ ACTION_WORDS = {
     "calls": "calls",
     "zoom": "calls",
     "visible": "calls",
+    # Sweep Zoom and Fathom now rather than waiting for the next check.
+    "sweep": "sweep",
+    "catchup": "sweep",
     # Note: "test" stays a MODE word (preview), not a check alias.
     "check": "check",
     "diagnose": "check",
@@ -251,7 +254,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         found = RECORDING_URL_RE.search(text)
         return MentionRequest(action="calls", brief=found.group(0).rstrip(".,;)>") if found else "")
 
-    if action in ("status", "schedule", "help", "fields", "reconcile", "missed"):
+    if action in ("status", "schedule", "help", "fields", "reconcile", "missed", "sweep"):
         return MentionRequest(action=action)
 
     # No YouTube link, but a call link: file it. Checked after the blog sources
@@ -417,6 +420,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Or reply to the message with the link and just say @RYTE **recording**
 > @RYTE **Sales: Derrick Robison** `<link>` — names the card and finds the call
 > @RYTE **need the recording for Derrick Robison** — I'll send the card back
+> New calls file themselves every 15 minutes — @RYTE **sweep** does it now
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

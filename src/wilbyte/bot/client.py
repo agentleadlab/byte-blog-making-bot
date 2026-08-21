@@ -121,6 +121,7 @@ class WilByteBot(discord.Client):
         self.run_lock = asyncio.Lock()
         self.publisher_task: asyncio.Task | None = None
         self.updater_task: asyncio.Task | None = None
+        self.recordings_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         register_commands(self)
@@ -161,6 +162,8 @@ class WilByteBot(discord.Client):
             self.publisher_task = self.loop.create_task(publisher_loop(self))
         if self.updater_task is None or self.updater_task.done():
             self.updater_task = self.loop.create_task(updater_loop(self))
+        if self.recordings_task is None or self.recordings_task.done():
+            self.recordings_task = self.loop.create_task(recordings_loop(self))
         # Fill the call list before anyone types into it. Discord allows an
         # autocomplete three seconds, which is not enough to ask Zoom.
         self.loop.create_task(asyncio.to_thread(jobs.call_choices, self.config))
@@ -407,6 +410,15 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_check(responder, config, request.source)
                 return
 
+            if request.action == "sweep":
+                await responder.send("Checking Zoom and Fathom for new calls…")
+                before = await asyncio.to_thread(jobs.new_recordings, config)
+                if not before:
+                    await responder.send("Nothing new — everything recent is already filed.")
+                    return
+                await _file_new_recordings(bot)
+                return
+
             if request.action == "findcall":
                 await _send_cards(responder, config, request.brief or "")
                 return
@@ -608,6 +620,60 @@ async def _publish_due(bot: WilByteBot) -> None:
         await channel.send(f"📣 **{entry.title}** is live — {link}")
     for problem in problems:
         await channel.send(f"⚠ Couldn't publish a post that was due — {problem}")
+
+
+# Zoom and Fathom both know what was recorded and when, so nobody should have
+# to tell RYTE. Checked on this cadence, which is well inside "before anyone
+# goes looking for it" and nowhere near either platform's rate limit.
+RECORDING_CHECK_SECONDS = 900
+
+
+async def recordings_loop(bot: WilByteBot) -> None:
+    """File new sales calls without being asked, for as long as RYTE runs."""
+    # Let the first cache fill and the bot settle before the first sweep.
+    await asyncio.sleep(60)
+    while not bot.is_closed():
+        try:
+            await _file_new_recordings(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Recording sweep failed; will try again later")
+        await asyncio.sleep(RECORDING_CHECK_SECONDS)
+
+
+async def _file_new_recordings(bot: WilByteBot) -> None:
+    found = await asyncio.to_thread(jobs.new_recordings, bot.config)
+    if not found:
+        return
+
+    channel = _recordings_channel(bot)
+    for call in found:
+        try:
+            title, url, note = await asyncio.to_thread(jobs.file_call, bot.config, call)
+        except Exception as exc:  # one bad call must not stop the rest
+            log.exception("Couldn't file %s", call.topic)
+            if channel is not None:
+                await channel.send(f"⚠ Couldn't file **{call.topic}** — {jobs._short(exc)}")
+            continue
+
+        log.info("Filed %s", title)
+        if channel is not None:
+            tail = f"\n⚠ {note}" if note else " with a summary"
+            await channel.send(f"📁 **{title}** filed in Notion{tail}\n{url}")
+
+
+def _recordings_channel(bot: WilByteBot):
+    """Where new cards are announced. Its own channel if one is set."""
+    configured = bot.config.secrets.discord_recordings_channel_id
+    if configured:
+        try:
+            channel = bot.get_channel(int(configured))
+        except (TypeError, ValueError):
+            channel = None
+        if channel is not None:
+            return channel
+    return _announce_channel(bot)
 
 
 def _announce_channel(bot: WilByteBot):

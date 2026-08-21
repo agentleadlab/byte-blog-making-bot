@@ -859,3 +859,82 @@ def test_claude_returning_nothing_is_reported_with_its_stop_reason(monkeypatch):
         jobs.summarise_text(config, "Santiago: hello. Derrick: hi.")
 
     assert "max_tokens" in str(caught.value)
+
+
+# ------------------------------ filing calls without being asked
+
+# Posting a link and then being told which call it was is two steps more than
+# nobody doing anything. Zoom and Fathom both know what was recorded and when.
+
+
+def a_zoom_call(topic, when, *, transcript=True):
+    from wilbyte.bot import jobs
+
+    files = [{"file_type": "TRANSCRIPT", "download_url": "https://x/t.vtt"}] if transcript else []
+    return jobs.Call(
+        "zoom", f"uid-{topic}", topic, when, "santi@agentleadlab.com",
+        {"topic": topic, "start_time": when, "recording_files": files},
+    )
+
+
+@pytest.mark.parametrize(
+    "topic",
+    ["Daily Team Call: 🙏", "EOD Team Call", "Weekly sync", "1:1 with Tre", "Interview — Ops"],
+)
+def test_recurring_internal_calls_are_not_sales_calls(topic):
+    """These are recorded daily and would bury the gallery in standups."""
+    from wilbyte.bot import jobs
+
+    assert jobs.is_internal(topic) is True
+
+
+@pytest.mark.parametrize(
+    "topic",
+    ["Derrick Robison", "Strategy Session — Brice Barker", "Fran – Compra de Leads"],
+)
+def test_a_client_call_is_never_treated_as_internal(topic):
+    from wilbyte.bot import jobs
+
+    assert jobs.is_internal(topic) is False
+
+
+def test_only_calls_with_something_to_read_are_swept(monkeypatch):
+    from wilbyte.bot import jobs
+
+    assert jobs._has_text(a_zoom_call("Derrick", "2026-08-21T10:00:00Z")) is True
+    assert jobs._has_text(a_zoom_call("Derrick", "2026-08-21T10:00:00Z", transcript=False)) is False
+
+
+def test_a_fathom_call_always_has_something_to_read():
+    """Fathom writes its own summary, so there is always a card worth making."""
+    from wilbyte.bot import jobs
+
+    assert jobs._has_text(jobs.Call("fathom", "f1", "Brice", "2026-08-21T10:00:00Z", "Tre", {}))
+
+
+def test_the_sweep_skips_what_is_filed_internal_or_old(monkeypatch, tmp_path):
+    from wilbyte.bot import jobs
+
+    calls = [
+        a_zoom_call("Derrick Robison", "2026-08-21T10:00:00Z"),
+        a_zoom_call("Daily Team Call: 🙏", "2026-08-21T09:00:00Z"),
+        a_zoom_call("Already Filed", "2026-08-21T08:00:00Z"),
+        a_zoom_call("Ancient History", "2026-01-01T08:00:00Z"),
+        a_zoom_call("No Transcript", "2026-08-21T07:00:00Z", transcript=False),
+    ]
+    monkeypatch.setattr(jobs, "call_choices", lambda config, force=False: calls)
+    monkeypatch.setattr(
+        recordings, "filed_ids", lambda path=None: {"uid-Already Filed"}
+    )
+
+    import datetime as real_datetime
+
+    class Now(real_datetime.datetime):
+        @classmethod
+        def utcnow(cls):
+            return cls(2026, 8, 21, 12, 0)
+
+    monkeypatch.setattr(real_datetime, "datetime", Now)
+    found = jobs.new_recordings(None)
+
+    assert [call.topic for call in found] == ["Derrick Robison"]

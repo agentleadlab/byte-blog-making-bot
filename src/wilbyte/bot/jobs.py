@@ -1470,3 +1470,94 @@ def find_cards(config: Config, name: str, *, limit: int = 5) -> list[tuple[str, 
     # Newest last out of Notion, and the recent one is nearly always the one
     # being asked about.
     return list(reversed(found))[:limit]
+
+
+# ---------------------------------------------- filing calls without being asked
+
+# Posting a link, then being asked which call it was, is two steps more than
+# nobody-does-anything. Zoom and Fathom both know what was recorded and when,
+# so RYTE reads them directly and files what it finds. The link stops being an
+# identifier and goes back to being what it always was: a link on a card.
+
+# Recurring internal calls. These are recorded every day, have transcripts, and
+# are never sales calls - filing them would bury the gallery in standups.
+SKIP_TOPICS = (
+    "daily team call", "eod team call", "team meeting", "standup", "stand-up",
+    "all hands", "weekly sync", "1:1", "one on one", "interview",
+)
+
+
+def is_internal(topic: str, *, skip: tuple[str, ...] = SKIP_TOPICS) -> bool:
+    lowered = " ".join((topic or "").split()).casefold()
+    return any(phrase in lowered for phrase in skip)
+
+
+def new_recordings(config: Config, *, within_days: int = 3, limit: int = 10) -> list[Call]:
+    """Calls worth filing that aren't in the gallery yet, oldest first.
+
+    Only recent ones: the account holds ninety recordings and the first run
+    should file the last few days, not four weeks of history nobody asked for.
+    Oldest first so the gallery reads in the order the calls happened.
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from .. import recordings
+
+    cutoff = (_dt.utcnow() - _td(days=within_days)).date().isoformat()
+    filed = recordings.filed_ids()
+    found = [
+        call for call in call_choices(config, force=True)
+        if call.uid not in filed
+        and (call.when or "")[:10] >= cutoff
+        and not is_internal(call.topic)
+        and _has_text(call)
+    ]
+    found.sort(key=lambda call: call.when or "")
+    return found[:limit]
+
+
+def _has_text(call: Call) -> bool:
+    """Whether there is anything to summarise. Fathom always writes one."""
+    if call.platform == "fathom":
+        return True
+    from .. import zoom
+
+    return bool(zoom.pick_transcript((call.raw or {}).get("recording_files") or []))
+
+
+def file_call(config: Config, call: Call) -> tuple[str, str, str]:
+    """Read one call and put it in the gallery. Returns (title, card, note)."""
+    from .. import recordings
+
+    link = ""
+    if call.platform == "zoom":
+        link = str((call.raw or {}).get("share_url") or "")
+    else:
+        from .. import fathom
+
+        link = fathom.as_call(call.raw or {}).url
+
+    rec = recordings.Recording(
+        url=link or "",
+        platform="Zoom" if call.platform == "zoom" else "Fathom",
+        posted_on=_day_of(call.when),
+    )
+    try:
+        text = read_chosen(config, rec, call)
+        summary = rec.fathom_summary or summarise_text(config, text)
+    except Exception as exc:
+        summary = ""
+        rec.note = f"No summary — {_short(exc)}"
+
+    title, url = file_recording(config, rec, summary=summary)
+    return title, url, rec.note
+
+
+def _day_of(when: str):
+    from datetime import datetime as _dt
+
+    try:
+        return _dt.fromisoformat((when or "").replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
