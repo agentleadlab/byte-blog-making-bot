@@ -78,6 +78,10 @@ ACTION_WORDS = {
     # Sweep Zoom and Fathom now rather than waiting for the next check.
     "sweep": "sweep",
     "catchup": "sweep",
+    # Read the SOP channel's history and file what was posted before RYTE
+    # was watching it.
+    "backfill": "backfill",
+    "history": "backfill",
     # The daily Trello board, and what the 9pm rollover would move.
     "board": "board",
     "trello": "board",
@@ -159,6 +163,8 @@ def _asks_for_an_sop(lowered: str) -> bool:
         return False
     # "sop for the new hires <link>" with a link in it is somebody filing one.
     return not ANY_URL_RE.search(lowered)
+
+
 _THE_THING = ("recording", "recordings", "sales call", "call link", "notion", "video", "videos")
 
 # Words that mean somebody wants copy written. "video" is an alias for the
@@ -276,7 +282,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
-        "board", "rollover",
+        "board", "rollover", "backfill",
     ):
         return MentionRequest(action=action)
 
@@ -445,7 +451,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **need the recording for Derrick Robison** — I'll send the card back
 > New calls file themselves every 15 minutes — @RYTE **sweep** does it now
 
-**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n\n**The daily board**
+**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n\n**The daily board**
 > @RYTE **board** — what's on Trello today, and what's missing
 > @RYTE **rollover** — what tonight's carry-over would move (shows only)
 > @RYTE **host** — attach an image, get a permanent public link back

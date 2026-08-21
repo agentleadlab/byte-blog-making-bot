@@ -533,3 +533,14 @@ def test_posting_an_sop_with_a_link_is_not_a_question():
 def test_a_recording_question_is_still_a_recording_question():
     """Both are lookups; they read different libraries."""
     assert parse(f"{BOT} need the sales recording for Derrick").action == "findcall"
+
+
+@pytest.mark.parametrize("word", ["backfill", "history"])
+def test_backfill_words_need_no_link(word):
+    assert parse(f"{BOT} {word}").action == "backfill"
+
+
+def test_backfill_is_not_confused_with_the_recordings_sweep():
+    """One reads a Discord channel's past; the other reads Zoom and Fathom."""
+    assert parse(f"{BOT} sweep").action == "sweep"
+    assert parse(f"{BOT} backfill").action == "backfill"

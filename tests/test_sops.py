@@ -294,3 +294,31 @@ def test_being_forgiving_does_not_make_it_match_anything():
 
     assert sops.matching_rows(rows, "payroll") == []
     assert sops.matching_rows(rows, "zoom recording") == []
+
+
+# ------------------------------------- backfilling what was posted before
+
+
+def test_a_message_is_remembered_so_it_is_not_filed_twice(tmp_path):
+    """Backfill reads messages RYTE has already seen. Discord's message id is
+    the identity: unique, and it never changes."""
+    store = tmp_path / "filed.json"
+
+    assert sops.already_filed(1467651106309017600, path=store) is False
+
+    sops.remember(1467651106309017600, path=store)
+
+    assert sops.already_filed(1467651106309017600, path=store) is True
+    assert sops.already_filed(999, path=store) is False
+
+
+def test_a_filed_sop_does_not_collide_with_a_filed_recording(tmp_path):
+    """Both use the same store, and a Zoom uuid is not a Discord message id."""
+    from wilbyte import recordings
+
+    store = tmp_path / "filed.json"
+    recordings.remember_filed("abc==", store)
+    sops.remember("abc==", path=store)
+
+    assert sops.already_filed("abc==", path=store) is True
+    assert recordings.filed_ids(store) == {"abc==", "sop-message:abc=="}

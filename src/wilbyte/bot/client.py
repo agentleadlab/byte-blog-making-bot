@@ -290,6 +290,9 @@ async def handle_sop_post(bot: WilByteBot, message) -> None:
     if getattr(message.author, "bot", False):
         return
 
+    if sops.already_filed(getattr(message, "id", "")):
+        return
+
     images, audio = message_files(message)
     sop = sops.find_sop(message.content or "", images=images, audio=audio)
     if sop is None:
@@ -317,6 +320,7 @@ async def handle_sop_post(bot: WilByteBot, message) -> None:
             await responder.send(embed=embeds.error(f"Couldn't file that SOP\n{exc}"))
             return
 
+    sops.remember(getattr(message, "id", ""))
     tail = " with a summary" if summary else (f"\n⚠ {sop.note}" if sop.note else "")
     await responder.send(f"📘 **{title}** filed{tail}\n{url}")
 
@@ -521,6 +525,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                     await responder.send("Nothing new — everything recent is already filed.")
                     return
                 await _file_new_recordings(bot)
+                return
+
+            if request.action == "backfill":
+                await _backfill_sops(bot, responder, message)
                 return
 
             if request.action == "findsop":
@@ -1259,6 +1267,92 @@ async def _host_images(responder: Responder, config: Config, message) -> None:
             await responder.send(embed=embeds.error(f"Couldn't host {attachment.filename}\n{exc}"))
             continue
         await responder.send(f"🔗 `{attachment.filename}`\n{url}")
+
+
+# One run reads this far back and files at most this many. A channel with a
+# year in it would otherwise be one enormous unattended spend, and the tally
+# says what was left so it can be run again.
+BACKFILL_SCAN = 500
+BACKFILL_FILE = 40
+
+
+async def _backfill_sops(bot: WilByteBot, responder: Responder, message) -> None:
+    """File what was posted in the SOP channel before RYTE was watching it."""
+    from .. import sops
+
+    channel = message.channel
+    if not is_sop_channel(message, bot.config):
+        channel = _first_sop_channel(bot)
+        if channel is None:
+            await responder.send(
+                "I don't have an SOP channel set, so there's nothing to backfill."
+            )
+            return
+
+    await responder.send(f"Reading back through {channel.mention} — this takes a minute.")
+
+    filed: list[str] = []
+    skipped = 0
+    problems: list[str] = []
+    seen = 0
+
+    # Oldest first, so the library ends up in the order things happened.
+    async for old in channel.history(limit=BACKFILL_SCAN, oldest_first=True):
+        if len(filed) >= BACKFILL_FILE:
+            break
+        seen += 1
+        if getattr(old.author, "bot", False) or sops.already_filed(old.id):
+            continue
+
+        images, audio = message_files(old)
+        sop = sops.find_sop(old.content or "", images=images, audio=audio)
+        if sop is None:
+            skipped += 1
+            continue
+
+        sop.posted_by = getattr(old.author, "display_name", "") or ""
+        sop.posted_on = old.created_at.date() if old.created_at else None
+
+        summary = ""
+        try:
+            summary = await asyncio.to_thread(jobs.sop_summary, bot.config, sop)
+        except PIPELINE_ERRORS as exc:
+            log.warning("Backfill couldn't read %s: %s", sop.title, exc)
+            sop.note = sop.note or f"No summary — {exc}"
+        try:
+            title, _ = await asyncio.to_thread(jobs.file_sop, bot.config, sop, summary=summary)
+        except PIPELINE_ERRORS as exc:
+            problems.append(f"{sop.title}: {jobs._short(exc)}")
+            continue
+
+        sops.remember(old.id)
+        filed.append(title)
+
+    lines = [f"📘 Filed {len(filed)} of {seen} message(s) read."]
+    lines += [f"· {title}" for title in filed[:20]]
+    if len(filed) > 20:
+        lines.append(f"-# …and {len(filed) - 20} more")
+    if skipped:
+        lines.append(f"-# {skipped} skipped as chatter — no link, no file, nothing written.")
+    if len(filed) >= BACKFILL_FILE:
+        lines.append(
+            f"-# Stopped at {BACKFILL_FILE} for one run. Say `backfill` again to carry on."
+        )
+    for problem in problems[:5]:
+        lines.append(f"⚠ {problem}")
+
+    await responder.send("\n".join(lines))
+
+
+def _first_sop_channel(bot: WilByteBot):
+    for raw in bot.config.secrets.discord_sop_channel_ids:
+        try:
+            found = bot.get_channel(int(raw))
+        except (TypeError, ValueError):
+            continue
+        if found is not None:
+            return found
+    return None
 
 
 async def _send_sops(responder: Responder, config: Config, asked: str) -> None:

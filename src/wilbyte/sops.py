@@ -368,3 +368,28 @@ def _row_text(row: dict, role: str) -> str:
         if kind == "rich_text":
             return "".join(part.get("plain_text", "") for part in value.get("rich_text") or [])
     return ""
+
+
+# ------------------------------------------- what has already been filed
+
+# Backfilling a channel means reading messages RYTE has already seen, so it has
+# to know which ones. Discord's message id is the identity: it never changes and
+# it is unique across every channel.
+
+_PREFIX = "sop-message"
+
+
+def message_key(message_id) -> str:
+    return f"{_PREFIX}:{message_id}"
+
+
+def already_filed(message_id, *, path=None) -> bool:
+    from . import recordings
+
+    return message_key(message_id) in recordings.filed_ids(path)
+
+
+def remember(message_id, *, path=None) -> None:
+    from . import recordings
+
+    recordings.remember_filed(message_key(message_id), path)
