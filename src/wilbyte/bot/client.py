@@ -124,6 +124,7 @@ class WilByteBot(discord.Client):
         self.publisher_task: asyncio.Task | None = None
         self.updater_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
+        self.catchup_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         register_commands(self)
@@ -196,6 +197,12 @@ class WilByteBot(discord.Client):
         # Fill the call list before anyone types into it. Discord allows an
         # autocomplete three seconds, which is not enough to ask Zoom.
         self.loop.create_task(asyncio.to_thread(jobs.call_choices, self.config))
+        # Anything posted while the Mac was off. Safe to run every start:
+        # what is already filed is passed over.
+        if self.config.secrets.discord_sop_channel_ids and (
+            self.catchup_task is None or self.catchup_task.done()
+        ):
+            self.catchup_task = self.loop.create_task(catch_up_sops(self))
         await _warn_if_stale(self)
 
     async def on_message(self, message: discord.Message) -> None:
@@ -1288,10 +1295,31 @@ BACKFILL_SCAN = 500
 BACKFILL_FILE = 40
 
 
+async def catch_up_sops(bot: WilByteBot) -> None:
+    """File what was posted while RYTE was off, without being asked.
+
+    The Mac gets turned off at the end of the day and things get posted over a
+    weekend. Remembering to say `backfill` on Monday is exactly the kind of
+    step this was built to remove - and the message ids mean running it is
+    always safe, whether or not anything was actually missed.
+    """
+    await asyncio.sleep(45)  # let the gateway settle and the caches fill
+    channel = _first_sop_channel(bot)
+    if channel is None:
+        return
+    try:
+        filed = await _file_channel_history(bot, channel)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("Catch-up on the SOP channel failed")
+        return
+    if filed:
+        log.info("Caught up %s SOP(s) posted while RYTE was off", len(filed))
+
+
 async def _backfill_sops(bot: WilByteBot, responder: Responder, message) -> None:
     """File what was posted in the SOP channel before RYTE was watching it."""
-    from .. import sops
-
     channel = message.channel
     if not is_sop_channel(message, bot.config):
         channel = _first_sop_channel(bot)
@@ -1303,12 +1331,38 @@ async def _backfill_sops(bot: WilByteBot, responder: Responder, message) -> None
 
     await responder.send(f"Reading back through {channel.mention} — this takes a minute.")
 
+    filed, skipped, problems, seen = await _file_channel_history(bot, channel, counted=True)
+
+    lines = [f"📘 Filed {len(filed)} of {seen} message(s) read."]
+    lines += [f"· {title}" for title in filed[:20]]
+    if len(filed) > 20:
+        lines.append(f"-# …and {len(filed) - 20} more")
+    if skipped:
+        lines.append(f"-# {skipped} skipped as chatter — no link, no file, nothing written.")
+    if len(filed) >= BACKFILL_FILE:
+        lines.append(
+            f"-# Stopped at {BACKFILL_FILE} for one run. Say `backfill` again to carry on."
+        )
+    for problem in problems[:5]:
+        lines.append(f"⚠ {problem}")
+
+    await responder.send("\n".join(lines))
+
+
+async def _file_channel_history(bot: WilByteBot, channel, *, counted: bool = False):
+    """Walk a channel oldest-first and file what isn't filed yet.
+
+    Oldest first so the library ends up in the order things happened. Anything
+    already recorded is passed over, which is what makes running this twice -
+    or on every start-up - cost nothing but a read.
+    """
+    from .. import sops
+
     filed: list[str] = []
     skipped = 0
     problems: list[str] = []
     seen = 0
 
-    # Oldest first, so the library ends up in the order things happened.
     async for old in channel.history(limit=BACKFILL_SCAN, oldest_first=True):
         if len(filed) >= BACKFILL_FILE:
             break
@@ -1329,7 +1383,7 @@ async def _backfill_sops(bot: WilByteBot, responder: Responder, message) -> None
         try:
             summary = await asyncio.to_thread(jobs.sop_summary, bot.config, sop)
         except PIPELINE_ERRORS as exc:
-            log.warning("Backfill couldn't read %s: %s", sop.title, exc)
+            log.warning("Couldn't read %s: %s", sop.title, exc)
             sop.note = sop.note or f"No summary — {exc}"
         try:
             title, _ = await asyncio.to_thread(jobs.file_sop, bot.config, sop, summary=summary)
@@ -1339,21 +1393,12 @@ async def _backfill_sops(bot: WilByteBot, responder: Responder, message) -> None
 
         sops.remember(old.id)
         filed.append(title)
+        try:
+            await old.add_reaction(SOP_FILED_REACTION)
+        except discord.HTTPException:
+            pass
 
-    lines = [f"📘 Filed {len(filed)} of {seen} message(s) read."]
-    lines += [f"· {title}" for title in filed[:20]]
-    if len(filed) > 20:
-        lines.append(f"-# …and {len(filed) - 20} more")
-    if skipped:
-        lines.append(f"-# {skipped} skipped as chatter — no link, no file, nothing written.")
-    if len(filed) >= BACKFILL_FILE:
-        lines.append(
-            f"-# Stopped at {BACKFILL_FILE} for one run. Say `backfill` again to carry on."
-        )
-    for problem in problems[:5]:
-        lines.append(f"⚠ {problem}")
-
-    await responder.send("\n".join(lines))
+    return (filed, skipped, problems, seen) if counted else filed
 
 
 def _first_sop_channel(bot: WilByteBot):

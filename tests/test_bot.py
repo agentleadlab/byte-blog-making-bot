@@ -1282,3 +1282,106 @@ def test_the_sop_channel_is_allowed_without_being_listed_twice():
     assert is_allowed(channel_id=222, user=None, config=config)[0] is True
     assert is_allowed(channel_id=111, user=None, config=config)[0] is True
     assert is_allowed(channel_id=333, user=None, config=config)[0] is False
+
+
+# --------------------------- catching up on what was posted while off
+
+# The Mac gets turned off at the end of the day. Things get posted over a
+# weekend. Remembering to say `backfill` on Monday is the kind of step this was
+# built to remove.
+
+
+class _Msg:
+    def __init__(self, id, content, *, bot=False):
+        from datetime import datetime
+        self.id = id
+        self.content = content
+        self.author = SimpleNamespace(display_name="K2", bot=bot)
+        self.created_at = datetime(2026, 8, 22, 9, 0)
+        self.attachments = []
+
+    async def add_reaction(self, emoji):
+        pass
+
+
+class _Channel:
+    def __init__(self, messages):
+        self.messages = messages
+        self.mention = "#sop"
+
+    def history(self, *, limit, oldest_first):
+        async def walk():
+            for message in (self.messages if oldest_first else reversed(self.messages)):
+                yield message
+        return walk()
+
+
+def _run_history(bot, channel):
+    from wilbyte.bot.client import _file_channel_history
+
+    return asyncio.run(_file_channel_history(bot, channel, counted=True))
+
+
+def _point_at(monkeypatch, sops, store):
+    """Send the filed-message store at a temp file, without recursing into the
+    replacements - the originals have to be bound before they are replaced."""
+    was_filed, was_remember = sops.already_filed, sops.remember
+    monkeypatch.setattr(sops, "already_filed", lambda mid, path=None: was_filed(mid, path=store))
+    monkeypatch.setattr(sops, "remember", lambda mid, path=None: was_remember(mid, path=store))
+
+
+def test_only_what_was_missed_is_filed(monkeypatch, tmp_path):
+    """A weekend off, then a catch-up: Saturday and Sunday, nothing else."""
+    from wilbyte import sops
+    from wilbyte.bot import client as client_mod
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "filed.json"
+    _point_at(monkeypatch, sops, store)
+    monkeypatch.setattr(jobs, "sop_summary", lambda config, sop: "a summary")
+    monkeypatch.setattr(jobs, "file_sop", lambda config, sop, summary="": (sop.title, "https://n/x"))
+
+    LOOM = "https://www.loom.com/share/abc"
+    friday = _Msg(1, f"**Friday thing**\n{LOOM}")
+    saturday = _Msg(2, f"**Saturday thing**\n{LOOM}")
+    sunday = _Msg(3, f"**Sunday thing**\n{LOOM}")
+
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace()))
+
+    # Friday was filed while RYTE was still on.
+    sops.remember(1, path=store)
+
+    filed, _, _, _ = _run_history(bot, _Channel([friday, saturday, sunday]))
+
+    assert filed == ["Saturday thing", "Sunday thing"]
+
+
+def test_running_the_catch_up_twice_files_nothing_the_second_time(monkeypatch, tmp_path):
+    """It runs on every start-up, so it has to cost nothing when nothing changed."""
+    from wilbyte import sops
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "filed.json"
+    _point_at(monkeypatch, sops, store)
+    monkeypatch.setattr(jobs, "sop_summary", lambda config, sop: "a summary")
+    monkeypatch.setattr(jobs, "file_sop", lambda config, sop, summary="": (sop.title, "https://n/x"))
+
+    channel = _Channel([_Msg(7, "**A thing**\nhttps://www.loom.com/share/abc")])
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace()))
+
+    assert len(_run_history(bot, channel)[0]) == 1
+    assert _run_history(bot, channel)[0] == []
+
+
+def test_the_bots_own_posts_are_never_filed(monkeypatch, tmp_path):
+    from wilbyte import sops
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "filed.json"
+    _point_at(monkeypatch, sops, store)
+    monkeypatch.setattr(jobs, "file_sop", lambda config, sop, summary="": (sop.title, "u"))
+
+    channel = _Channel([_Msg(9, "**Mine**\nhttps://loom.com/share/x", bot=True)])
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace()))
+
+    assert _run_history(bot, channel)[0] == []
