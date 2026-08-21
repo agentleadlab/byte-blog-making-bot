@@ -161,6 +161,9 @@ class WilByteBot(discord.Client):
             self.publisher_task = self.loop.create_task(publisher_loop(self))
         if self.updater_task is None or self.updater_task.done():
             self.updater_task = self.loop.create_task(updater_loop(self))
+        # Fill the call list before anyone types into it. Discord allows an
+        # autocomplete three seconds, which is not enough to ask Zoom.
+        self.loop.create_task(asyncio.to_thread(jobs.call_choices, self.config))
         await _warn_if_stale(self)
 
     async def on_message(self, message: discord.Message) -> None:
@@ -723,6 +726,46 @@ def register_commands(bot: WilByteBot) -> None:
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(str(exc)))
 
+    @bot.tree.command(name="recording", description="File a sales call in the Notion gallery")
+    @app_commands.describe(
+        link="The Zoom or Fathom link to put on the card",
+        call="Start typing a name to pick the exact call — only needed if the link can't be matched",
+        passcode="The recording's passcode, if it has one",
+    )
+    async def recording_cmd(
+        interaction: discord.Interaction,
+        link: str,
+        call: str | None = None,
+        passcode: str | None = None,
+    ):
+        if not await guard(interaction, config):
+            return
+        await interaction.response.defer(thinking=True)
+        responder = InteractionResponder(interaction)
+        try:
+            await _file_recording(
+                responder, config, _AsMessage(interaction, link, passcode), chosen_key=call
+            )
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+
+    @recording_cmd.autocomplete("call")
+    async def recording_call_options(interaction: discord.Interaction, typed: str):
+        """Type-to-search over the recordings RYTE can actually read.
+
+        Discord allows three seconds here, which is not enough to ask Zoom for
+        ninety recordings - so this filters a list kept warm in the background
+        and never fetches on the keystroke.
+        """
+        try:
+            found = jobs.call_choices(config)
+        except Exception:  # an autocomplete must never raise at the user
+            return []
+        matching = [item for item in found if item.matches(typed)][:25]
+        return [
+            app_commands.Choice(name=item.label, value=item.key) for item in matching
+        ]
+
     @bot.tree.command(name="corpus", description="What past copy RYTE has learned")
     async def corpus_cmd(interaction: discord.Interaction):
         if not await guard(interaction, config):
@@ -1069,7 +1112,23 @@ async def _host_images(responder: Responder, config: Config, message) -> None:
         await responder.send(f"🔗 `{attachment.filename}`\n{url}")
 
 
-async def _file_recording(responder: Responder, config: Config, message) -> None:
+class _AsMessage:
+    """A slash command dressed up as the message the filing code expects.
+
+    `/recording` and a pasted link do exactly the same work, so they share one
+    path rather than growing a second copy of it that drifts.
+    """
+
+    def __init__(self, interaction, link: str, passcode: str | None):
+        self.content = f"{link}\nPasscode: {passcode}" if passcode else link
+        self.author = interaction.user
+        self.created_at = interaction.created_at
+        self.reference = None
+
+
+async def _file_recording(
+    responder: Responder, config: Config, message, *, chosen_key: str | None = None
+) -> None:
     """File a posted sales call in the Notion gallery.
 
     Reads the message that was replied to when the mention carries no link,
@@ -1101,7 +1160,26 @@ async def _file_recording(responder: Responder, config: Config, message) -> None
         found.posted_on = found.posted_on.date()
 
     summary = ""
-    if found.transcribable(config):
+    if chosen_key:
+        # Named explicitly, so there is nothing to work out. This is the way
+        # through when a link can't be resolved - and it is exact.
+        await responder.send("Reading the call you picked…")
+        try:
+            picked = await asyncio.to_thread(jobs.find_choice, config, chosen_key)
+            if picked is None:
+                await responder.send(
+                    "I don't have that call in my list any more — run the command "
+                    "again and pick from the fresh one."
+                )
+                return
+            text = await asyncio.to_thread(jobs.read_chosen, config, found, picked)
+            summary = found.fathom_summary or await asyncio.to_thread(
+                jobs.summarise_text, config, text
+            )
+        except PIPELINE_ERRORS as exc:
+            log.warning("Could not read the chosen call: %s", exc)
+            found.note = f"Couldn't read that call: {exc}"
+    elif found.transcribable(config):
         await responder.send(f"Filing the {found.platform} recording — reading it first.")
         try:
             summary = await asyncio.to_thread(jobs.summarise_call, config, found)

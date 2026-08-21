@@ -597,8 +597,9 @@ def zoom_transcript(config: Config, rec) -> str:
             rec.note = (
                 f"I can't tell which call this link points at, so I've filed it "
                 f"without a summary rather than guess — Zoom's API can't resolve "
-                f"share links, {why}.{seen} Post it again with the "
-                "`Passcode:` line under the link and I'll match it exactly."
+                f"share links, {why}.{seen}\n"
+                "Delete this card and use `/recording` — start typing a name in "
+                "the **call** box and pick it from the list."
             )
             return ""
 
@@ -680,6 +681,20 @@ def fathom_transcript(config: Config, rec) -> str:
             return ""
 
         rec.matched_by = how
+        return fathom_read(config, rec, found, client=client)
+    finally:
+        client.close()
+
+
+def fathom_read(config: Config, rec, found, *, client=None) -> str:
+    """Take a Fathom call's details and text. Shared by the link and hand-picked
+    paths, so a call chosen by name files exactly like one that matched."""
+    from .. import fathom, recordings
+
+    owned = client is None
+    if owned:
+        client = fathom.FathomClient(config.secrets.fathom_api_key)
+    try:
         recordings.remember_filed(fathom.meeting_id(found.raw or {}))
         rec.topic = found.title
         rec.closer = found.recorded_by
@@ -698,7 +713,8 @@ def fathom_transcript(config: Config, rec) -> str:
         # so a call Fathom hasn't summarised needs one more request.
         return text or client.transcript_for(fathom.meeting_id(found.raw or {}))
     finally:
-        client.close()
+        if owned:
+            client.close()
 
 
 def summarise_call(config: Config, rec) -> str:
@@ -964,6 +980,117 @@ def _check_zoom(config: Config) -> list[tuple[bool, str]]:
     elif with_text:
         rows.append((True, f"{len(with_text)} of them have transcripts RYTE can read"))
     return rows
+
+
+# ------------------------------------------------ picking a call by name
+
+# Discord gives an autocomplete three seconds to answer, and asking Zoom for
+# ninety recordings takes longer than that - so the list is kept warm and the
+# typing filters what is already here.
+_CALLS: dict = {"at": None, "items": []}
+CALLS_TTL_SECONDS = 600
+
+
+class Call:
+    """One recording, in the shape the picker and the reader both need."""
+
+    def __init__(self, platform: str, uid: str, topic: str, when: str, who: str, raw=None):
+        self.platform = platform
+        self.uid = uid
+        self.topic = topic
+        self.when = when
+        self.who = who
+        self.raw = raw
+
+    @property
+    def key(self) -> str:
+        # Discord caps an option's value at 100 characters.
+        return f"{self.platform}|{self.uid}"[:100]
+
+    @property
+    def label(self) -> str:
+        return f"{self.topic or '(no topic)'} · {self.when[:10]}"[:100]
+
+    def matches(self, typed: str) -> bool:
+        needle = (typed or "").strip().casefold()
+        if not needle:
+            return True
+        return all(
+            word in f"{self.topic} {self.when} {self.who} {self.platform}".casefold()
+            for word in needle.split()
+        )
+
+
+def call_choices(config: Config, *, force: bool = False) -> list[Call]:
+    """Every recording RYTE can read, newest first, cached for a few minutes."""
+    from datetime import datetime as _dt
+
+    now = _dt.utcnow()
+    if not force and _CALLS["at"] and (now - _CALLS["at"]).total_seconds() < CALLS_TTL_SECONDS:
+        return _CALLS["items"]
+
+    found: list[Call] = []
+    secrets = config.secrets
+
+    if secrets.zoom_account_id and secrets.zoom_client_id and secrets.zoom_client_secret:
+        from .. import zoom
+
+        client = zoom.ZoomClient(
+            secrets.zoom_account_id, secrets.zoom_client_id, secrets.zoom_client_secret
+        )
+        try:
+            for meeting in client.account_recordings(days=30):
+                item = zoom.as_recording(meeting)
+                found.append(
+                    Call("zoom", item.uid, item.topic, item.started_at, item.host_email, meeting)
+                )
+        except Exception:
+            # A warm-up failure must never break the command that uses it.
+            pass
+        finally:
+            client.close()
+
+    if secrets.fathom_api_key:
+        from .. import fathom
+
+        client = fathom.FathomClient(secrets.fathom_api_key)
+        try:
+            for meeting in client.meetings():
+                item = fathom.as_call(meeting)
+                found.append(
+                    Call(
+                        "fathom", fathom.meeting_id(meeting), item.title,
+                        item.started_at, item.recorded_by, meeting,
+                    )
+                )
+        except Exception:
+            pass
+        finally:
+            client.close()
+
+    found.sort(key=lambda item: item.when or "", reverse=True)
+    _CALLS["at"], _CALLS["items"] = now, found
+    return found
+
+
+def find_choice(config: Config, key: str) -> Call | None:
+    for item in call_choices(config):
+        if item.key == key:
+            return item
+    return None
+
+
+def read_chosen(config: Config, rec, call: Call) -> str:
+    """Read the call somebody picked by name, and take the card's details from it."""
+    rec.matched_by = "you picking it"
+    if call.platform == "fathom":
+        from .. import fathom
+
+        return fathom_read(config, rec, fathom.as_call(call.raw or {}))
+
+    from .. import zoom
+
+    return zoom_read(config, rec, zoom.as_recording(call.raw or {}))
 
 
 def diagnose_link(config: Config, link: str) -> list[str]:

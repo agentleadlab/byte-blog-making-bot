@@ -451,3 +451,55 @@ def test_a_corrupt_store_is_treated_as_empty(tmp_path):
     store.write_text("{not json", encoding="utf-8")
 
     assert recordings.filed_ids(store) == set()
+
+
+# ------------------------------------------ picking a call by typing its name
+
+
+def a_call(**kwargs):
+    from wilbyte.bot import jobs
+
+    base = {
+        "platform": "zoom", "uid": "abc==", "topic": "Derrick Robison",
+        "when": "2026-08-19T05:17:00Z", "who": "santi@agentleadlab.com",
+    }
+    return jobs.Call(**{**base, **kwargs})
+
+
+def test_typing_part_of_a_name_finds_the_call():
+    assert a_call().matches("derr")
+    assert a_call().matches("Derrick Robison")
+
+
+def test_the_search_ignores_case_and_word_order():
+    assert a_call().matches("robison derrick")
+
+
+def test_a_date_narrows_it_down():
+    assert a_call().matches("derrick 2026-08-19")
+    assert not a_call().matches("derrick 2026-08-21")
+
+
+def test_the_closer_can_be_searched_for_too():
+    assert a_call().matches("santi")
+
+
+def test_an_empty_box_offers_everything():
+    assert a_call().matches("")
+
+
+def test_a_name_that_is_not_there_matches_nothing():
+    assert not a_call().matches("arlene")
+
+
+def test_the_label_and_value_fit_what_discord_allows():
+    """Discord truncates past 100 characters, which would break the lookup."""
+    long_call = a_call(topic="x" * 300, uid="y" * 300)
+
+    assert len(long_call.label) <= 100
+    assert len(long_call.key) <= 100
+
+
+def test_the_platform_is_part_of_the_key():
+    """Zoom and Fathom ids are unrelated and could collide."""
+    assert a_call().key.startswith("zoom|")
