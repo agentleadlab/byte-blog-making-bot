@@ -111,6 +111,14 @@ RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording")
 # "host" and "upload" turn up in ordinary copy briefs.
 HOST_WORDS = ("host", "upload", "imageurl")
 
+# A Zoom or Fathom link has exactly one meaning here, so it doesn't need the
+# verb the way a YouTube link does - that one already means "write a blog
+# post", which is why `recording` exists at all. Posting a call link and
+# getting the help text back is a trap with no upside.
+RECORDING_URL_RE = re.compile(
+    r"https?://[\w.-]*(?:zoom\.us|fathom\.video)/\S+", re.IGNORECASE
+)
+
 
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
     first = re.match(r"\s*([a-zA-Z]+)", text)
@@ -191,6 +199,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in ("status", "schedule", "help", "fields", "reconcile", "missed"):
         return MentionRequest(action=action)
 
+    # No YouTube link, but a call link: file it. Checked after the blog sources
+    # so that a message carrying both still writes the post.
+    if not sources and RECORDING_URL_RE.search(text):
+        return MentionRequest(action="recording", brief=text)
+
     if not sources:
         # A mention with no link and no recognised verb is a greeting or a mistake.
         return MentionRequest(action="help")
@@ -230,9 +243,18 @@ def find_sources(text: str) -> tuple[str, ...]:
     return tuple(found)
 
 
+_ANY_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
 def _first_format_word(text: str, find) -> object | None:
-    """The first word that names a copy format, e.g. sms / email / fb / vsl."""
-    for word in re.findall(r"[a-zA-Z]+", text):
+    """The first word that names a copy format, e.g. sms / email / fb / vsl.
+
+    Links are stripped first. `fathom.video` contains "video", which is an
+    alias for the script format, so a bare Fathom link was being read as a
+    request to write one - and any URL with "ad" or "social" in it would have
+    done the same. A word only counts when someone actually typed it.
+    """
+    for word in re.findall(r"[a-zA-Z]+", _ANY_URL.sub(" ", text)):
         fmt = find(word)
         if fmt:
             return fmt
@@ -334,7 +356,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
 
 **Sales call recordings**
-> @RYTE **recording** `<zoom/fathom/youtube link>` — file it in Notion
+> Paste a Zoom or Fathom link — I'll file it in Notion
+> @RYTE **recording** `<link>` — same thing, said out loud
 > Or reply to the message with the link and just say @RYTE **recording**
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on

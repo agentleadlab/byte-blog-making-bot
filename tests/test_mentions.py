@@ -342,3 +342,43 @@ def test_the_batch_cap_still_applies():
 def test_source_is_still_the_first_link():
     """plan and check act on one source; they must keep working."""
     assert parse(f"{BOT} {VID_A} {VID_B}").source == VID_A
+
+
+# ------------------------------------------------- a call link needs no verb
+
+ZOOM_REC = "https://us06web.zoom.us/rec/share/qVQ0NLoGrnVQQZbM.VeLdfj6Y"
+FATHOM_REC = "https://fathom.video/share/abc123xyz"
+
+
+@pytest.mark.parametrize("link", [ZOOM_REC, FATHOM_REC, "https://fathom.video/calls/12345"])
+def test_a_bare_call_link_files_the_recording(link):
+    """It can't mean anything else, and getting the help text back is a trap."""
+    assert parse(f"{BOT} {link}").action == "recording"
+
+
+def test_the_passcode_line_comes_along_with_it():
+    request = parse(f"{BOT} {ZOOM_REC}\nPasscode: U^M^s7Bw")
+
+    assert request.action == "recording"
+    assert "U^M^s7Bw" in request.brief
+
+
+def test_a_youtube_link_still_means_write_a_blog_post():
+    """This is why `recording` exists as a word at all."""
+    assert parse(f"{BOT} {VIDEO}").action == "run"
+
+
+def test_fathom_video_in_a_url_is_not_a_request_for_a_script():
+    """`fathom.video` contains "video", an alias for the script format."""
+    assert parse(f"{BOT} {FATHOM_REC}").action == "recording"
+
+
+def test_a_format_word_inside_any_link_is_not_a_format_word():
+    """A blog URL with "ad" in it was enough to trigger the ad writer."""
+    request = parse(f"{BOT} plan https://agentleadlab.com/blog/ad-spend-tracker {PLAYLIST}")
+
+    assert request.action == "plan"
+
+
+def test_a_typed_format_word_still_wins():
+    assert parse(f"{BOT} email about https://agentleadlab.com/x").action == "write"
