@@ -228,3 +228,95 @@ def test_nothing_recent_means_no_guess(monkeypatch):
 
 def test_a_call_carries_an_id_even_without_an_id_field():
     assert fathom.meeting_id({"url": "https://fathom.video/share/abc123"}) == "abc123"
+
+
+# ------------------------------------------------ being rate limited
+
+# A 429 killed the whole reply: FathomError wasn't in the handler's error list,
+# so the task died and RYTE simply went quiet on someone who had just posted a
+# link. Waiting is the entire remedy for a 429, so it waits.
+
+
+class _Reply:
+    def __init__(self, status, headers=None, payload=None):
+        self.status_code = status
+        self.headers = headers or {}
+        self._payload = payload if payload is not None else {"items": []}
+        self.content = b"{}"
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+class _FakeHttp:
+    """Replays a queue of responses and counts the calls."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = 0
+
+    def get(self, path, params=None):
+        self.calls += 1
+        return self.replies.pop(0) if self.replies else _Reply(200)
+
+
+def client_with(replies, monkeypatch):
+    client = fathom.FathomClient.__new__(fathom.FathomClient)
+    client._client = _FakeHttp(replies)
+    monkeypatch.setattr(fathom.time, "sleep", lambda seconds: None)
+    return client
+
+
+def test_a_rate_limit_is_waited_out_not_raised(monkeypatch):
+    client = client_with(
+        [_Reply(429, {"Retry-After": "1"}), _Reply(200, payload={"items": [{"id": "a"}]})],
+        monkeypatch,
+    )
+
+    assert client.meetings() == [{"id": "a"}]
+    assert client._client.calls == 2
+
+
+def test_a_rate_limit_that_will_not_clear_says_what_to_do(monkeypatch):
+    client = client_with([_Reply(429), _Reply(429), _Reply(429)], monkeypatch)
+
+    with pytest.raises(fathom.FathomError) as caught:
+        client.meetings()
+
+    assert "minute" in str(caught.value)
+    assert "nothing is wrong" in str(caught.value)
+
+
+def test_a_bad_retry_after_header_does_not_hang():
+    assert fathom._retry_after(_Reply(429, {"Retry-After": "banana"}), default=2.0) == 2.0
+    assert fathom._retry_after(_Reply(429, {"Retry-After": "9999"}), default=2.0) == 30.0
+
+
+def test_the_listing_does_not_walk_the_whole_history(monkeypatch):
+    """Two hundred calls fetched to identify one is what earned the 429."""
+    endless = [
+        _Reply(200, payload={"items": [{"id": str(n)}], "next_cursor": "more"})
+        for n in range(50)
+    ]
+    client = client_with(endless, monkeypatch)
+
+    client.meetings()
+
+    assert client._client.calls <= fathom.FathomClient.MAX_PAGES
+
+
+def test_transcripts_are_left_out_of_the_listing(monkeypatch):
+    """Fathom's own summary is what goes on the card, so the text is dead weight."""
+    seen = {}
+
+    class Recording(_FakeHttp):
+        def get(self, path, params=None):
+            seen.update(params or {})
+            return _Reply(200)
+
+    client = fathom.FathomClient.__new__(fathom.FathomClient)
+    client._client = Recording([])
+    client.meetings()
+
+    assert "include_transcript" not in seen

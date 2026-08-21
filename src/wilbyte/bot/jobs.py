@@ -673,11 +673,17 @@ def fathom_transcript(config: Config, rec) -> str:
         rec.guests = found.guests
         if found.participants:
             rec.participants = found.participants
-        # Fathom writes its own summary. Prefer it: it costs nothing, and it
-        # describes the call the way the platform the team already reads does.
+        # Fathom writes its own summary. Prefer it: it costs nothing, it reads
+        # the way the team's own tool describes a call, and it means the
+        # transcript never has to be fetched at all.
         if found.summary:
             rec.fathom_summary = found.summary
-        return fathom.transcript_text(found.raw or {})
+            return ""
+
+        text = fathom.transcript_text(found.raw or {})
+        # Listings come back without transcripts to stay inside the rate limit,
+        # so a call Fathom hasn't summarised needs one more request.
+        return text or client.transcript_for(fathom.meeting_id(found.raw or {}))
     finally:
         client.close()
 

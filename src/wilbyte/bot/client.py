@@ -26,7 +26,9 @@ from discord import app_commands
 
 from .. import corpus
 from .. import cover as cover_mod
-from .. import formats, ghl, notion, prefs, publisher, version, writer, youtube
+from .. import (
+    fathom, formats, ghl, notion, prefs, publisher, version, writer, youtube, zoom,
+)
 from ..config import Config, ConfigError, load_config
 from ..copywriter import CopywriterError
 from ..corpus import Corpus
@@ -52,6 +54,11 @@ PIPELINE_ERRORS = (
     IngestError, CopywriterError, cover_mod.CoverError, ghl.GHLError,
     PipelineError, SchedulerError, ConfigError, WriterError, corpus.CorpusError,
     notion.NotionError,
+    # Both were missing, and the cost was RYTE going silent mid-reply: a Fathom
+    # rate limit escaped every handler, killed the task, and left the person
+    # who posted a link watching nothing happen. An error nobody sees is the
+    # worst kind.
+    zoom.ZoomError, fathom.FathomError,
 )
 
 # Ingestion guards: one mention shouldn't be able to upload the world.

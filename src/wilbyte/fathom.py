@@ -15,6 +15,7 @@ print what actually arrived when something doesn't match.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -181,6 +182,15 @@ def match_share_url(meetings: list[dict], share_url: str) -> FathomCall | None:
     return None
 
 
+def _retry_after(response, *, default: float) -> float:
+    """How long Fathom asked us to wait, capped so nothing hangs on a bad header."""
+    raw = (response.headers.get("Retry-After") or "").strip()
+    try:
+        return max(0.0, min(float(raw), 30.0))
+    except (TypeError, ValueError):
+        return default
+
+
 def meeting_id(meeting: dict) -> str:
     """A stable identity for one Fathom call."""
     for field in ("id", "recording_id", "meeting_id", "uuid"):
@@ -262,25 +272,55 @@ class FathomClient:
     def close(self) -> None:
         self._client.close()
 
-    def _get(self, path: str, **params) -> dict[str, Any]:
-        try:
-            response = self._client.get(path, params=params)
-        except httpx.HTTPError as exc:
-            raise FathomError(f"GET {path} failed to send: {exc}") from exc
-        if response.status_code == 401:
-            raise FathomError(
-                "Fathom rejected the API key. Check it was copied whole from "
-                "fathom.video -> Settings, and that the plan includes API access."
-            )
-        if response.status_code >= 400:
-            raise FathomError(f"GET {path} -> HTTP {response.status_code}: {response.text[:300]}")
-        return response.json() if response.content else {}
+    def _get(self, path: str, *, attempts: int = 3, **params) -> dict[str, Any]:
+        for attempt in range(attempts):
+            try:
+                response = self._client.get(path, params=params)
+            except httpx.HTTPError as exc:
+                raise FathomError(f"GET {path} failed to send: {exc}") from exc
 
-    def meetings(self, *, include_transcript: bool = True, limit: int = 200) -> list[dict]:
-        """Recent calls, following the cursor until there are enough."""
+            if response.status_code == 401:
+                raise FathomError(
+                    "Fathom rejected the API key. Check it was copied whole from "
+                    "fathom.video -> Settings, and that the plan includes API access."
+                )
+            # Rate limited. Fathom's allowance is small, and waiting is the
+            # whole remedy - so wait rather than surfacing a failure that only
+            # means "too fast".
+            if response.status_code == 429 and attempt < attempts - 1:
+                time.sleep(_retry_after(response, default=2.0 * (attempt + 1)))
+                continue
+            if response.status_code == 429:
+                raise FathomError(
+                    "Fathom is rate-limiting us. Give it a minute and post the "
+                    "link again — nothing is wrong with the key or the call."
+                )
+            if response.status_code >= 400:
+                raise FathomError(
+                    f"GET {path} -> HTTP {response.status_code}: {response.text[:300]}"
+                )
+            return response.json() if response.content else {}
+        return {}
+
+    # Enough to cover the calls of the last fortnight without walking the whole
+    # history. Every page is a request against a small allowance, and asking
+    # for two hundred calls to identify one is what earned the 429.
+    DEFAULT_LIMIT = 25
+    MAX_PAGES = 4
+
+    def meetings(self, *, include_transcript: bool = False, limit: int = DEFAULT_LIMIT) -> list[dict]:
+        """Recent calls, newest first, following the cursor a few pages at most.
+
+        Transcripts are left out by default. Fathom writes its own summary of
+        every call and that is what ends up on the card, so pulling the full
+        text of two hundred calls was fetching the one thing nobody reads - at
+        the cost of the rate limit that took RYTE off the air.
+        """
         found: list[dict] = []
         cursor = None
-        while len(found) < limit:
+        for _ in range(self.MAX_PAGES):
+            if len(found) >= limit:
+                break
             params: dict[str, Any] = {}
             if include_transcript:
                 params["include_transcript"] = "true"
@@ -292,7 +332,20 @@ class FathomClient:
             cursor = data.get("next_cursor") or data.get("cursor")
             if not cursor or not batch:
                 break
-        return found
+        return found[:limit]
+
+    def transcript_for(self, wanted_id: str) -> str:
+        """The full transcript of one call, fetched only when it's needed.
+
+        Which is rarely: Fathom writes a summary of every call and that is what
+        goes on the card. This is the path for a call it hasn't summarised.
+        """
+        if not wanted_id:
+            return ""
+        for meeting in self.meetings(include_transcript=True):
+            if meeting_id(meeting) == wanted_id:
+                return transcript_text(meeting)
+        return ""
 
     def find(self, share_url: str) -> tuple[FathomCall | None, list[dict]]:
         """The call behind a posted link, and everything seen while looking.
