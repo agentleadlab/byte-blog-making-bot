@@ -110,6 +110,31 @@ def parse_guild_id(raw: str | None) -> int | None:
     return None
 
 
+# What Discord shows under a bot's name. Empty means none at all.
+ACTIVITY_VERBS = {
+    "watching": discord.ActivityType.watching,
+    "playing": discord.ActivityType.playing,
+    "listening": discord.ActivityType.listening,
+    "competing": discord.ActivityType.competing,
+}
+
+
+def _activity():
+    """The status line, read from DISCORD_ACTIVITY. None when it isn't set.
+
+    Written as "watching: the SOP channel" or just "the SOP channel", which
+    Discord shows as "Watching". A status line that has stopped being true is
+    worse than none, so having none is the default.
+    """
+    raw = (os.getenv("DISCORD_ACTIVITY") or "").strip()
+    if not raw:
+        return None
+    verb, _, rest = raw.partition(":")
+    kind = ACTIVITY_VERBS.get(verb.strip().casefold())
+    name = rest.strip() if kind else raw
+    return discord.Activity(type=kind or discord.ActivityType.watching, name=name[:128])
+
+
 def _clip(text: str, limit: int = 60) -> str:
     text = text.strip()
     return text if len(text) <= limit else text[:limit] + "…"
@@ -176,11 +201,11 @@ class WilByteBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("Connected as %s — running %s", self.user, version.code_version())
-        await self.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching, name="YouTube so you don't have to"
-            )
-        )
+        # The "Watching ..." line under his name. Set DISCORD_ACTIVITY to change
+        # it; leave it empty and he has none, which is what the profile looked
+        # like once the line stopped being true - he does rather more than watch
+        # YouTube now.
+        await self.change_presence(activity=_activity())
         # on_ready fires again after a reconnect, so guard it - two publisher
         # loops would race each other for the same posts.
         if self.publisher_task is None or self.publisher_task.done():

@@ -1385,3 +1385,54 @@ def test_the_bots_own_posts_are_never_filed(monkeypatch, tmp_path):
     bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace()))
 
     assert _run_history(bot, channel)[0] == []
+
+
+# ----------------------------------- the "Watching ..." line under his name
+
+
+def test_no_status_line_by_default(monkeypatch):
+    """A status line that has stopped being true is worse than none. His said
+    "Watching YouTube so you don't have to" long after he also started filing
+    sales calls and keeping the SOP library."""
+    from wilbyte.bot.client import _activity
+
+    monkeypatch.delenv("DISCORD_ACTIVITY", raising=False)
+
+    assert _activity() is None
+
+
+def test_a_plain_line_is_something_he_is_watching(monkeypatch):
+    import discord
+
+    from wilbyte.bot.client import _activity
+
+    monkeypatch.setenv("DISCORD_ACTIVITY", "the SOP channel")
+    found = _activity()
+
+    assert found.type is discord.ActivityType.watching
+    assert found.name == "the SOP channel"
+
+
+@pytest.mark.parametrize(
+    "verb,expected",
+    [("watching", "watching"), ("playing", "playing"), ("listening", "listening"),
+     ("competing", "competing")],
+)
+def test_the_verb_can_be_chosen(monkeypatch, verb, expected):
+    import discord
+
+    from wilbyte.bot.client import _activity
+
+    monkeypatch.setenv("DISCORD_ACTIVITY", f"{verb}: sales calls")
+
+    assert _activity().type is getattr(discord.ActivityType, expected)
+    assert _activity().name == "sales calls"
+
+
+def test_a_colon_in_an_ordinary_line_is_not_a_verb(monkeypatch):
+    """"Watching: the thing" reads fine; "SOP: lead forms" is not a verb."""
+    from wilbyte.bot.client import _activity
+
+    monkeypatch.setenv("DISCORD_ACTIVITY", "SOP: lead forms")
+
+    assert _activity().name == "SOP: lead forms"
