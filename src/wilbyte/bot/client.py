@@ -129,10 +129,17 @@ def _activity():
     raw = (os.getenv("DISCORD_ACTIVITY") or "").strip()
     if not raw:
         return None
+
     verb, _, rest = raw.partition(":")
-    kind = ACTIVITY_VERBS.get(verb.strip().casefold())
-    name = rest.strip() if kind else raw
-    return discord.Activity(type=kind or discord.ActivityType.watching, name=name[:128])
+    label = verb.strip().casefold()
+    name = rest.strip() if (label in ACTIVITY_VERBS or label == "custom") else raw
+
+    # A custom status carries no verb, so the line reads as written - "busy
+    # being cute" rather than "Playing busy being cute".
+    if label == "custom":
+        return discord.CustomActivity(name=name[:128])
+    kind = ACTIVITY_VERBS.get(label, discord.ActivityType.watching)
+    return discord.Activity(type=kind, name=name[:128])
 
 
 def _clip(text: str, limit: int = 60) -> str:

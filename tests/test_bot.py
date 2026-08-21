@@ -1436,3 +1436,16 @@ def test_a_colon_in_an_ordinary_line_is_not_a_verb(monkeypatch):
     monkeypatch.setenv("DISCORD_ACTIVITY", "SOP: lead forms")
 
     assert _activity().name == "SOP: lead forms"
+
+
+def test_a_custom_status_carries_no_verb(monkeypatch):
+    """"busy being cute" reads as itself. "Playing busy being cute" doesn't."""
+    import discord
+
+    from wilbyte.bot.client import _activity
+
+    monkeypatch.setenv("DISCORD_ACTIVITY", "custom: busy being cute 🐹")
+    found = _activity()
+
+    assert isinstance(found, discord.CustomActivity)
+    assert found.name == "busy being cute 🐹"
