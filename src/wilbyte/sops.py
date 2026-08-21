@@ -43,6 +43,11 @@ ANY_LINK = re.compile(r"https?://\S+", re.IGNORECASE)
 # or italicise the heading above a link. It is a heading either way.
 _MARKDOWN = re.compile(r"(\*\*|\*|__|_|`|~~)")
 
+# `<@123>` is a person; `@here` and `@everyone` are just as much a mention and
+# just as little a heading. One became a card called "SOP: @here here's how to
+# connect luna to your calendar".
+_MENTION = re.compile(r"<@[!&]?\d+>|@here\b|@everyone\b", re.IGNORECASE)
+
 
 @dataclass
 class Sop:
@@ -61,6 +66,9 @@ class Sop:
     # Why a card has no real summary, when it doesn't. Said out loud rather
     # than left as an empty section nobody can explain.
     note: str = ""
+    # Whether somebody typed a heading. When they didn't, the page's own title
+    # is a far better name than "Drive SOP".
+    named_by_hand: bool = True
     links: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -84,7 +92,7 @@ def find_title(text: str) -> str:
         without_links = ANY_LINK.sub(" ", line)
         found = strip_markdown(" ".join(without_links.split()))
         # Drop a line that was only ever a link, and one that is only a mention.
-        found = re.sub(r"<@[!&]?\d+>", " ", found).strip(" :-–—")
+        found = _MENTION.sub(" ", found).strip(" :-–—")
         if len(found) >= 3:
             return found[:120]
     return ""
@@ -104,27 +112,54 @@ def find_kind(text: str, *, images=(), audio=()) -> str:
     return "Written"
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_SECRET_WORDS = ("password", "passcode", "login", "credential", "log in", "pwd", "api key")
+
+
+def looks_like_credentials(text: str) -> bool:
+    """Whether a message is somebody sharing a login.
+
+    The backfill filed one: an email, a password on the line under it, and
+    "NEW LOOM LOGIN" beneath that. It is not a procedure, and a Notion card is
+    a place a password outlives the conversation it was meant to die in.
+    """
+    lowered = (text or "").casefold()
+    if not any(word in lowered for word in _SECRET_WORDS):
+        return False
+    return bool(_EMAIL.search(text or ""))
+
+
 def find_sop(text: str, *, images=(), audio=()) -> Sop | None:
     """Read a posted message into an SOP, or None if there is nothing in it.
 
     A message with no link, no file and nothing but "nice one" is chatter, and
     filing chatter is how a library stops being worth searching.
     """
-    body = strip_markdown(ANY_LINK.sub(" ", re.sub(r"<@[!&]?\d+>", " ", text or "")))
+    body = strip_markdown(ANY_LINK.sub(" ", _MENTION.sub(" ", text or "")))
     body = "\n".join(line.strip() for line in body.splitlines() if line.strip())
     links = tuple(dict.fromkeys(ANY_LINK.findall(text or "")))
     images = tuple(images or ())
     audio = tuple(audio or ())
 
-    if not links and not images and not audio and len(body) < 40:
+    if looks_like_credentials(text):
+        return None
+
+    # With nothing attached, the text itself has to look like a procedure
+    # rather than a message. "will you pin this here so we have it quick just
+    # incase" cleared a forty-character bar and became a card.
+    if not links and not images and not audio and not _reads_like_a_procedure(body):
         return None
 
     title = find_title(text) or (body.splitlines()[0][:120] if body else "")
+    named_by_hand = bool(title)
     if not title:
+        # A placeholder until the page can be asked its own name. Three cards
+        # came out of the backfill called "SOP: Drive SOP".
         title = f"{find_kind(text, images=images, audio=audio)} SOP"
 
     return Sop(
         title=title,
+        named_by_hand=named_by_hand,
         kind=find_kind(text, images=images, audio=audio),
         url=links[0] if links else "",
         links=links,
@@ -132,6 +167,28 @@ def find_sop(text: str, *, images=(), audio=()) -> Sop | None:
         images=images,
         audio=audio,
     )
+
+
+# Something written out as an SOP runs to a paragraph, or to numbered steps.
+_STEPS = re.compile(r"(?:^|\n)\s*(?:\d{1,2}[.)]|[-*•])\s+", re.MULTILINE)
+
+# Length alone can't tell "will you pin this here so we have it quick just
+# incase" from a procedure of the same size. What can is who it is addressed
+# to: a procedure describes what to do, a request asks somebody to do it.
+_A_REQUEST = re.compile(
+    r"^\s*(?:hey|hi|yo|plz|please|can|could|would|will|any(?:one|body)|does\s+any)\b"
+    r"|\b(?:can|could|would|will)\s+(?:you|u|someone|somebody|anyone)\b",
+    re.IGNORECASE,
+)
+
+
+def _reads_like_a_procedure(body: str) -> bool:
+    text = (body or "").strip()
+    if not text or _A_REQUEST.search(text) or text.rstrip().endswith("?"):
+        return False
+    if len(_STEPS.findall(text)) >= 2 and len(text) >= 60:
+        return True
+    return len(text) >= 110
 
 
 def card_title(sop: "Sop", *, prefix: str = TITLE_PREFIX) -> str:
@@ -278,7 +335,7 @@ _ASKING = {
 def wanted_topic(text: str) -> str:
     """"do we have an SOP about lead forms" -> "lead forms"."""
     cleaned = ANY_LINK.sub(" ", text or "")
-    cleaned = re.sub(r"<@[!&]?\d+>", " ", cleaned)
+    cleaned = _MENTION.sub(" ", cleaned)
     kept = [
         word for word in re.split(r"[^\w'-]+", strip_markdown(cleaned))
         if word and word.casefold() not in _ASKING

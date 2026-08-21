@@ -322,3 +322,74 @@ def test_a_filed_sop_does_not_collide_with_a_filed_recording(tmp_path):
 
     assert sops.already_filed("abc==", path=store) is True
     assert recordings.filed_ids(store) == {"abc==", "sop-message:abc=="}
+
+
+# ------------------------------- what the first backfill actually produced
+
+# Eleven cards, and four of them were wrong in four different ways.
+
+
+def test_a_mention_of_everyone_is_not_a_heading():
+    """This became "SOP: @here here's how to connect luna to your calendar"."""
+    sop = sops.find_sop(f"@here here's how to connect luna to your calendar\n{LOOM}")
+
+    assert not sop.title.startswith("@here")
+
+
+def test_a_login_is_never_filed():
+    """The backfill made a card out of an email, a password, and "NEW LOOM
+    LOGIN" — a Notion card is where a password outlives the chat it was
+    meant to die in."""
+    posted = "franklinmay@agentleadlab.com\nAgentlealab2026!\n\nNEW LOOM LOGIN ^^^"
+
+    assert sops.find_sop(posted) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "api key is sk-abc123 for hello@example.com",
+        "password: hunter2 — login for ops@agentleadlab.com",
+    ],
+)
+def test_credentials_in_any_arrangement_are_left_alone(text):
+    assert sops.looks_like_credentials(text) is True
+
+
+def test_an_ordinary_sop_mentioning_a_login_screen_is_still_filed():
+    """"Where the login button is" is a procedure, not a credential."""
+    assert sops.looks_like_credentials(f"How to find the login screen {LOOM}") is False
+
+
+def test_asking_somebody_to_pin_a_message_is_not_a_procedure():
+    """This cleared the old length bar and became a card."""
+    assert sops.find_sop("will you pin this here so we have it quick just incase") is None
+
+
+def test_something_genuinely_written_out_is_still_kept():
+    steps = (
+        "1. Open the Auto-Deploys sheet\n"
+        "2. Filter to last week\n"
+        "3. Copy the totals column into the Monday card"
+    )
+
+    assert sops.find_sop(steps) is not None
+
+
+def test_a_bare_link_is_marked_as_needing_a_name():
+    """"SOP: Drive SOP" three times over is a library you can't read."""
+    assert sops.find_sop(LOOM).named_by_hand is False
+    assert sops.find_sop(f"**Blacklist feature**\n{LOOM}").named_by_hand is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "plz can someone send me the doc for the onboarding process again thanks",
+        "hey does anyone know where the lead order sheet lives these days?",
+        "would you mind reposting the lead order walkthrough when you get a sec",
+    ],
+)
+def test_asking_for_an_sop_is_not_filing_one(text):
+    """Length alone can't tell these from a procedure. Who they address can."""
+    assert sops.find_sop(text) is None

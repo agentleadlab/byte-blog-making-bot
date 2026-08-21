@@ -1708,6 +1708,8 @@ def sop_summary(config: Config, sop) -> str:
     if sop.kind == "YouTube":
         try:
             video = youtube.video_from_link(sop.url)
+            if not sop.named_by_hand and getattr(video, "title", ""):
+                sop.title = video.title[:120]
             material.append(youtube.fetch_transcript(video.video_id).text)
         except Exception as exc:
             sop.note = f"Couldn't read the video: {_short(exc)}"
@@ -1715,6 +1717,11 @@ def sop_summary(config: Config, sop) -> str:
         described = describe_page(sop.url)
         if described:
             material.append(f"What the page says about itself:\n{described}")
+            # Nobody typed a heading, so the page's own name is the card's.
+            # Otherwise a bare Google Docs link files as "SOP: Drive SOP", and
+            # three of those are indistinguishable.
+            if not sop.named_by_hand:
+                sop.title = described.splitlines()[0][:120]
         elif not sop.body.strip() and not sop.images:
             sop.note = (
                 f"{sop.kind} pages can't be read from here, so this is filed under "
