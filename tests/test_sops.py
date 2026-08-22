@@ -599,3 +599,62 @@ def test_a_hit_still_reads_as_title_card_link():
 
     assert (title, link) == ("SOP: Lead Order Process", LOOM)
     assert card.startswith("https://")
+
+
+# ------------------------------------- handing one over from another channel
+
+# "@Ryte add to sop <loom link>" got the help text. Posting in #sop files
+# silently, but the link is usually already in the conversation that produced
+# it, and saying so anywhere else has to work too.
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "add to sop {link}",
+        "add this to sop {link}",
+        "add it to the sops {link}",
+        "file as sop {link}",
+        "save this as an sop {link}",
+        "put this in sops {link}",
+        "sop this {link}",
+    ],
+)
+def test_handing_an_sop_over_is_read_as_filing_it(said):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(said.format(link=LOOM)).action == "filesop"
+
+
+def test_asking_for_one_is_still_asking():
+    """"add to sop" contains the word that asks a question. They are opposite
+    things and the difference cannot be a coin toss."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("do we have an sop for lead forms").action == "findsop"
+    assert mentions.parse("how do we set up a dedicated LP").action == "findsop"
+
+
+def test_the_command_words_do_not_become_the_title():
+    """Left in, the card comes out called "SOP: add to sop"."""
+    from wilbyte.bot import mentions
+
+    brief = mentions.parse(f"add to sop {LOOM}").brief
+
+    assert "add to sop" not in brief.lower()
+    assert LOOM in brief
+
+
+def test_a_title_typed_with_the_link_still_survives():
+    from wilbyte.bot import mentions
+
+    brief = mentions.parse(f"add to sop How To Toggle Automations {LOOM}").brief
+
+    assert sops.find_title(brief) == "How To Toggle Automations"
+
+
+def test_filing_nothing_is_not_filing_an_empty_card():
+    """"add to sop" on its own has nothing in it to file."""
+    from wilbyte.bot import mentions
+
+    assert sops.find_sop(mentions.parse("add to sop").brief) is None

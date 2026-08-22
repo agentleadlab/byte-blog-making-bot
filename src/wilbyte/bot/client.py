@@ -549,6 +549,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_weekends(responder, config, request.brief or "")
                 return
 
+            if request.action == "filesop":
+                await _file_sop(responder, config, message, request.brief or "")
+                return
+
             if request.action == "probe":
                 await _probe_update(responder, config)
                 return
@@ -1900,6 +1904,49 @@ async def _set_weekends(responder: Responder, config: Config, text: str) -> None
     await _rearrange(
         responder, config, offer=True, include_today=mentions.wants_today(text)
     )
+
+
+async def _file_sop(responder: Responder, config: Config, message, text: str) -> None:
+    """File an SOP handed over from outside the SOP channel.
+
+    Posting in #sop files silently, because a channel of procedures is not a
+    place for RYTE to announce that it noticed one. Being asked directly is
+    the opposite: somebody said do this, so they get told it is done and
+    where it went.
+
+    The command words are stripped before the message is read, or "add to sop"
+    becomes the title of the card.
+    """
+    from .. import sops
+
+    images, audio = message_files(message)
+    sop = sops.find_sop(text, images=images, audio=audio)
+    if sop is None:
+        await responder.send(
+            "There's nothing in that to file — give me a link, a file, or the "
+            "steps written out."
+        )
+        return
+
+    sop.posted_by = getattr(message.author, "display_name", "") or ""
+    posted = getattr(message, "created_at", None)
+    sop.posted_on = posted.date() if posted is not None else None
+
+    summary = ""
+    try:
+        summary = await asyncio.to_thread(jobs.sop_summary, config, sop)
+    except PIPELINE_ERRORS as exc:
+        log.warning("Couldn't read the SOP %s: %s", sop.title, exc)
+        sop.note = sop.note or f"No summary — {exc}"
+
+    try:
+        title, url = await asyncio.to_thread(jobs.file_sop, config, sop, summary=summary)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't file that SOP\n{exc}"))
+        return
+
+    sops.remember(getattr(message, "id", ""))
+    await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
 
 
 async def _probe_update(responder: Responder, config: Config) -> None:

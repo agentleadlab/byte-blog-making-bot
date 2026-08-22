@@ -168,6 +168,16 @@ PUBLISH_WORDS = ("publish", "publishnow", "release", "golive")
 
 WEEKEND_WORDS = ("weekends", "weekend", "everyday")
 
+# Handing an SOP over from somewhere that isn't the SOP channel. Posting in
+# #sop files it silently; saying so anywhere else has to work too, because the
+# link is usually already in the conversation that produced it.
+FILE_SOP_RE = re.compile(
+    r"\b(?:add(?:\s+(?:this|it|that))?\s+(?:to|in|into)\s+(?:the\s+)?sops?"
+    r"|(?:file|save|put|log)\s+(?:this|it|that)?\s*(?:as|in|into|under)\s+(?:an?\s+|the\s+)?sops?"
+    r"|sop\s+this)\b",
+    re.IGNORECASE,
+)
+
 # Switching the weekend on or off. The word has to come *after* "weekends",
 # because "do we post on weekends?" is a question and the "on" in it means
 # nothing - answering it by silently changing the schedule would be the worst
@@ -355,6 +365,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Asking *for* a recording, rather than handing one over. The difference is
     # a link: "recording <link>" files one, "need the recording for Derrick"
     # fetches one back out of the gallery.
+    # Before the question, because "add to sop" contains the word that asks
+    # one. Handing an SOP over and asking for one are opposite things.
+    if FILE_SOP_RE.search(text):
+        return MentionRequest(action="filesop", brief=FILE_SOP_RE.sub(" ", text, count=1).strip())
+
     if _asks_for_an_sop(lowered):
         return MentionRequest(action="findsop", brief=text)
 
@@ -574,7 +589,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **need the recording for Derrick Robison** — I'll send the card back
 > New calls file themselves every 15 minutes — @RYTE **sweep** does it now
 
-**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
+**SOPs**\n> Post a link in the SOP channel and I'll file it with a summary
+> @RYTE **add to sop** `<link>` — file one from anywhere else\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
 > @RYTE **board** — what's on Trello today, and what's missing
 > @RYTE **rollover** — what tonight's carry-over would move (shows only)
 > @RYTE **host** — attach an image, get a permanent public link back
