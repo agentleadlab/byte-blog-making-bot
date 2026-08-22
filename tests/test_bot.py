@@ -1704,3 +1704,95 @@ def test_the_probe_drops_exactly_the_field_it_names():
     assert full == {"blogId": "b", "locationId": "l", "urlSlug": "s", "rawHTML": "<p>x</p>"}, (
         "the original must not be mutated - every shape is built from it"
     )
+
+
+# ------------------------------------------- GHL falling over on its own code
+
+# Re-dating an already-scheduled post comes back 400 with `Cannot read
+# properties of undefined (reading 'childTaskError')` - a null dereference
+# inside GHL, not a field they objected to. Dropping to draft and scheduling
+# again is the transition their code survives.
+
+CRASH = (
+    'PUT /blogs/posts/p1 -> HTTP 400: {"status":400,"message":"Error while blog '
+    'update","name":"HttpException","error":"Cannot read properties of undefined '
+    "(reading 'childTaskError')\"}"
+)
+
+
+class Updates:
+    """A GHL client that fails the calls you tell it to, and remembers them."""
+
+    def __init__(self, fail_when=lambda call, payload: False):
+        self.calls = []
+        self.fail_when = fail_when
+
+    def update_post(self, post_id, payload):
+        self.calls.append(dict(payload))
+        if self.fail_when(len(self.calls), payload):
+            raise ghl.GHLError(CRASH)
+        return {}
+
+
+def probe_entry(scheduled_at="2099-08-24T10:00:00-04:00"):
+    return SimpleNamespace(ghl_post_id="p1", scheduled_at=scheduled_at, title="A Post")
+
+
+def moved_payload(when="2099-08-22T14:00:00.000Z"):
+    return {"blogId": "b", "rawHTML": "<p>x</p>", "status": "SCHEDULED", "publishedAt": when}
+
+
+def test_the_straight_update_is_what_gets_tried_first():
+    """It is the call that ought to work, and the one that starts working if
+    GHL ever fixes it."""
+    client = Updates()
+
+    jobs._redate(client, probe_entry(), moved_payload())
+
+    assert len(client.calls) == 1
+
+
+def test_their_crash_is_worked_around_by_dropping_to_draft_first():
+    client = Updates(fail_when=lambda call, _payload: call == 1)
+
+    jobs._redate(client, probe_entry(), moved_payload())
+
+    assert [call["status"] for call in client.calls] == ["SCHEDULED", "DRAFT", "SCHEDULED"]
+    assert "publishedAt" not in client.calls[1], "a draft carries no date"
+    assert client.calls[2]["publishedAt"] == "2099-08-22T14:00:00.000Z"
+
+
+def test_any_other_error_is_raised_rather_than_worked_around():
+    """The detour is for one known crash. Everything else is a real error and
+    hiding it behind two more writes would be worse."""
+
+    class Other:
+        calls = []
+
+        def update_post(self, post_id, payload):
+            raise ghl.GHLError("HTTP 401: unauthorized")
+
+    with pytest.raises(ghl.GHLError, match="401"):
+        jobs._redate(Other(), probe_entry(), moved_payload())
+
+
+def test_a_post_is_never_left_sitting_as_a_draft():
+    """If the reschedule half fails, the post goes back on the day it was
+    already on. Silently unscheduling somebody's article is far worse than
+    not moving it."""
+    client = Updates(fail_when=lambda call, _payload: call in (1, 3))
+
+    with pytest.raises(ghl.GHLError):
+        jobs._redate(client, probe_entry(), moved_payload())
+
+    assert client.calls[-1]["status"] == "SCHEDULED"
+    assert client.calls[-1]["publishedAt"] == "2099-08-24T14:00:00.000Z", "its original day"
+
+
+def test_with_no_original_date_there_is_nothing_to_put_back():
+    client = Updates(fail_when=lambda call, _payload: call in (1, 3))
+
+    with pytest.raises(ghl.GHLError):
+        jobs._redate(client, probe_entry(scheduled_at=None), moved_payload())
+
+    assert len(client.calls) == 3, "tried, dropped to draft, tried again - no restore"

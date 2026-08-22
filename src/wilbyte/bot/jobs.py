@@ -411,7 +411,7 @@ def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> l
             payload = publisher.load_payload(entry)
             payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_SCHEDULED
             payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(move.now)
-            context.client.update_post(entry.ghl_post_id, payload)
+            _redate(context.client, entry, payload)
         except Exception as exc:
             # The whole thing, not a trimmed version, and what was sent with
             # it. When GHL refuses every post in a queue it refuses them for
@@ -423,6 +423,50 @@ def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> l
         entry.scheduled_at = move.now.isoformat()
         ledger.save()
     return problems
+
+
+# GHL's own code falls over re-dating a post that is already scheduled:
+# `Cannot read properties of undefined (reading 'childTaskError')`. Not a
+# rejected field - a null dereference in whatever tracks a post's scheduling
+# task, which apparently only exists on the way *into* SCHEDULED.
+CHILD_TASK_CRASH = "childTaskError"
+
+
+def _redate(client, entry, payload: dict) -> None:
+    """Move a scheduled post's date, going the long way round if GHL crashes.
+
+    Straight through first, because that is the call that ought to work and
+    the one that will start working if GHL ever fixes it. Only their specific
+    crash triggers the detour - anything else is a real error and is raised.
+
+    The detour drops the post to a draft and schedules it again, which is the
+    transition their code survives. If the second half fails the post is put
+    back on the day it was already on: leaving somebody's article sitting as
+    an unscheduled draft, silently, is far worse than not moving it.
+    """
+    from ..scheduler import parse_timestamp
+
+    try:
+        client.update_post(entry.ghl_post_id, payload)
+        return
+    except Exception as exc:
+        if CHILD_TASK_CRASH not in str(exc):
+            raise
+
+    as_draft = {
+        key: value for key, value in payload.items() if key != ghl.SCHEDULE_FIELD
+    }
+    as_draft[ghl.POST_FIELDS["status"]] = ghl.STATUS_DRAFT
+    client.update_post(entry.ghl_post_id, as_draft)
+
+    try:
+        client.update_post(entry.ghl_post_id, payload)
+    except Exception:
+        was = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
+        if was:
+            restored = {**payload, ghl.SCHEDULE_FIELD: ghl.to_api_timestamp(was)}
+            client.update_post(entry.ghl_post_id, restored)
+        raise
 
 
 def publish_now(config: Config, ledger: Ledger, context: GHLContext, entry) -> datetime:
@@ -470,17 +514,24 @@ def held_on(config: Config, ledger: Ledger, day: date) -> list:
 
 
 def probe_update(config: Config) -> list[str]:
-    """Find out what GHL objects to on an update, without touching a live post.
+    """Find out which update GHL crashes on, without touching a live post.
 
-    Every move of a scheduled post came back 400 "Error while blog update",
-    which says nothing about which field it means. So: make one throwaway
-    draft, send it the same update in several shapes, and report which ones it
-    accepts. The difference between the shape it takes and the shape it
-    refuses is the answer.
+    Every move came back 400 with `Cannot read properties of undefined
+    (reading 'childTaskError')`. That is not GHL objecting to a field - it is
+    a null dereference inside their own code, in something that handles a
+    post's scheduling task. So subtracting fields one at a time was the wrong
+    experiment; what matters is which *transition* trips it.
 
-    A draft, because a draft is not on the blog. There is no delete endpoint,
-    so it stays there until somebody removes it by hand - which is a small
-    price for not experimenting on fifteen live articles.
+    So this walks a throwaway draft through the transitions in order:
+    scheduling it, re-dating it while scheduled (which is what a move does),
+    unscheduling it, and scheduling it again. If re-dating is the only one
+    that fails, then dropping to draft first and scheduling again is the way
+    round it - and the last two steps prove that in the same run.
+
+    It ends on DRAFT whatever happens, so nothing is left pointing at the
+    blog. There is no delete endpoint, so the post itself stays until somebody
+    removes it by hand - a small price for not experimenting on fifteen live
+    articles.
     """
     from datetime import timedelta
     from zoneinfo import ZoneInfo
@@ -517,31 +568,47 @@ def probe_update(config: Config) -> list[str]:
             return [f"❌ Couldn't even create the probe post: {created}"]
         lines.append(f"Probe draft created (`{slug}`) — delete it in GHL when we're done.")
 
-        later = ghl.to_api_timestamp(
-            datetime.now(ZoneInfo(config.schedule.timezone)) + timedelta(days=30)
-        )
-        moved = {**full, ghl.POST_FIELDS["status"]: ghl.STATUS_SCHEDULED}
-        moved[ghl.SCHEDULE_FIELD] = later
+        now = datetime.now(ZoneInfo(config.schedule.timezone))
+        first = ghl.to_api_timestamp(now + timedelta(days=30))
+        second = ghl.to_api_timestamp(now + timedelta(days=31))
 
-        # Ordered so the first failure and the first success bracket the
-        # offending field between them.
-        shapes = [
-            ("everything, exactly as a move sends it", moved),
-            ("without locationId", _less(moved, "locationId")),
-            ("without urlSlug", _less(moved, "urlSlug")),
-            ("without canonicalLink", _less(moved, "canonicalLink")),
-            ("without author, categories, tags", _less(moved, "author", "categories", "tags")),
-            ("without rawHTML", _less(moved, "rawHTML")),
-            ("the date only", {"blogId": context.blog_id, ghl.SCHEDULE_FIELD: later}),
-            ("the status only", {"blogId": context.blog_id, "status": ghl.STATUS_SCHEDULED}),
+        def scheduled(when):
+            return {
+                **full,
+                ghl.POST_FIELDS["status"]: ghl.STATUS_SCHEDULED,
+                ghl.SCHEDULE_FIELD: when,
+            }
+
+        def drafted():
+            return _less({**full, ghl.POST_FIELDS["status"]: ghl.STATUS_DRAFT}, "publishedAt")
+
+        # In order, because each one leaves the post in the state the next one
+        # is testing. Step 2 is what a move does; steps 4 and 5 are the way
+        # round it, if there is one.
+        steps = [
+            ("1. draft → scheduled", scheduled(first)),
+            ("2. scheduled → scheduled, new date (what a move does)", scheduled(second)),
+            ("3. scheduled → draft", drafted()),
+            ("4. draft → scheduled, new date", scheduled(second)),
+            ("5. same again, no body — just blogId, status, date", {
+                "blogId": context.blog_id,
+                "status": ghl.STATUS_SCHEDULED,
+                ghl.SCHEDULE_FIELD: first,
+            }),
         ]
-        for label, payload in shapes:
+        for label, payload in steps:
             try:
                 client.update_post(post_id, payload)
             except Exception as exc:
-                lines.append(f"❌ {label} — {_short(exc, 200)}")
+                lines.append(f"❌ {label}\n   {_short(exc, 240)}")
             else:
                 lines.append(f"✅ {label}")
+
+        # However it went, leave it as a draft so nothing points at the blog.
+        try:
+            client.update_post(post_id, drafted())
+        except Exception:
+            lines.append("⚠ Couldn't put the probe back to draft — delete it in GHL.")
     finally:
         context.close()
     return lines
