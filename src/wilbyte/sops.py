@@ -192,6 +192,29 @@ def _reads_like_a_procedure(body: str) -> bool:
     return len(text) >= 110
 
 
+def headline(summary: str) -> str:
+    """The title the summary gave itself, if it opened with one.
+
+    A card called "SOP: Loom SOP" is a card nobody finds. Once the video has
+    been read, what it turned out to be about is the best name there is -
+    better than the file name somebody gave the recording, and better than
+    anything guessable from a URL. Only the first line counts, and only when
+    that line is a heading rather than a sentence.
+    """
+    for line in (summary or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        found = re.fullmatch(r"\*\*(.+?)\*\*[:.]?", line) or re.fullmatch(
+            r"#{1,4}\s+(.+)", line
+        )
+        if not found:
+            return ""
+        # The colon lands inside the bold as often as outside it.
+        return " ".join(found.group(1).split()).rstrip(":.")[:120]
+    return ""
+
+
 def card_title(sop: "Sop", *, prefix: str = TITLE_PREFIX) -> str:
     """"SOP: How to Create Internal Ads LeadForm"."""
     name = " ".join((sop.title or "").split())

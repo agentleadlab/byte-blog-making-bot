@@ -271,3 +271,92 @@ def test_a_heading_somebody_typed_is_not_overwritten_by_loom(config, monkeypatch
     jobs.sop_summary(config, sop)
 
     assert sop.title == "How We Run VA Standups"
+
+
+# ------------------------------------------------- what the card gets called
+
+
+@pytest.mark.parametrize(
+    "summary,expected",
+    [
+        ("**VA Team: Campaign Launch & Lead Delivery Monitoring**\n\nThis covers…",
+         "VA Team: Campaign Launch & Lead Delivery Monitoring"),
+        ("## How To Upload Blog Posts\n\nSteps…", "How To Upload Blog Posts"),
+        ("**Lead Order Process:**\n- open the sheet", "Lead Order Process"),
+        ("\n\n**Weekly Numbers**\ntext", "Weekly Numbers"),
+    ],
+)
+def test_the_summary_names_the_card_when_nobody_else_did(summary, expected):
+    from wilbyte import sops
+
+    assert sops.headline(summary) == expected
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "",
+        "This entry covers what the VA team is responsible for.",
+        "- open the sheet\n- filter to last week",
+        "**bold** in the middle of a sentence is not a heading",
+    ],
+)
+def test_prose_is_not_mistaken_for_a_heading(summary):
+    from wilbyte import sops
+
+    assert sops.headline(summary) == ""
+
+
+def test_a_loom_nobody_titled_ends_up_named_for_what_it_covers(config, monkeypatch):
+    """It filed as "SOP: Loom SOP" - the placeholder. The video had been read
+    by then, so there was a far better name available."""
+    from wilbyte import sops
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(loom, "transcript", lambda url, **kw: "So once a client pays…")
+    monkeypatch.setattr(loom, "title", lambda url, **kw: "")
+    monkeypatch.setattr(jobs, "describe_page", lambda url, **kw: "")
+    monkeypatch.setattr(
+        jobs, "write_sop_summary",
+        lambda *a, **kw: "**VA Team: Campaign Launch & Lead Delivery Monitoring**\n\nCovers…",
+    )
+
+    sop = sops.find_sop(SHARE)
+    assert sop.title == "Loom SOP", "the placeholder, before anything is read"
+
+    jobs.sop_summary(config, sop)
+
+    assert sops.card_title(sop) == (
+        "SOP: VA Team: Campaign Launch & Lead Delivery Monitoring"
+    )
+
+
+def test_the_share_page_name_is_used_when_loom_will_not_say(config, monkeypatch):
+    """The GraphQL name query is the least reliable of the three. og: tags on
+    the share page are not."""
+    from wilbyte import sops
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(loom, "transcript", lambda url, **kw: "words")
+    monkeypatch.setattr(loom, "title", lambda url, **kw: "")
+    monkeypatch.setattr(jobs, "describe_page", lambda url, **kw: "Streamlining VA Operations")
+    monkeypatch.setattr(jobs, "write_sop_summary", lambda *a, **kw: "no heading here")
+
+    sop = sops.find_sop(SHARE)
+    jobs.sop_summary(config, sop)
+
+    assert sop.title == "Streamlining VA Operations"
+
+
+def test_a_heading_somebody_typed_still_beats_all_three(config, monkeypatch):
+    from wilbyte import sops
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(loom, "transcript", lambda url, **kw: "words")
+    monkeypatch.setattr(loom, "title", lambda url, **kw: "Loom's Name")
+    monkeypatch.setattr(jobs, "write_sop_summary", lambda *a, **kw: "**The Summary's Name**\nx")
+
+    sop = sops.find_sop(f"**How We Run VA Standups**\n{SHARE}")
+    jobs.sop_summary(config, sop)
+
+    assert sop.title == "How We Run VA Standups"

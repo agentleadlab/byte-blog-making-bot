@@ -1997,10 +1997,21 @@ def sop_summary(config: Config, sop) -> str:
         return f"{sop.kind} recording: {sop.title}. Not transcribed — watch the link."
 
     try:
-        return write_sop_summary(config, sop, "\n\n".join(material))
+        summary = write_sop_summary(config, sop, "\n\n".join(material))
     except CopywriterError as exc:
         sop.note = f"No summary — {exc}"
         return ""
+
+    # Last and best chance at a name. A recording nobody titled leaves the
+    # card called "SOP: Loom SOP", and once the thing has been read, what it
+    # turned out to be about beats every other guess at what to call it.
+    if not sop.named_by_hand:
+        from .. import sops as sops_rules
+
+        named = sops_rules.headline(summary)
+        if named:
+            sop.title = named
+    return summary
 
 
 def loom_spoken(sop) -> tuple[str, str]:
@@ -2021,10 +2032,14 @@ def loom_spoken(sop) -> tuple[str, str]:
             "sharing it with anyone-with-the-link is enough."
         )
 
+    # Loom's own name for the video, or failing that the name its share page
+    # publishes. Either beats the placeholder; the summary may beat both, and
+    # gets the last word once it has been written.
     if not sop.named_by_hand:
-        named = loom.title(sop.url)
+        described = describe_page(sop.url).splitlines()
+        named = loom.title(sop.url) or (described[0] if described else "")
         if named:
-            sop.title = named
+            sop.title = named[:120]
 
     if not spoken:
         return "", "Loom has no captions for this one yet — filed under its title and link."
