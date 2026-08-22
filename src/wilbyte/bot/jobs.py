@@ -406,13 +406,19 @@ def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> l
         if entry is None:
             problems.append(f"{move.title} — I've lost my record of it")
             continue
+        payload = None
         try:
             payload = publisher.load_payload(entry)
             payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_SCHEDULED
             payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(move.now)
             context.client.update_post(entry.ghl_post_id, payload)
         except Exception as exc:
-            problems.append(f"{move.title} — {_short(exc, 120)}")
+            # The whole thing, not a trimmed version, and what was sent with
+            # it. When GHL refuses every post in a queue it refuses them for
+            # one reason, and that reason was being cut off the end of the
+            # message fifteen times over.
+            sent = f"\n  sent: {', '.join(sorted(payload))}" if payload else ""
+            problems.append(f"{move.title} — {exc}{sent}")
             continue
         entry.scheduled_at = move.now.isoformat()
         ledger.save()

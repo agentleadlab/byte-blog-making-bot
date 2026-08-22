@@ -1907,7 +1907,7 @@ async def _rearrange(
     a wrong date here means an article going out on a day nobody expected -
     which is not something anybody would notice until it had happened.
     """
-    from ..rearrange import summarise
+    from ..rearrange import explain_failures, summarise
 
     ledger = await asyncio.to_thread(Ledger.load)
     context = await _maybe_open_ghl(config)
@@ -1957,7 +1957,7 @@ async def _rearrange(
         done = len(changing) - len(problems)
         note = f"📅 Moved {done} post(s)."
         if problems:
-            note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
+            note += "\n" + explain_failures(problems)
         await responder.send(note)
     finally:
         if context:

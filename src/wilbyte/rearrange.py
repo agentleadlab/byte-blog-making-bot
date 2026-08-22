@@ -73,3 +73,27 @@ def summarise(moves: list[Move], *, unmoved_note: bool = True) -> str:
     if staying and unmoved_note:
         lines.append(f"\n{staying} already on the right day, left alone.")
     return f"{head}\n" + "\n".join(lines)
+
+
+def explain_failures(problems: list[str]) -> str:
+    """One readable account of what went wrong, not fifteen copies of it.
+
+    When GHL refuses a whole queue it refuses it for one reason, and printing
+    that reason once per post buries it - the message is too long to read, and
+    the part that says *why* is the part that gets cut off the end.
+    """
+    if not problems:
+        return ""
+    if len(problems) == 1:
+        return f"⚠ Couldn't move it:\n{problems[0]}"
+
+    # Same reason for all of them? Say it once, and name what it happened to.
+    reasons = {problem.split(" — ", 1)[-1] for problem in problems}
+    if len(reasons) == 1:
+        titles = ", ".join(problem.split(" — ", 1)[0] for problem in problems[:3])
+        more = f" and {len(problems) - 3} more" if len(problems) > 3 else ""
+        return (
+            f"⚠ All {len(problems)} were refused for the same reason "
+            f"({titles}{more}):\n{reasons.pop()}"
+        )
+    return "⚠ Couldn't move:\n" + "\n".join(f"• {problem}" for problem in problems)

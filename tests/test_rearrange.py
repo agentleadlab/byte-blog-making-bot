@@ -430,3 +430,46 @@ def test_a_word_inside_a_link_is_not_somebody_asking_for_today():
 def test_rearrange_can_be_asked_to_use_today():
     assert mentions.parse("rearrange today").today is True
     assert mentions.parse("rearrange").today is False
+
+
+# --------------------------------------- saying why, once, when it all fails
+
+# GHL refused a queue of fifteen and sent back the same 400 fifteen times. The
+# message that reached Discord was the reason cut off at 120 characters,
+# repeated - too long to read and missing the only part that mattered.
+
+
+def test_one_failure_is_reported_as_it_is():
+    said = rearrange.explain_failures(["A Post — HTTP 400: something specific"])
+
+    assert "something specific" in said
+
+
+def test_the_same_reason_is_given_once_not_once_per_post():
+    problems = [f"Post {n} — HTTP 400: blogId is required" for n in range(15)]
+
+    said = rearrange.explain_failures(problems)
+
+    assert said.count("blogId is required") == 1
+    assert "All 15 were refused for the same reason" in said
+
+
+def test_the_posts_it_happened_to_are_still_named():
+    problems = [f"Post {n} — HTTP 400: same" for n in range(15)]
+
+    said = rearrange.explain_failures(problems)
+
+    assert "Post 0, Post 1, Post 2" in said
+    assert "12 more" in said
+
+
+def test_different_reasons_are_all_listed():
+    problems = ["A — one thing", "B — another thing"]
+
+    said = rearrange.explain_failures(problems)
+
+    assert "one thing" in said and "another thing" in said
+
+
+def test_nothing_wrong_says_nothing():
+    assert rearrange.explain_failures([]) == ""
