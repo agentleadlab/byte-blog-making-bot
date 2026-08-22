@@ -293,3 +293,140 @@ def test_a_slot_too_close_to_now_is_not_offered(tmp_path):
     slots = next_open_slots(set(), 1, schedule, now=saturday_afternoon)
 
     assert slots[0].date() == date(2026, 8, 23)
+
+
+# ---------------------------------------------- giving up the 10am rule for today
+
+# Ten in the morning has almost always gone by the time somebody decides they
+# want something out today, so the day was being skipped and the answer to "can
+# we get this out this afternoon" was "no, Monday".
+
+
+def test_today_is_offered_at_the_soonest_time_gh_l_will_take():
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    schedule = load_config().schedule
+    monday_afternoon = datetime(2026, 8, 24, 14, 30, tzinfo=EASTERN)
+
+    (slot,) = next_open_slots(set(), 1, schedule, now=monday_afternoon, include_today=True)
+
+    assert slot.date() == date(2026, 8, 24)
+    assert slot == monday_afternoon + timedelta(minutes=schedule.min_lead_minutes)
+
+
+def test_without_asking_the_afternoon_still_waits_for_tomorrow():
+    """The 10:00 rule is the rule. This is an exception somebody has to ask for."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    monday_afternoon = datetime(2026, 8, 24, 14, 30, tzinfo=EASTERN)
+
+    (slot,) = next_open_slots(set(), 1, load_config().schedule, now=monday_afternoon)
+
+    assert slot == datetime(2026, 8, 25, 10, tzinfo=EASTERN)
+
+
+def test_only_today_gives_up_the_rule():
+    """Every day after it is back to 10:00 - this is a one-off, not a new time."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    monday_afternoon = datetime(2026, 8, 24, 14, 30, tzinfo=EASTERN)
+
+    slots = next_open_slots(
+        set(), 3, load_config().schedule, now=monday_afternoon, include_today=True
+    )
+
+    assert slots[0].hour == 14
+    assert [(s.date(), s.hour) for s in slots[1:]] == [
+        (date(2026, 8, 25), 10), (date(2026, 8, 26), 10),
+    ]
+
+
+def test_a_morning_request_still_gets_ten_oclock():
+    """Asked at 8am, today's slot has not gone anywhere - use it as it is."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    monday_morning = datetime(2026, 8, 24, 8, tzinfo=EASTERN)
+
+    (slot,) = next_open_slots(
+        set(), 1, load_config().schedule, now=monday_morning, include_today=True
+    )
+
+    assert slot == datetime(2026, 8, 24, 10, tzinfo=EASTERN)
+
+
+def test_late_at_night_the_lead_time_would_land_tomorrow_so_today_is_dropped():
+    """23:55 plus the lead is tomorrow, and tomorrow has its own slot coming.
+    Booking both would put two posts on one day."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    late = datetime(2026, 8, 24, 23, 55, tzinfo=EASTERN)
+
+    slots = next_open_slots(set(), 2, load_config().schedule, now=late, include_today=True)
+
+    assert [slot.date() for slot in slots] == [date(2026, 8, 25), date(2026, 8, 26)]
+
+
+def test_a_taken_today_is_still_taken():
+    """Asking for today doesn't mean posting twice in one day."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    monday_afternoon = datetime(2026, 8, 24, 14, 30, tzinfo=EASTERN)
+
+    (slot,) = next_open_slots(
+        {date(2026, 8, 24)}, 1, load_config().schedule,
+        now=monday_afternoon, include_today=True,
+    )
+
+    assert slot.date() == date(2026, 8, 25)
+
+
+def test_a_weekend_today_needs_the_weekend_on_as_well(tmp_path):
+    """Today being allowed is not the same as Saturday being a posting day."""
+    from wilbyte.config import load_config
+    from wilbyte.scheduler import next_open_slots
+
+    saturday = datetime(2026, 8, 22, 14, tzinfo=EASTERN)
+    weekdays_only = prefs.apply(load_config(), tmp_path / "none.json").schedule
+
+    (slot,) = next_open_slots(set(), 1, weekdays_only, now=saturday, include_today=True)
+    assert slot.date() == date(2026, 8, 24), "Saturday is not a posting day yet"
+
+    store = tmp_path / "prefs.json"
+    prefs.set_weekends(True, store)
+    both = prefs.apply(load_config(), store).schedule
+
+    (slot,) = next_open_slots(set(), 1, both, now=saturday, include_today=True)
+    assert slot == saturday + timedelta(minutes=both.min_lead_minutes)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "https://youtu.be/abc12345678 today",
+        "today https://youtu.be/abc12345678",
+        "https://youtu.be/abc12345678 now",
+        "post this asap https://youtu.be/abc12345678",
+    ],
+)
+def test_asking_for_today_is_read_off_the_message(said):
+    assert mentions.parse(said).today is True
+
+
+def test_not_asking_for_today_leaves_the_rule_alone():
+    assert mentions.parse("https://youtu.be/abc12345678").today is False
+
+
+def test_a_word_inside_a_link_is_not_somebody_asking_for_today():
+    """A video called "Start Now" is not a request to publish this afternoon."""
+    assert mentions.parse("https://www.youtube.com/watch?v=nowornever1").today is False
+
+
+def test_rearrange_can_be_asked_to_use_today():
+    assert mentions.parse("rearrange today").today is True
+    assert mentions.parse("rearrange").today is False

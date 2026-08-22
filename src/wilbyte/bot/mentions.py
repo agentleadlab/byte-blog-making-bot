@@ -130,6 +130,21 @@ MODE_WORDS = {
 
 FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 
+# "post this today". Today's 10:00 slot has almost always gone by the time
+# anybody says it, so the day would be skipped and the answer to "can we get
+# this out this afternoon" would be "no, Monday". These words say otherwise.
+TODAY_WORDS = {"today", "now", "asap", "tonight", "immediately"}
+
+
+def wants_today(text: str) -> bool:
+    """Whether the message asks for today, links ignored.
+
+    A URL with "now" in it is not somebody asking for today, and neither is
+    a video called "Start Now" - only a word they actually typed counts.
+    """
+    return bool(TODAY_WORDS & set(re.findall(r"[a-z]+", _without_links(text).lower())))
+
+
 # Command-position only - see the note at the call site.
 START_WORDS = ("start", "starting", "resume", "from", "schedulefrom")
 
@@ -281,6 +296,9 @@ class MentionRequest:
     limit: int = 1
     mode: str = "scheduled"
     force: bool = False
+    # Give up the 10:00 rule for today only. Ten in the morning has gone by
+    # the time anybody decides they want something out today.
+    today: bool = False
     kicker: str | None = None
     headline: str | None = None
     format_key: str | None = None  # write: which format; learn: which label
@@ -379,7 +397,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange",
     ):
-        return MentionRequest(action=action)
+        return MentionRequest(action=action, today=wants_today(text))
 
     # No YouTube link, but a call link: file it. Checked after the blog sources
     # so that a message carrying both still writes the post.
@@ -397,6 +415,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         limit=_parse_limit(text, sources, max_batch=max_batch),
         mode=_parse_mode(lowered),
         force=any(word in lowered.split() for word in FORCE_WORDS),
+        today=wants_today(text),
     )
 
 
@@ -538,6 +557,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **start** Aug 18 — don't schedule anything before that day
 > @RYTE **weekends** on / off — whether Saturday and Sunday are posting days
 > @RYTE **rearrange** — pull everything booked onto the earliest days free
+> Add **today** to any of those — `@RYTE <link> today` — to use today's
+> remaining hours instead of waiting for tomorrow's 10am
 > @RYTE **publish** monday — send that day's post out now instead
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
 

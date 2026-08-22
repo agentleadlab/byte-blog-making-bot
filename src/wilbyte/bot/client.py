@@ -18,6 +18,7 @@ import logging
 import os
 import re
 from datetime import date
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -549,7 +550,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "rearrange":
-                await _rearrange(responder, config)
+                await _rearrange(responder, config, include_today=request.today)
                 return
 
             if request.action == "publish":
@@ -670,6 +671,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         await _execute_run(
             bot, responder, request.sources, request.limit, request.mode, request.force,
             transcript_text=transcript_text,
+            include_today=request.today,
         )
 
 
@@ -1891,10 +1893,14 @@ async def _set_weekends(responder: Responder, config: Config, text: str) -> None
         if wanted else
         "📅 Weekends are **off** — weekdays only again."
     )
-    await _rearrange(responder, config, offer=True)
+    await _rearrange(
+        responder, config, offer=True, include_today=mentions.wants_today(text)
+    )
 
 
-async def _rearrange(responder: Responder, config: Config, *, offer: bool = False) -> None:
+async def _rearrange(
+    responder: Responder, config: Config, *, offer: bool = False, include_today: bool = False
+) -> None:
     """Pull everything already booked onto the earliest slots now available.
 
     Read-only until the button is pressed. These are live scheduled posts, and
@@ -1907,7 +1913,12 @@ async def _rearrange(responder: Responder, config: Config, *, offer: bool = Fals
     context = await _maybe_open_ghl(config)
     try:
         try:
-            moves = await asyncio.to_thread(jobs.reschedule_plan, config, ledger, context=context)
+            moves = await asyncio.to_thread(
+                partial(
+                    jobs.reschedule_plan, config, ledger,
+                    context=context, include_today=include_today,
+                )
+            )
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(f"Couldn't work out a new schedule\n{exc}"))
             return
@@ -2164,6 +2175,7 @@ async def _execute_run(
     mode: str,
     force: bool,
     transcript_text: str | None = None,
+    include_today: bool = False,
 ) -> None:
     config = bot.config
     limit = max(1, min(limit, config.discord.max_batch))
@@ -2207,12 +2219,22 @@ async def _execute_run(
     # the original message for the links that got no answer.
     unfinished: list = []
     try:
-        slot_pool = await asyncio.to_thread(jobs.plan_slots, videos, context, config, ledger)
+        slot_pool = await asyncio.to_thread(
+            partial(
+                jobs.plan_slots, videos, context, config, ledger,
+                include_today=include_today,
+            )
+        )
         # Say what was left out. Ten links in and eight posts back looks like a
         # bug unless the reason is on screen.
         trimmed = max(0, len(sources) - len(videos) - already_done)
         await responder.send(
             f"On it — building {len(videos)} post(s) in **{mode}** mode."
+            + (
+                f" First one goes out today at {slot_pool[0]:%-I:%M %p}."
+                if include_today and slot_pool and slot_pool[0].date() == _today(config)
+                else ""
+            )
             + (f" Skipping {already_done} already done." if already_done else "")
             + (
                 f" That's my {config.discord.max_batch}-per-run cap — send the "

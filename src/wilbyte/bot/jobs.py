@@ -146,14 +146,18 @@ def resolve_videos(
     return pending, len(done)
 
 
-def open_slots(taken: set[date], count: int, config: Config) -> list[datetime]:
+def open_slots(
+    taken: set[date], count: int, config: Config, *, include_today: bool = False
+) -> list[datetime]:
     """The next free slots, honouring an earliest day set from Discord.
 
     Every slot decision goes through here so the floor can't apply in one view
     and not another - a calendar that disagrees with itself is worse than one
     that's simply wrong.
     """
-    return next_open_slots(taken, count, prefs.apply(config).schedule)
+    return next_open_slots(
+        taken, count, prefs.apply(config).schedule, include_today=include_today
+    )
 
 
 def resolve_many(
@@ -195,8 +199,13 @@ def plan_slots(
     context: GHLContext | None,
     config: Config,
     ledger: Ledger | None = None,
+    *,
+    include_today: bool = False,
 ) -> list[datetime]:
-    return open_slots(taken_days(context, config, ledger), len(videos), config)
+    return open_slots(
+        taken_days(context, config, ledger), len(videos), config,
+        include_today=include_today,
+    )
 
 
 def build(
@@ -356,7 +365,10 @@ def pending_posts(config: Config, ledger: Ledger) -> list[tuple[str, str, dateti
     return sorted(found, key=lambda item: (item[2] is None, item[2] or datetime.min))
 
 
-def reschedule_plan(config: Config, ledger: Ledger, *, context: GHLContext | None = None):
+def reschedule_plan(
+    config: Config, ledger: Ledger, *, context: GHLContext | None = None,
+    include_today: bool = False,
+):
     """What re-laying the calendar would do, without writing anything.
 
     The days these posts already hold are taken out of the reckoning first.
@@ -373,7 +385,7 @@ def reschedule_plan(config: Config, ledger: Ledger, *, context: GHLContext | Non
         return []
 
     booked = taken_days(context, config, ledger) - rearrange.held_days(posts, tz)
-    slots = open_slots(booked, len(posts), config)
+    slots = open_slots(booked, len(posts), config, include_today=include_today)
     return rearrange.pair(posts, slots)
 
 

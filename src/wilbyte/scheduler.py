@@ -48,12 +48,19 @@ def next_open_slots(
     config: ScheduleConfig,
     *,
     now: datetime | None = None,
+    include_today: bool = False,
 ) -> list[datetime]:
     """Return the next `count` free weekday 10:00 AM slots.
 
     `taken_days` are the dates that already hold a scheduled or published post.
     A slot is skipped if it is taken, if it falls on a weekend, or if it is too
     close to now for GHL to accept (`min_lead_minutes`).
+
+    `include_today` gives up the 10:00 rule for today only. Ten in the morning
+    has usually gone by the time somebody decides they want something out
+    today, and skipping the day for it means the answer to "can we post this
+    afternoon" is "no, Monday" - so today's slot becomes the soonest time GHL
+    will take instead. Every day after it is back to 10:00.
     """
     if count <= 0:
         return []
@@ -79,7 +86,14 @@ def next_open_slots(
             continue
         candidate = slot_datetime(day, config)
         if candidate < earliest:
-            continue
+            # Today, asked for on purpose: take the soonest time GHL will
+            # accept rather than losing the day. Only if that time is still
+            # today - late at night the lead pushes it into tomorrow, and
+            # tomorrow already has its own slot coming.
+            if include_today and day == now.date() and earliest.date() == day:
+                candidate = earliest
+            else:
+                continue
         slots.append(candidate)
         if len(slots) == count:
             return slots
