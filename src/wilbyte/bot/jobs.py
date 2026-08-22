@@ -1948,14 +1948,27 @@ def sop_summary(config: Config, sop) -> str:
     if sop.body.strip():
         material.append(f"What was written with it:\n{sop.body.strip()}")
 
+    # Whether anything of substance was read, as opposed to a page describing
+    # itself. A card summarised from og: tags alone comes out as a paragraph
+    # about how there is nothing to summarise, which is honest and useless.
+    read_something = bool(sop.body.strip())
+
     if sop.kind == "YouTube":
         try:
             video = youtube.video_from_link(sop.url)
             if not sop.named_by_hand and getattr(video, "title", ""):
                 sop.title = video.title[:120]
             material.append(youtube.fetch_transcript(video.video_id).text)
+            read_something = True
         except Exception as exc:
             sop.note = f"Couldn't read the video: {_short(exc)}"
+    elif sop.kind == "Loom":
+        spoken, told = loom_spoken(sop)
+        if spoken:
+            material.append(f"What was said in the video:\n{spoken}")
+            read_something = True
+        elif told:
+            sop.note = told
     elif sop.url:
         described = describe_page(sop.url)
         if described:
@@ -1977,11 +1990,45 @@ def sop_summary(config: Config, sop) -> str:
     if not material and not sop.images:
         return ""
 
+    if not read_something and not sop.images:
+        # Nothing was read, so there is nothing to summarise. One line saying
+        # what it is beats four paragraphs saying what it isn't, and it is
+        # what a search will match on.
+        return f"{sop.kind} recording: {sop.title}. Not transcribed — watch the link."
+
     try:
         return write_sop_summary(config, sop, "\n\n".join(material))
     except CopywriterError as exc:
         sop.note = f"No summary — {exc}"
         return ""
+
+
+def loom_spoken(sop) -> tuple[str, str]:
+    """(what was said, what to say if it wasn't) for a Loom link.
+
+    Loom captions every video and serves them publicly, so most of these read
+    properly. The ones that don't are private, or too new to have been
+    processed, and the difference is worth putting on the card - "ask whoever
+    posted it to make it shareable" is actionable and "no summary" isn't.
+    """
+    from .. import loom
+
+    try:
+        spoken = loom.transcript(sop.url)
+    except loom.LoomError as exc:
+        return "", (
+            f"Couldn't read the Loom — {_short(exc, 160)}. If it's private, "
+            "sharing it with anyone-with-the-link is enough."
+        )
+
+    if not sop.named_by_hand:
+        named = loom.title(sop.url)
+        if named:
+            sop.title = named
+
+    if not spoken:
+        return "", "Loom has no captions for this one yet — filed under its title and link."
+    return spoken, ""
 
 
 def describe_page(url: str, *, timeout: float = 15.0) -> str:
