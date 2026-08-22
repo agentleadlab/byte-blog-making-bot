@@ -549,6 +549,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_weekends(responder, config, request.brief or "")
                 return
 
+            if request.action == "probe":
+                await _probe_update(responder, config)
+                return
+
             if request.action == "rearrange":
                 await _rearrange(responder, config, include_today=request.today)
                 return
@@ -1896,6 +1900,17 @@ async def _set_weekends(responder: Responder, config: Config, text: str) -> None
     await _rearrange(
         responder, config, offer=True, include_today=mentions.wants_today(text)
     )
+
+
+async def _probe_update(responder: Responder, config: Config) -> None:
+    """Ask GHL what it will accept on an update, on a post nobody can see."""
+    await responder.send("Making a throwaway draft and trying a few update shapes…")
+    try:
+        lines = await asyncio.to_thread(jobs.probe_update, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"The probe itself failed\n{exc}"))
+        return
+    await responder.send("\n".join(lines))
 
 
 async def _rearrange(

@@ -100,6 +100,9 @@ ACTION_WORDS = {
     "trello": "board",
     "rollover": "rollover",
     "carryover": "rollover",
+    # Find out what GHL's update endpoint actually accepts, on a throwaway
+    # draft rather than on fifteen live articles.
+    "probe": "probe",
     # Note: "test" stays a MODE word (preview), not a check alias.
     "check": "check",
     "diagnose": "check",
@@ -395,7 +398,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
-        "board", "rollover", "backfill", "index", "rearrange",
+        "board", "rollover", "backfill", "index", "rearrange", "probe",
     ):
         return MentionRequest(action=action, today=wants_today(text))
 
@@ -561,6 +564,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > remaining hours instead of waiting for tomorrow's 10am
 > @RYTE **publish** monday — send that day's post out now instead
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
+> @RYTE **probe** — ask GHL what it accepts on an update, on a throwaway draft
 
 **Sales call recordings**
 > Paste a Zoom or Fathom link — I'll file it in Notion

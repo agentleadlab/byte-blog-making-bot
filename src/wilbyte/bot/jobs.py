@@ -469,6 +469,88 @@ def held_on(config: Config, ledger: Ledger, day: date) -> list:
     return found
 
 
+def probe_update(config: Config) -> list[str]:
+    """Find out what GHL objects to on an update, without touching a live post.
+
+    Every move of a scheduled post came back 400 "Error while blog update",
+    which says nothing about which field it means. So: make one throwaway
+    draft, send it the same update in several shapes, and report which ones it
+    accepts. The difference between the shape it takes and the shape it
+    refuses is the answer.
+
+    A draft, because a draft is not on the blog. There is no delete endpoint,
+    so it stays there until somebody removes it by hand - which is a small
+    price for not experimenting on fifteen live articles.
+    """
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    context = open_ghl(config)
+    lines = []
+    try:
+        client = context.client
+        slug = f"ryte-update-probe-{date.today():%Y%m%d}"
+        for suffix in range(2, 40):
+            if not client.slug_exists(slug):
+                break
+            slug = f"ryte-update-probe-{date.today():%Y%m%d}-{suffix}"
+
+        full = ghl.build_post_payload(
+            location_id=client.location_id,
+            blog_id=context.blog_id,
+            title="RYTE update probe — safe to delete",
+            content_html="<p>Checking what the update endpoint accepts.</p>",
+            description="Delete me.",
+            url_slug=slug,
+            canonical_link=config.brand.canonical_link(slug),
+            author_id=context.author_id,
+            category_ids=context.category_ids,
+            keywords=[],
+            image_url=None,
+            image_alt="probe",
+            status=ghl.STATUS_DRAFT,
+            published_at=None,
+        )
+        created = client.create_post(full)
+        post_id = str(created.get("_id") or created.get("id") or "")
+        if not post_id:
+            return [f"❌ Couldn't even create the probe post: {created}"]
+        lines.append(f"Probe draft created (`{slug}`) — delete it in GHL when we're done.")
+
+        later = ghl.to_api_timestamp(
+            datetime.now(ZoneInfo(config.schedule.timezone)) + timedelta(days=30)
+        )
+        moved = {**full, ghl.POST_FIELDS["status"]: ghl.STATUS_SCHEDULED}
+        moved[ghl.SCHEDULE_FIELD] = later
+
+        # Ordered so the first failure and the first success bracket the
+        # offending field between them.
+        shapes = [
+            ("everything, exactly as a move sends it", moved),
+            ("without locationId", _less(moved, "locationId")),
+            ("without urlSlug", _less(moved, "urlSlug")),
+            ("without canonicalLink", _less(moved, "canonicalLink")),
+            ("without author, categories, tags", _less(moved, "author", "categories", "tags")),
+            ("without rawHTML", _less(moved, "rawHTML")),
+            ("the date only", {"blogId": context.blog_id, ghl.SCHEDULE_FIELD: later}),
+            ("the status only", {"blogId": context.blog_id, "status": ghl.STATUS_SCHEDULED}),
+        ]
+        for label, payload in shapes:
+            try:
+                client.update_post(post_id, payload)
+            except Exception as exc:
+                lines.append(f"❌ {label} — {_short(exc, 200)}")
+            else:
+                lines.append(f"✅ {label}")
+    finally:
+        context.close()
+    return lines
+
+
+def _less(payload: dict, *drop: str) -> dict:
+    return {key: value for key, value in payload.items() if key not in drop}
+
+
 def built_but_not_posted(output_dir: Path, ledger: Ledger) -> list[tuple[str, str]]:
     """(title, video link) for posts RYTE wrote but never got an answer on.
 

@@ -1689,3 +1689,18 @@ def test_the_queue_comes_forward_in_the_order_it_was_in(tmp_path, config):
     assert [move.title for move in moves] == ["First", "Second"]
     assert moves[0].now < moves[1].now
     assert all(move.moved for move in moves), "2099 is not the earliest day there is"
+
+
+def test_the_probe_drops_exactly_the_field_it_names():
+    """Each shape differs from the last by one thing, so the first failure and
+    the first success bracket the offending field between them."""
+    full = {"blogId": "b", "locationId": "l", "urlSlug": "s", "rawHTML": "<p>x</p>"}
+
+    assert jobs._less(full, "locationId") == {
+        "blogId": "b", "urlSlug": "s", "rawHTML": "<p>x</p>",
+    }
+    assert jobs._less(full, "urlSlug", "rawHTML") == {"blogId": "b", "locationId": "l"}
+    assert jobs._less(full) == full
+    assert full == {"blogId": "b", "locationId": "l", "urlSlug": "s", "rawHTML": "<p>x</p>"}, (
+        "the original must not be mutated - every shape is built from it"
+    )
