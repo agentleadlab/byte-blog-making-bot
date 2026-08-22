@@ -129,3 +129,48 @@ class ApprovalView(discord.ui.View):
         self.decision = Decision.TIMEOUT
         for child in self.children:
             child.disabled = True
+
+
+class ConfirmView(discord.ui.View):
+    """One yes, one no, for a change that writes to something already live.
+
+    Moving a scheduled post or pushing one out early edits the blog itself, so
+    the plan is shown first and nothing happens until somebody looks at it and
+    presses the button.
+    """
+
+    def __init__(self, *, requester_id: int | None, timeout: float, label: str, emoji: str):
+        super().__init__(timeout=timeout)
+        self.requester_id = requester_id
+        self.confirmed = False
+        self._go.label = label
+        self._go.emoji = emoji
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.requester_id is None or interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            "Only the person who asked for this can confirm it.", ephemeral=True
+        )
+        return False
+
+    @discord.ui.button(label="Do it", style=discord.ButtonStyle.success, emoji="✅")
+    async def _go(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = True
+        await self._close(interaction, "✅ Working on it…")
+
+    @discord.ui.button(label="Leave it", style=discord.ButtonStyle.secondary, emoji="✖")
+    async def _no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = False
+        await self._close(interaction, "✖ Left alone — nothing changed.")
+
+    async def _close(self, interaction: discord.Interaction, note: str) -> None:
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content=note, view=self)
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        self.confirmed = False
+        for child in self.children:
+            child.disabled = True

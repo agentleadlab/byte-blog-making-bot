@@ -1502,3 +1502,190 @@ def test_the_help_text_now_fits():
 
     assert len(body) > MAX_MESSAGE, "still worth splitting"
     assert all(len(piece) <= MAX_MESSAGE for piece in split_message(body))
+
+
+# ------------------------------------------- moving posts that are already booked
+
+# Opening the weekend up doesn't move anything on its own: the posts are still
+# sitting on the weekdays they were given. These cover the part that writes.
+
+
+def booked(tmp_path, *rows):
+    """A ledger of scheduled posts, each with a real payload on disk."""
+    import json
+
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    for video_id, title, when in rows:
+        payload = tmp_path / f"{video_id}.json"
+        payload.write_text(json.dumps({"rawHTML": f"<h1>{title}</h1>", "status": "SCHEDULED"}))
+        ledger.record(
+            video_id=video_id, title=title, url_slug=video_id,
+            ghl_post_id=f"post-{video_id}", scheduled_at=when, payload_path=str(payload),
+        )
+    return ledger
+
+
+def test_pending_posts_are_soonest_first(tmp_path, config):
+    ledger = booked(
+        tmp_path,
+        ("v2", "Second", datetime(2099, 8, 25, 10, tzinfo=ET)),
+        ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)),
+    )
+
+    assert [title for _, title, _ in jobs.pending_posts(config, ledger)] == ["First", "Second"]
+
+
+def test_a_post_with_no_saved_body_is_never_offered_for_moving(tmp_path, config):
+    """An update to GHL is a replace, so moving it would empty the article."""
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.record(
+        video_id="v1", title="Bodyless", url_slug="b", ghl_post_id="post1",
+        scheduled_at=datetime(2099, 8, 24, 10, tzinfo=ET), payload_path=None,
+    )
+
+    assert jobs.pending_posts(config, ledger) == []
+
+
+def test_moving_a_post_keeps_its_body_and_writes_the_new_date(tmp_path, config):
+    from wilbyte.rearrange import Move
+
+    ledger = booked(tmp_path, ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)))
+    context = FakeGHL([])
+    move = Move(
+        video_id="v1", title="First",
+        was=datetime(2099, 8, 24, 10, tzinfo=ET),
+        now=datetime(2099, 8, 22, 10, tzinfo=ET),
+    )
+
+    assert jobs.apply_moves(config, ledger, context, [move]) == []
+
+    post_id, body = context.updates[0]
+    assert post_id == "post-v1"
+    assert body["rawHTML"] == "<h1>First</h1>"
+    assert body["status"] == "SCHEDULED"
+    assert body["publishedAt"] == "2099-08-22T14:00:00.000Z"
+    assert ledger.entries["v1"].scheduled_at.startswith("2099-08-22")
+
+
+def test_a_post_that_is_not_moving_is_not_re_sent(tmp_path, config):
+    """Every write is a chance to break a live post. Don't make pointless ones."""
+    from wilbyte.rearrange import Move
+
+    ledger = booked(tmp_path, ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)))
+    when = datetime(2099, 8, 24, 10, tzinfo=ET)
+    context = FakeGHL([])
+
+    jobs.apply_moves(config, ledger, context, [Move("v1", "First", when, when)])
+
+    assert context.updates == []
+
+
+def test_one_post_failing_does_not_stop_the_others(tmp_path, config):
+    """And the ones that worked are saved, so RYTE and GHL still agree."""
+    from wilbyte.rearrange import Move
+
+    ledger = booked(
+        tmp_path,
+        ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)),
+        ("v2", "Second", datetime(2099, 8, 25, 10, tzinfo=ET)),
+    )
+    context = FakeGHL([])
+
+    def explode(_self, payload):
+        if "First" in payload.get("rawHTML", ""):
+            raise ghl.GHLError("nope")
+
+    context.on_update = explode
+    moves = [
+        Move("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET),
+             datetime(2099, 8, 22, 10, tzinfo=ET)),
+        Move("v2", "Second", datetime(2099, 8, 25, 10, tzinfo=ET),
+             datetime(2099, 8, 23, 10, tzinfo=ET)),
+    ]
+
+    problems = jobs.apply_moves(config, ledger, context, moves)
+
+    assert len(problems) == 1 and "First" in problems[0]
+    assert ledger.entries["v2"].scheduled_at.startswith("2099-08-23")
+    assert ledger.entries["v1"].scheduled_at.startswith("2099-08-24"), "not moved, not recorded"
+
+
+def test_publishing_now_sends_today_as_the_date(tmp_path, config):
+    """A PUBLISHED post still carrying Monday's date reads as published on
+    Monday everywhere it is listed, which is not what happened."""
+    ledger = booked(tmp_path, ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)))
+    context = FakeGHL([])
+
+    when = jobs.publish_now(config, ledger, context, ledger.entries["v1"])
+
+    _post_id, body = context.updates[0]
+    assert body["status"] == "PUBLISHED"
+    assert body["rawHTML"] == "<h1>First</h1>"
+    assert body["publishedAt"] == ghl.to_api_timestamp(when)
+
+
+def test_a_published_post_is_recorded_so_it_never_goes_out_twice(tmp_path, config):
+    ledger = booked(tmp_path, ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)))
+
+    jobs.publish_now(config, ledger, FakeGHL([]), ledger.entries["v1"])
+
+    assert ledger.entries["v1"].published_at
+    assert jobs.pending_posts(config, ledger) == []
+
+
+def test_the_post_held_for_a_day_can_be_found(tmp_path, config):
+    ledger = booked(
+        tmp_path,
+        ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)),
+        ("v2", "Second", datetime(2099, 8, 25, 10, tzinfo=ET)),
+    )
+
+    found = jobs.held_on(config, ledger, date(2099, 8, 25))
+
+    assert [e.title for e in found] == ["Second"]
+
+
+def test_a_day_holding_two_posts_says_so_rather_than_picking_one(tmp_path, config):
+    ledger = booked(
+        tmp_path,
+        ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)),
+        ("v2", "Also", datetime(2099, 8, 24, 15, tzinfo=ET)),
+    )
+
+    assert len(jobs.held_on(config, ledger, date(2099, 8, 24))) == 2
+
+
+def test_an_empty_day_holds_nothing(tmp_path, config):
+    ledger = booked(tmp_path, ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)))
+
+    assert jobs.held_on(config, ledger, date(2099, 8, 26)) == []
+
+
+def test_the_plan_frees_the_days_the_movers_are_sitting_on(tmp_path, config):
+    """Otherwise every post blocks its own move - the earliest day is taken, by
+    the post already on it - and a whole queue shuffles one day later for no
+    reason at all."""
+    from wilbyte.scheduler import next_open_slots
+
+    weekend = replace(config, schedule=replace(config.schedule, weekdays_only=False))
+    soonest = next_open_slots(set(), 1, weekend.schedule)[0]
+    ledger = booked(tmp_path, ("v1", "First", soonest))
+
+    (move,) = jobs.reschedule_plan(weekend, ledger)
+
+    assert move.moved is False, "it is already on the earliest day there is"
+
+
+def test_the_queue_comes_forward_in_the_order_it_was_in(tmp_path, config):
+    weekend = replace(config, schedule=replace(config.schedule, weekdays_only=False))
+    ledger = booked(
+        tmp_path,
+        ("v2", "Second", datetime(2099, 8, 25, 10, tzinfo=ET)),
+        ("v1", "First", datetime(2099, 8, 24, 10, tzinfo=ET)),
+    )
+
+    moves = jobs.reschedule_plan(weekend, ledger)
+
+    assert [move.title for move in moves] == ["First", "Second"]
+    assert moves[0].now < moves[1].now
+    assert all(move.moved for move in moves), "2099 is not the earliest day there is"

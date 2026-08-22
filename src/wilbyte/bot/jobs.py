@@ -331,6 +331,126 @@ def set_status(context: GHLContext, entry, status: str) -> datetime | None:
     return slot
 
 
+def pending_posts(config: Config, ledger: Ledger) -> list[tuple[str, str, datetime | None]]:
+    """(video id, title, when) for every post RYTE is still holding.
+
+    Soonest first, and only the ones it can actually re-send: an entry without
+    a saved payload can't be moved any more than it can be published, because
+    an update to GHL is a replace and there is nowhere else to get the body.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import parse_timestamp
+
+    tz = ZoneInfo(config.schedule.timezone)
+    found = []
+    for entry in ledger.entries.values():
+        if not publishable(entry):
+            continue
+        when = parse_timestamp(entry.scheduled_at)
+        found.append(
+            (entry.video_id, entry.title or entry.url_slug, when.astimezone(tz) if when else None)
+        )
+    # No date sorts last: it has no place in the running order, so it takes
+    # whatever slot is left rather than displacing a post that has one.
+    return sorted(found, key=lambda item: (item[2] is None, item[2] or datetime.min))
+
+
+def reschedule_plan(config: Config, ledger: Ledger, *, context: GHLContext | None = None):
+    """What re-laying the calendar would do, without writing anything.
+
+    The days these posts already hold are taken out of the reckoning first.
+    Otherwise every post blocks its own move - Monday is taken, by the post
+    that wants to move off Monday - and the queue never budges.
+    """
+    from zoneinfo import ZoneInfo
+
+    from .. import rearrange
+
+    tz = ZoneInfo(config.schedule.timezone)
+    posts = pending_posts(config, ledger)
+    if not posts:
+        return []
+
+    booked = taken_days(context, config, ledger) - rearrange.held_days(posts, tz)
+    slots = open_slots(booked, len(posts), config)
+    return rearrange.pair(posts, slots)
+
+
+def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> list[str]:
+    """Write the new dates to GHL and to the ledger. Returns what failed.
+
+    Each post is saved to the ledger as it goes, one at a time. A run that dies
+    halfway then leaves RYTE agreeing with GHL about the posts it managed,
+    instead of holding a set of dates nothing else believes in.
+    """
+    from .. import publisher
+
+    problems = []
+    for move in moves:
+        if not move.moved:
+            continue
+        entry = ledger.entries.get(move.video_id)
+        if entry is None:
+            problems.append(f"{move.title} — I've lost my record of it")
+            continue
+        try:
+            payload = publisher.load_payload(entry)
+            payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_SCHEDULED
+            payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(move.now)
+            context.client.update_post(entry.ghl_post_id, payload)
+        except Exception as exc:
+            problems.append(f"{move.title} — {_short(exc, 120)}")
+            continue
+        entry.scheduled_at = move.now.isoformat()
+        ledger.save()
+    return problems
+
+
+def publish_now(config: Config, ledger: Ledger, context: GHLContext, entry) -> datetime:
+    """Send one held post out immediately, whatever day it was booked for.
+
+    The date goes out as now rather than being left alone: a PUBLISHED post
+    still carrying Monday's date reads as published-on-Monday everywhere it is
+    listed, which is not what happened.
+    """
+    from datetime import timezone as _tz
+
+    from .. import publisher
+
+    now = datetime.now(_tz.utc)
+    payload = publisher.load_payload(entry)
+    payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_PUBLISHED
+    payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(now)
+    context.client.update_post(entry.ghl_post_id, payload)
+
+    entry.scheduled_at = now.isoformat()
+    ledger.mark_published(entry.video_id)
+    ledger.save()
+    return now
+
+
+def held_on(config: Config, ledger: Ledger, day: date) -> list:
+    """Every post RYTE is holding for a given day.
+
+    A list rather than one post, because "publish Monday's" has to be able to
+    say "there are two" instead of picking one of them.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import parse_timestamp
+
+    tz = ZoneInfo(config.schedule.timezone)
+    found = []
+    for entry in ledger.entries.values():
+        if entry.published_at or not entry.scheduled_at:
+            continue
+        when = parse_timestamp(entry.scheduled_at)
+        if when and when.astimezone(tz).date() == day:
+            found.append(entry)
+    return found
+
+
 def built_but_not_posted(output_dir: Path, ledger: Ledger) -> list[tuple[str, str]]:
     """(title, video link) for posts RYTE wrote but never got an answer on.
 

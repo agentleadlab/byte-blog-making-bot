@@ -85,6 +85,16 @@ ACTION_WORDS = {
     # Read the SOP page that existed before RYTE did.
     "index": "index",
     "reindex": "index",
+    # Which days the blog goes out on, and re-laying what is already booked
+    # when that changes.
+    "weekends": "weekends",
+    "weekend": "weekends",
+    "everyday": "weekends",
+    "rearrange": "rearrange",
+    "reschedule": "rearrange",
+    "reshuffle": "rearrange",
+    "relay": "rearrange",
+    "compact": "rearrange",
     # The daily Trello board, and what the 9pm rollover would move.
     "board": "board",
     "trello": "board",
@@ -131,6 +141,49 @@ RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording")
 # Attach an image and get a permanent public URL back. Command-position only:
 # "host" and "upload" turn up in ordinary copy briefs.
 HOST_WORDS = ("host", "upload", "imageurl")
+
+# Send a held post out now instead of on the day it was booked for. Command
+# position only, and for the plainest reason of all: "publish" and "post" are
+# what the blog pipeline is *about*. "write me a post about X" must not push
+# Monday's article live.
+PUBLISH_WORDS = ("publish", "publishnow", "release", "golive")
+
+WEEKEND_WORDS = ("weekends", "weekend", "everyday")
+
+# Switching the weekend on or off. The word has to come *after* "weekends",
+# because "do we post on weekends?" is a question and the "on" in it means
+# nothing - answering it by silently changing the schedule would be the worst
+# kind of helpful.
+ON_WORDS = {"on", "yes", "enable", "enabled", "include", "included", "true", "daily"}
+OFF_WORDS = {"off", "no", "disable", "disabled", "exclude", "excluded", "false", "stop"}
+
+# Said before the word instead: "turn on weekends", "include weekends".
+_TURNS_ON = {"enable", "include", "add", "allow", "start"}
+_TURNS_OFF = {"disable", "exclude", "remove", "drop", "stop", "skip"}
+
+
+def weekend_switch(text: str) -> bool | None:
+    """True for on, False for off, None when it's a question rather than a change."""
+    words = [word.lower() for word in re.findall(r"[a-z]+", text or "")]
+    if "everyday" in words or "daily" in words:
+        return True
+
+    where = next((i for i, word in enumerate(words) if word in ("weekend", "weekends")), None)
+    if where is None:
+        return None
+    after = set(words[where + 1:])
+    before = words[:where]
+    turning = {word for word in before if word in _TURNS_ON | _TURNS_OFF}
+    # "turn on" / "turn off", which reads as neither word alone.
+    for first, second in zip(before, before[1:]):
+        if first in ("turn", "switch", "set"):
+            turning.add("enable" if second == "on" else "disable" if second == "off" else "")
+
+    if after & ON_WORDS or turning & _TURNS_ON:
+        return True
+    if after & OFF_WORDS or turning & _TURNS_OFF:
+        return False
+    return None
 
 # A Zoom or Fathom link has exactly one meaning here, so it doesn't need the
 # verb the way a YouTube link does - that one already means "write a blog
@@ -273,6 +326,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if _opens_with(text, START_WORDS):
         return MentionRequest(action="start", brief=_strip_word(text, START_WORDS))
 
+    # Same rule, sharper reason: a blog post is the thing this bot makes, so
+    # "publish" only means *send one out now* when it is the first word.
+    if _opens_with(text, PUBLISH_WORDS) and not find_sources(text):
+        return MentionRequest(action="publish", brief=_strip_word(text, PUBLISH_WORDS))
+
     # Asking *for* a recording, rather than handing one over. The difference is
     # a link: "recording <link>" files one, "need the recording for Derrick"
     # fetches one back out of the gallery.
@@ -310,9 +368,16 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         found = RECORDING_URL_RE.search(text)
         return MentionRequest(action="calls", brief=found.group(0).rstrip(".,;)>") if found else "")
 
+    # After the format check on purpose: "an email about our weekend sale"
+    # writes copy, it doesn't change which days the blog goes out on.
+    if action == "weekends":
+        # The whole message, not the remainder: whether this is a change or a
+        # question turns on where the words sit relative to each other.
+        return MentionRequest(action="weekends", brief=text)
+
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
-        "board", "rollover", "backfill", "index",
+        "board", "rollover", "backfill", "index", "rearrange",
     ):
         return MentionRequest(action=action)
 
@@ -471,6 +536,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
+> @RYTE **weekends** on / off — whether Saturday and Sunday are posting days
+> @RYTE **rearrange** — pull everything booked onto the earliest days free
+> @RYTE **publish** monday — send that day's post out now instead
 > @RYTE **cleanup** — free up days held by posts you deleted in GHL
 
 **Sales call recordings**

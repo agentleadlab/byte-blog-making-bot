@@ -45,6 +45,7 @@ from .responders import (
     MessageResponder,
     Responder,
 )
+from . import views
 from .views import ApprovalView, Decision, RecordingPicker
 
 log = logging.getLogger("wilbyte.bot")
@@ -541,6 +542,18 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "start":
                 await _set_earliest_day(responder, config, request.brief or "")
+                return
+
+            if request.action == "weekends":
+                await _set_weekends(responder, config, request.brief or "")
+                return
+
+            if request.action == "rearrange":
+                await _rearrange(responder, config)
+                return
+
+            if request.action == "publish":
+                await _publish_now(responder, config, request.brief or "")
                 return
 
             if request.action == "host":
@@ -1853,6 +1866,163 @@ async def _set_earliest_day(responder: Responder, config: Config, text: str) -> 
     await responder.send(
         f"Got it — nothing before **{day:%a %b %d, %Y}**.\nNext posts land: {listed}"
     )
+
+
+async def _set_weekends(responder: Responder, config: Config, text: str) -> None:
+    """Turn Saturday and Sunday on or off, and offer to re-lay the calendar.
+
+    Widening the week does nothing on its own - everything already booked is
+    still sitting on the weekdays it was given, and the new days go by empty.
+    So the offer to rearrange comes with the change rather than being something
+    to remember afterwards.
+    """
+    wanted = mentions.weekend_switch(text)
+    if wanted is None:
+        await responder.send(
+            f"{prefs.describe_days(config)}\n"
+            "Change it with `@RYTE weekends on` or `@RYTE weekends off`."
+        )
+        return
+
+    await asyncio.to_thread(prefs.set_weekends, wanted)
+    config = prefs.apply(config)
+    await responder.send(
+        "📅 Weekends are **on** — the blog can go out any day now."
+        if wanted else
+        "📅 Weekends are **off** — weekdays only again."
+    )
+    await _rearrange(responder, config, offer=True)
+
+
+async def _rearrange(responder: Responder, config: Config, *, offer: bool = False) -> None:
+    """Pull everything already booked onto the earliest slots now available.
+
+    Read-only until the button is pressed. These are live scheduled posts, and
+    a wrong date here means an article going out on a day nobody expected -
+    which is not something anybody would notice until it had happened.
+    """
+    from ..rearrange import summarise
+
+    ledger = await asyncio.to_thread(Ledger.load)
+    context = await _maybe_open_ghl(config)
+    try:
+        try:
+            moves = await asyncio.to_thread(jobs.reschedule_plan, config, ledger, context=context)
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(f"Couldn't work out a new schedule\n{exc}"))
+            return
+
+        changing = [move for move in moves if move.moved]
+        if not changing:
+            # After a change of days this is good news, not an answer worth
+            # sending: it means nothing needed pulling forward.
+            if not offer:
+                await responder.send(summarise(moves))
+            return
+
+        view = views.ConfirmView(
+            requester_id=responder.requester_id,
+            timeout=config.discord.approval_timeout_seconds,
+            label="Move them",
+            emoji="📅",
+        )
+        await responder.send(summarise(moves), view=view)
+        await view.wait()
+        if not view.confirmed:
+            return
+
+        if context is None:
+            await responder.send(
+                embed=embeds.error("No GHL credentials, so there's nothing to move them in.")
+            )
+            return
+
+        try:
+            problems = await asyncio.to_thread(jobs.apply_moves, config, ledger, context, moves)
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
+            return
+
+        done = len(changing) - len(problems)
+        note = f"📅 Moved {done} post(s)."
+        if problems:
+            note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
+        await responder.send(note)
+    finally:
+        if context:
+            await asyncio.to_thread(context.close)
+
+
+async def _publish_now(responder: Responder, config: Config, text: str) -> None:
+    """Send a held post out today rather than on the day it was booked for."""
+    asked = (text or "").strip()
+    if not asked:
+        await responder.send(
+            "Which one? `@RYTE publish monday` — the day it's currently booked for."
+        )
+        return
+
+    try:
+        day = prefs.parse_day(asked, today=_today(config))
+    except prefs.PrefsError as exc:
+        await responder.send(str(exc))
+        return
+
+    ledger = await asyncio.to_thread(Ledger.load)
+    held = await asyncio.to_thread(jobs.held_on, config, ledger, day)
+    if not held:
+        await responder.send(f"Nothing booked for {day:%a %b %d} that I'm holding.")
+        return
+    if len(held) > 1:
+        titles = "\n".join(f"• {e.title or e.url_slug}" for e in held)
+        await responder.send(f"{day:%a %b %d} has more than one post:\n{titles}")
+        return
+
+    entry = held[0]
+    if not jobs.publishable(entry):
+        why = "I never got its post id from GHL" if not entry.ghl_post_id else (
+            "I have no saved copy of its body, so re-sending it would empty the post"
+        )
+        await responder.send(f"Can't publish **{entry.title}** — {why}. Do that one by hand.")
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Publish now",
+        emoji="🚀",
+    )
+    await responder.send(
+        f"**{entry.title}**\nBooked for {day:%a %b %d}. Publishing now puts it live "
+        f"immediately and frees that day.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    context = await _maybe_open_ghl(config)
+    if context is None:
+        await responder.send(embed=embeds.error("No GHL credentials, so I can't publish."))
+        return
+    try:
+        await asyncio.to_thread(jobs.publish_now, config, ledger, context, entry)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't publish it\n{exc}"))
+        return
+    finally:
+        await asyncio.to_thread(context.close)
+
+    await responder.send(f"🚀 **{entry.title}** is live.")
+    # Its day is free now, so whatever was queued behind it can come forward.
+    await _rearrange(responder, config, offer=True)
+
+
+def _today(config: Config):
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    return _dt.now(ZoneInfo(config.schedule.timezone)).date()
 
 
 async def _send_corpus(responder: Responder) -> None:

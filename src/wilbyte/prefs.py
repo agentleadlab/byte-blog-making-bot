@@ -63,12 +63,39 @@ def clear_earliest_day(path: Path | None = None) -> None:
     save(values, path)
 
 
+def set_weekends(on: bool, path: Path | None = None) -> None:
+    """Whether Saturday and Sunday are posting days.
+
+    Which days the blog goes out on is exactly the kind of thing that changes
+    when somebody decides it should, so it lives here rather than in the
+    tracked config - flipping it shouldn't mean editing a file in git on the
+    Mac and stranding RYTE on old code.
+    """
+    values = load(path)
+    values["weekends"] = bool(on)
+    save(values, path)
+
+
+def weekends_on(path: Path | None = None) -> bool | None:
+    """True, False, or None when nothing has been said and the config decides."""
+    value = load(path).get("weekends")
+    return bool(value) if value is not None else None
+
+
 def apply(config: Config, path: Path | None = None) -> Config:
     """Overlay the saved preferences onto a config, if there are any."""
-    earliest = str(load(path).get("earliest_day") or "").strip()
-    if not earliest:
+    values = load(path)
+    earliest = str(values.get("earliest_day") or "").strip()
+    weekends = values.get("weekends")
+
+    schedule = config.schedule
+    if earliest:
+        schedule = replace(schedule, earliest_day=earliest)
+    if weekends is not None:
+        schedule = replace(schedule, weekdays_only=not weekends)
+    if schedule is config.schedule:
         return config
-    return replace(config, schedule=replace(config.schedule, earliest_day=earliest))
+    return replace(config, schedule=schedule)
 
 
 def parse_day(text: str, *, today: date | None = None) -> date:
@@ -140,11 +167,20 @@ def _weekday(raw: str, now: date) -> date | None:
 
 def describe(config: Config, path: Path | None = None) -> str:
     """What the floor currently is, in words, for a confirmation message."""
+    every_day = not apply(config, path).schedule.weekdays_only
+    days = "any day" if every_day else "the next free weekday"
     earliest = str(load(path).get("earliest_day") or "").strip()
     if not earliest:
-        return "No earliest day set — I'll use the next free weekday."
+        return f"No earliest day set — I'll use {days}."
     try:
         day = datetime.fromisoformat(earliest).date()
     except ValueError:
         return f"Earliest day is set to {earliest}."
-    return f"I won't schedule anything before {day:%a %b %d, %Y}."
+    return f"I won't schedule anything before {day:%a %b %d, %Y}, and I'll use {days}."
+
+
+def describe_days(config: Config, path: Path | None = None) -> str:
+    """Which days of the week the blog goes out on, in words."""
+    if apply(config, path).schedule.weekdays_only:
+        return "Weekdays only — nothing goes out on Saturday or Sunday."
+    return "Every day, weekends included."
