@@ -16,7 +16,7 @@ from wilbyte.bot.client import (
     publish_status,
 )
 from wilbyte.bot.views import Decision
-from wilbyte import ghl, youtube
+from wilbyte import ghl, publisher, youtube
 from wilbyte.models import Video
 from wilbyte.pipeline import assemble_post
 from wilbyte.state import Ledger
@@ -1747,7 +1747,7 @@ def test_the_straight_update_is_what_gets_tried_first():
     GHL ever fixes it."""
     client = Updates()
 
-    jobs._redate(client, probe_entry(), moved_payload())
+    publisher.send_update(client, probe_entry(), moved_payload())
 
     assert len(client.calls) == 1
 
@@ -1755,7 +1755,7 @@ def test_the_straight_update_is_what_gets_tried_first():
 def test_their_crash_is_worked_around_by_dropping_to_draft_first():
     client = Updates(fail_when=lambda call, _payload: call == 1)
 
-    jobs._redate(client, probe_entry(), moved_payload())
+    publisher.send_update(client, probe_entry(), moved_payload())
 
     assert [call["status"] for call in client.calls] == ["SCHEDULED", "DRAFT", "SCHEDULED"]
     assert "publishedAt" not in client.calls[1], "a draft carries no date"
@@ -1773,7 +1773,7 @@ def test_any_other_error_is_raised_rather_than_worked_around():
             raise ghl.GHLError("HTTP 401: unauthorized")
 
     with pytest.raises(ghl.GHLError, match="401"):
-        jobs._redate(Other(), probe_entry(), moved_payload())
+        publisher.send_update(Other(), probe_entry(), moved_payload())
 
 
 def test_a_post_is_never_left_sitting_as_a_draft():
@@ -1783,7 +1783,7 @@ def test_a_post_is_never_left_sitting_as_a_draft():
     client = Updates(fail_when=lambda call, _payload: call in (1, 3))
 
     with pytest.raises(ghl.GHLError):
-        jobs._redate(client, probe_entry(), moved_payload())
+        publisher.send_update(client, probe_entry(), moved_payload())
 
     assert client.calls[-1]["status"] == "SCHEDULED"
     assert client.calls[-1]["publishedAt"] == "2099-08-24T14:00:00.000Z", "its original day"
@@ -1793,6 +1793,26 @@ def test_with_no_original_date_there_is_nothing_to_put_back():
     client = Updates(fail_when=lambda call, _payload: call in (1, 3))
 
     with pytest.raises(ghl.GHLError):
-        jobs._redate(client, probe_entry(scheduled_at=None), moved_payload())
+        publisher.send_update(client, probe_entry(scheduled_at=None), moved_payload())
 
     assert len(client.calls) == 3, "tried, dropped to draft, tried again - no restore"
+
+
+def test_publishing_a_due_post_survives_the_same_crash(tmp_path):
+    """The publisher loop uses the same endpoint to take a post live. If that
+    met the crash unprotected, scheduled posts would silently never go out -
+    which is the exact failure the publisher exists to fix."""
+    import json
+
+    payload_file = tmp_path / "p.json"
+    payload_file.write_text(json.dumps({"rawHTML": "<h1>A</h1>", "status": "SCHEDULED"}))
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    entry = ledger.record(
+        video_id="v1", title="A", url_slug="a", ghl_post_id="p1",
+        scheduled_at=datetime(2099, 8, 18, 10, tzinfo=ET), payload_path=str(payload_file),
+    )
+    client = Updates(fail_when=lambda call, _payload: call == 1)
+
+    publisher.publish_entry(client, entry)
+
+    assert [call["status"] for call in client.calls] == ["PUBLISHED", "DRAFT", "PUBLISHED"]

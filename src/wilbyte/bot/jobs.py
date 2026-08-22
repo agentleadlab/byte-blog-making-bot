@@ -411,7 +411,7 @@ def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> l
             payload = publisher.load_payload(entry)
             payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_SCHEDULED
             payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(move.now)
-            _redate(context.client, entry, payload)
+            publisher.send_update(context.client, entry, payload)
         except Exception as exc:
             # The whole thing, not a trimmed version, and what was sent with
             # it. When GHL refuses every post in a queue it refuses them for
@@ -423,50 +423,6 @@ def apply_moves(config: Config, ledger: Ledger, context: GHLContext, moves) -> l
         entry.scheduled_at = move.now.isoformat()
         ledger.save()
     return problems
-
-
-# GHL's own code falls over re-dating a post that is already scheduled:
-# `Cannot read properties of undefined (reading 'childTaskError')`. Not a
-# rejected field - a null dereference in whatever tracks a post's scheduling
-# task, which apparently only exists on the way *into* SCHEDULED.
-CHILD_TASK_CRASH = "childTaskError"
-
-
-def _redate(client, entry, payload: dict) -> None:
-    """Move a scheduled post's date, going the long way round if GHL crashes.
-
-    Straight through first, because that is the call that ought to work and
-    the one that will start working if GHL ever fixes it. Only their specific
-    crash triggers the detour - anything else is a real error and is raised.
-
-    The detour drops the post to a draft and schedules it again, which is the
-    transition their code survives. If the second half fails the post is put
-    back on the day it was already on: leaving somebody's article sitting as
-    an unscheduled draft, silently, is far worse than not moving it.
-    """
-    from ..scheduler import parse_timestamp
-
-    try:
-        client.update_post(entry.ghl_post_id, payload)
-        return
-    except Exception as exc:
-        if CHILD_TASK_CRASH not in str(exc):
-            raise
-
-    as_draft = {
-        key: value for key, value in payload.items() if key != ghl.SCHEDULE_FIELD
-    }
-    as_draft[ghl.POST_FIELDS["status"]] = ghl.STATUS_DRAFT
-    client.update_post(entry.ghl_post_id, as_draft)
-
-    try:
-        client.update_post(entry.ghl_post_id, payload)
-    except Exception:
-        was = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
-        if was:
-            restored = {**payload, ghl.SCHEDULE_FIELD: ghl.to_api_timestamp(was)}
-            client.update_post(entry.ghl_post_id, restored)
-        raise
 
 
 def publish_now(config: Config, ledger: Ledger, context: GHLContext, entry) -> datetime:
@@ -484,7 +440,7 @@ def publish_now(config: Config, ledger: Ledger, context: GHLContext, entry) -> d
     payload = publisher.load_payload(entry)
     payload[ghl.POST_FIELDS["status"]] = ghl.STATUS_PUBLISHED
     payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(now)
-    context.client.update_post(entry.ghl_post_id, payload)
+    publisher.send_update(context.client, entry, payload)
 
     entry.scheduled_at = now.isoformat()
     ledger.mark_published(entry.video_id)

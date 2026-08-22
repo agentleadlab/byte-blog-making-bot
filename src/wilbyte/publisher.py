@@ -95,7 +95,58 @@ def publish_entry(client: ghl.GHLClient, entry: LedgerEntry) -> None:
         slot = parse_timestamp(entry.scheduled_at)
         if slot:
             payload[ghl.SCHEDULE_FIELD] = ghl.to_api_timestamp(slot)
-    client.update_post(entry.ghl_post_id, payload)
+    send_update(client, entry, payload)
+
+
+# GHL's own code falls over updating a post that is already scheduled:
+#
+#     Cannot read properties of undefined (reading 'childTaskError')
+#
+# Not a field they rejected - a null dereference in whatever tracks a post's
+# scheduling task, which only exists on the way *into* SCHEDULED. Nineteen
+# posts were refused for it, and the same endpoint is what takes a post live,
+# so publishing can meet it too.
+CHILD_TASK_CRASH = "childTaskError"
+
+
+def send_update(client: ghl.GHLClient, entry: LedgerEntry, payload: dict) -> None:
+    """Update a post, going the long way round if GHL crashes on its own task.
+
+    Straight through first, because that is the call that ought to work and
+    the one that will start working if GHL ever fixes it. Only their specific
+    crash triggers the detour - anything else is a real error and is raised
+    rather than buried under two more writes.
+
+    The detour drops the post to a draft and sends the update again, which is
+    the transition their code survives. If the second half fails the post is
+    put back the way it was found: leaving somebody's article sitting as an
+    unscheduled draft, silently, is far worse than not changing it.
+    """
+    try:
+        client.update_post(entry.ghl_post_id, payload)
+        return
+    except Exception as exc:
+        if CHILD_TASK_CRASH not in str(exc):
+            raise
+
+    as_draft = {key: value for key, value in payload.items() if key != ghl.SCHEDULE_FIELD}
+    as_draft[ghl.POST_FIELDS["status"]] = ghl.STATUS_DRAFT
+    client.update_post(entry.ghl_post_id, as_draft)
+
+    try:
+        client.update_post(entry.ghl_post_id, payload)
+    except Exception:
+        was = parse_timestamp(entry.scheduled_at) if entry.scheduled_at else None
+        if was:
+            client.update_post(
+                entry.ghl_post_id,
+                {
+                    **payload,
+                    ghl.POST_FIELDS["status"]: ghl.STATUS_SCHEDULED,
+                    ghl.SCHEDULE_FIELD: ghl.to_api_timestamp(was),
+                },
+            )
+        raise
 
 
 def load_payload(entry: LedgerEntry) -> dict:
