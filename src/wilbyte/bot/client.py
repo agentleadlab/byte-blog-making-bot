@@ -26,6 +26,7 @@ import discord
 from discord import app_commands
 
 from .. import corpus
+from .. import waiting
 from .. import cover as cover_mod
 from .. import (
     fathom, formats, ghl, notion, prefs, publisher, version, writer, youtube, zoom,
@@ -157,6 +158,7 @@ class WilByteBot(discord.Client):
         self.run_lock = asyncio.Lock()
         self.publisher_task: asyncio.Task | None = None
         self.updater_task: asyncio.Task | None = None
+        self.caption_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -221,6 +223,11 @@ class WilByteBot(discord.Client):
             self.publisher_task = self.loop.create_task(publisher_loop(self))
         if self.updater_task is None or self.updater_task.done():
             self.updater_task = self.loop.create_task(updater_loop(self))
+        # Videos announced before YouTube had finished captioning them. Also
+        # safe every start: the list is on disk, so a restart mid-wait picks
+        # up where it left off.
+        if self.caption_task is None or self.caption_task.done():
+            self.caption_task = self.loop.create_task(caption_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -781,6 +788,87 @@ async def updater_loop(bot: "WilByteBot") -> None:
 # GHL publishes on the minute, so checking more often buys nothing; checking
 # much less often would let a 10:00 post go out at 10:20.
 PUBLISH_CHECK_SECONDS = 60
+
+# How often the waiting list is looked at. The wait itself is set in
+# `waiting`; this only decides how promptly a due one is noticed.
+CAPTION_CHECK_SECONDS = 300
+
+# Terminal colour codes out of a subprocess's error output. yt-dlp writes them
+# even when nothing is a terminal, and they arrive in Discord as "[0;31mERROR"
+# in the middle of the sentence somebody is trying to read.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m|\[[0-9];[0-9]{2}m")
+
+
+def _readable(exc) -> str:
+    """An error with the terminal escape codes taken out of it."""
+    return " ".join(_ANSI.sub("", str(exc)).split())
+
+
+async def _wait_for_captions(responder: Responder, video, output_dir) -> None:
+    """Put a video on the waiting list and say so, once."""
+    queue = await asyncio.to_thread(waiting.Queue.load)
+    item = queue.add(
+        video.url or video.short_url,
+        title=getattr(video, "title", "") or "",
+        channel_id=responder.channel_id,
+    )
+    if item.tries > 1:
+        return
+    await responder.send(
+        f"⏳ **{video.title or video.short_url}** has no captions yet — YouTube "
+        f"usually takes a while on a fresh upload. I'll keep checking and write "
+        f"it up as soon as they appear."
+    )
+
+
+async def caption_loop(bot: "WilByteBot") -> None:
+    """Retry the videos that were announced before YouTube had captioned them.
+
+    The whole point is that nobody has to remember. A video that was early
+    when it was announced is written up when it stops being early, without
+    anybody pasting the link back in.
+    """
+    while not bot.is_closed():
+        try:
+            await _retry_waiting(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Caption check failed; will try again shortly")
+        await asyncio.sleep(CAPTION_CHECK_SECONDS)
+
+
+async def _retry_waiting(bot: "WilByteBot") -> None:
+    queue = await asyncio.to_thread(waiting.Queue.load)
+    if not queue.items:
+        return
+
+    for item in queue.expired():
+        queue.drop(item.url)
+        channel = bot.get_channel(item.channel_id) if item.channel_id else _post_channel(bot)
+        if channel is not None:
+            await ChannelResponder(channel).send(
+                f"⏳ Gave up waiting on **{item.title or item.url}** — still no "
+                f"captions after {waiting.GIVE_UP_AFTER.total_seconds() // 3600:.0f} "
+                f"hours. Attach a transcript as a .txt with the link and I'll "
+                f"write it:\n```\n@RYTE {item.url}\n```"
+            )
+
+    due = queue.due()
+    if not due or bot.run_lock.locked():
+        return
+
+    item = due[0]
+    channel = bot.get_channel(item.channel_id) if item.channel_id else _post_channel(bot)
+    if channel is None:
+        return
+
+    # Off the list before the run, not after: a run that ends in a review card
+    # sitting unanswered must not be started again five minutes later.
+    queue.drop(item.url)
+    responder = ChannelResponder(channel)
+    async with bot.run_lock:
+        await _execute_run(bot, responder, [item.url], 1, "scheduled", force=False)
 
 
 async def publisher_loop(bot: WilByteBot) -> None:
@@ -2312,10 +2400,18 @@ async def _execute_run(
                     transcript_text=transcript_text if len(videos) == 1 else None,
                 )
             except PIPELINE_ERRORS as exc:
+                # A video announced the minute it goes up has no captions yet.
+                # Nothing is wrong; it is early. Failing it makes writing the
+                # post somebody's job to remember, which means it doesn't get
+                # written.
+                if waiting.not_ready_yet(str(exc)):
+                    await _wait_for_captions(responder, video, output_dir)
+                    skipped += 1
+                    continue
                 failed += 1
                 unfinished.append(video)
                 await responder.send(
-                    embed=embeds.error(f"{video.title or video.short_url}\n{exc}")
+                    embed=embeds.error(f"{video.title or video.short_url}\n{_readable(exc)}")
                 )
                 continue
 

@@ -194,7 +194,19 @@ def cookie_file() -> str | None:
 
     existing = (os.getenv("YOUTUBE_COOKIES_FILE") or "").strip()
     if existing and _Path(existing).exists():
-        return existing
+        # Repaired the same way a pasted one is. A file exported by hand is
+        # every bit as likely to have lost its header or had its tabs turned
+        # into spaces - and yt-dlp's answer to that is "does not look like a
+        # Netscape format cookies file", which sounds like the wrong file
+        # rather than a fixable one.
+        try:
+            raw = _Path(existing).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return existing
+        mended = _mend_cookies(raw)
+        if mended == raw.strip() or not has_cookie_rows(mended):
+            return existing
+        return _write_cookies(mended)
 
     raw = os.getenv("YOUTUBE_COOKIES") or ""
     # Railway strips real newlines out of some pasted values; accept the escaped
@@ -203,6 +215,46 @@ def cookie_file() -> str | None:
     if not text:
         return None
 
+    return _write_cookies(_mend_cookies(text))
+
+
+def _mend_cookies(text: str) -> str:
+    """A cookies.txt with its header put back and its tabs restored.
+
+    Both things go missing in ordinary use - the header when somebody copies
+    the rows out without the first line, the tabs when the file travels
+    through a web form - and yt-dlp refuses the whole file for either.
+    """
+    body = _retab_cookies((text or "").replace("\\n", "\n").strip())
+    if not body:
+        return ""
+    if not body.startswith("# Netscape"):
+        body = "# Netscape HTTP Cookie File\n" + body
+    return body
+
+
+def has_cookie_rows(text: str) -> bool:
+    """Whether anything in here is actually a cookie.
+
+    Used before mending a file somebody points at rather than pastes. Giving a
+    header to something that holds no cookies turns "this isn't a cookies
+    file" into "this is a cookies file with a bad line in it", which is a
+    worse thing to be told and a longer thing to work out.
+    """
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and len(stripped.split("\t")) == 7:
+            return True
+    return False
+
+
+def _write_cookies(text: str) -> str | None:
+    """Put a mended cookies file somewhere yt-dlp can read it."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    if not text:
+        return None
     cached = _COOKIE_CACHE.get(text)
     if cached and _Path(cached).exists():
         return cached
@@ -211,9 +263,7 @@ def cookie_file() -> str | None:
         "w", suffix=".txt", prefix="yt-cookies-", delete=False, encoding="utf-8"
     )
     with handle:
-        if not text.startswith("# Netscape"):
-            handle.write("# Netscape HTTP Cookie File\n")
-        handle.write(_retab_cookies(text) + "\n")
+        handle.write(text + "\n")
     _COOKIE_CACHE[text] = handle.name
     return handle.name
 

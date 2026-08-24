@@ -360,3 +360,81 @@ def test_an_unreadable_cookie_file_yields_no_session(monkeypatch, tmp_path):
     monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(bad))
 
     assert youtube.cookie_session() is None
+
+
+# ----------------------------------- a cookies file somebody points at, not pastes
+
+# "cookies.txt does not look like a Netscape format cookies file" killed a run.
+# The pasted form was being mended - header put back, tabs restored - and a file
+# path was handed to yt-dlp exactly as found.
+
+ROW = ".youtube.com\tTRUE\t/\tTRUE\t0\t__Secure-3PSID\tabc123"
+
+
+def test_a_file_missing_its_header_is_mended_rather_than_refused(monkeypatch, tmp_path):
+    theirs = tmp_path / "cookies.txt"
+    theirs.write_text(ROW + "\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    used = Path(youtube.cookie_file()).read_text()
+
+    assert used.startswith("# Netscape HTTP Cookie File")
+    assert "__Secure-3PSID" in used
+
+
+def test_the_file_they_pointed_at_is_not_written_to(monkeypatch, tmp_path):
+    """Mending happens on a copy. Rewriting somebody's own file, in place,
+    without being asked, is not RYTE's to do."""
+    theirs = tmp_path / "cookies.txt"
+    theirs.write_text(ROW + "\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    youtube.cookie_file()
+
+    assert theirs.read_text() == ROW + "\n"
+
+
+def test_spaces_where_the_tabs_should_be_are_put_back(monkeypatch, tmp_path):
+    theirs = tmp_path / "cookies.txt"
+    theirs.write_text("# Netscape HTTP Cookie File\n" + ROW.replace("\t", "    ") + "\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    used = Path(youtube.cookie_file()).read_text()
+
+    assert "\t__Secure-3PSID\t" in used
+
+
+def test_a_file_that_is_already_right_is_used_as_it_is(monkeypatch, tmp_path):
+    """No copy, no temp file, nothing to go stale."""
+    theirs = tmp_path / "cookies.txt"
+    theirs.write_text("# Netscape HTTP Cookie File\n" + ROW)
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    assert youtube.cookie_file() == str(theirs)
+
+
+def test_a_file_that_holds_no_cookies_is_left_well_alone(monkeypatch, tmp_path):
+    """Giving it a header would turn "this isn't a cookies file" into "this is
+    a cookies file with a bad line in it"."""
+    theirs = tmp_path / "notes.txt"
+    theirs.write_text("this is not a cookie file at all\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    assert youtube.cookie_file() == str(theirs)
+
+
+def test_a_mended_file_still_counts_its_cookies(monkeypatch, tmp_path):
+    """`@RYTE check` reads it back, and would have reported zero."""
+    theirs = tmp_path / "cookies.txt"
+    theirs.write_text(ROW + "\n")
+    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
+    monkeypatch.setenv("YOUTUBE_COOKIES_FILE", str(theirs))
+
+    count, signed_in = youtube.cookie_summary()
+
+    assert count == 1 and signed_in is True
