@@ -438,11 +438,41 @@ async def handle_watched(bot: "WilByteBot", message: discord.Message) -> None:
         )
         return
 
+    # Ask for the transcript before announcing anything. A video announced the
+    # minute it goes up has no captions for another while yet, and finding that
+    # out by running the whole thing costs three messages in the channel to say
+    # that nothing happened.
+    ready, problem = await asyncio.to_thread(jobs.waiting_on_captions, links[0])
+    if not ready and waiting.not_ready_yet(problem):
+        await _hold_for_captions(bot, responder, links[0], message)
+        return
+
     await responder.send(f"📺 New video posted in <#{message.channel.id}> — writing it up.")
     async with bot.run_lock:
         await _execute_run(
-            bot, responder, links, len(links), "scheduled", force=False
+            bot, responder, links, len(links), "scheduled", force=False,
+            # Already in hand, so the run doesn't spend another minute asking
+            # YouTube for what was just fetched.
+            transcript_text=ready if len(links) == 1 else None,
         )
+
+
+async def _hold_for_captions(bot, responder: Responder, link: str, message) -> None:
+    """Say once that the video is early, and let the retry loop have it."""
+    queue = await asyncio.to_thread(waiting.Queue.load)
+    title = ""
+    for embed in getattr(message, "embeds", []) or []:
+        if isinstance(getattr(embed, "title", None), str):
+            title = embed.title
+            break
+    item = queue.add(link, title=title, channel_id=responder.channel_id)
+    if item.tries > 1:
+        return
+    await responder.send(
+        f"📺 New video posted in <#{message.channel.id}> — no captions on it yet, "
+        f"which is normal for a fresh upload. I'll write it up as soon as YouTube "
+        f"publishes them."
+    )
 
 
 def _post_channel(bot: "WilByteBot"):
@@ -863,12 +893,31 @@ async def _retry_waiting(bot: "WilByteBot") -> None:
     if channel is None:
         return
 
+    ready, problem = await asyncio.to_thread(jobs.waiting_on_captions, item.url)
+    if not ready:
+        if waiting.not_ready_yet(problem):
+            # Note the try and keep the original first_seen, or the six-hour
+            # limit resets every time and this waits for ever.
+            queue.add(item.url, title=item.title, channel_id=item.channel_id)
+            return
+        # Something else is wrong with it now, and that is worth saying.
+        queue.drop(item.url)
+        await ChannelResponder(channel).send(
+            embed=embeds.error(f"{item.title or item.url}\n{problem}")
+        )
+        return
+
     # Off the list before the run, not after: a run that ends in a review card
     # sitting unanswered must not be started again five minutes later.
     queue.drop(item.url)
     responder = ChannelResponder(channel)
+    await responder.send(
+        f"📺 Captions are up on **{item.title or item.url}** — writing it up now."
+    )
     async with bot.run_lock:
-        await _execute_run(bot, responder, [item.url], 1, "scheduled", force=False)
+        await _execute_run(
+            bot, responder, [item.url], 1, "scheduled", force=False, transcript_text=ready
+        )
 
 
 async def publisher_loop(bot: WilByteBot) -> None:

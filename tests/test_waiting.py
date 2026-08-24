@@ -155,3 +155,33 @@ def test_a_plain_error_is_left_as_it_is():
     assert _readable("No caption track published for abc.") == (
         "No caption track published for abc."
     )
+
+
+# ------------------------------------- the clock that must not keep resetting
+
+
+def test_noting_another_try_does_not_restart_the_six_hours(tmp_path):
+    """The retry loop takes a video off the list to run it. If a failed retry
+    puts it back as new, the wait resets every fifteen minutes and it waits for
+    ever."""
+    store = queue(tmp_path)
+    store.add(LINK, now=NOON)
+
+    for minutes in range(15, 6 * 60, 15):
+        store.add(LINK, now=NOON + timedelta(minutes=minutes))
+
+    assert store.items[LINK].first_seen == NOON.isoformat()
+    assert store.expired(now=NOON + waiting.GIVE_UP_AFTER)
+
+
+def test_a_video_removed_and_re_added_starts_its_wait_again(tmp_path):
+    """The other direction: a genuinely new announcement of the same link is a
+    new wait, not a continuation of one that already gave up."""
+    store = queue(tmp_path)
+    store.add(LINK, now=NOON)
+    store.drop(LINK)
+
+    store.add(LINK, now=NOON + timedelta(hours=8))
+
+    assert store.items[LINK].first_seen == (NOON + timedelta(hours=8)).isoformat()
+    assert store.expired(now=NOON + timedelta(hours=9)) == []

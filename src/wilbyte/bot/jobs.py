@@ -117,6 +117,32 @@ def upcoming_posts(
     return sorted(found.values())[:limit]
 
 
+def waiting_on_captions(link: str) -> tuple[str, str]:
+    """(transcript, why not) for a video, without building anything.
+
+    An announcement fires the moment a video goes up, and YouTube has not
+    captioned it yet. Trying the whole run to find that out costs three
+    messages in the channel to say nothing happened - so the transcript is
+    asked for first, and the answer decides whether there is a run at all.
+
+    The text comes back rather than being thrown away, because the run takes a
+    transcript directly and fetching it twice would be a minute of nothing for
+    no reason.
+    """
+    try:
+        video = youtube.video_from_link(link)
+        return youtube.fetch_transcript(video.video_id).text, ""
+    except Exception as exc:
+        return "", _readable_error(exc)
+
+
+def _readable_error(exc: Exception) -> str:
+    """An error with the terminal escape codes taken out of it."""
+    import re as _re
+
+    return " ".join(_re.sub(r"\x1b\[[0-9;]*m|\[[0-9];[0-9]{2}m", "", str(exc)).split())
+
+
 def resolve_videos(
     source: str, ledger: Ledger, *, limit: int, force: bool, offline: bool = False
 ) -> tuple[list[Video], int]:
