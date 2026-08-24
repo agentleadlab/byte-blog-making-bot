@@ -172,6 +172,20 @@ def post_day(post: dict, tz: ZoneInfo) -> date | None:
     return created.astimezone(tz).date() if created else None
 
 
+def holds_a_day(post: dict) -> bool:
+    """Whether this post occupies a day on the calendar at all.
+
+    A draft is not scheduled - it has no date because it is not going out, and
+    it never will until somebody schedules it. Same for one that was archived
+    or deleted. Counting them costs twice: their creation day reads as taken
+    when it is free, and the check reports them as days that might be
+    double-booked when there is no day involved.
+    """
+    if post.get("deleted") or post.get("archived"):
+        return False
+    return str(post.get("status") or "").upper() != "DRAFT"
+
+
 def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date]:
     """Extract occupied dates from GHL blog posts.
 
@@ -179,7 +193,10 @@ def taken_days_from_posts(posts: list[dict], config: ScheduleConfig) -> set[date
     and converts them into local posting dates.
     """
     tz = ZoneInfo(config.timezone)
-    return {day for post in posts if (day := post_day(post, tz)) is not None}
+    return {
+        day for post in posts
+        if holds_a_day(post) and (day := post_day(post, tz)) is not None
+    }
 
 
 def taken_days_from_ledger(entries, config: ScheduleConfig) -> set[date]:

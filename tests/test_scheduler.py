@@ -229,3 +229,63 @@ def test_no_floor_set_behaves_as_before(config):
 def test_a_floor_that_is_not_a_date_says_so(config):
     with pytest.raises(Exception, match="earliest_day"):
         next_open_slots(set(), 1, floored(config, "next tuesday"), now=at(2026, 8, 5, 9))
+
+
+# --------------------------------------- posts that are not on the calendar
+
+# The check reported "2 post(s) came back with no readable date — those days can
+# be double-booked", listing fields with no date among them but with `status`,
+# `archived` and `deleted`. A draft has no date because it is not going out.
+
+
+def test_a_draft_holds_no_day(config):
+    """It has no date because it is not scheduled. That is what a draft is."""
+    drafts = [
+        {"status": "DRAFT", "createdAt": "2026-08-12T14:00:00.000Z", "title": "half written"},
+        {"status": "draft", "createdAt": "2026-08-13T14:00:00.000Z", "title": "lowercase"},
+    ]
+
+    assert taken_days_from_posts(drafts, config.schedule) == set()
+
+
+def test_an_archived_or_deleted_post_holds_no_day(config):
+    posts = [
+        {"status": "PUBLISHED", "deleted": True, "publishedAt": "2026-08-12T14:00:00.000Z"},
+        {"status": "PUBLISHED", "archived": True, "publishedAt": "2026-08-13T14:00:00.000Z"},
+    ]
+
+    assert taken_days_from_posts(posts, config.schedule) == set()
+
+
+def test_a_scheduled_post_still_holds_its_day(config):
+    posts = [{"status": "SCHEDULED", "publishedAt": "2026-08-12T14:00:00.000Z"}]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 12)}
+
+
+def test_a_post_with_no_status_at_all_is_still_counted(config):
+    """Not knowing is not the same as knowing it is a draft, and a day wrongly
+    read as free gets double-booked."""
+    posts = [{"publishedAt": "2026-08-12T14:00:00.000Z"}]
+
+    assert taken_days_from_posts(posts, config.schedule) == {date(2026, 8, 12)}
+
+
+def test_a_draft_is_not_reported_as_a_day_that_might_be_double_booked(config):
+    from wilbyte.bot import jobs
+
+    drafts = [{"status": "DRAFT", "_id": "a", "title": "half written", "urlSlug": "x"}]
+
+    assert jobs._undated_posts(drafts, config) == []
+
+
+def test_a_live_post_with_no_date_is_still_worth_saying(config):
+    """That one is a real hazard: it is on the blog and its day reads as free."""
+    from wilbyte.bot import jobs
+
+    posts = [{"status": "PUBLISHED", "_id": "a", "title": "live but dateless"}]
+
+    (ok, said), = jobs._undated_posts(posts, config)
+
+    assert ok is False
+    assert "double-booked" in said

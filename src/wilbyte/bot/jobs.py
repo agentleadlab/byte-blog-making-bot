@@ -1663,10 +1663,14 @@ def _undated_posts(posts: list[dict], config: Config) -> list[tuple[bool, str]]:
     """
     from zoneinfo import ZoneInfo
 
-    from ..scheduler import post_day
+    from ..scheduler import holds_a_day, post_day
 
     tz = ZoneInfo(config.schedule.timezone)
-    undated = [p for p in posts if post_day(p, tz) is None]
+    # Drafts, and anything archived or deleted, are not on the calendar. They
+    # have no date because they are not going out, which is not a problem to
+    # report - it is what a draft is.
+    on_the_calendar = [p for p in posts if holds_a_day(p)]
+    undated = [p for p in on_the_calendar if post_day(p, tz) is None]
     if not undated:
         return []
 
