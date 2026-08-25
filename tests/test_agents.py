@@ -668,3 +668,92 @@ def test_the_qualified_type_routes_by_its_tier():
     assert agents.shape_of(agents.stated_lead_type(BENJAMIN)) == (
         "vet", "plus", frozenset()
     )
+
+
+# ------------------------------------------- the Spark cards, written a second way
+
+SPARK = """veteran-final-expense — 25 leads · one-time pack
+A buyer just purchased on Spark. Fulfill this order from your Spark vendor \
+dashboard.
+
+Buyer
+Mills Financial LLC
+
+Lead type
+veteran-final-expense
+
+Order
+25 leads · one-time pack
+
+Price / lead
+$38
+
+States
+AL, GA, KY, MD, NC, OH, SC, TX
+
+Buyer email
+zdmills19@gmail.com
+
+Routing token
+lw_ecd0a411ba43c5f6abceddb5b0d7defda796dceba9e2c03e
+
+OTP Vets
+Live Thursday, August 27
+"""
+
+
+def test_a_label_on_its_own_line_is_still_the_lead_type_field():
+    """Spark writes "Lead type" and puts the value underneath. The order form
+    writes "Lead Type: x". Both are the field."""
+    assert agents.find_lead_type(SPARK) == "veteran-final-expense"
+    assert agents.find_lead_type("Lead Type: OTP IUL Plus") == "OTP IUL Plus"
+
+
+def test_lead_types_in_prose_is_not_the_field():
+    """"we buy several lead types including vets" is somebody talking."""
+    assert agents.find_lead_type("we buy several lead types including vets") == ""
+
+
+def test_an_empty_field_does_not_swallow_the_line_after_the_gap():
+    assert agents.find_lead_type("Lead Type:\n\nBuyer\nMills Financial LLC") == ""
+
+
+def test_the_spark_card_reads_as_the_qualified_type():
+    """It names the leads twice - "veteran-final-expense" up top and "OTP Vets"
+    at the bottom. The one that says which vets is the one to file."""
+    agent = agents.read_agent(
+        {"id": "x", "name": "New Agent - Mills Financial LLC",
+         "shortUrl": "https://trello.com/c/abc"},
+        text=SPARK, today=date(2026, 8, 26),
+    )
+
+    assert agent.stated == "OTP Vets"
+    assert agents.shape_of(agent.stated) == ("vet", "plus", frozenset())
+    assert agent.launch == date(2026, 8, 27)
+    assert agent.when(date(2026, 8, 26)) == "tomorrow"
+    assert agent.ready is True
+    assert agents.cannot_read(agent, needs_lead_type=True) == ""
+
+
+def test_a_card_that_names_the_leads_without_the_field_is_not_refused():
+    """The field is one way of saying it, not the only way. Refusing a card
+    that says what it is three times over is refusing to read."""
+    agent = agents.Agent(
+        name="Somebody", card_id="x", url="", lead_type="", stated="OTP Vets",
+        launch=date(2026, 8, 27),
+    )
+
+    assert agents.cannot_read(agent, needs_lead_type=True) == ""
+    assert agent.ready is True
+
+
+def test_a_card_that_names_no_leads_at_all_still_needs_a_person():
+    agent = agents.Agent(
+        name="Somebody", card_id="x", url="", lead_type="", stated="",
+        launch=date(2026, 8, 27),
+    )
+
+    assert agents.cannot_read(agent, needs_lead_type=True) == (
+        "I can't find a lead type on this card."
+    )
+    assert agent.ready is False

@@ -74,7 +74,24 @@ AGENT_CARD = re.compile(r"^\s*new\s+agent\s*[-–—:]+\s*", re.IGNORECASE)
 
 # The line the form writes. Authoritative: the body text mentions lead types
 # in passing ("paid for OTP IUL leads") and that is not the field.
-LEAD_TYPE_LINE = re.compile(r"^\s*lead\s*type\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+#
+# Two forms, because two things write these cards. The \b after "type" keeps
+# prose out either way - "several lead types" is somebody talking, not a field.
+#
+# The order form's own field, colon and value on the one line.
+LEAD_TYPE_LINE = re.compile(
+    r"^[ \t]*lead[ \t]*type\b[ \t]*:[ \t]*(\S.*?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Spark writes the label on its own line with the value underneath. There is
+# no colon in that shape, so requiring its absence keeps the two apart: a
+# colon with nothing after it is an empty field, and the line below it belongs
+# to whatever comes next.
+LEAD_TYPE_BLOCK = re.compile(
+    r"^[ \t]*lead[ \t]*type\b[ \t]*\r?\n[ \t]*(\S.*?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # What kind of leads. The word that matters, whatever it is dressed in.
 FAMILIES = (
@@ -120,7 +137,7 @@ class Agent:
     @property
     def ready(self) -> bool:
         """Whether there is enough here to act on without guessing."""
-        return bool(self.lead_type and self.launch)
+        return bool((self.lead_type or self.stated) and self.launch)
 
     def when(self, today: date) -> str:
         """today / tomorrow / later / past, by the launch date."""
@@ -146,7 +163,7 @@ def agent_name(title: str) -> str:
 
 def find_lead_type(text: str) -> str:
     """The lead type as the form wrote it, or "" if the line isn't there."""
-    found = LEAD_TYPE_LINE.search(text or "")
+    found = LEAD_TYPE_LINE.search(text or "") or LEAD_TYPE_BLOCK.search(text or "")
     return " ".join(found.group(1).split()) if found else ""
 
 
@@ -477,7 +494,11 @@ def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     missing = []
     if agent.launch is None:
         missing.append("a launch date")
-    if needs_lead_type and not agent.lead_type:
+    # What the card is read as saying, not only the field it wrote it in. A
+    # card can name the leads three times over and still not have the form's
+    # own line on it, and refusing that one is refusing a card that says
+    # exactly what it is.
+    if needs_lead_type and not (agent.lead_type or agent.stated):
         missing.append("a lead type")
     return f"I can't find {' or '.join(missing)} on this card." if missing else ""
 
