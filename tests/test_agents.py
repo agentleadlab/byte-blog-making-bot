@@ -148,6 +148,43 @@ def test_no_setup_card_yet_is_none_so_one_gets_made():
     assert agents.find_setup_card([], date(2026, 8, 26)) is None
 
 
+def test_a_setup_card_is_told_apart_from_a_daily_one():
+    assert agents.is_setup_card("Agent Setup Going Live Wednesday 08/26") is True
+    assert agents.is_setup_card("💎 General 08/26/26") is False
+    assert agents.is_setup_card("New Agent - Gustin Elrod") is False
+
+
+def test_a_setup_card_is_ahead_until_the_day_it_covers():
+    title = "Agent Setup Going Live Wednesday 08/26"
+
+    assert agents.setup_ahead_of(title, date(2026, 8, 25)) is True
+    # The go-live day itself: the setting up is over, not still to come.
+    assert agents.setup_ahead_of(title, date(2026, 8, 26)) is False
+    assert agents.setup_ahead_of(title, date(2026, 8, 27)) is False
+
+
+def test_a_weekend_setup_card_is_ahead_until_its_last_day():
+    """The Friday card runs Saturday to Monday and isn't finished till Monday."""
+    title = "Agent Setup Going Live Saturday-Monday 08/22-08/24"
+
+    assert agents.setup_ahead_of(title, date(2026, 8, 22)) is True
+    assert agents.setup_ahead_of(title, date(2026, 8, 23)) is True
+    assert agents.setup_ahead_of(title, date(2026, 8, 24)) is False
+
+
+def test_a_setup_card_over_new_year_is_next_month_not_last_year():
+    """The titles carry no year, so 01/02 read on the 30th of December has to
+    come out as three days away rather than eleven months behind."""
+    title = "Agent Setup Going Live Friday 01/02"
+
+    assert agents.setup_ahead_of(title, date(2026, 12, 30)) is True
+    assert agents.setup_ahead_of(title, date(2027, 1, 3)) is False
+
+
+def test_a_setup_card_with_no_date_on_it_is_not_ahead_of_anything():
+    assert agents.setup_ahead_of("Agent Setup Going Live", date(2026, 8, 25)) is False
+
+
 # ------------------------------------------------------- what it will say
 
 

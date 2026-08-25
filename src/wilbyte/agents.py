@@ -614,6 +614,40 @@ def setup_covers(title: str, day: date) -> bool:
     return wanted >= start or wanted <= end
 
 
+def is_setup_card(title: str) -> bool:
+    """Whether a card is one of the "Agent Setup Going Live" ones."""
+    return bool(_SETUP_CARD.search(title or ""))
+
+
+def _near(month: int, dom: int, near: date) -> date | None:
+    """A bare MM/DD from a card title as a real date, in the nearest year.
+
+    The titles carry no year, so December's card read in January has to come
+    out as next month rather than eleven months ago.
+    """
+    for year in (near.year, near.year + 1, near.year - 1):
+        try:
+            when = date(year, month, dom)
+        except ValueError:  # 02/29 in a year that hasn't got one
+            continue
+        if abs((when - near).days) <= 182:
+            return when
+    return None
+
+
+def setup_ahead_of(title: str, day: date) -> bool:
+    """Whether a setup card's go-live is still to come after `day`.
+
+    The last date in the title is the one that matters: the Friday card runs
+    Saturday to Monday and isn't finished until the Monday.
+    """
+    found = _SETUP_DATE.findall(title or "")
+    if not found:
+        return False
+    last = _near(int(found[-1][0]), int(found[-1][1]), day)
+    return last is not None and last > day
+
+
 def find_setup_card(cards: list[dict], day: date) -> dict | None:
     """The setup card covering a day, wherever on the board it has got to.
 
@@ -623,7 +657,7 @@ def find_setup_card(cards: list[dict], day: date) -> dict | None:
     """
     for card in cards or []:
         title = str(card.get("name", ""))
-        if _SETUP_CARD.search(title) and setup_covers(title, day):
+        if is_setup_card(title) and setup_covers(title, day):
             return card
     return None
 

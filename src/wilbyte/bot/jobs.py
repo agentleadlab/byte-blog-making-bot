@@ -1947,11 +1947,15 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
         if trello.find_list(lists, to_name) is None:
             return [], [f"The board has no list called {to_name!r}"]
 
-        found = [
-            str(card.get("name", ""))
-            for card in client.list_cards(str(source.get("id") or ""))
-            if walks_today(card, day)
-        ]
+        found = []
+        for card in client.list_cards(str(source.get("id") or "")):
+            if not walks_today(card, day):
+                continue
+            title = str(card.get("name", ""))
+            where = walk_to(card, step, day)
+            # Named only when it isn't the one on the button, so the setup
+            # card going somewhere else is visible before it goes there.
+            found.append(title if where == to_name else f"{title} → {where}")
         return found, []
     finally:
         client.close()
@@ -1974,6 +1978,27 @@ def walks_today(card: dict, day: date) -> bool:
         return False
     named = dailyops.parse_card_title(title)
     return named is None or named[1] == day
+
+
+def walk_to(card: dict, step: str, day: date) -> str:
+    """Which list a card lands in for one step of the walk, by name.
+
+    Normally the step's own destination. The exception is the setup card: at
+    six it goes back to In Que rather than on to Quality Check, so nine the
+    next morning puts it in Today again. Agents keep being added to it right
+    up to the day it covers, and a card in Quality Check is a card nobody is
+    adding to. Once its go-live day has been and gone it walks on with
+    everything else.
+    """
+    from .. import agents, dailyops
+
+    to_name = dailyops.STEP_LISTS[step][1]
+    if step != "to_quality_check":
+        return to_name
+    title = str(card.get("name", ""))
+    if agents.is_setup_card(title) and agents.setup_ahead_of(title, day):
+        return dailyops.IN_QUE
+    return to_name
 
 
 def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
@@ -2002,15 +2027,21 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
             missing = from_name if source is None else to_name
             return 0, [f"The board has no list called {missing!r}"]
 
-        target_id = str(target.get("id") or "")
         # Backwards, because each one goes to the top: move the last card
         # first and the first card ends up above it. The list arrives in the
         # order it left in rather than reversed.
         for card in reversed(client.list_cards(str(source.get("id") or ""))):
             if not walks_today(card, day):
                 continue
+            where = walk_to(card, step, day)
+            landing = target if where == to_name else trello.find_list(lists, where)
+            if landing is None:
+                problems.append(
+                    f"{card.get('name')} — the board has no list called {where!r}"
+                )
+                continue
             try:
-                client.move_card(str(card.get("id") or ""), target_id)
+                client.move_card(str(card.get("id") or ""), str(landing.get("id") or ""))
             except Exception as exc:
                 problems.append(f"{card.get('name')} — {_short(exc, 160)}")
                 continue
