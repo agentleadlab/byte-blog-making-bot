@@ -1976,6 +1976,10 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
     behind rather than one waiting its turn, and leaving it is how Quality
     Check silts up - "as long as the cards are on quality check ... you move
     them to done".
+
+    Lead Order is the exception to that exception: it walks the board like the
+    others but it is not RYTE's to finish, so it stays in Quality Check until
+    somebody puts it in Done themselves.
     """
     from .. import agents, dailyops
 
@@ -1985,7 +1989,9 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
     named = dailyops.parse_card_title(title)
     if named is None:
         return True
-    return named[1] <= day if step == "to_done" else named[1] == day
+    if step != "to_done":
+        return named[1] == day
+    return named[0] != "lead_order" and named[1] <= day
 
 
 def walk_to(card: dict, step: str, day: date) -> str:

@@ -1384,7 +1384,7 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
     board = FakeBoard({
         "Quality Check": [
             {"id": "c1", "name": "📊 Ads 08/25/26"},
-            {"id": "c2", "name": "Lead Order 08/24/26"},
+            {"id": "c2", "name": "💻 Ops 08/24/26"},
         ],
         "Done": [],
     })
@@ -1392,9 +1392,45 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
 
     cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
 
-    assert cards == ["📊 Ads 08/25/26", "Lead Order 08/24/26"]
+    assert cards == ["📊 Ads 08/25/26", "💻 Ops 08/24/26"]
     assert problems == []
     assert board.moves == [], "reading only"
+
+
+def test_lead_order_is_never_moved_into_done(monkeypatch, config):
+    """It walks the board like the others but it isn't RYTE's to finish - it
+    waits in Quality Check for somebody to put it in Done themselves."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [
+            {"id": "c1", "name": "Lead Order 08/25/26"},
+            {"id": "c2", "name": "Lead Order 08/24/26"},
+            {"id": "c3", "name": "📊 Ads 08/25/26"},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert (moved, problems) == (1, [])
+    assert board.moves == [("c3", "id-Done", "top")]
+
+
+def test_lead_order_still_walks_the_rest_of_the_day(monkeypatch, config):
+    """Only Done is the exception. Nine and six move it like anything else."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [{"id": "c1", "name": "Lead Order 08/25/26"}],
+        "Today": [{"id": "c2", "name": "Lead Order 08/25/26"}],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.walk_board(config, "to_today", day=date(2026, 8, 25))[0] == 1
+    assert jobs.walk_board(config, "to_quality_check", day=date(2026, 8, 25))[0] == 1
 
 
 def test_a_card_dated_ahead_still_waits_its_turn_for_done(monkeypatch, config):
