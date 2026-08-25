@@ -1967,7 +1967,7 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     return moved, problems
 
 
-def run_rollover(config: Config, *, day=None) -> tuple[int, list[str], list]:
+def run_rollover(config: Config, *, day=None, only: str | None = None) -> tuple[int, list[str], list]:
     """Read the board and carry the items over. (moved, problems, flagged).
 
     The unattended version of what the button does, and the same two things
@@ -1975,7 +1975,7 @@ def run_rollover(config: Config, *, day=None) -> tuple[int, list[str], list]:
     three nights running. Those come back to be said out loud rather than
     moved while nobody is watching.
     """
-    plans, missing, targets = read_rollover(config, day=day)
+    plans, missing, targets = read_rollover(config, day=day, only=only)
     moved, problems = apply_rollover(config, plans, targets, day=day)
     if missing:
         problems.append(f"No card for tomorrow yet: {', '.join(missing)}")
@@ -1994,7 +1994,7 @@ def rollover_plan(config: Config, *, day=None) -> str:
     return report
 
 
-def read_rollover(config: Config, *, day=None):
+def read_rollover(config: Config, *, day=None, only: str | None = None):
     """(plans, cards missing for tomorrow, where each item goes).
 
     Read-only, and the same read the write uses - so what gets shown and what
@@ -2015,6 +2015,9 @@ def read_rollover(config: Config, *, day=None):
         today_cards = dailyops.cards_for(cards, day)
         tomorrow_cards = dailyops.cards_for(cards, tomorrow)
         history = carried.history()
+
+        if only:
+            today_cards = {k: v for k, v in today_cards.items() if k == only}
 
         plans, targets = [], {}
         for kind, card in today_cards.items():

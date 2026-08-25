@@ -980,3 +980,113 @@ def test_a_ticked_copy_on_tomorrows_card_also_counts_as_already_there(
     board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
 
     assert moved == 0 and board.items_added == []
+
+
+# ------------------------------ the whole item, exactly as somebody wrote it
+
+# The real items are a linked card *and* text: a link to "New Agent - Margo
+# Becht" followed by "37 OTP Vet leads unsigned". The link makes the card name
+# and the Done badge render; the text is the actual detail of the order. Losing
+# either half loses the item.
+
+REAL_ITEM = (
+    "https://trello.com/c/AbCd1234/912-new-agent-margo-becht "
+    "37 OTP Vet leads unsigned"
+)
+
+
+def test_the_link_and_the_words_after_it_both_travel(monkeypatch, config, tmp_path):
+    plan = rollover_of(("OTP VET Plus", REAL_ITEM, "incomplete"))
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "OTP VET Plus"}])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    (_, sent), = board.items_added
+    assert sent == REAL_ITEM, "verbatim, or the badge dies and the detail is lost"
+    assert "37 OTP Vet leads unsigned" in sent
+    assert "trello.com/c/AbCd1234" in sent
+
+
+def test_a_link_with_text_after_it_is_still_recognised_as_a_link():
+    from wilbyte import trello
+
+    assert trello.item_is_link(REAL_ITEM) is True
+    assert trello.linked_card_id(REAL_ITEM) == "AbCd1234"
+
+
+def test_a_checklist_named_for_a_product_routes_like_any_other(
+    monkeypatch, config, tmp_path
+):
+    """Lead Order's checklists are OTP VET Plus, OTP FEX, own setup - lead
+    types, not people. The rule is the same: back onto the one it came from."""
+    plan = rollover_of(
+        ("OTP FEX", "20 Txt Verified Final Expense Leads UNSIGNED", "incomplete"),
+        ("own setup", "Chase the Aulundrew paperwork", "incomplete"),
+    )
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "OTP FEX"}])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert moved == 2
+    assert ("l1", "20 Txt Verified Final Expense Leads UNSIGNED") in board.items_added
+    assert board.checklists_made == [("card-tomorrow", "own setup")]
+
+
+# ------------------------------------------------ one card, to try it out on
+
+
+@pytest.mark.parametrize(
+    "said,kind",
+    [
+        ("rollover general", "general"),
+        ("rollover ops", "ops"),
+        ("rollover ads", "ads"),
+        ("rollover lead order", "lead_order"),
+        ("rollover leadorder", "lead_order"),
+        ("rollover", None),
+    ],
+)
+def test_the_card_somebody_named_is_the_one_they_meant(said, kind):
+    assert dailyops.kind_named(said) == kind
+
+
+def test_naming_one_card_leaves_the_others_alone(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["💎 General 08/26/26", "💻 Ops 08/26/26"],
+        "Today": ["💎 General 08/25/26", "💻 Ops 08/25/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    plans, missing, targets = jobs.read_rollover(
+        config, day=date(2026, 8, 25), only="general"
+    )
+
+    assert [plan.kind for plan in plans] == ["general"]
+    assert sorted(targets) == ["general"]
+    assert missing == [], "Ops was not asked about, so it is not missing"
+
+
+def test_asking_for_all_of_them_is_still_the_default(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["💎 General 08/26/26", "💻 Ops 08/26/26"],
+        "Today": ["💎 General 08/25/26", "💻 Ops 08/25/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    plans, _, _ = jobs.read_rollover(config, day=date(2026, 8, 25))
+
+    assert sorted(plan.kind for plan in plans) == ["general", "ops"]

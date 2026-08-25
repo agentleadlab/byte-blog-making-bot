@@ -84,6 +84,20 @@ _KIND_PATTERNS = (
 _DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 
 
+def kind_named(text: str) -> str | None:
+    """Which of the four somebody meant, or None for all of them.
+
+    "rollover general" is how you try this on one card before trusting it with
+    the board. The words are the same ones that identify the cards, so nobody
+    has to learn a second vocabulary for it.
+    """
+    said = " ".join((text or "").split())
+    for kind, pattern in _KIND_PATTERNS:
+        if pattern.search(said):
+            return kind
+    return None
+
+
 def parse_card_title(title: str) -> tuple[str, date] | None:
     """('general', date(2026, 8, 20)) for `💎 General 08/20/26`, else None.
 

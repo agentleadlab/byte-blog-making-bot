@@ -429,7 +429,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe",
     ):
-        return MentionRequest(action=action, today=wants_today(text))
+        # The whole message travels: "rollover general" names which card, and
+        # deciding that here would mean teaching this module the board's
+        # vocabulary as well.
+        return MentionRequest(action=action, brief=text, today=wants_today(text))
 
     # No YouTube link, but a call link: file it. Checked after the blog sources
     # so that a message carrying both still writes the post.
@@ -606,7 +609,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 **SOPs**\n> Post a link in the SOP channel and I'll file it with a summary
 > @RYTE **add to sop** `<link>` — file one from anywhere else\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
 > @RYTE **trello board** — what's on the board today, and what's missing
-> @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> On its own it walks itself: 9am to Today, 6pm to Quality Check, 9pm carry over
+> @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 9am to Today, 6pm to Quality Check, 9pm carry over
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

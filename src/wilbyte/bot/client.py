@@ -663,7 +663,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "rollover":
-                await _rollover(responder, config)
+                await _rollover(responder, config, named=request.brief or "")
                 return
 
             if request.action == "findcall":
@@ -2171,7 +2171,7 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
     await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
 
 
-async def _rollover(responder: Responder, config: Config) -> None:
+async def _rollover(responder: Responder, config: Config, *, named: str = "") -> None:
     """Move today's unfinished items onto tomorrow's cards, once approved.
 
     The board is the team's day. A rollover that guesses wrong scatters
@@ -2181,9 +2181,15 @@ async def _rollover(responder: Responder, config: Config) -> None:
     """
     from .. import dailyops
 
-    await responder.send("Reading the board — nothing will move yet.")
+    only = dailyops.kind_named(named)
+    which = dailyops.CARD_KINDS.get(only, "") if only else ""
+    await responder.send(
+        f"Reading {which or 'the board'} — nothing will move yet."
+    )
     try:
-        plans, missing, targets = await asyncio.to_thread(jobs.read_rollover, config)
+        plans, missing, targets = await asyncio.to_thread(
+            partial(jobs.read_rollover, config, only=only)
+        )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
@@ -2199,10 +2205,13 @@ async def _rollover(responder: Responder, config: Config) -> None:
         await responder.send(report)
         return
 
+    if which:
+        report = f"**{which} only** — the other cards are untouched.\n{report}"
+
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Trello rollover — {movable} item(s)",
+        label=f"Trello rollover — {movable} item(s)"[:80],
         emoji="📋",
     )
     await responder.send(report, view=view)
