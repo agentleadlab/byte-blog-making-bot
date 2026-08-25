@@ -8,7 +8,7 @@ place and nothing about the board looks different afterwards.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -120,10 +120,6 @@ def test_a_card_that_is_not_an_agent_is_not_read():
 
 
 # ------------------------------------------- tomorrow's setup card
-
-
-def test_the_setup_card_is_named_for_the_day_it_covers():
-    assert agents.setup_title(date(2026, 8, 26)) == "Agent Setup Going Live Wednesday 08/26"
 
 
 def test_an_existing_setup_card_is_found_however_it_was_typed():
@@ -756,3 +752,63 @@ def test_a_card_that_names_no_leads_at_all_still_needs_a_person():
         "I can't find a lead type on this card."
     )
     assert agent.ready is False
+
+
+# ------------------------------------------- when the card isn't there yet
+
+
+def plan_for_launch(text, *, every_card, day=date(2026, 8, 25), parked=False):
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent(card(), text=text, today=day)
+    return jobs._plan_for(
+        Stub(), agent, day=day, tomorrow=day + timedelta(days=1), dated={},
+        every_card=every_card, parked=parked,
+    )
+
+
+def test_no_setup_card_for_tomorrow_parks_rather_than_making_one():
+    """The setup cards are made on their own schedule at eleven. A second one
+    made here would split a day's agents across two cards."""
+    plan = plan_for_launch(
+        "Lead Type: OTP Vets\nLive Wednesday, August 26", every_card=[]
+    )
+
+    assert plan.move_to == agents.PARKED
+    assert plan.steps == []
+    assert plan.problems == []
+
+
+def test_no_setup_card_for_a_day_further_off_parks_too():
+    plan = plan_for_launch(
+        "Lead Type: OTP Vets\nLive Friday, August 28", every_card=[]
+    )
+
+    assert plan.move_to == agents.PARKED
+
+
+def test_a_card_already_parked_is_left_exactly_where_it_is():
+    """Moving it to the list it is already in shuffles Franklin's board every
+    five minutes for no reason."""
+    plan = plan_for_launch(
+        "Lead Type: OTP Vets\nLive Friday, August 28", every_card=[], parked=True
+    )
+
+    assert plan.move_to == ""
+
+
+def test_the_moment_the_card_exists_the_parked_agent_goes_on_it():
+    """Franklin's list is a waiting room that gets read every time In Que is."""
+    plan = plan_for_launch(
+        "Lead Type: OTP Vets\nLive Wednesday, August 26",
+        every_card=[{"id": "s", "name": "Agent Setup Going Live Wednesday 08/26"}],
+        parked=True,
+    )
+
+    assert plan.move_to == agents.DONE
+    assert [step.checklist for step in plan.steps] == list(agents.SETUP_PEOPLE)
+    assert all(step.card_id == "s" for step in plan.steps)
+
+
+def test_nothing_in_a_plan_ever_asks_for_a_card_to_be_made():
+    assert not hasattr(agents.AgentPlan(agent=None, when="today"), "make_card")

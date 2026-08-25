@@ -11,8 +11,11 @@ go on exists yet:
 
     today                       -> that day's Lead Order, Ads and Ops cards
     a setup card covers the day -> that card
-    tomorrow, and none exists   -> make one, then that card
-    anything else               -> wait in Franklin's list
+    no card for the day yet     -> wait in Franklin's list
+
+Nothing here makes a card. The setup cards are made on their own schedule at
+eleven, and a second one made in the meantime would split a day's agents
+across two cards - so an agent whose card does not exist yet waits for it.
 
 Everything filed ends up in Done, at the top of it. Franklin's list means
 waiting, and it is read every time In Que is - an agent put there on Monday
@@ -511,29 +514,6 @@ _SETUP_CARD = re.compile(r"agent\s+setup", re.IGNORECASE)
 # as "Wednesday 08/26", and a boundary needs a space that isn't there.
 _SETUP_DATE = re.compile(r"(\d{1,2})/(\d{1,2})(?!\d)")
 
-# Fridays make one card for the whole weekend - "Agent Setup Going Live
-# Saturday-Monday 08/22-08/25" - because nobody is making a card on Saturday.
-FRIDAY = 4
-SATURDAY = 5
-
-
-def weekend_span(day: date) -> tuple[date, date] | None:
-    """(Saturday, Monday) when `day` is a Saturday, else None.
-
-    The Friday card covers until the next working day, so an agent going live
-    on the Sunday belongs on it just as much as one going live on the Saturday.
-    """
-    if day.weekday() != SATURDAY:
-        return None
-    return day, day + timedelta(days=2)
-
-
-def setup_title(day: date, through: date | None = None) -> str:
-    """"Agent Setup Going Live Wednesday 08/26", or a weekend's worth of one."""
-    if through is None or through == day:
-        return f"{SETUP_TITLE} {day:%A} {day:%m/%d}"
-    return f"{SETUP_TITLE} {day:%A}-{through:%A} {day:%m/%d}-{through:%m/%d}"
-
 
 def setup_covers(title: str, day: date) -> bool:
     """Whether a setup card's title covers a given day.
@@ -638,7 +618,6 @@ class AgentPlan:
     when: str
     steps: list[Step] = field(default_factory=list)
     move_to: str = ""
-    make_card: str = ""
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -669,8 +648,6 @@ def describe(plans: list[AgentPlan]) -> str:
         if plan.problems:
             lines.extend(f"  ⚠ {problem}" for problem in plan.problems)
             continue
-        if plan.make_card:
-            lines.append(f"  + make `{plan.make_card}`")
         for step in plan.steps:
             made = " (new checklist)" if step.make_checklist else ""
             lines.append(f"  → {step.card_title} · {step.checklist}{made}")

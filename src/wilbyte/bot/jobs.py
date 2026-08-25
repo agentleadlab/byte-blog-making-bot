@@ -2251,28 +2251,23 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         # exists, not on how far off the launch is. A Thursday card made on
         # Tuesday is a Thursday card, and the agents for it can go on now.
         card = rules.find_setup_card(every_card, agent.launch)
-        make = ""
         if card is None:
-            if plan.when != "tomorrow":
-                # Nothing to put them on yet. Wait in Franklin's list, and
-                # leave one already there exactly where it is rather than
-                # moving it to the list it is in.
-                plan.move_to = "" if parked else rules.PARKED
-                return plan
-            # A card made on a Friday covers the whole weekend, because
-            # nobody is making one on Saturday.
-            span = rules.weekend_span(agent.launch)
-            make = rules.setup_title(agent.launch, span[1] if span else None)
+            # Nothing to put them on yet. The setup cards are made on their
+            # own schedule at eleven; making a second one here would split a
+            # day's agents across two cards, which is worse than waiting.
+            # Wait in Franklin's list, and leave one already there exactly
+            # where it is rather than moving it to the list it is in.
+            plan.move_to = "" if parked else rules.PARKED
+            return plan
 
         problem = rules.cannot_read(agent, needs_lead_type=True)
         if problem:
             plan.problems.append(problem)
             return plan
 
-        plan.make_card = make
-        title = make or str(card.get("name", ""))
-        card_id = str(card.get("id") or "") if card else ""
-        held = client.card_checklists(card_id) if card else []
+        title = str(card.get("name", ""))
+        card_id = str(card.get("id") or "")
+        held = client.card_checklists(card_id)
         for person in rules.SETUP_PEOPLE:
             plan.steps.append(_step(
                 title, card_id, person, agent, held, exact=True,
@@ -2379,16 +2374,14 @@ def apply_agents(config: Config, plans, where) -> tuple[int, list[str]]:
 
 
 def _carry_out(client, plan, where):
-    """One agent, all of it, or an exception and the card left where it is."""
-    from .. import agents as rules
+    """One agent, all of it, or an exception and the card left where it is.
 
-    if plan.make_card:
-        made = client.create_card(where[rules.AUTOMATION], plan.make_card)
-        card_id = str(made.get("id") or "")
-        for step in plan.steps:
-            step.card_id = card_id
-            step.card_title = plan.make_card
-            step.make_checklist = True
+    Nothing here makes a card. The setup cards are made on their own schedule
+    at eleven and the daily four by Zapier - RYTE writes onto them and moves
+    them, and an agent whose card does not exist yet waits rather than getting
+    a second one made for them.
+    """
+    from .. import agents as rules
 
     for step in plan.steps:
         # Read again rather than trusting the plan: an agent filed a minute
