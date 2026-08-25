@@ -17,7 +17,7 @@ import asyncio
 import logging
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -159,6 +159,7 @@ class WilByteBot(discord.Client):
         self.publisher_task: asyncio.Task | None = None
         self.updater_task: asyncio.Task | None = None
         self.caption_task: asyncio.Task | None = None
+        self.board_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -228,6 +229,13 @@ class WilByteBot(discord.Client):
         # up where it left off.
         if self.caption_task is None or self.caption_task.done():
             self.caption_task = self.loop.create_task(caption_loop(self))
+        # The daily board walks itself only when asked to. It writes to a board
+        # four people work off every day, on a timer, whether or not anybody is
+        # looking.
+        if self.config.secrets.trello_auto and (
+            self.board_task is None or self.board_task.done()
+        ):
+            self.board_task = self.loop.create_task(board_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -820,6 +828,85 @@ PUBLISH_CHECK_SECONDS = 60
 # How often the waiting list is looked at. The wait itself is set in
 # `waiting`; this only decides how promptly a due one is noticed.
 CAPTION_CHECK_SECONDS = 300
+
+# How often the board's clock is looked at. The steps are on the hour, so a
+# check every few minutes is plenty and a missed one is caught by the next.
+BOARD_CHECK_SECONDS = 240
+
+
+async def board_loop(bot: "WilByteBot") -> None:
+    """Walk the daily board through its day: 9am, 6pm, 9pm.
+
+    In Que to Today, Today to Quality Check, then whatever is still unticked
+    onto tomorrow's cards - which Zapier has already made and left in In Que.
+    """
+    while not bot.is_closed():
+        try:
+            await _board_steps(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Board check failed; will try again shortly")
+        await asyncio.sleep(BOARD_CHECK_SECONDS)
+
+
+async def _board_steps(bot: "WilByteBot") -> None:
+    from .. import boardclock, dailyops
+
+    config = bot.config
+    today = _today(config)
+    due = dailyops.steps_due(
+        datetime.now(ZoneInfo(config.schedule.timezone)),
+        await asyncio.to_thread(boardclock.done_on, today),
+    )
+    for step in due:
+        await _board_step(bot, step, today)
+
+
+async def _board_step(bot: "WilByteBot", step: str, today) -> None:
+    """Do one step and say what happened, then never do it again today."""
+    from .. import boardclock, dailyops
+
+    responder = _board_responder(bot)
+    try:
+        if step == "rollover":
+            moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
+            note = f"📋 9pm — carried {moved} unfinished item(s) onto tomorrow's cards."
+            if flagged:
+                note += "\n" + "\n".join(
+                    f"⚠ {item.person}: {item.name[:60]} — "
+                    + ("already Done but unticked" if item.looks_done
+                       else f"carried {item.times_rolled} days, left for you")
+                    for item in flagged
+                )
+        else:
+            moved, problems = await asyncio.to_thread(jobs.walk_board, bot.config, step)
+            hour = dict((name, at) for at, name in dailyops.STEPS)[step]
+            note = (
+                f"📋 {hour % 12 or 12}{'am' if hour < 12 else 'pm'} — moved {moved} card(s) "
+                f"{dailyops.STEP_NAMES[step]}."
+            )
+    except PIPELINE_ERRORS as exc:
+        # Not marked done: the next tick tries again, which is right for a
+        # board sitting in the wrong list.
+        if responder:
+            await responder.send(embed=embeds.error(f"Board step failed\n{exc}"))
+        return
+
+    # Marked before the message, because the step happened whether or not
+    # Discord hears about it, and doing it twice is the worse mistake.
+    await asyncio.to_thread(boardclock.mark, step, today)
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    if responder and (moved or problems or step == "rollover"):
+        await responder.send(note)
+
+
+def _board_responder(bot: "WilByteBot"):
+    """Where the board's own messages go, if anywhere."""
+    configured = bot.config.secrets.discord_board_channel_id
+    channel = bot.get_channel(int(configured)) if configured else _post_channel(bot)
+    return ChannelResponder(channel) if channel is not None else None
 
 # Terminal colour codes out of a subprocess's error output. yt-dlp writes them
 # even when nothing is a terminal, and they arrive in Discord as "[0;31mERROR"
@@ -2115,7 +2202,7 @@ async def _rollover(responder: Responder, config: Config) -> None:
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Move {movable} item(s)",
+        label=f"Trello rollover — {movable} item(s)",
         emoji="📋",
     )
     await responder.send(report, view=view)

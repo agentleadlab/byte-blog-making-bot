@@ -162,6 +162,12 @@ class Secrets:
     recordings_autofile: bool = False
     # The daily board. Key and token from trello.com/power-ups/admin; the board
     # id is the short code in its URL.
+    # Off unless asked for. This one writes to a board four people work off
+    # every day, on a timer, whether or not anybody is looking - so turning it
+    # on is a deliberate act and turning it off needs no code change.
+    trello_auto: bool = False
+    # Where the board's own messages go. Falls back to the posting channel.
+    discord_board_channel_id: str | None = None
     # The SOP library: a page to hold the database, and the channel it fills
     # from. RYTE files what lands in that channel and answers questions on it.
     notion_sop_page_id: str | None = None
@@ -260,6 +266,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 trello_key=_env("TRELLO_KEY"),
                 trello_token=_env("TRELLO_TOKEN"),
                 trello_board_id=_env("TRELLO_BOARD_ID"),
+                trello_auto=(_env("TRELLO_AUTO") or "").strip().lower()
+                in ("1", "true", "yes"),
+                discord_board_channel_id=_env("DISCORD_BOARD_CHANNEL_ID"),
                 notion_token=_env("NOTION_TOKEN"),
                 notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
                 notion_cover_url=_env("NOTION_COVER_URL"),

@@ -28,6 +28,50 @@ CARD_KINDS = {
     "lead_order": "Lead Order",
 }
 
+# The day, as three moves and a carry-over. From how it is actually run:
+# "from In Que, by 9am the cards are moved to Today; Today by 6pm the cards are
+# moved to Quality Check; by 9pm all checklist items that aren't checked are
+# moved to next day's cards, which are on In Que."
+IN_QUE = "In Que"
+TODAY = "Today"
+QUALITY_CHECK = "Quality Check"
+
+# (hour, what happens). Local time on the board's own clock - the team's, not
+# the server's.
+STEPS = (
+    (9, "to_today"),
+    (18, "to_quality_check"),
+    (21, "rollover"),
+)
+
+STEP_NAMES = {
+    "to_today": f"{IN_QUE} → {TODAY}",
+    "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
+    "rollover": "carry the unfinished items to tomorrow",
+}
+
+# Where each move goes. The rollover moves no cards, so it is not here.
+STEP_LISTS = {
+    "to_today": (IN_QUE, TODAY),
+    "to_quality_check": (TODAY, QUALITY_CHECK),
+}
+
+
+def steps_due(now, done_today: set[str]) -> list[str]:
+    """Which of the day's steps should have happened by now and haven't.
+
+    Catches up rather than skipping. RYTE is not always awake at nine, and a
+    board still sitting in In Que at eleven is worse than one moved late - the
+    team's cards are where they should be either way, just later.
+
+    Ordered, because the 6pm move takes cards the 9am move put there.
+    """
+    return [
+        step for hour, step in STEPS
+        if now.hour >= hour and step not in done_today
+    ]
+
+
 _KIND_PATTERNS = (
     ("lead_order", re.compile(r"\blead\s*order\b", re.IGNORECASE)),
     ("general", re.compile(r"\bgeneral\b", re.IGNORECASE)),

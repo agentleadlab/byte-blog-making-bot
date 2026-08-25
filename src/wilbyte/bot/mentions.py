@@ -95,9 +95,12 @@ ACTION_WORDS = {
     "reshuffle": "rearrange",
     "relay": "rearrange",
     "compact": "rearrange",
-    # The daily Trello board, and what the 9pm rollover would move.
+    # The daily Trello board. Everything that touches it is said with the word
+    # "trello" in front - `trello board`, `trello rollover` - so the board's
+    # commands read as one set rather than as loose words that happen to exist.
+    # The bare words still work, because breaking what already worked to
+    # rename it would be its own small betrayal.
     "board": "board",
-    "trello": "board",
     "rollover": "rollover",
     "carryover": "rollover",
     # Find out what GHL's update endpoint actually accepts, on a throwaway
@@ -333,6 +336,17 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     action = _first_action_word(_without_links(lowered))
 
     # `cover` takes free text, so handle it before the link/number extraction.
+    # "trello" names the board and then says what to do with it. On its own it
+    # means "show me the board", which is what somebody typing just that wants.
+    if _opens_with(text, ("trello",)):
+        rest = _strip_word(text, ("trello",))
+        after = _first_action_word(rest.lower())
+        return MentionRequest(
+            action=after if after in ("board", "rollover") else "board",
+            brief=rest,
+            today=wants_today(rest),
+        )
+
     if action == "cover":
         return _parse_cover(text)
 
@@ -591,8 +605,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 
 **SOPs**\n> Post a link in the SOP channel and I'll file it with a summary
 > @RYTE **add to sop** `<link>` — file one from anywhere else\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
-> @RYTE **board** — what's on Trello today, and what's missing
-> @RYTE **rollover** — carry tonight's unfinished items onto tomorrow's cards
+> @RYTE **trello board** — what's on the board today, and what's missing
+> @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> On its own it walks itself: 9am to Today, 6pm to Quality Check, 9pm carry over
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

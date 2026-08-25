@@ -1912,6 +1912,60 @@ def board_today(config: Config, *, day=None) -> list[str]:
         client.close()
 
 
+def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
+    """Move today's four cards from one list to the next. (moved, problems).
+
+    Only the four dated cards, found by their titles - `Agent Setup Going Live
+    Thursday` sits in the same lists and is not part of the routine. And only
+    the ones actually in the list they are supposed to be leaving: a card
+    somebody already moved by hand is where they wanted it.
+    """
+    from .. import dailyops, trello
+
+    day = day or date.today()
+    from_name, to_name = dailyops.STEP_LISTS[step]
+    client = open_trello(config)
+    moved, problems = 0, []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        source = trello.find_list(lists, from_name)
+        target = trello.find_list(lists, to_name)
+        if source is None or target is None:
+            missing = from_name if source is None else to_name
+            return 0, [f"The board has no list called {missing!r}"]
+
+        target_id = str(target.get("id") or "")
+        for card in client.list_cards(str(source.get("id") or "")):
+            found = dailyops.parse_card_title(str(card.get("name", "")))
+            if not found or found[1] != day:
+                continue
+            try:
+                client.move_card(str(card.get("id") or ""), target_id)
+            except Exception as exc:
+                problems.append(f"{card.get('name')} — {_short(exc, 160)}")
+                continue
+            moved += 1
+    finally:
+        client.close()
+    return moved, problems
+
+
+def run_rollover(config: Config, *, day=None) -> tuple[int, list[str], list]:
+    """Read the board and carry the items over. (moved, problems, flagged).
+
+    The unattended version of what the button does, and the same two things
+    stay put: an item whose linked card already reads Done, and one carried
+    three nights running. Those come back to be said out loud rather than
+    moved while nobody is watching.
+    """
+    plans, missing, targets = read_rollover(config, day=day)
+    moved, problems = apply_rollover(config, plans, targets, day=day)
+    if missing:
+        problems.append(f"No card for tomorrow yet: {', '.join(missing)}")
+    flagged = [item for plan in plans for item in plan.needs_a_look]
+    return moved, problems, flagged
+
+
 def rollover_plan(config: Config, *, day=None) -> str:
     """What the 9pm rollover would move, as words. Writes nothing."""
     from .. import dailyops

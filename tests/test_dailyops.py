@@ -576,3 +576,219 @@ def test_only_the_items_that_moved_are_aged(monkeypatch, config, tmp_path):
     counted = carried.history(store)
     assert dailyops.item_key("general", "Jay", "This one is fine") in counted
     assert dailyops.item_key("general", "Nicole", "This one breaks") not in counted
+
+
+# --------------------------------------------- walking the board through its day
+
+# From how it is actually run: In Que to Today by 9am, Today to Quality Check by
+# 6pm, and by 9pm whatever is still unticked goes onto tomorrow's cards - which
+# Zapier has already made and left in In Que.
+
+
+def at_hour(hour, minute=0):
+    from datetime import datetime as _dt
+
+    return _dt(2026, 8, 24, hour, minute)
+
+
+@pytest.mark.parametrize(
+    "hour,expected",
+    [
+        (8, []),
+        (9, ["to_today"]),
+        (17, ["to_today"]),
+        (18, ["to_today", "to_quality_check"]),
+        (21, ["to_today", "to_quality_check", "rollover"]),
+        (23, ["to_today", "to_quality_check", "rollover"]),
+    ],
+)
+def test_the_day_unfolds_in_order(hour, expected):
+    assert dailyops.steps_due(at_hour(hour), set()) == expected
+
+
+def test_a_step_already_done_is_not_done_again():
+    """Moving cards that already moved puts them somewhere nobody expects."""
+    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check"}) == ["rollover"]
+    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check", "rollover"}) == []
+
+
+def test_starting_late_catches_up_rather_than_skipping():
+    """RYTE is restarted often enough that "it was running at nine" is not
+    something to rely on. A board moved late beats one left in In Que."""
+    assert dailyops.steps_due(at_hour(11), set()) == ["to_today"]
+    assert dailyops.steps_due(at_hour(22, 30), set()) == [
+        "to_today", "to_quality_check", "rollover",
+    ]
+
+
+def test_the_clock_remembers_across_a_restart(tmp_path):
+    from datetime import date as _date
+
+    from wilbyte import boardclock
+
+    store = tmp_path / "clock.json"
+    today = _date(2026, 8, 24)
+
+    boardclock.mark("to_today", today, store)
+
+    assert boardclock.done_on(today, store) == {"to_today"}
+    assert dailyops.steps_due(at_hour(9), boardclock.done_on(today, store)) == []
+
+
+def test_yesterdays_steps_do_not_count_as_todays(tmp_path):
+    from datetime import date as _date
+
+    from wilbyte import boardclock
+
+    store = tmp_path / "clock.json"
+    boardclock.mark("to_today", _date(2026, 8, 23), store)
+
+    assert boardclock.done_on(_date(2026, 8, 24), store) == set()
+
+
+def test_a_corrupt_clock_is_a_fresh_day_rather_than_a_crash(tmp_path):
+    from datetime import date as _date
+
+    from wilbyte import boardclock
+
+    store = tmp_path / "clock.json"
+    store.write_text("{ not json")
+
+    assert boardclock.done_on(_date(2026, 8, 24), store) == set()
+
+
+class FakeBoard:
+    """A board with named lists and cards in them."""
+
+    def __init__(self, lists):
+        self.lists = lists
+        self.moves = []
+
+    def board_lists(self, board_id):
+        return [{"id": f"id-{name}", "name": name} for name in self.lists]
+
+    def list_cards(self, list_id):
+        return self.lists[list_id.removeprefix("id-")]
+
+    def move_card(self, card_id, list_id):
+        self.moves.append((card_id, list_id))
+        return {}
+
+    def close(self):
+        pass
+
+
+def test_the_nine_am_move_takes_todays_four_cards(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [
+            {"id": "c1", "name": "💎 General 08/24/26"},
+            {"id": "c2", "name": "💻 Ops 08/24/26"},
+            {"id": "c3", "name": "💎 General 08/25/26"},
+        ],
+        "Today": [],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_today", day=_date(2026, 8, 24))
+
+    assert moved == 2 and problems == []
+    assert board.moves == [("c1", "id-Today"), ("c2", "id-Today")]
+
+
+def test_a_card_that_is_not_one_of_the_four_is_left_alone(monkeypatch, config):
+    """`Agent Setup Going Live Thursday 08/24` sits in the same lists."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [{"id": "c9", "name": "Agent Setup Going Live Thursday 08/24"}],
+        "Today": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, _ = jobs.walk_board(config, "to_today", day=_date(2026, 8, 24))
+
+    assert moved == 0 and board.moves == []
+
+
+def test_a_card_somebody_already_moved_by_hand_stays_where_they_put_it(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [],
+        "Today": [{"id": "c1", "name": "💎 General 08/24/26"}],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, _ = jobs.walk_board(config, "to_today", day=_date(2026, 8, 24))
+
+    assert moved == 0
+
+
+def test_a_list_the_board_does_not_have_is_named(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: FakeBoard({"In Que": []}))
+
+    moved, problems = jobs.walk_board(config, "to_today", day=_date(2026, 8, 24))
+
+    assert moved == 0
+    assert "'Today'" in problems[0]
+
+
+def test_the_six_pm_move_goes_the_other_way(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Today": [{"id": "c1", "name": "📊 Ads 08/24/26"}],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 24))
+
+    assert board.moves == [("c1", "id-Quality Check")]
+
+
+def test_the_trello_word_names_the_board_and_then_the_task():
+    """Every board command is said with "trello" in front, so they read as one
+    set rather than as loose words that happen to exist."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("trello rollover").action == "rollover"
+    assert mentions.parse("trello board").action == "board"
+    assert mentions.parse("trello carryover").action == "rollover"
+
+
+def test_trello_on_its_own_shows_the_board():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("trello").action == "board"
+    assert mentions.parse("trello what's on today").action == "board"
+
+
+def test_the_bare_words_still_work():
+    """Renaming something by breaking what already worked is its own small
+    betrayal."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("rollover").action == "rollover"
+    assert mentions.parse("board").action == "board"
+
+
+def test_trello_in_the_middle_of_a_brief_is_not_a_command():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("write an sms about our trello board").action == "write"
