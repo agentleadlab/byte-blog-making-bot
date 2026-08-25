@@ -687,8 +687,8 @@ class FakeBoard:
     def list_cards(self, list_id):
         return self.lists[list_id.removeprefix("id-")]
 
-    def move_card(self, card_id, list_id):
-        self.moves.append((card_id, list_id))
+    def move_card(self, card_id, list_id, *, position="top"):
+        self.moves.append((card_id, list_id, position))
         return {}
 
     def close(self):
@@ -718,7 +718,9 @@ def test_the_whole_list_moves_not_just_the_four(monkeypatch, config):
     moved, problems = jobs.walk_board(config, "to_today", day=_date(2026, 8, 24))
 
     assert moved == 4 and problems == []
-    assert [card for card, _ in board.moves] == ["c1", "c2", "c3", "c4"]
+    # Sent last-first, each to the top, so they land in the order they left in.
+    assert [card for card, _, _ in board.moves] == ["c4", "c3", "c2", "c1"]
+    assert {pos for _, _, pos in board.moves} == {"top"}
 
 
 def test_a_card_dated_for_another_day_is_labelled_before_it_moves(monkeypatch, config):
@@ -785,7 +787,7 @@ def test_the_six_pm_move_goes_the_other_way(monkeypatch, config):
 
     jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 24))
 
-    assert board.moves == [("c1", "id-Quality Check")]
+    assert board.moves == [("c1", "id-Quality Check", "top")]
 
 
 def test_the_trello_word_names_the_board_and_then_the_task():
@@ -1253,4 +1255,41 @@ def test_the_done_move_carries_todays_cards_out_of_quality_check(monkeypatch, co
     moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
 
     assert moved == 1 and problems == []
-    assert board.moves == [("c1", "id-Done")]
+    assert board.moves == [("c1", "id-Done", "top")], "the bottom of Done is under 49 cards"
+
+
+def test_a_moved_card_lands_at_the_top(monkeypatch, config):
+    """Trello drops it at the bottom otherwise, and the bottom of Done is
+    under forty-nine other cards."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [{"id": "c1", "name": "💎 General 08/25/26"}],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    (_, _, position), = board.moves
+    assert position == "top"
+
+
+def test_the_order_they_were_in_is_the_order_they_arrive_in(monkeypatch, config):
+    """Four cards each sent to the top would land upside down. Sent last
+    first, they don't."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [
+            {"id": "first", "name": "Lead Order 08/25/26"},
+            {"id": "second", "name": "💎 General 08/25/26"},
+            {"id": "third", "name": "💻 Ops 08/25/26"},
+        ],
+        "Today": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_today", day=date(2026, 8, 25))
+
+    assert [card for card, _, _ in board.moves] == ["third", "second", "first"]

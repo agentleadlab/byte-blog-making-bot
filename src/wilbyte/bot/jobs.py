@@ -1991,7 +1991,10 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
             return 0, [f"The board has no list called {missing!r}"]
 
         target_id = str(target.get("id") or "")
-        for card in client.list_cards(str(source.get("id") or "")):
+        # Backwards, because each one goes to the top: move the last card
+        # first and the first card ends up above it. The list arrives in the
+        # order it left in rather than reversed.
+        for card in reversed(client.list_cards(str(source.get("id") or ""))):
             try:
                 client.move_card(str(card.get("id") or ""), target_id)
             except Exception as exc:

@@ -90,8 +90,16 @@ class TrelloClient:
 
     # ------------------------------------------------------------- writing
 
-    def move_card(self, card_id: str, list_id: str) -> dict:
-        return self._request("PUT", f"/cards/{card_id}", params={"idList": list_id})
+    def move_card(self, card_id: str, list_id: str, *, position: str = "top") -> dict:
+        """Move a card to another list, at the top of it by default.
+
+        Trello drops a moved card at the bottom unless told otherwise, and the
+        bottom of Done is under forty-nine other cards. `pos` takes "top",
+        "bottom", or a number.
+        """
+        return self._request(
+            "PUT", f"/cards/{card_id}", params={"idList": list_id, "pos": position}
+        )
 
     def create_checklist(self, card_id: str, name: str) -> dict:
         return self._request("POST", "/checklists", params={"idCard": card_id, "name": name})
