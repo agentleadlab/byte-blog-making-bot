@@ -1934,6 +1934,10 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
 
     The same read the move itself does, so what gets shown and what gets moved
     cannot disagree.
+
+    A card dated for another day is labelled rather than left out. The whole
+    list moves, so the only protection against moving one a day early is
+    seeing it named before pressing the button.
     """
     from .. import dailyops, trello
 
@@ -1950,21 +1954,27 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
 
         found = []
         for card in client.list_cards(str(source.get("id") or "")):
-            named = dailyops.parse_card_title(str(card.get("name", "")))
-            if named and named[1] == day:
-                found.append(str(card.get("name", "")))
+            title = str(card.get("name", ""))
+            named = dailyops.parse_card_title(title)
+            if named and named[1] != day:
+                title += f"  ← dated {named[1]:%a %b %d}, not today"
+            found.append(title)
         return found, []
     finally:
         client.close()
 
 
 def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
-    """Move today's four cards from one list to the next. (moved, problems).
+    """Move everything in one list to the next. (moved, problems).
 
-    Only the four dated cards, found by their titles - `Agent Setup Going Live
-    Thursday` sits in the same lists and is not part of the routine. And only
-    the ones actually in the list they are supposed to be leaving: a card
-    somebody already moved by hand is where they wanted it.
+    The whole list, not only the four dated cards. The lists *are* the day -
+    whatever is sitting in Today at six o'clock is what went through today,
+    and leaving the rest behind means somebody still has to walk the board by
+    hand afterwards, which is the thing this replaces.
+
+    What is in the list is all it touches: a card somebody already dragged
+    across is where they wanted it, and nothing goes looking for cards
+    elsewhere on the board.
     """
     from .. import dailyops, trello
 
@@ -1982,9 +1992,6 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
 
         target_id = str(target.get("id") or "")
         for card in client.list_cards(str(source.get("id") or "")):
-            found = dailyops.parse_card_title(str(card.get("name", "")))
-            if not found or found[1] != day:
-                continue
             try:
                 client.move_card(str(card.get("id") or ""), target_id)
             except Exception as exc:
