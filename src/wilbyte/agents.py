@@ -296,25 +296,62 @@ _SETUP_CARD = re.compile(r"agent\s+setup", re.IGNORECASE)
 # as "Wednesday 08/26", and a boundary needs a space that isn't there.
 _SETUP_DATE = re.compile(r"(\d{1,2})/(\d{1,2})(?!\d)")
 
+# Fridays make one card for the whole weekend - "Agent Setup Going Live
+# Saturday-Monday 08/22-08/25" - because nobody is making a card on Saturday.
+FRIDAY = 4
+SATURDAY = 5
 
-def setup_title(day: date) -> str:
-    """"Agent Setup Going Live Wednesday 08/26"."""
-    return f"{SETUP_TITLE} {day:%A} {day:%m/%d}"
+
+def weekend_span(day: date) -> tuple[date, date] | None:
+    """(Saturday, Monday) when `day` is a Saturday, else None.
+
+    The Friday card covers until the next working day, so an agent going live
+    on the Sunday belongs on it just as much as one going live on the Saturday.
+    """
+    if day.weekday() != SATURDAY:
+        return None
+    return day, day + timedelta(days=2)
+
+
+def setup_title(day: date, through: date | None = None) -> str:
+    """"Agent Setup Going Live Wednesday 08/26", or a weekend's worth of one."""
+    if through is None or through == day:
+        return f"{SETUP_TITLE} {day:%A} {day:%m/%d}"
+    return f"{SETUP_TITLE} {day:%A}-{through:%A} {day:%m/%d}-{through:%m/%d}"
+
+
+def setup_covers(title: str, day: date) -> bool:
+    """Whether a setup card's title covers a given day.
+
+    One date means one day. Two mean a span, and everything between them is
+    on it - which is what the Friday card is for.
+    """
+    found = _SETUP_DATE.findall(title or "")
+    if not found:
+        return False
+
+    wanted = (day.month, day.day)
+    if len(found) == 1:
+        return (int(found[0][0]), int(found[0][1])) == wanted
+
+    start = (int(found[0][0]), int(found[0][1]))
+    end = (int(found[-1][0]), int(found[-1][1]))
+    if start <= end:
+        return start <= wanted <= end
+    # A span across the turn of the year: 12/31-01/02 is three days, not none.
+    return wanted >= start or wanted <= end
 
 
 def find_setup_card(cards: list[dict], day: date) -> dict | None:
-    """Tomorrow's setup card, wherever on the board it has got to.
+    """The setup card covering a day, wherever on the board it has got to.
 
-    Found by month and day rather than by list: they are made in Automation
-    Department and do not always stay there, and a second one made because
-    the first was moved is worse than looking everywhere.
+    Found by the dates in its title rather than by list: they are made in
+    Automation Department and do not always stay there, and a second one made
+    because the first was moved is worse than looking everywhere.
     """
     for card in cards or []:
         title = str(card.get("name", ""))
-        if not _SETUP_CARD.search(title):
-            continue
-        found = _SETUP_DATE.search(title)
-        if found and (int(found.group(1)), int(found.group(2))) == (day.month, day.day):
+        if _SETUP_CARD.search(title) and setup_covers(title, day):
             return card
     return None
 

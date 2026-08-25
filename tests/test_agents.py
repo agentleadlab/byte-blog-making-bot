@@ -374,3 +374,85 @@ def test_a_parked_card_still_waiting_is_not_moved_to_where_it_already_is():
 
     assert already.move_to == ""
     assert fresh.move_to == agents.PARKED
+
+
+# --------------------------------------------- the card that covers a weekend
+
+# Made every Friday, one card for the whole weekend: "Agent Setup Going Live
+# Saturday-Monday 08/22-08/25". Reading only the first date on it would mean an
+# agent going live on the Sunday never found it.
+
+
+WEEKEND = "Agent Setup Going Live Saturday-Monday 08/22-08/25"
+
+
+@pytest.mark.parametrize("day", [22, 23, 24, 25])
+def test_every_day_in_the_span_is_covered(day):
+    assert agents.setup_covers(WEEKEND, date(2026, 8, day)) is True
+
+
+@pytest.mark.parametrize("day", [21, 26])
+def test_a_day_outside_the_span_is_not(day):
+    assert agents.setup_covers(WEEKEND, date(2026, 8, day)) is False
+
+
+def test_the_weekend_card_is_found_for_the_sunday(config=None):
+    cards = [{"id": "w", "name": WEEKEND}, {"id": "o", "name": "💎 General 08/23/26"}]
+
+    assert agents.find_setup_card(cards, date(2026, 8, 23))["id"] == "w"
+
+
+def test_a_single_day_card_still_covers_only_that_day():
+    single = "Agent Setup Going Live Wednesday 08/26"
+
+    assert agents.setup_covers(single, date(2026, 8, 26)) is True
+    assert agents.setup_covers(single, date(2026, 8, 27)) is False
+
+
+def test_a_span_across_the_turn_of_the_year_is_three_days_not_none():
+    span = "Agent Setup Going Live Wednesday-Friday 12/31-01/02"
+
+    assert agents.setup_covers(span, date(2026, 12, 31)) is True
+    assert agents.setup_covers(span, date(2027, 1, 1)) is True
+    assert agents.setup_covers(span, date(2027, 1, 2)) is True
+    assert agents.setup_covers(span, date(2026, 6, 15)) is False
+
+
+def test_a_card_with_no_date_covers_nothing():
+    assert agents.setup_covers("Agent Setup Going Live", date(2026, 8, 26)) is False
+
+
+# ------------------------------------------------ making one, if it isn't there
+
+
+def test_a_saturday_gets_the_weekend_shape():
+    """Nobody makes a card on Saturday, so Friday's covers until Monday."""
+    saturday = date(2026, 8, 29)
+
+    span = agents.weekend_span(saturday)
+
+    assert span == (saturday, date(2026, 8, 31))
+    assert agents.setup_title(*span) == (
+        "Agent Setup Going Live Saturday-Monday 08/29-08/31"
+    )
+
+
+@pytest.mark.parametrize("day", [24, 25, 26, 27, 28, 30])
+def test_every_other_day_is_a_day(day):
+    assert agents.weekend_span(date(2026, 8, day)) is None
+
+
+def test_a_weekday_card_is_named_for_its_one_day():
+    assert agents.setup_title(date(2026, 8, 26)) == (
+        "Agent Setup Going Live Wednesday 08/26"
+    )
+
+
+def test_one_made_for_the_weekend_is_then_found_by_all_of_it():
+    """What it makes on Friday has to be what it looks for on Sunday."""
+    saturday = date(2026, 8, 29)
+    made = agents.setup_title(*agents.weekend_span(saturday))
+    cards = [{"id": "w", "name": made}]
+
+    for day in (29, 30, 31):
+        assert agents.find_setup_card(cards, date(2026, 8, day))["id"] == "w"

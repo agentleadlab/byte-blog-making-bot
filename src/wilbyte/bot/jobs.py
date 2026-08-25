@@ -2123,7 +2123,10 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
 
     if plan.when == "tomorrow":
         card = rules.find_setup_card(every_card, tomorrow)
-        title = rules.setup_title(tomorrow)
+        # A card made on a Friday covers the whole weekend, because nobody is
+        # making one on Saturday.
+        span = rules.weekend_span(tomorrow)
+        title = rules.setup_title(tomorrow, span[1] if span else None)
         if card is None:
             plan.make_card = title
         else:
