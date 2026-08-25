@@ -1893,7 +1893,10 @@ def board_today(config: Config, *, day=None) -> list[str]:
             cards = client.list_cards(str(board_list.get("id") or ""))
             dated = dailyops.daily_cards(cards)
             named = [
-                f"{dailyops.CARD_KINDS.get(kind, kind)} {when:%m/%d}"
+                # With the year. Without it a card dated 08/26/25 reads as
+                # "08/26" and looks like tomorrow's, right up until the
+                # rollover says there is no card for tomorrow.
+                f"{dailyops.CARD_KINDS.get(kind, kind)} {when:%m/%d/%y}"
                 for (kind, when) in sorted(dated, key=lambda pair: (pair[1], pair[0]))
             ]
             label = str(board_list.get("name") or "(unnamed)")
@@ -2018,8 +2021,10 @@ def read_rollover(config: Config, *, day=None):
             )
             targets[kind] = (target_id, target_lists)
 
+        # Named with a reason. "No card for tomorrow" is true and useless when
+        # the card is sitting right there with the wrong year on it.
         missing = [
-            dailyops.CARD_KINDS.get(kind, kind)
+            f"{dailyops.CARD_KINDS.get(kind, kind)} ({dailyops.why_missing(cards, kind, tomorrow)})"
             for kind in today_cards
             if kind not in tomorrow_cards
         ]

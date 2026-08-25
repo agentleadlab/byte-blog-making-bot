@@ -127,6 +127,30 @@ def cards_for(cards: list[dict], day: date) -> dict[str, dict]:
     return {kind: card for (kind, when), card in daily_cards(cards).items() if when == day}
 
 
+def why_missing(cards: list[dict], kind: str, wanted: date) -> str:
+    """What to say about a card that should exist for a day and doesn't.
+
+    Usually because the date on it is not the date it looks like. A card
+    titled `General 08/26/25` reads as tomorrow's at a glance and sorts as
+    last year's, so "there is no card for tomorrow" is true and useless -
+    the card is right there with a typo in it.
+    """
+    dates = sorted(
+        when for (found, when) in daily_cards(cards) if found == kind
+    )
+    same_look = [
+        when for when in dates
+        if (when.month, when.day) == (wanted.month, wanted.day) and when != wanted
+    ]
+    if same_look:
+        return f"there's one dated {same_look[0]:%m/%d/%y} — the year on it is wrong"
+
+    ahead = [when for when in dates if when > wanted]
+    if ahead:
+        return f"the next one I can see is {ahead[0]:%a %b %d}"
+    return "nothing dated after today"
+
+
 def missing_kinds(cards: list[dict], day: date) -> list[str]:
     """Which of the four didn't get generated - Lead Order has gone missing before."""
     present = cards_for(cards, day)

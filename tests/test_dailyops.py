@@ -792,3 +792,58 @@ def test_trello_in_the_middle_of_a_brief_is_not_a_command():
     from wilbyte.bot import mentions
 
     assert mentions.parse("write an sms about our trello board").action == "write"
+
+
+# ------------------------------- a card that is there and does not look like it
+
+# `trello board` showed all four of tomorrow's cards in In Que. The rollover
+# said there was no card for tomorrow. Both read the same board - so the date on
+# those cards was not the date they appeared to have, and the display was hiding
+# it by printing the month and day without the year.
+
+
+def test_the_year_is_shown_so_a_wrong_one_is_visible(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({"In Que": [{"id": "c1", "name": "💎 General 08/26/25"}]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    (line,) = [
+        row for row in jobs.board_today(config, day=_date(2026, 8, 25))
+        if "In Que" in row
+    ]
+
+    assert "08/26/25" in line, "without the year this reads as tomorrow's card"
+
+
+def test_a_card_with_the_wrong_year_is_named_as_such():
+    """It is right there. "No card for tomorrow" is true and useless."""
+    cards = [{"name": "💎 General 08/25/26"}, {"name": "💎 General 08/26/25"}]
+
+    said = dailyops.why_missing(cards, "general", date(2026, 8, 26))
+
+    assert "08/26/25" in said and "year" in said
+
+
+def test_a_kind_with_nothing_ahead_says_so():
+    cards = [{"name": "💻 Ops 08/25/26"}]
+
+    assert dailyops.why_missing(cards, "ops", date(2026, 8, 26)) == "nothing dated after today"
+
+
+def test_a_card_further_out_is_pointed_at():
+    cards = [{"name": "📊 Ads 08/28/26"}]
+
+    said = dailyops.why_missing(cards, "ads", date(2026, 8, 26))
+
+    assert "Fri Aug 28" in said
+
+
+def test_the_right_card_existing_is_not_a_complaint():
+    """Only asked about kinds that are actually missing, but the helper must
+    not invent a problem when the date matches exactly."""
+    cards = [{"name": "📊 Ads 08/26/26"}]
+
+    assert "year on it is wrong" not in dailyops.why_missing(cards, "ads", date(2026, 8, 26))
