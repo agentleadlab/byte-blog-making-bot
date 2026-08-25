@@ -87,6 +87,9 @@ class Agent:
     launch: date | None = None
     # The tier said elsewhere on the card, when the Lead Type line didn't say.
     tier: str | None = None
+    # Everything written on the card, kept so the lead type can be worked out
+    # against the checklists that actually exist rather than in the abstract.
+    said: str = ""
     note: str = ""
 
     @property
@@ -195,6 +198,65 @@ def match_checklist(
     """
     found = candidates(lead_type, existing, tier=tier)
     return found[0] if len(found) == 1 else None
+
+
+# "$1050/WEEK- UPRISE PHX PLUS" is a price and then a lead type. The price is
+# not part of what the leads are called.
+_PRICE_PREFIX = re.compile(r"^\$\s*[\d,.]+\s*(?:/\s*\w+)?\s*[-–—:]*\s*")
+
+
+def tidy_lead_type(phrase: str) -> str:
+    """A lead type with the money and the punctuation taken off the front."""
+    return _PRICE_PREFIX.sub("", " ".join((phrase or "").split())).strip(" -–—:")
+
+
+def named_lead_types(text: str) -> list[str]:
+    """Every phrase on the card that names a kind of leads.
+
+    The Lead Type line first, then each line of the rest. A card says it more
+    than once and not always in the same words: "Lead Type: VETS" up top and
+    "$1050/WEEK- UPRISE PHX PLUS" further down are both somebody saying what
+    was bought.
+    """
+    said = []
+    field = find_lead_type(text)
+    if field:
+        said.append(field)
+    for line in (text or "").splitlines():
+        line = " ".join(line.split())
+        if line and line != field and family_of(line):
+            said.append(tidy_lead_type(line))
+    return said
+
+
+def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, list[str]]:
+    """(the phrase to use, the checklist it lands on, what else could fit).
+
+    A card naming its tier outright beats one that leaves it to be worked out:
+    "Lead Type: VETS" says which leads and "UPRISE PHX PLUS" says which leads
+    *and* which tier, so the second one is the one to act on - as long as the
+    board actually has that checklist.
+
+    Two phrases naming different checklists, both with a tier, is the card
+    disagreeing with itself. Both come back and a person is asked.
+    """
+    hint = tier_of(text)
+    found = []
+    for phrase in named_lead_types(text):
+        landed = match_checklist(phrase, existing, tier=hint)
+        if landed:
+            found.append((bool(tier_of(phrase)), phrase, landed))
+
+    if not found:
+        field = find_lead_type(text)
+        return field, None, candidates(field, existing, tier=hint)
+
+    tiered = [item for item in found if item[0]]
+    picked = tiered or found
+    landings = {item[2] for item in picked}
+    if len(landings) > 1:
+        return picked[0][1], None, sorted(landings)
+    return picked[0][1], picked[0][2], []
 
 
 def tier_hint(text: str) -> str | None:
@@ -313,6 +375,7 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         lead_type=find_lead_type(text),
         launch=find_launch(text, today=today),
         tier=tier_hint(text),
+        said=text or "",
     )
     return agent
 

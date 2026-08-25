@@ -2161,19 +2161,18 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         title = str(card.get("name", ""))
         if people is None:
             names = [str(c.get("name") or "") for c in held]
-            named = rules.match_checklist(agent.lead_type, names, tier=agent.tier)
-            if named is None:
-                could = rules.candidates(agent.lead_type, names, tier=agent.tier)
-                if len(could) > 1:
-                    # Two would fit and nothing on the card says which. Picking
-                    # one is the guess that puts leads on the wrong order.
-                    plan.problems.append(
-                        f"“{agent.lead_type}” could be {' or '.join(could)} — "
-                        f"the card doesn't say which."
-                    )
-                    continue
+            said, landed, could = rules.best_lead_type(agent.said, names)
+            if landed is None and len(could) > 1:
+                # Two would fit and nothing on the card says which. Picking
+                # one is the guess that puts leads on the wrong order.
+                plan.problems.append(
+                    f"“{said or agent.lead_type}” could be {' or '.join(could)} — "
+                    f"the card doesn't say which."
+                )
+                continue
             plan.steps.append(_step(
-                title, card_id, named or agent.lead_type, agent, held, exact=bool(named),
+                title, card_id, landed or said or agent.lead_type,
+                agent, held, exact=bool(landed), label=said or agent.lead_type,
             ))
         else:
             for person in people:
@@ -2183,8 +2182,13 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
     return plan
 
 
-def _step(card_title, card_id, checklist, agent, held, *, exact):
-    """One line onto one checklist, knowing whether that checklist exists."""
+def _step(card_title, card_id, checklist, agent, held, *, exact, label=""):
+    """One line onto one checklist, knowing whether that checklist exists.
+
+    `label` is what the line says the leads are, which is not always the Lead
+    Type field: a card whose body names the tier outright is filed by what the
+    body said, and the line should say the same thing.
+    """
     from .. import agents as rules
 
     names = {" ".join(str(c.get("name") or "").split()).casefold() for c in held or []}
@@ -2192,7 +2196,7 @@ def _step(card_title, card_id, checklist, agent, held, *, exact):
         card_title=card_title,
         card_id=card_id,
         checklist=checklist,
-        item=rules.checklist_item(agent.url, agent.lead_type),
+        item=rules.checklist_item(agent.url, label or agent.lead_type),
         make_checklist=" ".join(checklist.split()).casefold() not in names,
     )
 

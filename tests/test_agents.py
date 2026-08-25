@@ -695,3 +695,75 @@ def test_the_lead_type_field_still_decides_which_leads():
 
 def test_an_agent_reads_its_tier_off_the_whole_card():
     assert read(SEBASTIAN).tier == "standard"
+
+
+# ------------------- when the body names something better than the field does
+
+# "Lead Type: VETS" up top, "$1050/WEEK- UPRISE PHX PLUS" further down. Both
+# are somebody saying what was bought, and the second says which tier as well -
+# so if the board has a PHX PLUS, that is where he goes.
+
+
+def test_the_body_wins_when_it_names_a_tier_and_the_field_does_not():
+    said, landed, could = agents.best_lead_type(TAYLER, BOARD)
+
+    assert landed == "PHNX Plus"
+    assert said == "UPRISE PHX PLUS"
+    assert could == []
+
+
+def test_the_price_is_not_part_of_what_the_leads_are_called():
+    assert agents.tidy_lead_type("$1050/WEEK- UPRISE PHX PLUS") == "UPRISE PHX PLUS"
+    assert agents.tidy_lead_type("Phoenix Standard") == "Phoenix Standard"
+
+
+def test_without_a_phx_plus_on_the_board_he_is_what_the_field_says():
+    """"He should be PHX PLUS if there is a PHX PLUS." If there isn't, the
+    field stands."""
+    board = ["OTP VET Plus", "OTP IUL Plus", "OTP FEX"]
+
+    said, landed, _ = agents.best_lead_type(TAYLER, board)
+
+    assert landed == "OTP VET Plus"
+
+
+def test_the_body_settles_a_tier_within_the_same_family():
+    said, landed, _ = agents.best_lead_type(SEBASTIAN, BOARD)
+
+    assert landed == "PHNX Standard"
+    assert said == "Phoenix Standard"
+
+
+def test_a_field_that_already_names_its_tier_is_left_alone():
+    """Gustin's field says everything. The body agreeing changes nothing."""
+    said, landed, _ = agents.best_lead_type(REAL, BOARD)
+
+    assert landed == "OTP IUL Plus"
+    assert said == "Text Verified IUL Plus"
+
+
+def test_a_card_disagreeing_with_itself_asks_a_person():
+    """Two phrases, both naming a tier, landing somewhere different. That is
+    not a thing to pick between."""
+    card = "Lead Type: OTP IUL Plus\n\nUPRISE PHX PLUS\n\nlive fri, aug 28"
+
+    said, landed, could = agents.best_lead_type(card, BOARD)
+
+    assert landed is None
+    assert could == ["OTP IUL Plus", "PHNX Plus"]
+
+
+def test_the_line_says_what_it_was_filed_as():
+    """Filed under PHX PLUS, the line should say PHX PLUS - not the field it
+    overrode."""
+    from wilbyte.bot import jobs
+
+    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
+    held = [{"id": "l", "name": name, "checkItems": []} for name in BOARD]
+    said, landed, _ = agents.best_lead_type(agent.said, BOARD)
+
+    step = jobs._step("Lead Order", "c", landed, agent, held, exact=True, label=said)
+
+    assert step.item.endswith("UPRISE PHX PLUS")
+    assert step.checklist == "PHNX Plus"
+    assert step.make_checklist is False
