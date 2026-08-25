@@ -723,9 +723,9 @@ def test_the_whole_list_moves_not_just_the_four(monkeypatch, config):
     assert {pos for _, _, pos in board.moves} == {"top"}
 
 
-def test_a_card_dated_for_another_day_is_labelled_before_it_moves(monkeypatch, config):
-    """The whole list moves, so seeing it named is the only thing between a
-    card and being pulled forward a day early."""
+def test_tomorrows_cards_are_left_where_they_are(monkeypatch, config):
+    """In Que holds tomorrow's four from the evening before. Taking them
+    across at nine in the morning starts the day a day early."""
     from datetime import date as _date
 
     from wilbyte.bot import jobs
@@ -740,9 +740,54 @@ def test_a_card_dated_for_another_day_is_labelled_before_it_moves(monkeypatch, c
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
     cards, _ = jobs.moves_waiting(config, "to_today", day=_date(2026, 8, 25))
+    moved, _ = jobs.walk_board(config, "to_today", day=_date(2026, 8, 25))
 
-    assert "dated Wed Aug 26, not today" in cards[0]
-    assert "not today" not in cards[1]
+    assert cards == ["💻 Ops 08/25/26"]
+    assert moved == 1 and [c for c, _, _ in board.moves] == ["c2"]
+
+
+def test_a_new_agents_card_is_not_walked(monkeypatch, config):
+    """It is in In Que waiting to be filed, not waiting to be walked. Sweeping
+    it into Today loses it out of the only place anything looks for it."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [
+            {"id": "a", "name": "NEW AGENT- Benjamin Zuniga"},
+            {"id": "b", "name": "New Agent - Vicente Mejia"},
+            {"id": "c", "name": "💎 General 08/25/26"},
+        ],
+        "Today": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, _ = jobs.walk_board(config, "to_today", day=_date(2026, 8, 25))
+
+    assert moved == 1
+    assert [c for c, _, _ in board.moves] == ["c"]
+
+
+def test_everything_else_still_goes(monkeypatch, config):
+    """The Agent Setup card, the odd untitled one - the lists are the day."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Today": [
+            {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26"},
+            {"id": "h", "name": "Hyros - UTM Code"},
+            {"id": "g", "name": "💎 General 08/25/26"},
+        ],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, _ = jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 25))
+
+    assert moved == 3
 
 
 def test_a_card_somebody_already_moved_by_hand_stays_where_they_put_it(monkeypatch, config):
@@ -1225,8 +1270,7 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
 
     cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
 
-    assert cards[0] == "📊 Ads 08/25/26"
-    assert "dated Mon Aug 24, not today" in cards[1]
+    assert cards == ["📊 Ads 08/25/26"], "yesterday's card is not today's move"
     assert problems == []
     assert board.moves == [], "reading only"
 

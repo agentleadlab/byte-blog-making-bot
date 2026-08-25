@@ -1933,10 +1933,6 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
 
     The same read the move itself does, so what gets shown and what gets moved
     cannot disagree.
-
-    A card dated for another day is labelled rather than left out. The whole
-    list moves, so the only protection against moving one a day early is
-    seeing it named before pressing the button.
     """
     from .. import dailyops, trello
 
@@ -1951,25 +1947,42 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
         if trello.find_list(lists, to_name) is None:
             return [], [f"The board has no list called {to_name!r}"]
 
-        found = []
-        for card in client.list_cards(str(source.get("id") or "")):
-            title = str(card.get("name", ""))
-            named = dailyops.parse_card_title(title)
-            if named and named[1] != day:
-                title += f"  ← dated {named[1]:%a %b %d}, not today"
-            found.append(title)
+        found = [
+            str(card.get("name", ""))
+            for card in client.list_cards(str(source.get("id") or ""))
+            if walks_today(card, day)
+        ]
         return found, []
     finally:
         client.close()
 
 
+def walks_today(card: dict, day: date) -> bool:
+    """Whether the daily walk should move this card at all.
+
+    Everything in the list except two kinds. A new agent's card is in In Que
+    waiting to be filed, not waiting to be walked - it leaves by being filed,
+    and sweeping it into Today loses it out of the only place anything looks
+    for it. And a card dated for another day is not today's: In Que holds
+    tomorrow's four from the evening before, and taking them across at nine in
+    the morning starts the day a day early.
+    """
+    from .. import agents, dailyops
+
+    title = str(card.get("name", ""))
+    if agents.is_agent_card(title):
+        return False
+    named = dailyops.parse_card_title(title)
+    return named is None or named[1] == day
+
+
 def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     """Move everything in one list to the next. (moved, problems).
 
-    The whole list, not only the four dated cards. The lists *are* the day -
-    whatever is sitting in Today at six o'clock is what went through today,
-    and leaving the rest behind means somebody still has to walk the board by
-    hand afterwards, which is the thing this replaces.
+    The whole list rather than only the four dated cards - the lists *are* the
+    day, and leaving the rest behind means somebody still walks the board by
+    hand afterwards, which is the thing this replaces. Two exceptions, both in
+    `walks_today`: a new agent's card, and a card dated for another day.
 
     What is in the list is all it touches: a card somebody already dragged
     across is where they wanted it, and nothing goes looking for cards
@@ -1994,6 +2007,8 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
         # first and the first card ends up above it. The list arrives in the
         # order it left in rather than reversed.
         for card in reversed(client.list_cards(str(source.get("id") or ""))):
+            if not walks_today(card, day):
+                continue
             try:
                 client.move_card(str(card.get("id") or ""), target_id)
             except Exception as exc:
