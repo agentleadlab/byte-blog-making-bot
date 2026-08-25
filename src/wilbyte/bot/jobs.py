@@ -2059,6 +2059,11 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     and Trello renders the name and badge from it. So the raw `name` goes
     across untouched: copying the rendered label produces dead text, and the
     badge stops updating.
+
+    An item already on tomorrow's card is not added again. Running this twice
+    in an evening is somebody checking their work, and the cost of not
+    guarding it is sixty-two items becoming a hundred and twenty-four - which
+    nobody would unpick by hand, they would just delete the card.
     """
     from .. import carried, dailyops
 
@@ -2077,10 +2082,20 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
                 " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
                 for c in target_lists or []
             }
+            already = {
+                (
+                    " ".join(str(c.get("name") or "").split()).casefold(),
+                    " ".join(str(existing.get("name") or "").split()),
+                )
+                for c in target_lists or []
+                for existing in c.get("checkItems") or []
+            }
             for item in plan.carried:
                 if item.stuck:
                     continue
                 key = " ".join(item.person.split()).casefold()
+                if (key, " ".join(item.name.split())) in already:
+                    continue
                 try:
                     if key not in by_person:
                         made = client.create_checklist(target_id, item.person)

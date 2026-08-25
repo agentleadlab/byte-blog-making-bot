@@ -908,3 +908,75 @@ def test_the_setup_card_is_not_mistaken_for_one_of_the_four(monkeypatch, config)
     """`Agent Setup Going Live Wednesday 08/26` sits in Today and is not part
     of the routine."""
     assert dailyops.parse_card_title("Agent Setup Going Live Wednesday 08/26") is None
+
+
+# ------------------------------------- running it twice must not double the card
+
+# 62 items became 124 would not be unpicked by hand. Somebody would delete the
+# card and rebuild it, and whatever was ticked on it goes with it.
+
+
+def test_an_item_already_on_tomorrows_card_is_not_added_again(monkeypatch, config, tmp_path):
+    plan = rollover_of(
+        ("Nicole", "Chase the Thompson docs", "incomplete"),
+        ("Nicole", "Call the Hendersons", "incomplete"),
+    )
+    targets = {"general": ("card-tomorrow", [{
+        "id": "l1",
+        "name": "Nicole",
+        "checkItems": [{"name": "Chase the Thompson docs", "state": "incomplete"}],
+    }])}
+
+    board, moved, problems = apply_with(
+        monkeypatch, config, plan, targets, store=tmp_path / "c.json"
+    )
+
+    assert moved == 1 and problems == []
+    assert board.items_added == [("l1", "Call the Hendersons")]
+
+
+def test_the_same_wording_on_a_different_persons_list_still_goes_over():
+    """Two people can have the same task. Matching on the text alone would
+    silently drop one of them."""
+    from wilbyte.bot import jobs
+
+    plan = rollover_of(
+        ("Nicole", "Send the weekly numbers", "incomplete"),
+        ("Jay", "Send the weekly numbers", "incomplete"),
+    )
+    targets = {"general": ("card-tomorrow", [
+        {"id": "l1", "name": "Nicole",
+         "checkItems": [{"name": "Send the weekly numbers", "state": "incomplete"}]},
+        {"id": "l2", "name": "Jay", "checkItems": []},
+    ])}
+
+    board = FakeTrello()
+    import wilbyte.bot.jobs as module
+
+    original = module.open_trello
+    module.open_trello = lambda cfg: board
+    try:
+        from wilbyte.config import load_config
+
+        moved, _ = jobs.apply_rollover(load_config(), [plan], targets, day=date(2026, 8, 24))
+    finally:
+        module.open_trello = original
+
+    assert moved == 1
+    assert board.items_added == [("l2", "Send the weekly numbers")]
+
+
+def test_a_ticked_copy_on_tomorrows_card_also_counts_as_already_there(
+    monkeypatch, config, tmp_path
+):
+    """Somebody did it early. Adding it again unticked undoes that."""
+    plan = rollover_of(("Nicole", "Chase the Thompson docs", "incomplete"))
+    targets = {"general": ("card-tomorrow", [{
+        "id": "l1",
+        "name": "Nicole",
+        "checkItems": [{"name": "Chase the Thompson docs", "state": "complete"}],
+    }])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert moved == 0 and board.items_added == []
