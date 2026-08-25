@@ -2160,9 +2160,18 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         held = client.card_checklists(card_id)
         title = str(card.get("name", ""))
         if people is None:
-            named = rules.match_checklist(agent.lead_type, [
-                str(c.get("name") or "") for c in held
-            ])
+            names = [str(c.get("name") or "") for c in held]
+            named = rules.match_checklist(agent.lead_type, names, tier=agent.tier)
+            if named is None:
+                could = rules.candidates(agent.lead_type, names, tier=agent.tier)
+                if len(could) > 1:
+                    # Two would fit and nothing on the card says which. Picking
+                    # one is the guess that puts leads on the wrong order.
+                    plan.problems.append(
+                        f"“{agent.lead_type}” could be {' or '.join(could)} — "
+                        f"the card doesn't say which."
+                    )
+                    continue
             plan.steps.append(_step(
                 title, card_id, named or agent.lead_type, agent, held, exact=bool(named),
             ))

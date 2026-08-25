@@ -575,3 +575,123 @@ def test_the_agent_card_ends_up_at_the_top_of_done(monkeypatch, config):
     jobs.apply_agents(config, [plan], {agents.DONE: "done-list"})
 
     assert moved == [(plan.agent.card_id, "done-list", "top")]
+
+
+# ------------------------------------- the ways the real cards actually read
+
+# Three cards in Franklin's list said "no launch date" and all three had one.
+# They just don't use the word launch.
+
+SEBASTIAN = """First Name: Sebastian
+Last Name: Espinoza
+Phone: (847) 775-9758
+Email: seb.esp6@gmail.com
+Package Selected: Text Verified
+Lead Type: Phoenix Campaign
+States: all states except for FL and CA.
+
+Veteran
+
+Uprise
+
+Phoenix Standard
+$350
+
+live fri, aug 28
+"""
+
+TAYLER = """First Name: Tayler
+Last Name: Collins
+Phone: +1904-814-3494
+Email: taylercollins949@yahoo.com
+Package Selected: Apex Client
+Lead Type: VETS
+Target Areas for Marketing: All states besides CA
+
+Live fri, aug 28
+
+$1050/WEEK- UPRISE PHX PLUS
+
+RINGY INTEGRATION
+"""
+
+
+@pytest.mark.parametrize("said", [SEBASTIAN, TAYLER])
+def test_live_fri_aug_28_is_a_launch_date(said):
+    """No word "launch" anywhere on either card."""
+    assert agents.find_launch(said, today=TUESDAY) == date(2026, 8, 28)
+
+
+@pytest.mark.parametrize(
+    "said,when",
+    [
+        ("live fri, aug 28", date(2026, 8, 28)),
+        ("Live fri, aug 28", date(2026, 8, 28)),
+        ("going live Thursday, August 27", date(2026, 8, 27)),
+        ("goes live 8/27", date(2026, 8, 27)),
+        ("go live wed", date(2026, 8, 26)),
+    ],
+)
+def test_the_other_ways_of_saying_when(said, when):
+    assert agents.find_launch(said, today=TUESDAY) == when
+
+
+def test_launch_date_still_wins_over_a_bare_live():
+    """"Live transfer leads" is a product. The sentence that says launch date
+    is the one that means it."""
+    said = "Live transfer leads ordered 8/20.\nLaunch date is Thursday, August 27."
+
+    assert agents.find_launch(said, today=TUESDAY) == date(2026, 8, 27)
+
+
+# ------------------------------------------------------------ phoenix leads
+
+
+@pytest.mark.parametrize(
+    "written,shape",
+    [
+        ("Phoenix Campaign", ("phnx", None, frozenset())),
+        ("Phoenix Standard", ("phnx", "standard", frozenset())),
+        ("UPRISE PHX PLUS", ("phnx", "plus", frozenset())),
+        ("PHNX Plus", ("phnx", "plus", frozenset())),
+        ("phnx standard", ("phnx", "standard", frozenset())),
+    ],
+)
+def test_phoenix_however_it_is_abbreviated(written, shape):
+    assert agents.shape_of(written) == shape
+
+
+BOARD = ["PHNX Plus", "PHNX Standard", "OTP IUL Plus", "OTP VET Plus"]
+
+
+def test_a_lead_type_with_no_tier_is_not_guessed_at():
+    """Phoenix leads, and the board has two kinds. Picking one is the guess
+    that puts somebody's leads on the wrong order."""
+    assert agents.match_checklist("Phoenix Campaign", BOARD) is None
+    assert agents.candidates("Phoenix Campaign", BOARD) == ["PHNX Plus", "PHNX Standard"]
+
+
+def test_the_rest_of_the_card_settles_it():
+    """"Lead Type: Phoenix Campaign" with "Phoenix Standard / $350" three
+    lines below is one card saying one thing twice."""
+    tier = agents.tier_hint(SEBASTIAN)
+
+    assert tier == "standard"
+    assert agents.match_checklist("Phoenix Campaign", BOARD, tier=tier) == "PHNX Standard"
+
+
+def test_a_card_that_names_its_tier_needs_no_help():
+    assert agents.match_checklist("UPRISE PHX PLUS", BOARD) == "PHNX Plus"
+
+
+def test_the_lead_type_field_still_decides_which_leads():
+    """Tayler's field says VETS and the body mentions PHX PLUS. The field is
+    the field; the body only settles a tier it didn't state."""
+    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
+
+    assert agent.lead_type == "VETS"
+    assert agents.match_checklist(agent.lead_type, BOARD, tier=agent.tier) == "OTP VET Plus"
+
+
+def test_an_agent_reads_its_tier_off_the_whole_card():
+    assert read(SEBASTIAN).tier == "standard"

@@ -59,6 +59,7 @@ FAMILIES = (
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
     ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
+    ("phnx", re.compile(r"\bpho?e?nix\b|\bphnx\b|\bphx\b", re.IGNORECASE)),
 )
 
 # Variants that sit alongside the plain one and are not it. "OTP Spanish IUL"
@@ -84,6 +85,8 @@ class Agent:
     url: str
     lead_type: str = ""
     launch: date | None = None
+    # The tier said elsewhere on the card, when the Lead Type line didn't say.
+    tier: str | None = None
     note: str = ""
 
     @property
@@ -150,7 +153,31 @@ def shape_of(text: str) -> tuple:
     return (family_of(text), tier_of(text), qualifiers_of(text))
 
 
-def match_checklist(lead_type: str, existing: list[str]) -> str | None:
+def candidates(lead_type: str, existing: list[str], *, tier: str | None = None) -> list[str]:
+    """Every checklist these leads could belong on.
+
+    More than one means the lead type didn't say enough. "Phoenix Campaign"
+    is Phoenix leads and says nothing about Standard or Plus, and a board with
+    both is a coin toss over somebody's money.
+    """
+    family, said, marks = shape_of(lead_type)
+    tier = said or tier
+    if family is None:
+        return []
+    found = []
+    for name in existing or []:
+        theirs = shape_of(name)
+        if theirs[0] != family or theirs[2] != marks:
+            continue
+        if tier and theirs[1] and tier != theirs[1]:
+            continue
+        found.append(name)
+    return found
+
+
+def match_checklist(
+    lead_type: str, existing: list[str], *, tier: str | None = None
+) -> str | None:
     """The checklist this lead type belongs on, out of the ones that exist.
 
     Matched by what the leads *are* rather than by the words used, so the card
@@ -161,18 +188,23 @@ def match_checklist(lead_type: str, existing: list[str]) -> str | None:
     nothing about Standard or Plus, and refusing to match it to "OTP Spanish
     IUL" over a word neither of them disputes would make a second checklist
     for the same leads.
+
+    None when two could fit, as well as when none does. Picking one of two is
+    guessing, and this is the guess that puts somebody's leads on the wrong
+    order.
     """
-    family, tier, marks = shape_of(lead_type)
-    if family is None:
-        return None
-    for name in existing or []:
-        theirs = shape_of(name)
-        if theirs[0] != family or theirs[2] != marks:
-            continue
-        if tier and theirs[1] and tier != theirs[1]:
-            continue
-        return name
-    return None
+    found = candidates(lead_type, existing, tier=tier)
+    return found[0] if len(found) == 1 else None
+
+
+def tier_hint(text: str) -> str | None:
+    """The tier said anywhere on the card, for when the Lead Type line doesn't.
+
+    "Lead Type: Phoenix Campaign" with "Phoenix Standard / $350" three lines
+    below it is one card saying one thing twice, and the second half is the
+    half with the answer in it.
+    """
+    return tier_of(text)
 
 
 def checklist_item(url: str, lead_type: str) -> str:
@@ -187,10 +219,17 @@ _MONTHS = {
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+# "live fri, aug 28" is how it is actually written about half the time.
+_SHORT_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
-# The sentence that says when. Cut at the sentence end so a second date later
-# in the description is not read as the launch.
-_LAUNCH_SENTENCE = re.compile(r"[^.\n]*\blaunch(?:ing|es)?\b[^.\n]*", re.IGNORECASE)
+# The ways people say when somebody goes live, strongest first. "Launch date"
+# is unmistakable; a bare "live" is not - "Live transfer leads" is a product -
+# so it is looked at last and only counts if a date is sitting next to it.
+_WHEN_SAID = (
+    re.compile(r"[^.\n]*\blaunch\s*date\b[^.\n]*", re.IGNORECASE),
+    re.compile(r"[^.\n]*\b(?:launch(?:ing|es|ed)?|go(?:es|ing)?\s+live)\b[^.\n]*", re.IGNORECASE),
+    re.compile(r"[^.\n]*\blive\b[^.\n]*", re.IGNORECASE),
+)
 
 _MONTH_DAY = re.compile(
     r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?\s+(\d{1,2})\b", re.IGNORECASE
@@ -205,10 +244,11 @@ def find_launch(text: str, *, today: date) -> date | None:
     day it was written and disagree when it isn't, and the calendar date is
     the one that stays true.
     """
-    for sentence in _LAUNCH_SENTENCE.findall(text or ""):
-        found = _date_in(sentence, today=today)
-        if found:
-            return found
+    for pattern in _WHEN_SAID:
+        for sentence in pattern.findall(text or ""):
+            found = _date_in(sentence, today=today)
+            if found:
+                return found
     return None
 
 
@@ -230,7 +270,7 @@ def _date_in(sentence: str, *, today: date) -> date | None:
         return today + timedelta(days=1)
 
     for index, name in enumerate(_WEEKDAYS):
-        if re.search(rf"\b{name}\b", said):
+        if re.search(rf"\b{name}\b|\b{_SHORT_DAYS[index]}\b", said):
             ahead = (index - today.weekday()) % 7
             return today + timedelta(days=ahead)
     return None
@@ -272,6 +312,7 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         url=str(card.get("shortUrl") or card.get("url") or ""),
         lead_type=find_lead_type(text),
         launch=find_launch(text, today=today),
+        tier=tier_hint(text),
     )
     return agent
 
