@@ -1913,13 +1913,25 @@ def board_today(config: Config, *, day=None) -> list[str]:
 
 
 def rollover_plan(config: Config, *, day=None) -> str:
-    """What the 9pm rollover *would* move, without moving anything.
-
-    Read-only on purpose. The board is the team's day, and a rollover that
-    guesses wrong scatters somebody's unfinished work across the wrong
-    checklists - which is worse than having done it by hand.
-    """
+    """What the 9pm rollover would move, as words. Writes nothing."""
     from .. import dailyops
+
+    plans, missing, _ = read_rollover(config, day=day)
+    report = dailyops.summarise(plans)
+    if missing:
+        report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
+    return report
+
+
+def read_rollover(config: Config, *, day=None):
+    """(plans, cards missing for tomorrow, where each item goes).
+
+    Read-only, and the same read the write uses - so what gets shown and what
+    gets done cannot drift apart. The third value carries the target card ids
+    and checklists, because working them out twice is how a rollover ends up
+    writing to a card nobody was shown.
+    """
+    from .. import carried, dailyops
 
     day = day or date.today()
     tomorrow = dailyops.next_day(day)
@@ -1931,33 +1943,89 @@ def rollover_plan(config: Config, *, day=None) -> str:
         ]
         today_cards = dailyops.cards_for(cards, day)
         tomorrow_cards = dailyops.cards_for(cards, tomorrow)
+        history = carried.history()
 
-        plans = []
+        plans, targets = [], {}
         for kind, card in today_cards.items():
             target = tomorrow_cards.get(kind)
             if target is None:
                 continue
+            target_id = str(target.get("id") or "")
+            target_lists = client.card_checklists(target_id)
             plans.append(
                 dailyops.plan_rollover(
                     kind,
                     source_card=card,
                     source_checklists=client.card_checklists(str(card.get("id") or "")),
                     target_card=target,
-                    target_checklists=client.card_checklists(str(target.get("id") or "")),
+                    target_checklists=target_lists,
+                    history=history,
                 )
             )
+            targets[kind] = (target_id, target_lists)
 
         missing = [
             dailyops.CARD_KINDS.get(kind, kind)
             for kind in today_cards
             if kind not in tomorrow_cards
         ]
-        report = dailyops.summarise(plans)
-        if missing:
-            report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
-        return report
+        return plans, missing, targets
     finally:
         client.close()
+
+
+def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, list[str]]:
+    """Write the carried items onto tomorrow's cards. Returns (moved, problems).
+
+    Only what the plan called `carried` - an item whose linked card already
+    reads Done, or one that has been carried three days running, is left where
+    it is and raised instead. Those are the two cases where moving it silently
+    is the wrong answer, and they are the reason this asks before it writes.
+
+    A checklist item that links to another card is stored as that card's URL,
+    and Trello renders the name and badge from it. So the raw `name` goes
+    across untouched: copying the rendered label produces dead text, and the
+    badge stops updating.
+    """
+    from .. import carried, dailyops
+
+    day = day or date.today()
+    client = open_trello(config)
+    moved, problems = 0, []
+    counted: list[str] = []
+    try:
+        for plan in plans:
+            target_id, target_lists = targets.get(plan.kind, ("", []))
+            if not target_id:
+                problems.append(f"{dailyops.CARD_KINDS.get(plan.kind, plan.kind)}: no card for tomorrow")
+                continue
+
+            by_person = {
+                " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
+                for c in target_lists or []
+            }
+            for item in plan.carried:
+                if item.stuck:
+                    continue
+                key = " ".join(item.person.split()).casefold()
+                try:
+                    if key not in by_person:
+                        made = client.create_checklist(target_id, item.person)
+                        by_person[key] = str(made.get("id") or "")
+                    client.add_check_item(by_person[key], item.name)
+                except Exception as exc:
+                    problems.append(f"{item.person} — {_short(exc, 160)}")
+                    continue
+                moved += 1
+                counted.append(dailyops.item_key(plan.kind, item.person, item.name))
+    finally:
+        client.close()
+
+    # Counted after the writes, so a run that failed halfway doesn't age items
+    # it never moved.
+    if counted:
+        carried.record(counted, day)
+    return moved, problems
 
 
 # ---------------------------------------------------------- the SOP library

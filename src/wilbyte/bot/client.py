@@ -655,9 +655,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "rollover":
-                await responder.send("Reading the board — nothing will move.")
-                report = await asyncio.to_thread(jobs.rollover_plan, config)
-                await responder.send(report)
+                await _rollover(responder, config)
                 return
 
             if request.action == "findcall":
@@ -2084,6 +2082,65 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
 
     sops.remember(getattr(message, "id", ""))
     await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
+
+
+async def _rollover(responder: Responder, config: Config) -> None:
+    """Move today's unfinished items onto tomorrow's cards, once approved.
+
+    The board is the team's day. A rollover that guesses wrong scatters
+    somebody's unfinished work across the wrong checklists, and unlike a wrong
+    blog date nobody sees it happen - the item just quietly isn't where they
+    left it. So the plan is shown and the button is the decision.
+    """
+    from .. import dailyops
+
+    await responder.send("Reading the board — nothing will move yet.")
+    try:
+        plans, missing, targets = await asyncio.to_thread(jobs.read_rollover, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    report = dailyops.summarise(plans)
+    if missing:
+        report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
+
+    movable = sum(
+        1 for plan in plans for item in plan.carried if not item.stuck
+    )
+    if not movable:
+        await responder.send(report)
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Move {movable} item(s)",
+        emoji="📋",
+    )
+    await responder.send(report, view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        moved, problems = await asyncio.to_thread(
+            jobs.apply_rollover, config, plans, targets
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
+        return
+
+    note = f"📋 Carried {moved} item(s) onto tomorrow's cards."
+    flagged = [item for plan in plans for item in plan.needs_a_look]
+    if flagged:
+        note += (
+            f"\n{len(flagged)} left where they are for you to look at — "
+            f"they're in the list above."
+        )
+    if problems:
+        note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
+    await responder.send(note)
 
 
 async def _probe_update(responder: Responder, config: Config) -> None:

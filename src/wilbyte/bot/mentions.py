@@ -592,7 +592,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 **SOPs**\n> Post a link in the SOP channel and I'll file it with a summary
 > @RYTE **add to sop** `<link>` — file one from anywhere else\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
 > @RYTE **board** — what's on Trello today, and what's missing
-> @RYTE **rollover** — what tonight's carry-over would move (shows only)
+> @RYTE **rollover** — carry tonight's unfinished items onto tomorrow's cards
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

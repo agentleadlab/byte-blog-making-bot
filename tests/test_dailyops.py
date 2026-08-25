@@ -296,3 +296,283 @@ def test_the_next_day_includes_weekends():
     friday = date(2026, 8, 21)
 
     assert dailyops.next_day(friday) == date(2026, 8, 22)
+
+
+# --------------------------------------- counting the days an item is carried
+
+# `plan_rollover` already flags an item rolled three nights running, but nothing
+# was counting, so the flag never fired. A task could walk from Monday to Friday
+# without anybody noticing it had - which is exactly what doing it by hand
+# would have caught.
+
+
+def test_an_item_carried_again_counts_up(tmp_path):
+    from datetime import date as _date
+
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    key = dailyops.item_key("general", "Nicole", "Chase the Thompson docs")
+
+    carried.record([key], _date(2026, 8, 24), store)
+    carried.record([key], _date(2026, 8, 25), store)
+
+    assert carried.history(store)[key] == 2
+
+
+def test_rolling_twice_in_one_evening_is_not_two_days(tmp_path):
+    """Running it again is somebody checking their work, not the item ageing."""
+    from datetime import date as _date
+
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    key = dailyops.item_key("ops", "Jay", "Fix the lead sheet")
+
+    carried.record([key], _date(2026, 8, 24), store)
+    carried.record([key], _date(2026, 8, 24), store)
+
+    assert carried.history(store)[key] == 1
+
+
+def test_a_count_of_three_makes_an_item_stuck():
+    item = dailyops.Leftover(person="Nicole", name="Chase the docs", times_rolled=3)
+
+    assert item.stuck is True
+    assert dailyops.Leftover(person="Nicole", name="x", times_rolled=2).stuck is False
+
+
+def test_a_stuck_item_is_raised_rather_than_carried_again(tmp_path):
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    key = dailyops.item_key("general", "Nicole", "Chase the Thompson docs")
+    carried.save({key: {"count": 4, "last": "2026-08-24"}}, store)
+
+    plan = dailyops.plan_rollover(
+        "general",
+        source_card={"name": "💎 General 08/24/26"},
+        source_checklists=[{
+            "name": "Nicole",
+            "checkItems": [{"name": "Chase the Thompson docs", "state": "incomplete"}],
+        }],
+        target_card={"name": "💎 General 08/25/26"},
+        target_checklists=[],
+        history=carried.history(store),
+    )
+
+    (flagged,) = plan.needs_a_look
+    assert flagged.stuck is True
+    assert "rolled forward 4 days" in dailyops.summarise([plan])
+
+
+def test_a_finished_item_stops_being_counted(tmp_path):
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    key = dailyops.item_key("ops", "Jay", "Fix the lead sheet")
+    carried.save({key: {"count": 2, "last": "2026-08-24"}}, store)
+
+    carried.clear([key], store)
+
+    assert carried.history(store) == {}
+
+
+def test_an_item_nobody_has_seen_for_a_fortnight_is_forgotten(tmp_path):
+    from datetime import date as _date
+
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    old = dailyops.item_key("ads", "Teresa", "Old thing")
+    carried.save({old: {"count": 3, "last": "2026-08-01"}}, store)
+
+    carried.record([dailyops.item_key("ads", "Teresa", "New thing")], _date(2026, 8, 24), store)
+
+    assert old not in carried.history(store)
+
+
+def test_a_corrupt_count_file_is_no_counts_rather_than_a_crash(tmp_path):
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    store.write_text("{ not json")
+
+    assert carried.history(store) == {}
+
+
+def test_rewording_an_item_starts_its_count_again(tmp_path):
+    """The safe direction to be wrong in: a renamed item looks new, which
+    means it gets carried rather than flagged."""
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    carried.save(
+        {dailyops.item_key("general", "Nicole", "Chase docs"): {"count": 4, "last": "2026-08-24"}},
+        store,
+    )
+
+    assert dailyops.item_key("general", "Nicole", "Chase the docs") not in carried.history(store)
+
+
+# ------------------------------------------------ actually writing the board
+
+
+class FakeTrello:
+    """Records what a rollover would send, and can be told to refuse."""
+
+    def __init__(self, *, fail_on=None):
+        self.checklists_made = []
+        self.items_added = []
+        self.fail_on = fail_on
+
+    def create_checklist(self, card_id, name):
+        self.checklists_made.append((card_id, name))
+        return {"id": f"list-{name}"}
+
+    def add_check_item(self, checklist_id, name, *, checked=False):
+        if self.fail_on and self.fail_on in name:
+            raise RuntimeError("Trello said no")
+        self.items_added.append((checklist_id, name))
+        return {}
+
+    def close(self):
+        pass
+
+
+def rollover_of(*items, target_lists=(), history=None):
+    """One plan carrying the (person, name, state) items given."""
+    return dailyops.plan_rollover(
+        "general",
+        source_card={"name": "💎 General 08/24/26"},
+        source_checklists=[
+            {"name": person, "checkItems": [{"name": name, "state": state}]}
+            for person, name, state in items
+        ],
+        target_card={"name": "💎 General 08/25/26"},
+        target_checklists=list(target_lists),
+        history=history or {},
+    )
+
+
+def apply_with(monkeypatch, config, plan, targets, *, fail_on=None, store=None):
+    from datetime import date as _date
+
+    from wilbyte import carried
+    from wilbyte.bot import jobs
+
+    board = FakeTrello(fail_on=fail_on)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    if store is not None:
+        monkeypatch.setattr(carried, "CARRIED_PATH", store)
+    moved, problems = jobs.apply_rollover(config, [plan], targets, day=_date(2026, 8, 24))
+    return board, moved, problems
+
+
+def test_an_unticked_item_lands_on_the_same_persons_checklist(monkeypatch, config, tmp_path):
+    plan = rollover_of(("Nicole", "Chase the Thompson docs", "incomplete"))
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"}])}
+
+    board, moved, problems = apply_with(
+        monkeypatch, config, plan, targets, store=tmp_path / "c.json"
+    )
+
+    assert moved == 1 and problems == []
+    assert board.items_added == [("l1", "Chase the Thompson docs")]
+    assert board.checklists_made == [], "Nicole's list was already there"
+
+
+def test_a_missing_checklist_is_made_before_the_item_goes_on_it(monkeypatch, config, tmp_path):
+    """The generated cards arrive with no checklists at all, so this is the
+    normal case rather than an error."""
+    plan = rollover_of(("Jay", "Fix the lead sheet", "incomplete"))
+    targets = {"general": ("card-tomorrow", [])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert board.checklists_made == [("card-tomorrow", "Jay")]
+    assert board.items_added == [("list-Jay", "Fix the lead sheet")]
+    assert moved == 1
+
+
+def test_a_ticked_item_is_left_behind(monkeypatch, config, tmp_path):
+    plan = rollover_of(("Nicole", "Already done", "complete"))
+    targets = {"general": ("card-tomorrow", [])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert board.items_added == [] and moved == 0
+
+
+def test_a_card_link_travels_as_the_url_not_the_label(monkeypatch, config, tmp_path):
+    """Trello renders the name and badge from the URL. Copying the rendered
+    label produces dead text and the badge stops updating."""
+    link = "https://trello.com/c/AbCd1234/57-set-up-the-thompson-campaign"
+    plan = rollover_of(("Teresa", link, "incomplete"))
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Teresa"}])}
+
+    board, _, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert board.items_added == [("l1", link)]
+
+
+def test_an_item_carried_three_days_is_not_carried_a_fourth(monkeypatch, config, tmp_path):
+    """It is raised instead. Moving it again silently is the failure that doing
+    this by hand would have caught."""
+    key = dailyops.item_key("general", "Nicole", "Chase the docs")
+    plan = rollover_of(("Nicole", "Chase the docs", "incomplete"), history={key: 3})
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"}])}
+
+    board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
+
+    assert board.items_added == [] and moved == 0
+    assert plan.needs_a_look[0].stuck is True
+
+
+def test_one_item_failing_does_not_stop_the_others(monkeypatch, config, tmp_path):
+    plan = rollover_of(
+        ("Nicole", "This one breaks", "incomplete"),
+        ("Jay", "This one is fine", "incomplete"),
+    )
+    targets = {
+        "general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"}, {"id": "l2", "name": "Jay"}])
+    }
+
+    board, moved, problems = apply_with(
+        monkeypatch, config, plan, targets, fail_on="breaks", store=tmp_path / "c.json"
+    )
+
+    assert moved == 1
+    assert board.items_added == [("l2", "This one is fine")]
+    assert len(problems) == 1 and "Nicole" in problems[0]
+
+
+def test_no_card_for_tomorrow_is_said_rather_than_guessed_at(monkeypatch, config, tmp_path):
+    plan = rollover_of(("Nicole", "Chase the docs", "incomplete"))
+
+    board, moved, problems = apply_with(
+        monkeypatch, config, plan, {}, store=tmp_path / "c.json"
+    )
+
+    assert moved == 0 and board.items_added == []
+    assert "no card for tomorrow" in problems[0]
+
+
+def test_only_the_items_that_moved_are_aged(monkeypatch, config, tmp_path):
+    """A run that failed halfway must not age items it never moved."""
+    from wilbyte import carried
+
+    store = tmp_path / "c.json"
+    plan = rollover_of(
+        ("Nicole", "This one breaks", "incomplete"),
+        ("Jay", "This one is fine", "incomplete"),
+    )
+    targets = {
+        "general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"}, {"id": "l2", "name": "Jay"}])
+    }
+
+    apply_with(monkeypatch, config, plan, targets, fail_on="breaks", store=store)
+
+    counted = carried.history(store)
+    assert dailyops.item_key("general", "Jay", "This one is fine") in counted
+    assert dailyops.item_key("general", "Nicole", "This one breaks") not in counted
