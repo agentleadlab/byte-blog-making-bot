@@ -37,6 +37,23 @@ PARKED = "Franklin (Admin)"
 AUTOMATION = "AUTOMATION DEPARTMENT"
 DONE = "Done"
 
+# Where the self-setup agents go on the Lead Order card. Only these lead types
+# land there - every item on the real checklist is one of them: "40 Basic FB
+# Spanish IUL", "30 Spanish Instant/Basic IUL Leads", "FB Index Universal
+# Life". Anything else goes on the checklist for its own lead type.
+OWN_SETUP = "own setup"
+
+OWN_SETUP_WORDS = re.compile(r"\bbasic\b|\binstant\b|\bfb\b|\bfacebook\b", re.IGNORECASE)
+
+
+def is_own_setup(lead_type: str) -> bool:
+    """Whether these leads belong on the own-setup checklist.
+
+    FB, Instant and Basic - the ones an agent sets up themselves - as against
+    the OTP and text-verified orders, which have a checklist each.
+    """
+    return bool(OWN_SETUP_WORDS.search(lead_type or ""))
+
 # Who gets told, per card. Kath and Kathleen are one person; the checklists
 # are named differently on different cards and both mean her.
 ADS_PEOPLE = ("Jenn", "Kath", "Nicole")
@@ -85,8 +102,6 @@ class Agent:
     url: str
     lead_type: str = ""
     launch: date | None = None
-    # The tier said elsewhere on the card, when the Lead Type line didn't say.
-    tier: str | None = None
     # Everything written on the card, kept so the lead type can be worked out
     # against the checklists that actually exist rather than in the abstract.
     said: str = ""
@@ -157,6 +172,56 @@ def shape_of(text: str) -> tuple:
     text-verified are one thing said two ways, so both reduce to (iul, plus).
     """
     return (family_of(text), tier_of(text), qualifiers_of(text))
+
+
+# "$1050/WEEK- UPRISE PHX PLUS" is a price and then a lead type. The price is
+# not part of what the leads are called.
+_PRICE_PREFIX = re.compile(r"^\$\s*[\d,.]+\s*(?:/\s*\w+)?\s*[-–—:]*\s*")
+
+# "Package Selected: Basic Spanish IUL" is a label and then a lead type. The
+# label is the form's word for the field, not anything about the leads.
+_LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
+
+
+def tidy_lead_type(phrase: str) -> str:
+    """A lead type with the label, the money and the punctuation taken off."""
+    said = " ".join((phrase or "").split())
+    said = _LABEL_PREFIX.sub("", said)
+    return _PRICE_PREFIX.sub("", said).strip(" -–—:")
+
+
+def named_lead_types(text: str) -> list[str]:
+    """Every phrase on the card that names a kind of leads.
+
+    The Lead Type line first, then each line of the rest. A card says it more
+    than once and not always in the same words: "Lead Type: VETS" up top and
+    "$1050/WEEK- UPRISE PHX PLUS" further down are both somebody saying what
+    was bought.
+    """
+    said = []
+    field = find_lead_type(text)
+    if field:
+        said.append(field)
+    for line in (text or "").splitlines():
+        line = " ".join(line.split())
+        if line and line != field and family_of(line):
+            said.append(tidy_lead_type(line))
+    return said
+
+
+def stated_lead_type(text: str) -> str:
+    """The most specific thing the card says the leads are.
+
+    No board to check against - this is for the lines that go on a setup card,
+    which has a checklist per person rather than per lead type, and for saying
+    what an agent is before anything has been matched. The rule is the same
+    one: a phrase naming its tier beats a phrase that leaves it out.
+    """
+    said = named_lead_types(text)
+    if not said:
+        return find_lead_type(text)
+    tiered = [phrase for phrase in said if tier_of(phrase)]
+    return (tiered or said)[0]
 
 
 def candidates(
@@ -409,7 +474,6 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         url=str(card.get("shortUrl") or card.get("url") or ""),
         lead_type=find_lead_type(text),
         launch=find_launch(text, today=today),
-        tier=tier_hint(text),
         said=text or "",
         stated=stated_lead_type(text),
     )

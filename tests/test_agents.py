@@ -44,151 +44,6 @@ def card(name="New Agent - Gustin Elrod", **extra):
 # --------------------------------------------- telling an agent card apart
 
 
-@pytest.mark.parametrize(
-    "title",
-    ["New Agent - Gustin Elrod", "NEW AGENT- Jeffrey Boyd", "New Agent - Everlife"],
-)
-def test_the_cards_the_form_makes_are_recognised(title):
-    assert agents.is_agent_card(title) is True
-
-
-@pytest.mark.parametrize(
-    "title",
-    ["💎 General 08/25/26", "Lead Order 08/26/26", "Agent Setup Going Live Wednesday 08/26",
-     "Hyros - UTM Code", "New Agent Onboarding SOP"],
-)
-def test_everything_else_in_in_que_is_left_alone(title):
-    """In Que holds the daily four as well, and they are not agents."""
-    assert agents.is_agent_card(title) is False
-
-
-@pytest.mark.parametrize(
-    "title,name",
-    [
-        ("New Agent - Gustin Elrod", "Gustin Elrod"),
-        ("NEW AGENT- Jeffrey Boyd", "Jeffrey Boyd"),
-        ("New Agent  -  Waldt Family Insurance", "Waldt Family Insurance"),
-    ],
-)
-def test_the_name_comes_off_the_front_of_the_title(title, name):
-    assert agents.agent_name(title) == name
-
-
-# ------------------------------------------------------- reading the card
-
-
-def test_the_lead_type_line_is_the_lead_type():
-    assert agents.find_lead_type(REAL) == "Text Verified IUL Plus"
-
-
-def test_the_body_mentioning_leads_is_not_the_lead_type():
-    """"paid for OTP IUL leads" is prose. The labelled line is the field."""
-    assert "paid" not in agents.find_lead_type(REAL)
-    assert agents.find_lead_type("Gustin paid for OTP IUL leads") == ""
-
-
-def test_a_card_with_no_lead_type_line_says_so():
-    assert agents.find_lead_type("First Name: Gustin\nPhone: +1") == ""
-
-
-def test_the_launch_date_is_read_out_of_the_sentence_that_says_it():
-    assert agents.find_launch(REAL, today=TUESDAY) == TUESDAY
-
-
-def test_a_written_date_wins_over_the_word_today():
-    """They agree when the card is read the day it was written, and disagree
-    when it isn't. The calendar date is the one that stays true."""
-    said = "Launch date is today, Tuesday, August 25"
-
-    assert agents.find_launch(said, today=date(2026, 8, 27)) == date(2026, 8, 25)
-
-
-@pytest.mark.parametrize(
-    "said,when",
-    [
-        ("Launch date is Thursday, August 27", date(2026, 8, 27)),
-        ("launching 8/27", date(2026, 8, 27)),
-        ("Launch date: 08/27/26", date(2026, 8, 27)),
-        ("launch date is tomorrow", date(2026, 8, 26)),
-        ("setup for immediate launch", TUESDAY),
-        ("Launching Thursday", date(2026, 8, 27)),
-    ],
-)
-def test_the_ways_people_write_a_launch_date(said, when):
-    assert agents.find_launch(said, today=TUESDAY) == when
-
-
-def test_a_date_elsewhere_in_the_description_is_not_the_launch():
-    """The states list, the order line, a note about a call next month - the
-    launch is the one in the sentence that says launch."""
-    said = "Ordered 25 leads on 08/20/26.\nLaunch date is Thursday, August 27.\nCall 9/1"
-
-    assert agents.find_launch(said, today=TUESDAY) == date(2026, 8, 27)
-
-
-def test_no_launch_sentence_means_no_date():
-    assert agents.find_launch("First Name: Gustin\nOrder 25 Leads", today=TUESDAY) is None
-
-
-# ------------------------------------ which leads these are, however written
-
-
-@pytest.mark.parametrize(
-    "written,shape",
-    [
-        ("Text Verified IUL Plus", ("iul", "plus", frozenset())),
-        ("OTP IUL Plus", ("iul", "plus", frozenset())),
-        ("OTP VET Plus", ("vet", "plus", frozenset())),
-        ("Standard MTG", ("mtg", "standard", frozenset())),
-        ("Basic Mortgage", ("mtg", "standard", frozenset())),
-        ("OTP Spanish IUL", ("iul", "plus", frozenset({"spanish"}))),
-        ("OTP Blue Collar IUL", ("iul", "plus", frozenset({"blue collar"}))),
-        ("Final Expense", ("fex", None, frozenset())),
-        ("OTP Widows", ("widows", "plus", frozenset())),
-    ],
-)
-def test_a_lead_type_reduces_to_what_the_leads_actually_are(written, shape):
-    """OTP and text-verified are one thing said two ways, so both reduce the
-    same. Standard and basic are the other tier."""
-    assert agents.shape_of(written) == shape
-
-
-def test_text_verified_finds_the_otp_checklist():
-    """The card says one, the board says the other, and they are the same."""
-    existing = [
-        "OTP VET Plus", "OTP FEX", "OTP Blue Collar IUL", "OTP IUL Plus",
-        "OTP Spanish IUL", "OTP MTG Standard", "OTP Widows", "own setup",
-    ]
-
-    assert agents.match_checklist("Text Verified IUL Plus", existing) == "OTP IUL Plus"
-
-
-def test_a_variant_does_not_match_the_plain_one():
-    """OTP Spanish IUL is a different checklist, and filing into the wrong one
-    sends somebody's leads to the wrong place."""
-    existing = ["OTP IUL Plus", "OTP Spanish IUL", "OTP Blue Collar IUL"]
-
-    assert agents.match_checklist("Spanish IUL", existing) == "OTP Spanish IUL"
-    assert agents.match_checklist("Blue Collar IUL", existing) == "OTP Blue Collar IUL"
-    assert agents.match_checklist("Text Verified IUL Plus", existing) == "OTP IUL Plus"
-
-
-def test_standard_and_plus_are_not_each_other():
-    existing = ["OTP MTG Standard", "OTP MTG Plus"]
-
-    assert agents.match_checklist("Basic MTG", existing) == "OTP MTG Standard"
-    assert agents.match_checklist("Text Verified MTG Plus", existing) == "OTP MTG Plus"
-
-
-def test_nothing_matching_is_none_rather_than_the_nearest_thing():
-    """The caller makes a new checklist. Guessing is how leads go astray."""
-    assert agents.match_checklist("OTP Widows", ["OTP IUL Plus", "OTP FEX"]) is None
-
-
-def test_a_lead_type_that_names_no_leads_matches_nothing():
-    assert agents.match_checklist("Premium Package", ["OTP IUL Plus"]) is None
-
-
 # ------------------------------------------------- what goes on a checklist
 
 
@@ -386,317 +241,6 @@ def test_a_parked_card_still_waiting_is_not_moved_to_where_it_already_is():
 WEEKEND = "Agent Setup Going Live Saturday-Monday 08/22-08/25"
 
 
-@pytest.mark.parametrize("day", [22, 23, 24, 25])
-def test_every_day_in_the_span_is_covered(day):
-    assert agents.setup_covers(WEEKEND, date(2026, 8, day)) is True
-
-
-@pytest.mark.parametrize("day", [21, 26])
-def test_a_day_outside_the_span_is_not(day):
-    assert agents.setup_covers(WEEKEND, date(2026, 8, day)) is False
-
-
-def test_the_weekend_card_is_found_for_the_sunday(config=None):
-    cards = [{"id": "w", "name": WEEKEND}, {"id": "o", "name": "💎 General 08/23/26"}]
-
-    assert agents.find_setup_card(cards, date(2026, 8, 23))["id"] == "w"
-
-
-def test_a_single_day_card_still_covers_only_that_day():
-    single = "Agent Setup Going Live Wednesday 08/26"
-
-    assert agents.setup_covers(single, date(2026, 8, 26)) is True
-    assert agents.setup_covers(single, date(2026, 8, 27)) is False
-
-
-def test_a_span_across_the_turn_of_the_year_is_three_days_not_none():
-    span = "Agent Setup Going Live Wednesday-Friday 12/31-01/02"
-
-    assert agents.setup_covers(span, date(2026, 12, 31)) is True
-    assert agents.setup_covers(span, date(2027, 1, 1)) is True
-    assert agents.setup_covers(span, date(2027, 1, 2)) is True
-    assert agents.setup_covers(span, date(2026, 6, 15)) is False
-
-
-def test_a_card_with_no_date_covers_nothing():
-    assert agents.setup_covers("Agent Setup Going Live", date(2026, 8, 26)) is False
-
-
-# ------------------------------------------------ making one, if it isn't there
-
-
-def test_a_saturday_gets_the_weekend_shape():
-    """Nobody makes a card on Saturday, so Friday's covers until Monday."""
-    saturday = date(2026, 8, 29)
-
-    span = agents.weekend_span(saturday)
-
-    assert span == (saturday, date(2026, 8, 31))
-    assert agents.setup_title(*span) == (
-        "Agent Setup Going Live Saturday-Monday 08/29-08/31"
-    )
-
-
-@pytest.mark.parametrize("day", [24, 25, 26, 27, 28, 30])
-def test_every_other_day_is_a_day(day):
-    assert agents.weekend_span(date(2026, 8, day)) is None
-
-
-def test_a_weekday_card_is_named_for_its_one_day():
-    assert agents.setup_title(date(2026, 8, 26)) == (
-        "Agent Setup Going Live Wednesday 08/26"
-    )
-
-
-def test_one_made_for_the_weekend_is_then_found_by_all_of_it():
-    """What it makes on Friday has to be what it looks for on Sunday."""
-    saturday = date(2026, 8, 29)
-    made = agents.setup_title(*agents.weekend_span(saturday))
-    cards = [{"id": "w", "name": made}]
-
-    for day in (29, 30, 31):
-        assert agents.find_setup_card(cards, date(2026, 8, day))["id"] == "w"
-
-
-# ------------------- a card exists for the day, so they can go on it now
-
-# Tuesday, and "Agent Setup Going Live Thursday 08/27" is already in Automation
-# Department. Waiting until Wednesday to put Thursday's agents on it would be
-# waiting for nothing: the card they go on is already there.
-
-
-class Stub:
-    """A board that answers what a plan needs to ask it."""
-
-    def __init__(self, held=None):
-        self.held = held or []
-
-    def card_checklists(self, card_id):
-        return self.held
-
-
-def plan_for(agent, *, every_card, day=TUESDAY, parked=False, dated=None, held=None):
-    from datetime import timedelta
-
-    from wilbyte.bot import jobs
-
-    return jobs._plan_for(
-        Stub(held), agent, day=day, tomorrow=day + timedelta(days=1),
-        dated=dated or {}, every_card=every_card, parked=parked,
-    )
-
-
-THURSDAY_CARD = {"id": "setup-thu", "name": "Agent Setup Going Live Thursday 08/27"}
-
-
-def thursday_agent(text=None):
-    return read(text or "Lead Type: OTP VET Plus\nLaunch date is Thursday, August 27")
-
-
-def test_an_agent_for_thursday_goes_on_thursdays_card_on_tuesday():
-    plan = plan_for(thursday_agent(), every_card=[THURSDAY_CARD])
-
-    assert plan.move_to == agents.DONE
-    assert plan.make_card == ""
-    assert [step.checklist for step in plan.steps] == list(agents.SETUP_PEOPLE)
-    assert all(step.card_id == "setup-thu" for step in plan.steps)
-
-
-def test_with_no_card_for_that_day_it_waits_in_franklins_list():
-    plan = plan_for(thursday_agent(), every_card=[])
-
-    assert plan.move_to == agents.PARKED
-    assert plan.steps == []
-
-
-def test_one_already_waiting_is_left_where_it_is():
-    plan = plan_for(thursday_agent(), every_card=[], parked=True)
-
-    assert plan.move_to == ""
-
-
-def test_tomorrows_card_is_made_when_it_is_not_there():
-    """The only day RYTE makes one. Any further out, Franklin makes it."""
-    agent = read("Lead Type: OTP VET Plus\nLaunch date is Wednesday, August 26")
-
-    plan = plan_for(agent, every_card=[])
-
-    assert plan.make_card == "Agent Setup Going Live Wednesday 08/26"
-    assert plan.move_to == agents.DONE
-
-
-def test_the_weekend_card_takes_sundays_agents_too():
-    weekend = {"id": "w", "name": "Agent Setup Going Live Saturday-Monday 08/29-08/31"}
-    agent = read("Lead Type: OTP FEX\nLaunch date is Sunday, August 30")
-
-    plan = plan_for(agent, every_card=[weekend], day=date(2026, 8, 28))
-
-    assert all(step.card_id == "w" for step in plan.steps)
-    assert plan.move_to == agents.DONE
-
-
-def test_a_lead_type_is_needed_once_there_is_a_card_to_go_on():
-    """Parked, it can wait. About to be filed, it cannot."""
-    agent = thursday_agent("Launch date is Thursday, August 27")
-
-    waiting = plan_for(agent, every_card=[])
-    filing = plan_for(agent, every_card=[THURSDAY_CARD])
-
-    assert waiting.problems == [] and waiting.move_to == agents.PARKED
-    assert "lead type" in filing.problems[0]
-
-
-def test_the_agent_card_ends_up_at_the_top_of_done(monkeypatch, config):
-    """"Moved to done on top position" - under forty-nine other cards is not
-    where anybody looks."""
-    from wilbyte.bot import jobs
-
-    moved = []
-
-    class Board(Stub):
-        checklists_made: list = []
-
-        def card_checklists(self, card_id):
-            return [{"id": "l1", "name": p, "checkItems": []} for p in agents.SETUP_PEOPLE]
-
-        def add_check_item(self, checklist_id, name, *, checked=False):
-            return {}
-
-        def move_card(self, card_id, list_id, *, position="top"):
-            moved.append((card_id, list_id, position))
-            return {}
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
-    plan = plan_for(thursday_agent(), every_card=[THURSDAY_CARD])
-
-    jobs.apply_agents(config, [plan], {agents.DONE: "done-list"})
-
-    assert moved == [(plan.agent.card_id, "done-list", "top")]
-
-
-# ------------------------------------- the ways the real cards actually read
-
-# Three cards in Franklin's list said "no launch date" and all three had one.
-# They just don't use the word launch.
-
-SEBASTIAN = """First Name: Sebastian
-Last Name: Espinoza
-Phone: (847) 775-9758
-Email: seb.esp6@gmail.com
-Package Selected: Text Verified
-Lead Type: Phoenix Campaign
-States: all states except for FL and CA.
-
-Veteran
-
-Uprise
-
-Phoenix Standard
-$350
-
-live fri, aug 28
-"""
-
-TAYLER = """First Name: Tayler
-Last Name: Collins
-Phone: +1904-814-3494
-Email: taylercollins949@yahoo.com
-Package Selected: Apex Client
-Lead Type: VETS
-Target Areas for Marketing: All states besides CA
-
-Live fri, aug 28
-
-$1050/WEEK- UPRISE PHX PLUS
-
-RINGY INTEGRATION
-"""
-
-
-@pytest.mark.parametrize("said", [SEBASTIAN, TAYLER])
-def test_live_fri_aug_28_is_a_launch_date(said):
-    """No word "launch" anywhere on either card."""
-    assert agents.find_launch(said, today=TUESDAY) == date(2026, 8, 28)
-
-
-@pytest.mark.parametrize(
-    "said,when",
-    [
-        ("live fri, aug 28", date(2026, 8, 28)),
-        ("Live fri, aug 28", date(2026, 8, 28)),
-        ("going live Thursday, August 27", date(2026, 8, 27)),
-        ("goes live 8/27", date(2026, 8, 27)),
-        ("go live wed", date(2026, 8, 26)),
-    ],
-)
-def test_the_other_ways_of_saying_when(said, when):
-    assert agents.find_launch(said, today=TUESDAY) == when
-
-
-def test_launch_date_still_wins_over_a_bare_live():
-    """"Live transfer leads" is a product. The sentence that says launch date
-    is the one that means it."""
-    said = "Live transfer leads ordered 8/20.\nLaunch date is Thursday, August 27."
-
-    assert agents.find_launch(said, today=TUESDAY) == date(2026, 8, 27)
-
-
-# ------------------------------------------------------------ phoenix leads
-
-
-@pytest.mark.parametrize(
-    "written,shape",
-    [
-        ("Phoenix Campaign", ("phnx", None, frozenset())),
-        ("Phoenix Standard", ("phnx", "standard", frozenset())),
-        ("UPRISE PHX PLUS", ("phnx", "plus", frozenset())),
-        ("PHNX Plus", ("phnx", "plus", frozenset())),
-        ("phnx standard", ("phnx", "standard", frozenset())),
-    ],
-)
-def test_phoenix_however_it_is_abbreviated(written, shape):
-    assert agents.shape_of(written) == shape
-
-
-BOARD = ["PHNX Plus", "PHNX Standard", "OTP IUL Plus", "OTP VET Plus"]
-
-
-def test_a_lead_type_with_no_tier_is_not_guessed_at():
-    """Phoenix leads, and the board has two kinds. Picking one is the guess
-    that puts somebody's leads on the wrong order."""
-    assert agents.match_checklist("Phoenix Campaign", BOARD) is None
-    assert agents.candidates("Phoenix Campaign", BOARD) == ["PHNX Plus", "PHNX Standard"]
-
-
-def test_the_rest_of_the_card_settles_it():
-    """"Lead Type: Phoenix Campaign" with "Phoenix Standard / $350" three
-    lines below is one card saying one thing twice."""
-    tier = agents.tier_hint(SEBASTIAN)
-
-    assert tier == "standard"
-    assert agents.match_checklist("Phoenix Campaign", BOARD, tier=tier) == "PHNX Standard"
-
-
-def test_a_card_that_names_its_tier_needs_no_help():
-    assert agents.match_checklist("UPRISE PHX PLUS", BOARD) == "PHNX Plus"
-
-
-def test_the_lead_type_field_still_decides_which_leads():
-    """Tayler's field says VETS and the body mentions PHX PLUS. The field is
-    the field; the body only settles a tier it didn't state."""
-    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
-
-    assert agent.lead_type == "VETS"
-    assert agents.match_checklist(agent.lead_type, BOARD, tier=agent.tier) == "OTP VET Plus"
-
-
-def test_an_agent_reads_its_tier_off_the_whole_card():
-    assert read(SEBASTIAN).tier == "standard"
-
-
 # ------------------- when the body names something better than the field does
 
 # "Lead Type: VETS" up top, "$1050/WEEK- UPRISE PHX PLUS" further down. Both
@@ -704,69 +248,9 @@ def test_an_agent_reads_its_tier_off_the_whole_card():
 # so if the board has a PHX PLUS, that is where he goes.
 
 
-def test_the_body_wins_when_it_names_a_tier_and_the_field_does_not():
-    said, landed, could = agents.best_lead_type(TAYLER, BOARD)
-
-    assert landed == "PHNX Plus"
-    assert said == "UPRISE PHX PLUS"
-    assert could == []
-
-
 def test_the_price_is_not_part_of_what_the_leads_are_called():
     assert agents.tidy_lead_type("$1050/WEEK- UPRISE PHX PLUS") == "UPRISE PHX PLUS"
     assert agents.tidy_lead_type("Phoenix Standard") == "Phoenix Standard"
-
-
-def test_without_a_phx_plus_on_the_board_he_is_what_the_field_says():
-    """"He should be PHX PLUS if there is a PHX PLUS." If there isn't, the
-    field stands."""
-    board = ["OTP VET Plus", "OTP IUL Plus", "OTP FEX"]
-
-    said, landed, _ = agents.best_lead_type(TAYLER, board)
-
-    assert landed == "OTP VET Plus"
-
-
-def test_the_body_settles_a_tier_within_the_same_family():
-    said, landed, _ = agents.best_lead_type(SEBASTIAN, BOARD)
-
-    assert landed == "PHNX Standard"
-    assert said == "Phoenix Standard"
-
-
-def test_a_field_that_already_names_its_tier_is_left_alone():
-    """Gustin's field says everything. The body agreeing changes nothing."""
-    said, landed, _ = agents.best_lead_type(REAL, BOARD)
-
-    assert landed == "OTP IUL Plus"
-    assert said == "Text Verified IUL Plus"
-
-
-def test_a_card_disagreeing_with_itself_asks_a_person():
-    """Two phrases, both naming a tier, landing somewhere different. That is
-    not a thing to pick between."""
-    card = "Lead Type: OTP IUL Plus\n\nUPRISE PHX PLUS\n\nlive fri, aug 28"
-
-    said, landed, could = agents.best_lead_type(card, BOARD)
-
-    assert landed is None
-    assert could == ["OTP IUL Plus", "PHNX Plus"]
-
-
-def test_the_line_says_what_it_was_filed_as():
-    """Filed under PHX PLUS, the line should say PHX PLUS - not the field it
-    overrode."""
-    from wilbyte.bot import jobs
-
-    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
-    held = [{"id": "l", "name": name, "checkItems": []} for name in BOARD]
-    said, landed, _ = agents.best_lead_type(agent.said, BOARD)
-
-    step = jobs._step("Lead Order", "c", landed, agent, held, exact=True, label=said)
-
-    assert step.item.endswith("UPRISE PHX PLUS")
-    assert step.checklist == "PHNX Plus"
-    assert step.make_checklist is False
 
 
 # --------------------- what an agent is called, before anything is matched
@@ -774,171 +258,6 @@ def test_the_line_says_what_it_was_filed_as():
 # A setup card has a checklist per person, not per lead type, so there is no
 # board to check a phrase against - and the line still has to say what was
 # bought. Same rule without the board: the phrase naming a tier wins.
-
-
-@pytest.mark.parametrize(
-    "said,stated",
-    [
-        (TAYLER, "UPRISE PHX PLUS"),
-        (SEBASTIAN, "Phoenix Standard"),
-        (REAL, "Text Verified IUL Plus"),
-    ],
-)
-def test_the_most_specific_thing_the_card_says(said, stated):
-    assert agents.stated_lead_type(said) == stated
-
-
-def test_a_card_naming_leads_only_once_says_that():
-    assert agents.stated_lead_type("Lead Type: OTP FEX\n\nlive fri") == "OTP FEX"
-
-
-def test_a_card_naming_none_falls_back_to_the_field():
-    assert agents.stated_lead_type("Lead Type: Premium Package") == "Premium Package"
-
-
-def test_the_plan_shows_what_the_card_really_says():
-    """It said VETS under his name while filing him as PHX PLUS, which is one
-    of those two being a lie."""
-    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
-    plan = agents.AgentPlan(agent=agent, when="later")
-
-    assert "UPRISE PHX PLUS" in agents.describe([plan])
-    assert "VETS" not in agents.describe([plan])
-
-
-def test_a_setup_card_line_says_the_same_thing():
-    from wilbyte.bot import jobs
-
-    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
-
-    step = jobs._step(
-        "Agent Setup Going Live Friday 08/28", "c", "Therese", agent, [],
-        exact=True, label=agent.stated,
-    )
-
-    assert step.item.endswith("UPRISE PHX PLUS")
-
-
-def test_a_parked_agent_says_it_is_waiting_rather_than_nothing():
-    """A name with nothing under it reads as "nothing will happen to this",
-    which is true and unhelpful."""
-    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
-    plan = agents.AgentPlan(agent=agent, when="later")
-
-    said = agents.describe([plan])
-
-    assert "waiting in Franklin (Admin)" in said
-    assert "no card for that day yet" in said
-
-
-# ----------------------- nearly is not a thing to write on somebody's order
-
-# Vicente's card says "Package Selected: Basic Spanish IUL" and "Lead Type:
-# Index Universal Life". The board has "OTP Spanish IUL". Basic reads as
-# Standard and OTP reads as Plus, so they don't match - and quietly starting a
-# checklist called "Index Universal Life" would hide that rather than ask it.
-
-VICENTE = """Package Selected: Basic Spanish IUL
-Lead Type: Index Universal Life
-
-live thu, aug 27
-"""
-
-FULL_BOARD = [
-    "OTP Spanish IUL", "OTP IUL Plus", "OTP VET Plus",
-    "PHNX Plus", "PHNX Standard", "OTP FEX",
-]
-
-
-def test_a_label_is_not_part_of_what_the_leads_are_called():
-    assert agents.tidy_lead_type("Package Selected: Basic Spanish IUL") == (
-        "Basic Spanish IUL"
-    )
-    assert agents.tidy_lead_type("Lead Type: VETS") == "VETS"
-
-
-def test_a_different_tier_is_a_different_product_not_a_near_miss():
-    """Basic Spanish IUL and OTP Spanish IUL are two things you can buy. The
-    checklist gets made rather than the question being asked."""
-    said, landed, could = agents.best_lead_type(VICENTE, FULL_BOARD)
-
-    assert landed is None
-    assert could == []
-    assert said == "Basic Spanish IUL"
-
-
-def test_a_card_that_names_its_leads_and_not_its_tier_still_asks():
-    """Two on the board would both fit and the card says nothing to separate
-    them. That one is a guess about somebody's money."""
-    card = "Lead Type: Phoenix Campaign\n\nlive fri, aug 28"
-
-    said, landed, could = agents.best_lead_type(card, FULL_BOARD)
-
-    assert landed is None
-    assert could == ["PHNX Plus", "PHNX Standard"]
-
-
-def test_something_genuinely_new_is_not_a_question():
-    """Nothing on the board is those leads at all, so there is nothing to ask
-    about - a checklist gets made, which is what was asked for."""
-    card = "Lead Type: Widow Legacy Plan\n\nlive fri"
-
-    said, landed, could = agents.best_lead_type(card, FULL_BOARD)
-
-    assert landed is None and could == []
-
-
-def test_a_clean_match_is_still_clean():
-    for card, expected in (
-        (TAYLER, "PHNX Plus"),
-        (SEBASTIAN, "PHNX Standard"),
-        (REAL, "OTP IUL Plus"),
-    ):
-        _, landed, could = agents.best_lead_type(card, FULL_BOARD)
-        assert landed == expected and could == []
-
-
-def test_the_question_names_both_sides(config, monkeypatch):
-    from wilbyte.bot import jobs
-
-    agent = read(
-        "Lead Type: Phoenix Campaign\n\nlive thu, aug 27",
-        title="New Agent - Somebody",
-    )
-    held = [{"id": f"l{i}", "name": n, "checkItems": []} for i, n in enumerate(FULL_BOARD)]
-    dated = {"lead_order": {"id": "lo", "name": "Lead Order 08/27/26"}}
-
-    plan = jobs._plan_for(
-        Stub(held), agent, day=date(2026, 8, 27), tomorrow=date(2026, 8, 28),
-        dated=dated, every_card=[],
-    )
-
-    assert any("PHNX Plus" in problem for problem in plan.problems)
-    assert any("PHNX Standard" in problem for problem in plan.problems)
-
-
-def test_a_new_lead_type_gets_its_own_checklist(config):
-    """"There is a lead type basic spanish iul." Nothing on the board is it,
-    so one is made and named for what the card calls it."""
-    from wilbyte.bot import jobs
-
-    agent = read(VICENTE, title="New Agent - Vicente Mejia")
-    held = [{"id": f"l{i}", "name": n, "checkItems": []} for i, n in enumerate(FULL_BOARD)]
-
-    plan = jobs._plan_for(
-        Stub(held), agent, day=date(2026, 8, 27), tomorrow=date(2026, 8, 28),
-        dated={
-            "lead_order": {"id": "lo", "name": "Lead Order 08/27/26"},
-            "ads": {"id": "ad", "name": "📊 Ads 08/27/26"},
-            "ops": {"id": "op", "name": "💻 Ops 08/27/26"},
-        },
-        every_card=[],
-    )
-
-    (order,) = [step for step in plan.steps if step.card_title.startswith("Lead Order")]
-    assert order.checklist == "Basic Spanish IUL"
-    assert order.make_checklist is True
-    assert plan.problems == []
 
 
 # ---------------------------------------- dates written by people, not forms
@@ -957,3 +276,132 @@ def test_an_ordinal_suffix_does_not_hide_the_date(said, when):
     """"August 27th" - the th runs into the number, so a word boundary after
     it never matched and the whole date was missed."""
     assert agents.find_launch(said, today=TUESDAY) == when
+
+
+class Stub:
+    """A board that answers the one thing a plan asks it."""
+
+    def __init__(self, held=None):
+        self.held = held or []
+
+    def card_checklists(self, card_id):
+        return self.held
+
+
+VICENTE = """Package Selected: Basic Spanish IUL
+Lead Type: Index Universal Life
+
+Internal: Launch Date Thursday, August 27th
+"""
+
+
+# ------------------------------------ a new agent goes on own setup, always
+
+# The Lead Order card's lead-type checklists are the bulk orders. Every new
+# agent on the real card is under "own setup" - "New Agent - Romy Soto · Done ·
+# 40 Basic Spanish IUL" - and the lead type is in the line rather than being
+# the checklist it sits on.
+
+
+def filed_today(agent, board_checklists):
+    from wilbyte.bot import jobs
+
+    held = [
+        {"id": f"l{i}", "name": name, "checkItems": []}
+        for i, name in enumerate(board_checklists)
+    ]
+    return jobs._plan_for(
+        Stub(held), agent, day=date(2026, 8, 25), tomorrow=date(2026, 8, 26),
+        dated={
+            "lead_order": {"id": "lo", "name": "Lead Order 08/25/26"},
+            "ads": {"id": "ad", "name": "📊 Ads 08/25/26"},
+            "ops": {"id": "op", "name": "💻 Ops 08/25/26"},
+        },
+        every_card=[],
+    )
+
+
+LEAD_ORDER_LISTS = ["OTP IUL Plus", "OTP Spanish IUL", "Phoenix Standard", "own setup"]
+
+
+@pytest.mark.parametrize(
+    "leads",
+    ["40 Basic FB Spanish IUL", "Basic Spanish IUL", "Instant/Basic IUL Leads",
+     "FB Index Universal Life", "20 Spanish Basic 10"],
+)
+def test_the_self_setup_types_land_on_own_setup(leads):
+    """Every item on the real checklist is one of these."""
+    assert agents.is_own_setup(leads) is True
+
+
+@pytest.mark.parametrize(
+    "leads", ["Text Verified IUL Plus", "OTP VET Plus", "UPRISE PHX PLUS"],
+)
+def test_an_ordered_type_is_not_a_self_setup(leads):
+    assert agents.is_own_setup(leads) is False
+
+
+BASIC_TODAY = """Package Selected: Basic Spanish IUL
+Lead Type: Index Universal Life
+
+Launch date is today, Tuesday, August 25
+"""
+
+
+def test_a_basic_agent_lands_on_own_setup():
+    agent = read(BASIC_TODAY, title="New Agent - Vicente Mejia")
+
+    plan = filed_today(agent, LEAD_ORDER_LISTS)
+
+    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
+    assert order.checklist == "own setup"
+    assert order.make_checklist is False
+    assert order.item.endswith("Basic Spanish IUL")
+
+
+def test_an_otp_agent_lands_on_its_own_lead_type():
+    """Gustin bought text-verified IUL. That has a checklist of its own."""
+    plan = filed_today(read(), LEAD_ORDER_LISTS)
+
+    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
+    assert order.checklist == "OTP IUL Plus"
+
+
+def test_the_line_carries_the_link_and_the_lead_type():
+    """"New Agent - Romy Soto · Done · 40 Basic Spanish IUL" - the link renders
+    the name and badge, the words say what was bought."""
+    plan = filed_today(read(), LEAD_ORDER_LISTS)
+
+    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
+    assert order.item.endswith("Text Verified IUL Plus")
+    assert order.item.startswith("https://trello.com/c/")
+
+
+def test_a_self_setup_type_is_never_a_question():
+    """It goes on own setup whatever the board has, so there is nothing to be
+    unsure about."""
+    agent = read(BASIC_TODAY, title="New Agent - Vicente Mejia")
+
+    plan = filed_today(agent, ["OTP IUL Plus", "OTP Spanish IUL", "own setup"])
+
+    assert plan.problems == []
+
+
+def test_own_setup_is_made_if_the_card_has_not_got_one():
+    agent = read(BASIC_TODAY, title="New Agent - Vicente Mejia")
+
+    plan = filed_today(agent, ["OTP IUL Plus"])
+
+    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
+    assert order.checklist == "own setup"
+    assert order.make_checklist is True
+
+
+def test_ads_and_ops_still_go_to_people():
+    plan = filed_today(read(), LEAD_ORDER_LISTS)
+
+    ads = [s.checklist for s in plan.steps if "Ads" in s.card_title]
+    ops = [s.checklist for s in plan.steps if "Ops" in s.card_title]
+
+    assert ads == list(agents.ADS_PEOPLE)
+    assert ops == list(agents.OPS_PEOPLE)

@@ -2165,18 +2165,24 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         if people is None:
             names = [str(c.get("name") or "") for c in held]
             said, landed, could = rules.best_lead_type(agent.said, names)
+            label = said or agent.stated or agent.lead_type
+            if rules.is_own_setup(label):
+                # FB, Instant and Basic are the self-setup ones, and they all
+                # go on the one checklist. The lead type is in the line rather
+                # than being the checklist it sits on.
+                landed, could = rules.OWN_SETUP, []
             if landed is None and len(could) > 1:
                 # The card named its leads and not its tier, and two on the
-                # board would both fit. Picking one is the guess that puts
-                # somebody's leads on the wrong order.
+                # board would both fit. Picking one is a guess about somebody's
+                # money.
                 plan.problems.append(
-                    f"“{said or agent.lead_type}” could be {' or '.join(could)} — "
+                    f"“{label}” could be {' or '.join(could)} — "
                     f"the card doesn't say which."
                 )
                 continue
             plan.steps.append(_step(
-                title, card_id, landed or said or agent.lead_type,
-                agent, held, exact=bool(landed), label=said or agent.lead_type,
+                title, card_id, landed or label, agent, held,
+                exact=bool(landed), label=label,
             ))
         else:
             for person in people:
