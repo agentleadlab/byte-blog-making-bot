@@ -2260,13 +2260,19 @@ def _carry_out(client, plan, where):
             " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
             for c in held or []
         }
+        # Per checklist, not per card. The same line goes to Therese and to
+        # Kathleen and to Nicole, and a set of every item on the whole card
+        # makes the second and third look like duplicates of the first.
         already = {
-            " ".join(str(item.get("name") or "").split())
+            (
+                " ".join(str(c.get("name") or "").split()).casefold(),
+                " ".join(str(item.get("name") or "").split()),
+            )
             for c in held or [] for item in c.get("checkItems") or []
         }
-        if " ".join(step.item.split()) in already:
-            continue
         key = " ".join(step.checklist.split()).casefold()
+        if (key, " ".join(step.item.split())) in already:
+            continue
         if key not in by_name:
             made = client.create_checklist(step.card_id, step.checklist)
             by_name[key] = str(made.get("id") or "")

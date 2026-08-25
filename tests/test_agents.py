@@ -416,3 +416,120 @@ def test_ads_and_ops_still_go_to_people():
 
     assert ads == list(agents.ADS_PEOPLE)
     assert ops == list(agents.OPS_PEOPLE)
+
+
+# --------------------------- the same line, to three people, on one card
+
+# All four agents landed on Therese and Kathleen and Nicole got nothing. The
+# guard against adding a line twice was looking at every item on the whole
+# card, so the moment Daniella's line was on Therese it looked like a
+# duplicate for the other two.
+
+
+class Writable:
+    """A board that records what was written and answers what it holds."""
+
+    def __init__(self, checklists):
+        self.lists = {
+            name: {"id": f"l-{name}", "name": name, "checkItems": []}
+            for name in checklists
+        }
+        self.added = []
+        self.made = []
+        self.moved = []
+
+    def card_checklists(self, card_id):
+        return list(self.lists.values())
+
+    def create_checklist(self, card_id, name):
+        self.made.append(name)
+        self.lists[name] = {"id": f"l-{name}", "name": name, "checkItems": []}
+        return self.lists[name]
+
+    def add_check_item(self, checklist_id, name, *, checked=False):
+        which = next(c for c in self.lists.values() if c["id"] == checklist_id)
+        which["checkItems"].append({"name": name, "state": "incomplete"})
+        self.added.append((which["name"], name))
+        return {}
+
+    def move_card(self, card_id, list_id, *, position="top"):
+        self.moved.append((card_id, list_id, position))
+        return {}
+
+    def close(self):
+        pass
+
+
+def file_them(monkeypatch, config, plans, board):
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    return jobs.apply_agents(config, plans, {agents.DONE: "done-list"})
+
+
+def setup_plan(agent, card_id="setup-thu"):
+    plan = agents.AgentPlan(agent=agent, when="tomorrow", move_to=agents.DONE)
+    for person in agents.SETUP_PEOPLE:
+        plan.steps.append(agents.Step(
+            "Agent Setup Going Live Thursday 08/27", card_id, person,
+            agents.checklist_item(agent.url, agent.stated),
+        ))
+    return plan
+
+
+def test_every_person_named_gets_the_line(monkeypatch, config):
+    board = Writable(agents.SETUP_PEOPLE)
+    agent = read("Lead Type: OTP VET Plus\nlive thu, aug 27")
+
+    filed, problems = file_them(monkeypatch, config, [setup_plan(agent)], board)
+
+    assert filed == 1 and problems == []
+    assert [person for person, _ in board.added] == list(agents.SETUP_PEOPLE)
+
+
+def test_four_agents_reach_all_three_people(monkeypatch, config):
+    """What actually happened: four on Therese, nothing on the other two."""
+    board = Writable(agents.SETUP_PEOPLE)
+    plans = [
+        setup_plan(agents.Agent(
+            name=name, card_id=f"c{i}", url=f"https://trello.com/c/x{i}",
+            lead_type="OTP VET Plus", stated="OTP VET Plus",
+            launch=date(2026, 8, 27),
+        ))
+        for i, name in enumerate(("Daniella", "Benjamin", "Fabiana", "Vicente"))
+    ]
+
+    file_them(monkeypatch, config, plans, board)
+
+    for person in agents.SETUP_PEOPLE:
+        assert len([p for p, _ in board.added if p == person]) == 4, person
+
+
+def test_running_it_again_adds_nothing(monkeypatch, config):
+    """The guard still has to guard - just per checklist rather than per card."""
+    board = Writable(agents.SETUP_PEOPLE)
+    agent = read("Lead Type: OTP VET Plus\nlive thu, aug 27")
+
+    file_them(monkeypatch, config, [setup_plan(agent)], board)
+    before = len(board.added)
+    file_them(monkeypatch, config, [setup_plan(agent)], board)
+
+    assert len(board.added) == before
+
+
+def test_two_agents_with_the_same_leads_both_go_on(monkeypatch, config):
+    """Their lines differ by the card link, which is the point of it being
+    there - matching on the lead type alone would drop the second one."""
+    board = Writable(agents.SETUP_PEOPLE)
+    plans = [
+        setup_plan(agents.Agent(
+            name=name, card_id=name, url=f"https://trello.com/c/{name}",
+            lead_type="OTP VET Plus", stated="OTP VET Plus",
+            launch=date(2026, 8, 27),
+        ))
+        for name in ("first", "second")
+    ]
+
+    file_them(monkeypatch, config, plans, board)
+
+    assert len([p for p, _ in board.added if p == "Therese"]) == 2
