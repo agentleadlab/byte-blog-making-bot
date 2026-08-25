@@ -2053,15 +2053,16 @@ def read_agents(config: Config, *, day=None):
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         by_name = {" ".join(str(bl.get("name") or "").split()).casefold(): bl for bl in lists}
-        # Both the new ones and the ones already parked. Franklin's list is a
-        # waiting room, not a destination: a card put there on Tuesday because
-        # it launches Thursday has to be looked at again on Wednesday, or it
-        # waits there for ever.
-        watched = [
-            trello.find_list(lists, name) for name in (agents.IN_QUE, agents.PARKED)
-        ]
-        if watched[0] is None:
+        # In Que is where they land, Franklin's list is where they wait, and
+        # Today is where one ends up if somebody drags it there - a card in a
+        # list nothing watches is a card nothing will ever do anything about.
+        watched = {
+            name: trello.find_list(lists, name)
+            for name in (agents.IN_QUE, agents.TODAY, agents.PARKED)
+        }
+        if watched[agents.IN_QUE] is None:
             return [], {}, [f"The board has no list called {agents.IN_QUE!r}"]
+        parked_id = str((watched[agents.PARKED] or {}).get("id") or "\0")
 
         every_card = [
             card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
@@ -2069,7 +2070,7 @@ def read_agents(config: Config, *, day=None):
         dated = dailyops.cards_for(every_card, day)
 
         waiting_cards = [
-            card for bl in watched if bl is not None
+            card for bl in watched.values() if bl is not None
             for card in client.list_cards(str(bl.get("id") or ""))
         ]
 
@@ -2089,9 +2090,7 @@ def read_agents(config: Config, *, day=None):
                 _plan_for(
                     client, agent, day=day, tomorrow=tomorrow, dated=dated,
                     every_card=every_card,
-                    parked=str(card.get("idList") or "") == str(
-                        (watched[1] or {}).get("id") or "\0"
-                    ),
+                    parked=str(card.get("idList") or "") == parked_id,
                 )
             )
 

@@ -31,8 +31,11 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-# Where an agent card waits, and where it ends up.
+# Where an agent card waits, and where it ends up. Today is watched as well as
+# In Que: the daily walk leaves agent cards alone, but somebody dragging one
+# across by hand shouldn't put it somewhere nothing looks.
 IN_QUE = "In Que"
+TODAY = "Today"
 PARKED = "Franklin (Admin)"
 AUTOMATION = "AUTOMATION DEPARTMENT"
 DONE = "Done"
