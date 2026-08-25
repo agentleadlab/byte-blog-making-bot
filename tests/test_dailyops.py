@@ -419,16 +419,27 @@ def test_rewording_an_item_starts_its_count_again(tmp_path):
 
 
 class FakeTrello:
-    """Records what a rollover would send, and can be told to refuse."""
+    """Records what a rollover would send, and can be told to refuse.
 
-    def __init__(self, *, fail_on=None):
+    `holds` is what tomorrow's cards actually have on them right now - read
+    back at write time, not taken from the plan, because a plan is a snapshot
+    from whenever somebody last looked at it.
+    """
+
+    def __init__(self, *, fail_on=None, holds=None):
         self.checklists_made = []
         self.items_added = []
         self.fail_on = fail_on
+        self.holds = holds or {}
+
+    def card_checklists(self, card_id):
+        return self.holds.get(card_id, [])
 
     def create_checklist(self, card_id, name):
         self.checklists_made.append((card_id, name))
-        return {"id": f"list-{name}"}
+        made = {"id": f"list-{name}", "name": name, "checkItems": []}
+        self.holds.setdefault(card_id, []).append(made)
+        return made
 
     def add_check_item(self, checklist_id, name, *, checked=False):
         if self.fail_on and self.fail_on in name:
@@ -455,13 +466,19 @@ def rollover_of(*items, target_lists=(), history=None):
     )
 
 
-def apply_with(monkeypatch, config, plan, targets, *, fail_on=None, store=None):
+def apply_with(monkeypatch, config, plan, targets, *, fail_on=None, store=None, holds=None):
     from datetime import date as _date
 
     from wilbyte import carried
     from wilbyte.bot import jobs
 
-    board = FakeTrello(fail_on=fail_on)
+    # By default the board holds what the plan was built against, which is the
+    # ordinary case: nothing changed between looking and clicking.
+    board = FakeTrello(
+        fail_on=fail_on,
+        holds=holds if holds is not None
+        else {card_id: list(lists) for card_id, lists in targets.values()},
+    )
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
     if store is not None:
         monkeypatch.setattr(carried, "CARRIED_PATH", store)
@@ -950,7 +967,9 @@ def test_the_same_wording_on_a_different_persons_list_still_goes_over():
         {"id": "l2", "name": "Jay", "checkItems": []},
     ])}
 
-    board = FakeTrello()
+    board = FakeTrello(
+        holds={card_id: list(lists) for card_id, lists in targets.values()}
+    )
     import wilbyte.bot.jobs as module
 
     original = module.open_trello
@@ -1090,3 +1109,57 @@ def test_asking_for_all_of_them_is_still_the_default(monkeypatch, config):
     plans, _, _ = jobs.read_rollover(config, day=date(2026, 8, 25))
 
     assert sorted(plan.kind for plan in plans) == ["general", "ops"]
+
+
+# --------------------------------------- a button that has been sitting there
+
+# One card was rolled on its own to try it out. The all-four plan from seven
+# minutes earlier was still on screen with its button unclicked - and its idea
+# of what tomorrow's card held was from before the seven items went on it.
+
+
+def test_a_stale_plan_does_not_re_add_what_is_already_there(monkeypatch, config, tmp_path):
+    plan = rollover_of(
+        ("Nicole", "OPUS CLIP", "incomplete"),
+        ("Faith", "cancel invoices eod", "incomplete"),
+    )
+    # What the plan was built against: an empty card.
+    targets = {"general": ("card-tomorrow", [])}
+    # What the card actually holds now, because the single-card run went first.
+    holds = {"card-tomorrow": [
+        {"id": "l1", "name": "Nicole",
+         "checkItems": [{"name": "OPUS CLIP", "state": "incomplete"}]},
+        {"id": "l2", "name": "Faith", "checkItems": []},
+    ]}
+
+    board, moved, problems = apply_with(
+        monkeypatch, config, plan, targets, store=tmp_path / "c.json", holds=holds
+    )
+
+    assert moved == 1 and problems == []
+    assert board.items_added == [("l2", "cancel invoices eod")]
+    assert board.checklists_made == [], "both checklists already exist on the card"
+
+
+def test_a_card_that_cannot_be_re_read_is_not_written_to_blind(
+    monkeypatch, config, tmp_path
+):
+    """Guessing what is on it is how items land twice."""
+    from wilbyte import carried
+    from wilbyte.bot import jobs
+
+    class Unreadable(FakeTrello):
+        def card_checklists(self, card_id):
+            raise RuntimeError("Trello timed out")
+
+    board = Unreadable()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(carried, "CARRIED_PATH", tmp_path / "c.json")
+    plan = rollover_of(("Nicole", "Chase the docs", "incomplete"))
+
+    moved, problems = jobs.apply_rollover(
+        config, [plan], {"general": ("card-tomorrow", [])}, day=date(2026, 8, 24)
+    )
+
+    assert moved == 0 and board.items_added == []
+    assert "couldn't re-read" in problems[0]

@@ -2067,6 +2067,12 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     in an evening is somebody checking their work, and the cost of not
     guarding it is sixty-two items becoming a hundred and twenty-four - which
     nobody would unpick by hand, they would just delete the card.
+
+    What is already there is read again here rather than taken from the plan.
+    The plan is a snapshot from whenever somebody last looked, and a button
+    sitting unclicked in a channel is exactly how it goes stale: run one card
+    on its own, then press the older all-four button, and that card's items go
+    on twice.
     """
     from .. import carried, dailyops
 
@@ -2076,9 +2082,18 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     counted: list[str] = []
     try:
         for plan in plans:
-            target_id, target_lists = targets.get(plan.kind, ("", []))
+            target_id, _stale = targets.get(plan.kind, ("", []))
             if not target_id:
                 problems.append(f"{dailyops.CARD_KINDS.get(plan.kind, plan.kind)}: no card for tomorrow")
+                continue
+
+            try:
+                target_lists = client.card_checklists(target_id)
+            except Exception as exc:
+                problems.append(
+                    f"{dailyops.CARD_KINDS.get(plan.kind, plan.kind)} — "
+                    f"couldn't re-read tomorrow's card: {_short(exc, 160)}"
+                )
                 continue
 
             by_person = {
