@@ -2165,13 +2165,13 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         if people is None:
             names = [str(c.get("name") or "") for c in held]
             said, landed, could = rules.best_lead_type(agent.said, names)
-            if landed is None and could:
-                # Something on the board is nearly it. Nearly is not a thing to
-                # write on somebody's lead order, and quietly starting a new
-                # checklist instead would hide the question rather than ask it.
+            if landed is None and len(could) > 1:
+                # The card named its leads and not its tier, and two on the
+                # board would both fit. Picking one is the guess that puts
+                # somebody's leads on the wrong order.
                 plan.problems.append(
-                    f"“{said or agent.lead_type}” — is that {' or '.join(could)}? "
-                    f"The card doesn't say plainly enough to file it."
+                    f"“{said or agent.lead_type}” could be {' or '.join(could)} — "
+                    f"the card doesn't say which."
                 )
                 continue
             plan.steps.append(_step(

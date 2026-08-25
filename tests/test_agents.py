@@ -857,12 +857,25 @@ def test_a_label_is_not_part_of_what_the_leads_are_called():
     assert agents.tidy_lead_type("Lead Type: VETS") == "VETS"
 
 
-def test_the_same_leads_at_a_different_tier_is_a_question_not_a_match():
+def test_a_different_tier_is_a_different_product_not_a_near_miss():
+    """Basic Spanish IUL and OTP Spanish IUL are two things you can buy. The
+    checklist gets made rather than the question being asked."""
     said, landed, could = agents.best_lead_type(VICENTE, FULL_BOARD)
 
     assert landed is None
-    assert could == ["OTP Spanish IUL"]
+    assert could == []
     assert said == "Basic Spanish IUL"
+
+
+def test_a_card_that_names_its_leads_and_not_its_tier_still_asks():
+    """Two on the board would both fit and the card says nothing to separate
+    them. That one is a guess about somebody's money."""
+    card = "Lead Type: Phoenix Campaign\n\nlive fri, aug 28"
+
+    said, landed, could = agents.best_lead_type(card, FULL_BOARD)
+
+    assert landed is None
+    assert could == ["PHNX Plus", "PHNX Standard"]
 
 
 def test_something_genuinely_new_is_not_a_question():
@@ -888,7 +901,10 @@ def test_a_clean_match_is_still_clean():
 def test_the_question_names_both_sides(config, monkeypatch):
     from wilbyte.bot import jobs
 
-    agent = read(VICENTE, title="New Agent - Vicente Mejia")
+    agent = read(
+        "Lead Type: Phoenix Campaign\n\nlive thu, aug 27",
+        title="New Agent - Somebody",
+    )
     held = [{"id": f"l{i}", "name": n, "checkItems": []} for i, n in enumerate(FULL_BOARD)]
     dated = {"lead_order": {"id": "lo", "name": "Lead Order 08/27/26"}}
 
@@ -897,5 +913,47 @@ def test_the_question_names_both_sides(config, monkeypatch):
         dated=dated, every_card=[],
     )
 
-    assert any("OTP Spanish IUL" in problem for problem in plan.problems)
-    assert any("Basic Spanish IUL" in problem for problem in plan.problems)
+    assert any("PHNX Plus" in problem for problem in plan.problems)
+    assert any("PHNX Standard" in problem for problem in plan.problems)
+
+
+def test_a_new_lead_type_gets_its_own_checklist(config):
+    """"There is a lead type basic spanish iul." Nothing on the board is it,
+    so one is made and named for what the card calls it."""
+    from wilbyte.bot import jobs
+
+    agent = read(VICENTE, title="New Agent - Vicente Mejia")
+    held = [{"id": f"l{i}", "name": n, "checkItems": []} for i, n in enumerate(FULL_BOARD)]
+
+    plan = jobs._plan_for(
+        Stub(held), agent, day=date(2026, 8, 27), tomorrow=date(2026, 8, 28),
+        dated={
+            "lead_order": {"id": "lo", "name": "Lead Order 08/27/26"},
+            "ads": {"id": "ad", "name": "📊 Ads 08/27/26"},
+            "ops": {"id": "op", "name": "💻 Ops 08/27/26"},
+        },
+        every_card=[],
+    )
+
+    (order,) = [step for step in plan.steps if step.card_title.startswith("Lead Order")]
+    assert order.checklist == "Basic Spanish IUL"
+    assert order.make_checklist is True
+    assert plan.problems == []
+
+
+# ---------------------------------------- dates written by people, not forms
+
+
+@pytest.mark.parametrize(
+    "said,when",
+    [
+        ("Internal: Launch Date Thursday, August 27th", date(2026, 8, 27)),
+        ("Launch Date August 27th", date(2026, 8, 27)),
+        ("launch date is Sept 3rd", date(2026, 9, 3)),
+        ("Launch date is August 1st", date(2026, 8, 1)),
+    ],
+)
+def test_an_ordinal_suffix_does_not_hide_the_date(said, when):
+    """"August 27th" - the th runs into the number, so a word boundary after
+    it never matched and the whole date was missed."""
+    assert agents.find_launch(said, today=TUESDAY) == when

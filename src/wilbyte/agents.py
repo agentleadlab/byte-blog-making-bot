@@ -274,16 +274,13 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
             found.append((bool(tier_of(phrase)), phrase, landed))
 
     if not found:
-        # Nothing matched outright. Anything of the same leads but a different
-        # tier is close enough to be worth asking about and nowhere near close
-        # enough to write to - "Basic Spanish IUL" and "OTP Spanish IUL" are
-        # the same leads or two different products, and only a person knows.
+        # Nothing matched. A different tier is a different product - Basic
+        # Spanish IUL and OTP Spanish IUL are two things you can buy - so it
+        # is not a near miss and the checklist gets made. What does need
+        # asking is a card that named its leads and not its tier, where two
+        # on the board would both fit.
         said = stated_lead_type(text)
-        near = sorted({
-            name for phrase in named_lead_types(text)
-            for name in candidates(phrase, existing, tier=None, strict=False)
-        })
-        return said, None, near
+        return said, None, candidates(said, existing, tier=hint)
 
     tiered = [item for item in found if item[0]]
     picked = tiered or found
@@ -327,8 +324,12 @@ _WHEN_SAID = (
     re.compile(r"[^.\n]*\blive\b[^.\n]*", re.IGNORECASE),
 )
 
+# "August 27th" and "Sept 3rd" are how dates get typed by people rather than
+# by forms. The suffix runs straight into the number, so a word boundary after
+# it never matches and the whole date was missed.
 _MONTH_DAY = re.compile(
-    r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?\s+(\d{1,2})\b", re.IGNORECASE
+    r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b",
+    re.IGNORECASE,
 )
 _NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
 
