@@ -159,7 +159,9 @@ def shape_of(text: str) -> tuple:
     return (family_of(text), tier_of(text), qualifiers_of(text))
 
 
-def candidates(lead_type: str, existing: list[str], *, tier: str | None = None) -> list[str]:
+def candidates(
+    lead_type: str, existing: list[str], *, tier: str | None = None, strict: bool = True
+) -> list[str]:
     """Every checklist these leads could belong on.
 
     More than one means the lead type didn't say enough. "Phoenix Campaign"
@@ -175,7 +177,7 @@ def candidates(lead_type: str, existing: list[str], *, tier: str | None = None) 
         theirs = shape_of(name)
         if theirs[0] != family or theirs[2] != marks:
             continue
-        if tier and theirs[1] and tier != theirs[1]:
+        if strict and tier and theirs[1] and tier != theirs[1]:
             continue
         found.append(name)
     return found
@@ -207,10 +209,16 @@ def match_checklist(
 # not part of what the leads are called.
 _PRICE_PREFIX = re.compile(r"^\$\s*[\d,.]+\s*(?:/\s*\w+)?\s*[-–—:]*\s*")
 
+# "Package Selected: Basic Spanish IUL" is a label and then a lead type. The
+# label is the form's word for the field, not anything about the leads.
+_LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
+
 
 def tidy_lead_type(phrase: str) -> str:
-    """A lead type with the money and the punctuation taken off the front."""
-    return _PRICE_PREFIX.sub("", " ".join((phrase or "").split())).strip(" -–—:")
+    """A lead type with the label, the money and the punctuation taken off."""
+    said = " ".join((phrase or "").split())
+    said = _LABEL_PREFIX.sub("", said)
+    return _PRICE_PREFIX.sub("", said).strip(" -–—:")
 
 
 def named_lead_types(text: str) -> list[str]:
@@ -266,8 +274,16 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
             found.append((bool(tier_of(phrase)), phrase, landed))
 
     if not found:
-        field = find_lead_type(text)
-        return field, None, candidates(field, existing, tier=hint)
+        # Nothing matched outright. Anything of the same leads but a different
+        # tier is close enough to be worth asking about and nowhere near close
+        # enough to write to - "Basic Spanish IUL" and "OTP Spanish IUL" are
+        # the same leads or two different products, and only a person knows.
+        said = stated_lead_type(text)
+        near = sorted({
+            name for phrase in named_lead_types(text)
+            for name in candidates(phrase, existing, tier=None, strict=False)
+        })
+        return said, None, near
 
     tiered = [item for item in found if item[0]]
     picked = tiered or found

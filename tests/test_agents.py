@@ -829,3 +829,73 @@ def test_a_parked_agent_says_it_is_waiting_rather_than_nothing():
 
     assert "waiting in Franklin (Admin)" in said
     assert "no card for that day yet" in said
+
+
+# ----------------------- nearly is not a thing to write on somebody's order
+
+# Vicente's card says "Package Selected: Basic Spanish IUL" and "Lead Type:
+# Index Universal Life". The board has "OTP Spanish IUL". Basic reads as
+# Standard and OTP reads as Plus, so they don't match - and quietly starting a
+# checklist called "Index Universal Life" would hide that rather than ask it.
+
+VICENTE = """Package Selected: Basic Spanish IUL
+Lead Type: Index Universal Life
+
+live thu, aug 27
+"""
+
+FULL_BOARD = [
+    "OTP Spanish IUL", "OTP IUL Plus", "OTP VET Plus",
+    "PHNX Plus", "PHNX Standard", "OTP FEX",
+]
+
+
+def test_a_label_is_not_part_of_what_the_leads_are_called():
+    assert agents.tidy_lead_type("Package Selected: Basic Spanish IUL") == (
+        "Basic Spanish IUL"
+    )
+    assert agents.tidy_lead_type("Lead Type: VETS") == "VETS"
+
+
+def test_the_same_leads_at_a_different_tier_is_a_question_not_a_match():
+    said, landed, could = agents.best_lead_type(VICENTE, FULL_BOARD)
+
+    assert landed is None
+    assert could == ["OTP Spanish IUL"]
+    assert said == "Basic Spanish IUL"
+
+
+def test_something_genuinely_new_is_not_a_question():
+    """Nothing on the board is those leads at all, so there is nothing to ask
+    about - a checklist gets made, which is what was asked for."""
+    card = "Lead Type: Widow Legacy Plan\n\nlive fri"
+
+    said, landed, could = agents.best_lead_type(card, FULL_BOARD)
+
+    assert landed is None and could == []
+
+
+def test_a_clean_match_is_still_clean():
+    for card, expected in (
+        (TAYLER, "PHNX Plus"),
+        (SEBASTIAN, "PHNX Standard"),
+        (REAL, "OTP IUL Plus"),
+    ):
+        _, landed, could = agents.best_lead_type(card, FULL_BOARD)
+        assert landed == expected and could == []
+
+
+def test_the_question_names_both_sides(config, monkeypatch):
+    from wilbyte.bot import jobs
+
+    agent = read(VICENTE, title="New Agent - Vicente Mejia")
+    held = [{"id": f"l{i}", "name": n, "checkItems": []} for i, n in enumerate(FULL_BOARD)]
+    dated = {"lead_order": {"id": "lo", "name": "Lead Order 08/27/26"}}
+
+    plan = jobs._plan_for(
+        Stub(held), agent, day=date(2026, 8, 27), tomorrow=date(2026, 8, 28),
+        dated=dated, every_card=[],
+    )
+
+    assert any("OTP Spanish IUL" in problem for problem in plan.problems)
+    assert any("Basic Spanish IUL" in problem for problem in plan.problems)
