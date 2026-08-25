@@ -697,7 +697,12 @@ class FakeBoard:
         return [{"id": f"id-{name}", "name": name} for name in self.lists]
 
     def list_cards(self, list_id):
-        return self.lists[list_id.removeprefix("id-")]
+        # Stamped the way Trello stamps them, because what moves where now
+        # turns on which list a card is already in.
+        return [
+            {**card, "idList": list_id}
+            for card in self.lists[list_id.removeprefix("id-")]
+        ]
 
     def move_card(self, card_id, list_id, *, position="top"):
         self.moves.append((card_id, list_id, position))
@@ -829,6 +834,149 @@ def test_the_setup_card_goes_back_to_in_que_at_six(monkeypatch, config):
         "s": "id-In Que",
         "g": "id-Quality Check",
     }
+
+
+def test_six_fetches_tomorrows_setup_card_into_in_que(monkeypatch, config):
+    """They are made in the Automation Department and sit there until it is
+    their turn. In Que is the only list nine the next morning looks in."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": "thu", "name": "Agent Setup Going Live Thursday 08/27"},
+        ],
+        "In Que": [],
+        "Today": [{"id": "wed", "name": "Agent Setup Going Live Wednesday 08/26"}],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 26))
+
+    assert (moved, problems) == (2, [])
+    assert board.moves == [
+        # Wednesday's has had its day, so it finishes the walk...
+        ("wed", "id-Quality Check", "top"),
+        # ...and Thursday's is fetched last, so it lands on top of In Que.
+        ("thu", "id-In Que", "top"),
+    ]
+
+
+def test_a_setup_card_already_in_the_days_lists_is_left_alone(monkeypatch, config):
+    """The point is to fetch it, not to drag it back."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    for holding in ("In Que", "Quality Check", "Done"):
+        board = FakeBoard({
+            "In Que": [], "Today": [], "Quality Check": [], "Done": [],
+            holding: [{"id": "thu", "name": "Agent Setup Going Live Thursday 08/27"}],
+        })
+        monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+        jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 26))
+
+        assert [c for c, _, _ in board.moves] == [], f"moved it out of {holding}"
+
+
+def test_tomorrows_setup_card_sitting_in_today_is_sent_back_not_fetched_twice(
+    monkeypatch, config
+):
+    """Somebody dragged it across a day early. The walk sends it back to In Que
+    because its day is still ahead, and the fetch then has nothing to do."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [],
+        "Today": [{"id": "thu", "name": "Agent Setup Going Live Thursday 08/27"}],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 26))
+
+    assert (moved, problems) == (1, [])
+    assert board.moves == [("thu", "id-In Que", "top")]
+
+
+def test_no_setup_card_for_tomorrow_yet_is_not_a_problem(monkeypatch, config):
+    """Nobody has made it. That is Thursday's business, not tonight's."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({"In Que": [], "Today": [], "Quality Check": []})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 26)) == (0, [])
+
+
+def test_only_six_fetches_it(monkeypatch, config):
+    """Nine and the move to Done leave the Automation Department alone."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    for step, lists in (
+        ("to_today", {"In Que": [], "Today": []}),
+        ("to_done", {"Quality Check": [], "Done": []}),
+    ):
+        board = FakeBoard({
+            **lists,
+            "AUTOMATION DEPARTMENT": [
+                {"id": "thu", "name": "Agent Setup Going Live Thursday 08/27"},
+            ],
+        })
+        monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+        assert jobs.walk_board(config, step, day=_date(2026, 8, 26)) == (0, [])
+
+
+def test_the_friday_card_is_fetched_for_the_saturday_it_starts_on(monkeypatch, config):
+    """One card covers the weekend, so Friday evening is when it comes over."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": "we", "name": "Agent Setup Going Live Saturday-Monday 08/22-08/24"},
+        ],
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    # Friday the 21st.
+    jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 21))
+
+    assert board.moves == [("we", "id-In Que", "top")]
+
+
+def test_the_preview_says_the_setup_card_is_coming(monkeypatch, config):
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": "thu", "name": "Agent Setup Going Live Thursday 08/27"},
+        ],
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, problems = jobs.moves_waiting(
+        config, "to_quality_check", day=_date(2026, 8, 26)
+    )
+
+    assert problems == []
+    assert found == ["Agent Setup Going Live Thursday 08/27 → In Que (for tomorrow)"]
+    assert board.moves == [], "reading only"
 
 
 def test_the_setup_card_walks_on_once_its_day_has_gone(monkeypatch, config):

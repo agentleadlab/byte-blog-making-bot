@@ -1956,7 +1956,11 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
             # Named only when it isn't the one on the button, so the setup
             # card going somewhere else is visible before it goes there.
             found.append(title if where == to_name else f"{title} → {where}")
-        return found, []
+
+        card, problem = next_setup_to_pull(client, lists, day, step)
+        if card is not None:
+            found.append(f"{card.get('name')} → {dailyops.IN_QUE} (for tomorrow)")
+        return found, [problem] if problem else []
     finally:
         client.close()
 
@@ -1994,6 +1998,43 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
     return named[0] != "lead_order" and named[1] <= day
 
 
+def next_setup_to_pull(client, lists, day: date, step: str):
+    """Tomorrow's setup card, if six in the evening should fetch it. (card, problem).
+
+    The setup cards are made in the Automation Department and sit there until
+    it is their turn. Six is their turn: In Que is the only list nine the next
+    morning looks in, so a card that isn't there by then spends its own
+    go-live day off to the side of the board.
+
+    Looked for everywhere by the dates in its title, because they do not
+    always stay where they were made. One that has already reached a list in
+    the day's run is left alone - the point is to fetch it, not to drag it
+    back.
+    """
+    from .. import agents, dailyops, trello
+
+    if step != "to_quality_check":
+        return None, None
+
+    in_que = trello.find_list(lists, dailyops.IN_QUE)
+    if in_que is None:
+        return None, f"The board has no list called {dailyops.IN_QUE!r}"
+
+    already = {
+        str((trello.find_list(lists, name) or {}).get("id") or "\0")
+        for name in (
+            dailyops.IN_QUE, dailyops.TODAY, dailyops.QUALITY_CHECK, dailyops.DONE,
+        )
+    }
+    every = [
+        card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
+    ]
+    card = agents.find_setup_card(every, dailyops.next_day(day))
+    if card is None or str(card.get("idList") or "") in already:
+        return None, None
+    return card, None
+
+
 def walk_to(card: dict, step: str, day: date) -> str:
     """Which list a card lands in for one step of the walk, by name.
 
@@ -2023,9 +2064,9 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     hand afterwards, which is the thing this replaces. Two exceptions, both in
     `walks_today`: a new agent's card, and a card dated for another day.
 
-    What is in the list is all it touches: a card somebody already dragged
-    across is where they wanted it, and nothing goes looking for cards
-    elsewhere on the board.
+    What is in the list is nearly all it touches: a card somebody already
+    dragged across is where they wanted it. The one thing fetched from
+    elsewhere is tomorrow's setup card, at six - see `next_setup_to_pull`.
     """
     from .. import dailyops, trello
 
@@ -2060,6 +2101,18 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
                 problems.append(f"{card.get('name')} — {_short(exc, 160)}")
                 continue
             moved += 1
+
+        # Last, so it lands on top of In Que rather than under tomorrow's four.
+        fetch, problem = next_setup_to_pull(client, lists, day, step)
+        if problem:
+            problems.append(problem)
+        elif fetch is not None:
+            in_que = trello.find_list(lists, dailyops.IN_QUE)
+            try:
+                client.move_card(str(fetch.get("id") or ""), str(in_que.get("id") or ""))
+                moved += 1
+            except Exception as exc:
+                problems.append(f"{fetch.get('name')} — {_short(exc, 160)}")
     finally:
         client.close()
     return moved, problems
