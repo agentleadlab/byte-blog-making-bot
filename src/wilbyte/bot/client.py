@@ -160,6 +160,7 @@ class WilByteBot(discord.Client):
         self.updater_task: asyncio.Task | None = None
         self.caption_task: asyncio.Task | None = None
         self.board_task: asyncio.Task | None = None
+        self.agent_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -236,6 +237,12 @@ class WilByteBot(discord.Client):
             self.board_task is None or self.board_task.done()
         ):
             self.board_task = self.loop.create_task(board_loop(self))
+        # New agents arrive whenever a client signs, which is not on any
+        # schedule - so this one watches rather than waiting to be asked.
+        if self.config.secrets.trello_agents_auto and (
+            self.agent_task is None or self.agent_task.done()
+        ):
+            self.agent_task = self.loop.create_task(agent_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -660,6 +667,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
             if request.action == "board":
                 lines = await asyncio.to_thread(jobs.board_today, config)
                 await responder.send("\n".join(lines) or "The board is empty.")
+                return
+
+            if request.action == "agents":
+                await _file_agents(responder, config)
                 return
 
             if request.action == "move":
@@ -2173,6 +2184,110 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
 
     sops.remember(getattr(message, "id", ""))
     await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
+
+
+async def _file_agents(responder: Responder, config: Config, *, silent: bool = False) -> None:
+    """File the new agents waiting in In Que.
+
+    Asked for by hand it shows the plan and waits. Run by the watcher it does
+    it and says what it did - a card can land at any minute of the day, and a
+    button nobody is sitting next to is a card that stays in In Que.
+    """
+    from .. import agents as rules
+
+    try:
+        plans, where, missing = await asyncio.to_thread(jobs.read_agents, config)
+    except PIPELINE_ERRORS as exc:
+        if not silent:
+            await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if missing:
+        await responder.send(embed=embeds.error("\n".join(missing)))
+        return
+    if not plans:
+        if not silent:
+            await responder.send("No new agents waiting in In Que.")
+        return
+
+    doable = [plan for plan in plans if plan.doable]
+    stuck = [plan for plan in plans if not plan.doable]
+
+    if not silent:
+        view = None
+        if doable:
+            view = views.ConfirmView(
+                requester_id=responder.requester_id,
+                timeout=config.discord.approval_timeout_seconds,
+                label=f"File {len(doable)} agent(s)",
+                emoji="🧾",
+            )
+        await responder.send(rules.describe(plans), view=view)
+        if view is None:
+            return
+        await view.wait()
+        if not view.confirmed:
+            return
+    elif not doable:
+        # Nothing to do and nobody asked. The ones that need a person are
+        # said once, by the watcher, and then left alone.
+        await _report_stuck(responder, stuck)
+        return
+
+    try:
+        filed, problems = await asyncio.to_thread(jobs.apply_agents, config, doable, where)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't file them\n{exc}"))
+        return
+
+    note = f"🧾 Filed {filed} agent(s)."
+    if silent and filed:
+        note += "\n" + rules.describe(doable)
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    if filed or problems:
+        await responder.send(note)
+    if silent:
+        await _report_stuck(responder, stuck)
+
+
+async def _report_stuck(responder: Responder, stuck) -> None:
+    """Name a card that needs a person, once, and not again every five minutes."""
+    from .. import agentseen
+
+    seen = await asyncio.to_thread(agentseen.load)
+    fresh = [plan for plan in stuck if plan.agent.card_id not in seen]
+    if not fresh:
+        return
+    lines = [
+        f"• **{plan.agent.name}** — {'; '.join(plan.problems)}\n  {plan.agent.url}"
+        for plan in fresh
+    ]
+    await responder.send("🧾 Waiting on somebody:\n" + "\n".join(lines))
+    await asyncio.to_thread(
+        agentseen.remember, [plan.agent.card_id for plan in fresh]
+    )
+
+
+AGENT_CHECK_SECONDS = 300
+
+
+async def agent_loop(bot: "WilByteBot") -> None:
+    """Watch In Que for new agents, all day.
+
+    A card lands whenever a client signs, which is not on any schedule, so
+    this is the one board job that cannot wait for somebody to ask.
+    """
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            if responder is not None:
+                await _file_agents(responder, bot.config, silent=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Agent check failed; will try again shortly")
+        await asyncio.sleep(AGENT_CHECK_SECONDS)
 
 
 async def _move_cards(responder: Responder, config: Config, named: str) -> None:

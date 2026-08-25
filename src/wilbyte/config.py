@@ -166,6 +166,10 @@ class Secrets:
     # every day, on a timer, whether or not anybody is looking - so turning it
     # on is a deliberate act and turning it off needs no code change.
     trello_auto: bool = False
+    # File new agents as they land in In Que. Separate from trello_auto: the
+    # board moves happen three times a day and this happens all day, so
+    # wanting one is not wanting the other.
+    trello_agents_auto: bool = False
     # Where the board's own messages go. Falls back to the posting channel.
     discord_board_channel_id: str | None = None
     # The SOP library: a page to hold the database, and the channel it fills
@@ -267,6 +271,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 trello_token=_env("TRELLO_TOKEN"),
                 trello_board_id=_env("TRELLO_BOARD_ID"),
                 trello_auto=(_env("TRELLO_AUTO") or "").strip().lower()
+                in ("1", "true", "yes"),
+                trello_agents_auto=(_env("TRELLO_AGENTS_AUTO") or "").strip().lower()
                 in ("1", "true", "yes"),
                 discord_board_channel_id=_env("DISCORD_BOARD_CHANNEL_ID"),
                 notion_token=_env("NOTION_TOKEN"),

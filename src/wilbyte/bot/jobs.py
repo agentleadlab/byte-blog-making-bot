@@ -7,7 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .. import ghl, pipeline, prefs, youtube
@@ -515,7 +515,6 @@ def probe_update(config: Config) -> list[str]:
     removes it by hand - a small price for not experimenting on fifteen live
     articles.
     """
-    from datetime import timedelta
     from zoneinfo import ZoneInfo
 
     context = open_ghl(config)
@@ -2020,6 +2019,199 @@ def run_rollover(config: Config, *, day=None, only: str | None = None) -> tuple[
         problems.append(f"No card for tomorrow yet: {', '.join(missing)}")
     flagged = [item for plan in plans for item in plan.needs_a_look]
     return moved, problems, flagged
+
+
+# ------------------------------------------------- new agents going live
+
+
+def read_agents(config: Config, *, day=None):
+    """What should happen to every new agent card waiting in In Que.
+
+    Reads only. The board is walked once and everything each plan needs
+    travels with it, so what gets shown and what gets done cannot drift.
+    """
+    from .. import agents, dailyops, trello
+
+    day = day or board_day(config)
+    tomorrow = day + timedelta(days=1)
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        by_name = {" ".join(str(bl.get("name") or "").split()).casefold(): bl for bl in lists}
+        queue = trello.find_list(lists, agents.IN_QUE)
+        if queue is None:
+            return [], {}, [f"The board has no list called {agents.IN_QUE!r}"]
+
+        every_card = [
+            card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
+        ]
+        dated = dailyops.cards_for(every_card, day)
+
+        plans = []
+        for card in client.list_cards(str(queue.get("id") or "")):
+            if not agents.is_agent_card(str(card.get("name", ""))):
+                continue
+            detail = client.card_detail(str(card.get("id") or ""))
+            said = "\n".join(
+                [str(detail.get("desc") or "")]
+                + client.card_comments(str(card.get("id") or ""))
+            )
+            agent = agents.read_agent({**card, **detail}, text=said, today=day)
+            if agent is None:
+                continue
+            plans.append(
+                _plan_for(client, agent, day=day, tomorrow=tomorrow,
+                          dated=dated, every_card=every_card)
+            )
+
+        where = {
+            name: str(by_name[name.casefold()].get("id") or "")
+            for name in (agents.PARKED, agents.AUTOMATION, agents.DONE)
+            if name.casefold() in by_name
+        }
+        missing = [
+            f"The board has no list called {name!r}"
+            for name in (agents.PARKED, agents.AUTOMATION, agents.DONE)
+            if name not in where
+        ]
+        return plans, where, missing
+    finally:
+        client.close()
+
+
+def _plan_for(client, agent, *, day, tomorrow, dated, every_card):
+    """One agent's plan, with the cards and checklists it needs already found."""
+    from .. import agents as rules
+    from .. import dailyops
+
+    plan = rules.AgentPlan(agent=agent, when=agent.when(day))
+    if agent.note:
+        plan.problems.append(agent.note)
+        return plan
+
+    if plan.when == "later":
+        plan.move_to = rules.PARKED
+        return plan
+
+    if plan.when == "tomorrow":
+        card = rules.find_setup_card(every_card, tomorrow)
+        title = rules.setup_title(tomorrow)
+        if card is None:
+            plan.make_card = title
+        else:
+            title = str(card.get("name", ""))
+        held = client.card_checklists(str(card.get("id") or "")) if card else []
+        for person in rules.SETUP_PEOPLE:
+            plan.steps.append(_step(
+                title, str(card.get("id") or "") if card else "",
+                person, agent, held, exact=True,
+            ))
+        plan.move_to = rules.DONE
+        return plan
+
+    # Going live today: the three dated cards, wherever they have got to.
+    for kind, people in (
+        ("lead_order", None), ("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE),
+    ):
+        card = dated.get(kind)
+        if card is None:
+            plan.problems.append(
+                f"No {dailyops.CARD_KINDS.get(kind, kind)} card dated "
+                f"{day:%m/%d/%y} anywhere on the board"
+            )
+            continue
+        card_id = str(card.get("id") or "")
+        held = client.card_checklists(card_id)
+        title = str(card.get("name", ""))
+        if people is None:
+            named = rules.match_checklist(agent.lead_type, [
+                str(c.get("name") or "") for c in held
+            ])
+            plan.steps.append(_step(
+                title, card_id, named or agent.lead_type, agent, held, exact=bool(named),
+            ))
+        else:
+            for person in people:
+                plan.steps.append(_step(title, card_id, person, agent, held, exact=True))
+
+    plan.move_to = rules.DONE
+    return plan
+
+
+def _step(card_title, card_id, checklist, agent, held, *, exact):
+    """One line onto one checklist, knowing whether that checklist exists."""
+    from .. import agents as rules
+
+    names = {" ".join(str(c.get("name") or "").split()).casefold() for c in held or []}
+    return rules.Step(
+        card_title=card_title,
+        card_id=card_id,
+        checklist=checklist,
+        item=rules.checklist_item(agent.url, agent.lead_type),
+        make_checklist=" ".join(checklist.split()).casefold() not in names,
+    )
+
+
+def apply_agents(config: Config, plans, where) -> tuple[int, list[str]]:
+    """Carry the plans out. (agents filed, problems).
+
+    Each agent is finished before the next is started, and the card only moves
+    once every line it needed is on. A half-filed agent that got moved to Done
+    is one nobody will ever notice is half-filed.
+    """
+    from .. import agents as rules
+
+    client = open_trello(config)
+    filed, problems = 0, []
+    try:
+        for plan in plans:
+            if not plan.doable:
+                continue
+            try:
+                _carry_out(client, plan, where)
+            except Exception as exc:
+                problems.append(f"{plan.agent.name} — {_short(exc, 160)}")
+                continue
+            filed += 1
+    finally:
+        client.close()
+    return filed, problems
+
+
+def _carry_out(client, plan, where):
+    """One agent, all of it, or an exception and the card left where it is."""
+    from .. import agents as rules
+
+    if plan.make_card:
+        made = client.create_card(where[rules.AUTOMATION], plan.make_card)
+        card_id = str(made.get("id") or "")
+        for step in plan.steps:
+            step.card_id = card_id
+            step.card_title = plan.make_card
+            step.make_checklist = True
+
+    for step in plan.steps:
+        # Read again rather than trusting the plan: an agent filed a minute
+        # ago may have made the very checklist this one is looking for.
+        held = client.card_checklists(step.card_id)
+        by_name = {
+            " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
+            for c in held or []
+        }
+        already = {
+            " ".join(str(item.get("name") or "").split())
+            for c in held or [] for item in c.get("checkItems") or []
+        }
+        if " ".join(step.item.split()) in already:
+            continue
+        key = " ".join(step.checklist.split()).casefold()
+        if key not in by_name:
+            made = client.create_checklist(step.card_id, step.checklist)
+            by_name[key] = str(made.get("id") or "")
+        client.add_check_item(by_name[key], step.item)
+
+    if plan.move_to and plan.move_to in where:
+        client.move_card(plan.agent.card_id, where[plan.move_to])
 
 
 def rollover_plan(config: Config, *, day=None) -> str:

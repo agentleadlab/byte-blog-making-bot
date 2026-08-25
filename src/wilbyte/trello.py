@@ -88,6 +88,29 @@ class TrelloClient:
     def card(self, card_id: str) -> dict:
         return self._request("GET", f"/cards/{card_id}", params={"fields": "name,idList,url"})
 
+    def card_detail(self, card_id: str) -> dict:
+        """A card with its description and short URL, which the list view omits."""
+        return self._request(
+            "GET", f"/cards/{card_id}",
+            params={"fields": "name,idList,url,shortUrl,desc"},
+        )
+
+    def card_comments(self, card_id: str) -> list[str]:
+        """What people have said on a card, newest first.
+
+        The launch date turns up in a comment about as often as in the
+        description - Faith and Casey add it after the form has already made
+        the card - so both get read and neither is the official one.
+        """
+        actions = self._request(
+            "GET", f"/cards/{card_id}/actions",
+            params={"filter": "commentCard", "limit": 50},
+        )
+        return [
+            str((item.get("data") or {}).get("text") or "")
+            for item in actions or []
+        ]
+
     # ------------------------------------------------------------- writing
 
     def move_card(self, card_id: str, list_id: str, *, position: str = "top") -> dict:
@@ -99,6 +122,11 @@ class TrelloClient:
         """
         return self._request(
             "PUT", f"/cards/{card_id}", params={"idList": list_id, "pos": position}
+        )
+
+    def create_card(self, list_id: str, name: str, *, position: str = "top") -> dict:
+        return self._request(
+            "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
         )
 
     def create_checklist(self, card_id: str, name: str) -> dict:

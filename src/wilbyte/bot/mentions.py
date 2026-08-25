@@ -104,6 +104,8 @@ ACTION_WORDS = {
     "rollover": "rollover",
     "carryover": "rollover",
     "move": "move",
+    "agents": "agents",
+    "agent": "agents",
     # Find out what GHL's update endpoint actually accepts, on a throwaway
     # draft rather than on fifteen live articles.
     "probe": "probe",
@@ -343,7 +345,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         rest = _strip_word(text, ("trello",))
         after = _first_action_word(rest.lower())
         return MentionRequest(
-            action=after if after in ("board", "rollover", "move") else "board",
+            action=after if after in ("board", "rollover", "move", "agents") else "board",
             brief=rest,
             today=wants_today(rest),
         )
@@ -428,7 +430,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
-        "board", "rollover", "backfill", "index", "rearrange", "probe",
+        "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -611,6 +613,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **add to sop** `<link>` — file one from anywhere else\n> @RYTE **do we have an SOP for lead forms?** — I'll find it\n> @RYTE **backfill** — file everything already posted in the channel\n> @RYTE **index** — read the old SOP page so I can answer on it too\n\n**The daily board**
 > @RYTE **trello board** — what's on the board today, and what's missing
 > @RYTE **trello move today** / **move quality check** / **move done**
+> @RYTE **trello agents** — file the new agents waiting in In Que
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 9am to Today, 6pm to Quality Check, 9pm carry over
 > @RYTE **host** — attach an image, get a permanent public link back
