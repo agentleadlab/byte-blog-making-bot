@@ -2136,7 +2136,10 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         card_id = str(card.get("id") or "") if card else ""
         held = client.card_checklists(card_id) if card else []
         for person in rules.SETUP_PEOPLE:
-            plan.steps.append(_step(title, card_id, person, agent, held, exact=True))
+            plan.steps.append(_step(
+                title, card_id, person, agent, held, exact=True,
+                label=agent.stated,
+            ))
         plan.move_to = rules.DONE
         return plan
 
@@ -2176,7 +2179,10 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
             ))
         else:
             for person in people:
-                plan.steps.append(_step(title, card_id, person, agent, held, exact=True))
+                plan.steps.append(_step(
+                    title, card_id, person, agent, held, exact=True,
+                    label=agent.stated,
+                ))
 
     plan.move_to = rules.DONE
     return plan

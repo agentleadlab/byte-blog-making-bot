@@ -90,6 +90,9 @@ class Agent:
     # Everything written on the card, kept so the lead type can be worked out
     # against the checklists that actually exist rather than in the abstract.
     said: str = ""
+    # The most specific thing the card calls the leads, for the lines that go
+    # on a setup card and for saying what an agent is before matching.
+    stated: str = ""
     note: str = ""
 
     @property
@@ -227,6 +230,21 @@ def named_lead_types(text: str) -> list[str]:
         if line and line != field and family_of(line):
             said.append(tidy_lead_type(line))
     return said
+
+
+def stated_lead_type(text: str) -> str:
+    """The most specific thing the card says the leads are.
+
+    No board to check against - this is for the lines that go on a setup card,
+    which has a checklist per person rather than per lead type, and for saying
+    what an agent is before anything has been matched. The rule is the same
+    one: a phrase naming its tier beats a phrase that leaves it out.
+    """
+    said = named_lead_types(text)
+    if not said:
+        return find_lead_type(text)
+    tiered = [phrase for phrase in said if tier_of(phrase)]
+    return (tiered or said)[0]
 
 
 def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, list[str]]:
@@ -376,6 +394,7 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         launch=find_launch(text, today=today),
         tier=tier_hint(text),
         said=text or "",
+        stated=stated_lead_type(text),
     )
     return agent
 
@@ -508,8 +527,9 @@ def describe(plans: list[AgentPlan]) -> str:
             "unknown": "no launch date",
         }[plan.when]
         head = f"**{agent.name}**"
-        if agent.lead_type:
-            head += f" — {agent.lead_type}"
+        leads = agent.stated or agent.lead_type
+        if leads:
+            head += f" — {leads}"
         lines.append(f"{head} — {when}")
 
         if plan.problems:
@@ -522,4 +542,8 @@ def describe(plans: list[AgentPlan]) -> str:
             lines.append(f"  → {step.card_title} · {step.checklist}{made}")
         if plan.move_to:
             lines.append(f"  → move to {plan.move_to}")
+        elif not plan.steps:
+            # Parked and staying parked. Saying nothing under a name reads as
+            # "nothing will happen to this", which is true and unhelpful.
+            lines.append(f"  · waiting in {PARKED} — no card for that day yet")
     return "\n".join(lines)

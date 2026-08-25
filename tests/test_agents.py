@@ -767,3 +767,65 @@ def test_the_line_says_what_it_was_filed_as():
     assert step.item.endswith("UPRISE PHX PLUS")
     assert step.checklist == "PHNX Plus"
     assert step.make_checklist is False
+
+
+# --------------------- what an agent is called, before anything is matched
+
+# A setup card has a checklist per person, not per lead type, so there is no
+# board to check a phrase against - and the line still has to say what was
+# bought. Same rule without the board: the phrase naming a tier wins.
+
+
+@pytest.mark.parametrize(
+    "said,stated",
+    [
+        (TAYLER, "UPRISE PHX PLUS"),
+        (SEBASTIAN, "Phoenix Standard"),
+        (REAL, "Text Verified IUL Plus"),
+    ],
+)
+def test_the_most_specific_thing_the_card_says(said, stated):
+    assert agents.stated_lead_type(said) == stated
+
+
+def test_a_card_naming_leads_only_once_says_that():
+    assert agents.stated_lead_type("Lead Type: OTP FEX\n\nlive fri") == "OTP FEX"
+
+
+def test_a_card_naming_none_falls_back_to_the_field():
+    assert agents.stated_lead_type("Lead Type: Premium Package") == "Premium Package"
+
+
+def test_the_plan_shows_what_the_card_really_says():
+    """It said VETS under his name while filing him as PHX PLUS, which is one
+    of those two being a lie."""
+    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
+    plan = agents.AgentPlan(agent=agent, when="later")
+
+    assert "UPRISE PHX PLUS" in agents.describe([plan])
+    assert "VETS" not in agents.describe([plan])
+
+
+def test_a_setup_card_line_says_the_same_thing():
+    from wilbyte.bot import jobs
+
+    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
+
+    step = jobs._step(
+        "Agent Setup Going Live Friday 08/28", "c", "Therese", agent, [],
+        exact=True, label=agent.stated,
+    )
+
+    assert step.item.endswith("UPRISE PHX PLUS")
+
+
+def test_a_parked_agent_says_it_is_waiting_rather_than_nothing():
+    """A name with nothing under it reads as "nothing will happen to this",
+    which is true and unhelpful."""
+    agent = read(TAYLER, title="NEW AGENT- Tayler Collins")
+    plan = agents.AgentPlan(agent=agent, when="later")
+
+    said = agents.describe([plan])
+
+    assert "waiting in Franklin (Admin)" in said
+    assert "no card for that day yet" in said
