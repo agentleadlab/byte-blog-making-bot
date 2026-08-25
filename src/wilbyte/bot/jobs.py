@@ -1999,16 +1999,19 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
 
 
 def next_setup_to_pull(client, lists, day: date, step: str):
-    """Tomorrow's setup card, if six in the evening should fetch it. (card, problem).
+    """The setup card tomorrow will be working on. (card, problem).
 
     The setup cards are made in the Automation Department and sit there until
-    it is their turn. Six is their turn: In Que is the only list nine the next
-    morning looks in, so a card that isn't there by then spends its own
-    go-live day off to the side of the board.
+    it is their turn. Six in the evening is their turn - the one that comes
+    over is the one *tomorrow* works on, which is the card for the day after
+    that, because agents are set up the day before they go live. Tuesday
+    evening fetches Thursday's card: Wednesday is the day it gets worked.
 
-    Looked for everywhere by the dates in its title, because they do not
-    always stay where they were made. One that has already reached a list in
-    the day's run is left alone - the point is to fetch it, not to drag it
+    In Que is the only list nine the next morning looks in, so a card still in
+    Automation at nine spends its whole working day off to the side of the
+    board. Found by the dates in its title rather than by list, because they
+    do not always stay where they were made, and left alone once it has
+    reached one of the day's lists - the point is to fetch it, not to drag it
     back.
     """
     from .. import agents, dailyops, trello
@@ -2026,24 +2029,29 @@ def next_setup_to_pull(client, lists, day: date, step: str):
             dailyops.IN_QUE, dailyops.TODAY, dailyops.QUALITY_CHECK, dailyops.DONE,
         )
     }
-    every = [
-        card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
-    ]
-    card = agents.find_setup_card(every, dailyops.next_day(day))
-    if card is None or str(card.get("idList") or "") in already:
-        return None, None
-    return card, None
+    tomorrow = dailyops.next_day(day)
+    for card in (c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))):
+        title = str(card.get("name", ""))
+        if not agents.is_setup_card(title):
+            continue
+        if agents.setup_worked_on(title, day) != tomorrow:
+            continue
+        if str(card.get("idList") or "") in already:
+            return None, None
+        return card, None
+    return None, None
 
 
 def walk_to(card: dict, step: str, day: date) -> str:
     """Which list a card lands in for one step of the walk, by name.
 
-    Normally the step's own destination. The exception is the setup card: at
-    six it goes back to In Que rather than on to Quality Check, so nine the
-    next morning puts it in Today again. Agents keep being added to it right
-    up to the day it covers, and a card in Quality Check is a card nobody is
-    adding to. Once its go-live day has been and gone it walks on with
-    everything else.
+    Normally the step's own destination. The exception is a setup card that
+    somebody dragged into Today before its working day: it goes back to In Que
+    rather than on to Quality Check, so nine on the right morning puts it in
+    Today again. A card in Quality Check is a card nobody is adding agents to.
+
+    On its own working day it walks on with everything else - by six the
+    setting up is done and its agents go live in the morning.
     """
     from .. import agents, dailyops
 
@@ -2051,9 +2059,10 @@ def walk_to(card: dict, step: str, day: date) -> str:
     if step != "to_quality_check":
         return to_name
     title = str(card.get("name", ""))
-    if agents.is_setup_card(title) and agents.setup_ahead_of(title, day):
-        return dailyops.IN_QUE
-    return to_name
+    if not agents.is_setup_card(title):
+        return to_name
+    worked = agents.setup_worked_on(title, day)
+    return dailyops.IN_QUE if worked is not None and worked > day else to_name
 
 
 def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:

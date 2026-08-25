@@ -578,17 +578,28 @@ def _near(month: int, dom: int, near: date) -> date | None:
     return None
 
 
-def setup_ahead_of(title: str, day: date) -> bool:
-    """Whether a setup card's go-live is still to come after `day`.
+def setup_starts(title: str, near: date) -> date | None:
+    """The first day a setup card's agents go live, as a real date.
 
-    The last date in the title is the one that matters: the Friday card runs
-    Saturday to Monday and isn't finished until the Monday.
+    The first date, not the last: the Friday card runs Saturday to Monday, and
+    the whole weekend's worth of setting up is done before the Saturday.
     """
     found = _SETUP_DATE.findall(title or "")
     if not found:
-        return False
-    last = _near(int(found[-1][0]), int(found[-1][1]), day)
-    return last is not None and last > day
+        return None
+    return _near(int(found[0][0]), int(found[0][1]), near)
+
+
+def setup_worked_on(title: str, near: date) -> date | None:
+    """The day the card is worked, which is the day before its agents go live.
+
+    Everything about where these cards sit follows from this. A card headed
+    Thursday is Wednesday's work, so it has to be in In Que on the Tuesday
+    evening for nine on Wednesday morning to put it in Today - and by six on
+    Wednesday its work is finished and it walks on like anything else.
+    """
+    starts = setup_starts(title, near)
+    return starts - timedelta(days=1) if starts is not None else None
 
 
 def find_setup_card(cards: list[dict], day: date) -> dict | None:

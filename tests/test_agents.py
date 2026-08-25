@@ -154,22 +154,21 @@ def test_a_setup_card_is_told_apart_from_a_daily_one():
     assert agents.is_setup_card("New Agent - Gustin Elrod") is False
 
 
-def test_a_setup_card_is_ahead_until_the_day_it_covers():
-    title = "Agent Setup Going Live Wednesday 08/26"
+def test_a_setup_card_is_worked_the_day_before_its_agents_go_live():
+    """That is the whole shape of it: Thursday's card is Wednesday's work."""
+    title = "Agent Setup Going Live Thursday 08/27"
 
-    assert agents.setup_ahead_of(title, date(2026, 8, 25)) is True
-    # The go-live day itself: the setting up is over, not still to come.
-    assert agents.setup_ahead_of(title, date(2026, 8, 26)) is False
-    assert agents.setup_ahead_of(title, date(2026, 8, 27)) is False
+    assert agents.setup_starts(title, date(2026, 8, 25)) == date(2026, 8, 27)
+    assert agents.setup_worked_on(title, date(2026, 8, 25)) == date(2026, 8, 26)
 
 
-def test_a_weekend_setup_card_is_ahead_until_its_last_day():
-    """The Friday card runs Saturday to Monday and isn't finished till Monday."""
+def test_the_weekend_card_is_worked_on_the_friday():
+    """One card covers Saturday to Monday because nobody is making one on
+    Saturday - so the whole weekend gets set up before the Saturday."""
     title = "Agent Setup Going Live Saturday-Monday 08/22-08/24"
 
-    assert agents.setup_ahead_of(title, date(2026, 8, 22)) is True
-    assert agents.setup_ahead_of(title, date(2026, 8, 23)) is True
-    assert agents.setup_ahead_of(title, date(2026, 8, 24)) is False
+    assert agents.setup_starts(title, date(2026, 8, 20)) == date(2026, 8, 22)
+    assert agents.setup_worked_on(title, date(2026, 8, 20)) == date(2026, 8, 21)
 
 
 def test_a_setup_card_over_new_year_is_next_month_not_last_year():
@@ -177,12 +176,12 @@ def test_a_setup_card_over_new_year_is_next_month_not_last_year():
     come out as three days away rather than eleven months behind."""
     title = "Agent Setup Going Live Friday 01/02"
 
-    assert agents.setup_ahead_of(title, date(2026, 12, 30)) is True
-    assert agents.setup_ahead_of(title, date(2027, 1, 3)) is False
+    assert agents.setup_worked_on(title, date(2026, 12, 30)) == date(2027, 1, 1)
 
 
-def test_a_setup_card_with_no_date_on_it_is_not_ahead_of_anything():
-    assert agents.setup_ahead_of("Agent Setup Going Live", date(2026, 8, 25)) is False
+def test_a_setup_card_with_no_date_on_it_has_no_working_day():
+    assert agents.setup_starts("Agent Setup Going Live", date(2026, 8, 25)) is None
+    assert agents.setup_worked_on("Agent Setup Going Live", date(2026, 8, 25)) is None
 
 
 # ------------------------------------------------------- what it will say
