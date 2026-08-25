@@ -6,16 +6,19 @@ mechanical, and it is the mechanical part that gets done wrong at 5pm on a
 Friday: copy the lead type, copy the card link, paste both onto three
 different cards on the right date, on the right checklists.
 
-What happens depends only on when the agent goes live:
+What happens turns on when the agent goes live, and on whether the card they
+go on exists yet:
 
-    today      -> onto that day's Lead Order, Ads and Ops cards, then Done
-    tomorrow   -> onto tomorrow's "Agent Setup Going Live" card, then Done
-    later      -> park it in Franklin's list until it becomes tomorrow
+    today                       -> that day's Lead Order, Ads and Ops cards
+    a setup card covers the day -> that card
+    tomorrow, and none exists   -> make one, then that card
+    anything else               -> wait in Franklin's list
 
-Done means finished with. Franklin's list means waiting, and it is read every
-time In Que is - a card parked on Tuesday because it launches Thursday has to
-be picked up again on Wednesday, when Thursday has become tomorrow. A waiting
-room nobody goes back to is a place things get lost.
+Everything filed ends up in Done, at the top of it. Franklin's list means
+waiting, and it is read every time In Que is - an agent put there on Monday
+because nothing existed for Thursday goes on the Thursday card the moment
+somebody makes it. A waiting room nobody goes back to is where things get
+lost.
 
 Everything here is pure. It reads the card's description and comments and
 works out what should happen; nothing in this module writes to the board, so

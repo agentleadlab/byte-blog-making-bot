@@ -2108,36 +2108,41 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         plan.problems.append(rules.cannot_read(agent, needs_lead_type=False))
         return plan
 
-    if plan.when == "later":
-        # Its turn hasn't come. The lead type can still be missing - somebody
-        # fills it in before Thursday, and it is not needed until then.
-        # Already parked and still waiting: leave it exactly where it is
-        # rather than moving it to the list it is already in.
-        plan.move_to = "" if parked else rules.PARKED
+    if plan.when != "today":
+        # Whether they can be done yet turns on whether the card they go on
+        # exists, not on how far off the launch is. A Thursday card made on
+        # Tuesday is a Thursday card, and the agents for it can go on now.
+        card = rules.find_setup_card(every_card, agent.launch)
+        make = ""
+        if card is None:
+            if plan.when != "tomorrow":
+                # Nothing to put them on yet. Wait in Franklin's list, and
+                # leave one already there exactly where it is rather than
+                # moving it to the list it is in.
+                plan.move_to = "" if parked else rules.PARKED
+                return plan
+            # A card made on a Friday covers the whole weekend, because
+            # nobody is making one on Saturday.
+            span = rules.weekend_span(agent.launch)
+            make = rules.setup_title(agent.launch, span[1] if span else None)
+
+        problem = rules.cannot_read(agent, needs_lead_type=True)
+        if problem:
+            plan.problems.append(problem)
+            return plan
+
+        plan.make_card = make
+        title = make or str(card.get("name", ""))
+        card_id = str(card.get("id") or "") if card else ""
+        held = client.card_checklists(card_id) if card else []
+        for person in rules.SETUP_PEOPLE:
+            plan.steps.append(_step(title, card_id, person, agent, held, exact=True))
+        plan.move_to = rules.DONE
         return plan
 
     problem = rules.cannot_read(agent, needs_lead_type=True)
     if problem:
         plan.problems.append(problem)
-        return plan
-
-    if plan.when == "tomorrow":
-        card = rules.find_setup_card(every_card, tomorrow)
-        # A card made on a Friday covers the whole weekend, because nobody is
-        # making one on Saturday.
-        span = rules.weekend_span(tomorrow)
-        title = rules.setup_title(tomorrow, span[1] if span else None)
-        if card is None:
-            plan.make_card = title
-        else:
-            title = str(card.get("name", ""))
-        held = client.card_checklists(str(card.get("id") or "")) if card else []
-        for person in rules.SETUP_PEOPLE:
-            plan.steps.append(_step(
-                title, str(card.get("id") or "") if card else "",
-                person, agent, held, exact=True,
-            ))
-        plan.move_to = rules.DONE
         return plan
 
     # Going live today: the three dated cards, wherever they have got to.

@@ -456,3 +456,122 @@ def test_one_made_for_the_weekend_is_then_found_by_all_of_it():
 
     for day in (29, 30, 31):
         assert agents.find_setup_card(cards, date(2026, 8, day))["id"] == "w"
+
+
+# ------------------- a card exists for the day, so they can go on it now
+
+# Tuesday, and "Agent Setup Going Live Thursday 08/27" is already in Automation
+# Department. Waiting until Wednesday to put Thursday's agents on it would be
+# waiting for nothing: the card they go on is already there.
+
+
+class Stub:
+    """A board that answers what a plan needs to ask it."""
+
+    def __init__(self, held=None):
+        self.held = held or []
+
+    def card_checklists(self, card_id):
+        return self.held
+
+
+def plan_for(agent, *, every_card, day=TUESDAY, parked=False, dated=None, held=None):
+    from datetime import timedelta
+
+    from wilbyte.bot import jobs
+
+    return jobs._plan_for(
+        Stub(held), agent, day=day, tomorrow=day + timedelta(days=1),
+        dated=dated or {}, every_card=every_card, parked=parked,
+    )
+
+
+THURSDAY_CARD = {"id": "setup-thu", "name": "Agent Setup Going Live Thursday 08/27"}
+
+
+def thursday_agent(text=None):
+    return read(text or "Lead Type: OTP VET Plus\nLaunch date is Thursday, August 27")
+
+
+def test_an_agent_for_thursday_goes_on_thursdays_card_on_tuesday():
+    plan = plan_for(thursday_agent(), every_card=[THURSDAY_CARD])
+
+    assert plan.move_to == agents.DONE
+    assert plan.make_card == ""
+    assert [step.checklist for step in plan.steps] == list(agents.SETUP_PEOPLE)
+    assert all(step.card_id == "setup-thu" for step in plan.steps)
+
+
+def test_with_no_card_for_that_day_it_waits_in_franklins_list():
+    plan = plan_for(thursday_agent(), every_card=[])
+
+    assert plan.move_to == agents.PARKED
+    assert plan.steps == []
+
+
+def test_one_already_waiting_is_left_where_it_is():
+    plan = plan_for(thursday_agent(), every_card=[], parked=True)
+
+    assert plan.move_to == ""
+
+
+def test_tomorrows_card_is_made_when_it_is_not_there():
+    """The only day RYTE makes one. Any further out, Franklin makes it."""
+    agent = read("Lead Type: OTP VET Plus\nLaunch date is Wednesday, August 26")
+
+    plan = plan_for(agent, every_card=[])
+
+    assert plan.make_card == "Agent Setup Going Live Wednesday 08/26"
+    assert plan.move_to == agents.DONE
+
+
+def test_the_weekend_card_takes_sundays_agents_too():
+    weekend = {"id": "w", "name": "Agent Setup Going Live Saturday-Monday 08/29-08/31"}
+    agent = read("Lead Type: OTP FEX\nLaunch date is Sunday, August 30")
+
+    plan = plan_for(agent, every_card=[weekend], day=date(2026, 8, 28))
+
+    assert all(step.card_id == "w" for step in plan.steps)
+    assert plan.move_to == agents.DONE
+
+
+def test_a_lead_type_is_needed_once_there_is_a_card_to_go_on():
+    """Parked, it can wait. About to be filed, it cannot."""
+    agent = thursday_agent("Launch date is Thursday, August 27")
+
+    waiting = plan_for(agent, every_card=[])
+    filing = plan_for(agent, every_card=[THURSDAY_CARD])
+
+    assert waiting.problems == [] and waiting.move_to == agents.PARKED
+    assert "lead type" in filing.problems[0]
+
+
+def test_the_agent_card_ends_up_at_the_top_of_done(monkeypatch, config):
+    """"Moved to done on top position" - under forty-nine other cards is not
+    where anybody looks."""
+    from wilbyte.bot import jobs
+
+    moved = []
+
+    class Board(Stub):
+        checklists_made: list = []
+
+        def card_checklists(self, card_id):
+            return [{"id": "l1", "name": p, "checkItems": []} for p in agents.SETUP_PEOPLE]
+
+        def add_check_item(self, checklist_id, name, *, checked=False):
+            return {}
+
+        def move_card(self, card_id, list_id, *, position="top"):
+            moved.append((card_id, list_id, position))
+            return {}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    plan = plan_for(thursday_agent(), every_card=[THURSDAY_CARD])
+
+    jobs.apply_agents(config, [plan], {agents.DONE: "done-list"})
+
+    assert moved == [(plan.agent.card_id, "done-list", "top")]
