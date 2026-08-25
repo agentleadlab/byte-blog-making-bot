@@ -615,7 +615,8 @@ def at_hour(hour, minute=0):
         (9, ["to_today"]),
         (17, ["to_today"]),
         (18, ["to_today", "to_quality_check"]),
-        (21, ["to_today", "to_quality_check", "rollover", "to_done"]),
+        (19, ["to_today", "to_quality_check"]),
+        (20, ["to_today", "to_quality_check", "rollover", "to_done"]),
         (23, ["to_today", "to_quality_check", "rollover", "to_done"]),
     ],
 )
@@ -626,18 +627,18 @@ def test_the_day_unfolds_in_order(hour, expected):
 def test_the_carry_happens_before_the_cards_leave_for_done():
     """"After you move those unchecked lists to their respective new list you
     move them to done" - both at nine, and that way round."""
-    due = dailyops.steps_due(at_hour(21), set())
+    due = dailyops.steps_due(at_hour(20), set())
 
     assert due.index("rollover") < due.index("to_done")
 
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check"}) == [
+    assert dailyops.steps_due(at_hour(20), {"to_today", "to_quality_check"}) == [
         "rollover", "to_done",
     ]
     assert dailyops.steps_due(
-        at_hour(21), {"to_today", "to_quality_check", "rollover", "to_done"}
+        at_hour(20), {"to_today", "to_quality_check", "rollover", "to_done"}
     ) == []
 
 
@@ -1490,10 +1491,26 @@ def test_the_move_is_named_by_where_the_cards_end_up(said, step):
 
 
 def test_quality_check_to_done_is_a_step_as_well_as_a_move():
-    """It runs itself at nine, and it is still there to ask for by name."""
+    """It runs itself in the evening, and is still there to ask for by name."""
     assert "to_done" in dailyops.STEP_LISTS
-    assert dict((name, at) for at, name in dailyops.STEPS)["to_done"] == 21
+    assert dailyops.hour_of("to_done") == 20
     assert dailyops.move_named("trello move done") == "to_done"
+
+
+def test_the_evening_pair_run_at_the_same_hour():
+    """One hour, two steps. Changing it must not leave them on different ones."""
+    assert dailyops.hour_of("rollover") == dailyops.hour_of("to_done")
+
+
+def test_a_move_nobody_scheduled_has_no_hour():
+    assert dailyops.hour_of("not a step") is None
+
+
+@pytest.mark.parametrize(
+    "hour,said", [(9, "9am"), (12, "12pm"), (18, "6pm"), (20, "8pm"), (0, "12am")]
+)
+def test_the_hour_is_reported_the_way_anybody_says_it(hour, said):
+    assert dailyops.clock(hour) == said
 
 
 def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):

@@ -2414,7 +2414,7 @@ def _carry_out(client, plan, where):
 
 
 def rollover_plan(config: Config, *, day=None) -> str:
-    """What the 9pm rollover would move, as words. Writes nothing."""
+    """What the evening rollover would move, as words. Writes nothing."""
     from .. import dailyops
 
     plans, missing, _ = read_rollover(config, day=day)

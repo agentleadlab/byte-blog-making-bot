@@ -1,6 +1,6 @@
 """The Agent Lead Lab daily board routine, as rules rather than clicks.
 
-Four dated cards walk In Que -> Today -> Quality Check each day. At 9pm every
+Four dated cards walk In Que -> Today -> Quality Check each day. At 8pm every
 item still unticked has to land on tomorrow's card, on the *same person's*
 checklist and the *same card type*. Nicole's unfinished General items go to
 Nicole's checklist on tomorrow's General card - not into Ops, not into a
@@ -30,7 +30,7 @@ CARD_KINDS = {
 
 # The day, as three moves and a carry-over. From how it is actually run:
 # "from In Que, by 9am the cards are moved to Today; Today by 6pm the cards are
-# moved to Quality Check; by 9pm all checklist items that aren't checked are
+# moved to Quality Check; by 8pm all checklist items that aren't checked are
 # moved to next day's cards, which are on In Que."
 IN_QUE = "In Que"
 TODAY = "Today"
@@ -40,14 +40,14 @@ DONE = "Done"
 # (hour, what happens). Local time on the board's own clock - the team's, not
 # the server's.
 #
-# Two things happen at nine, in this order: "after you move those unchecked
+# Two things happen at eight, in this order: "after you move those unchecked
 # lists to their respective new list you move them to done". The carry has to
 # read the cards while they are still the day's, so it goes first.
 STEPS = (
     (9, "to_today"),
     (18, "to_quality_check"),
-    (21, "rollover"),
-    (21, "to_done"),
+    (20, "rollover"),
+    (20, "to_done"),
 )
 
 STEP_NAMES = {
@@ -72,6 +72,16 @@ MOVE_WORDS = (
     ("to_quality_check", re.compile(r"\bquality\s*check\b|\bqc\b", re.IGNORECASE)),
     ("to_done", re.compile(r"\bdone\b", re.IGNORECASE)),
 )
+
+
+def hour_of(step: str) -> int | None:
+    """When a step runs on its own, or None for one that only happens when asked."""
+    return dict((name, at) for at, name in STEPS).get(step)
+
+
+def clock(hour: int) -> str:
+    """20 -> "8pm". The way anybody says it, for what gets reported."""
+    return f"{hour % 12 or 12}{'am' if hour < 12 else 'pm'}"
 
 
 def move_named(text: str) -> str | None:

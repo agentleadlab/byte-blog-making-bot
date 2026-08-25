@@ -850,7 +850,7 @@ BOARD_CHECK_SECONDS = 240
 
 
 async def board_loop(bot: "WilByteBot") -> None:
-    """Walk the daily board through its day: 9am, 6pm, 9pm.
+    """Walk the daily board through its day: 9am, 6pm, 8pm.
 
     In Que to Today, Today to Quality Check, then whatever is still unticked
     onto tomorrow's cards - which Zapier has already made and left in In Que -
@@ -887,7 +887,10 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     try:
         if step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
-            note = f"📋 9pm — carried {moved} unfinished item(s) onto tomorrow's cards."
+            note = (
+                f"📋 {dailyops.clock(dailyops.hour_of(step))} — carried {moved} "
+                "unfinished item(s) onto tomorrow's cards."
+            )
             if flagged:
                 note += "\n" + "\n".join(
                     f"⚠ {item.person}: {item.name[:60]} — "
@@ -897,9 +900,8 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 )
         else:
             moved, problems = await asyncio.to_thread(jobs.walk_board, bot.config, step)
-            hour = dict((name, at) for at, name in dailyops.STEPS)[step]
             note = (
-                f"📋 {hour % 12 or 12}{'am' if hour < 12 else 'pm'} — moved {moved} card(s) "
+                f"📋 {dailyops.clock(dailyops.hour_of(step))} — moved {moved} card(s) "
                 f"{dailyops.STEP_NAMES[step]}."
             )
     except PIPELINE_ERRORS as exc:

@@ -1,6 +1,6 @@
 """Trello REST client for the Agent Lead Lab daily board routine.
 
-Replaces the manual moves and the 9pm rollover: four dated cards walk
+Replaces the manual moves and the evening rollover: four dated cards walk
 In Que -> Today -> Quality Check each day, and whatever is still unticked at
 the end has to land on tomorrow's card, on the right person's checklist.
 
