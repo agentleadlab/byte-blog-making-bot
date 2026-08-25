@@ -1757,3 +1757,147 @@ def test_two_cards_to_fetch_arrive_soonest_on_top(monkeypatch, config):
 
     assert (moved, problems) == (2, [])
     assert [c for c, _, _ in board.moves] == ["sat", "fri"]
+
+
+# ------------------------------- the thread from Done back to the setup card
+
+
+class LinkingBoard(FakeBoard):
+    """A board that remembers descriptions as well as moves."""
+
+    def __init__(self, lists, desc=None):
+        super().__init__(lists)
+        self.desc = desc or {}
+
+    def card_detail(self, card_id):
+        return {"id": card_id, "desc": self.desc.get(card_id, "")}
+
+    def set_description(self, card_id, text):
+        self.desc[card_id] = text
+        return {}
+
+
+SETUP_URL = "https://trello.com/c/FsT9wtDC/15321-agent-setup-going-live-wednesday-08-26"
+
+
+def linking_board(desc=None):
+    return LinkingBoard({
+        "Quality Check": [
+            {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26",
+             "url": SETUP_URL},
+        ],
+        "Done": [],
+        "In Que": [{"id": "lo", "name": "Lead Order 08/26/26"}],
+    }, desc=desc)
+
+
+def test_a_setup_card_going_to_done_is_linked_on_that_days_lead_order(
+    monkeypatch, config
+):
+    """Its agents go live on the 26th, so the 26th's Lead Order card is the one
+    somebody is looking at when they need to see who was set up."""
+    from wilbyte.bot import jobs
+
+    board = linking_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert (moved, problems) == (1, [])
+    assert board.moves == [("s", "id-Done", "top")]
+    assert board.desc["lo"] == SETUP_URL
+
+
+def test_the_link_is_added_under_what_is_already_there(monkeypatch, config):
+    """The description carries the people it concerns. Replacing it would lose
+    them, which is worse than not adding the link."""
+    from wilbyte.bot import jobs
+
+    board = linking_board({"lo": "@nic0l3 @kathleenmarie15 @jenniferhashisaki2"})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert board.desc["lo"] == (
+        "@nic0l3 @kathleenmarie15 @jenniferhashisaki2\n\n" + SETUP_URL
+    )
+
+
+def test_a_link_already_there_is_not_added_twice(monkeypatch, config):
+    """Matched on the card's short id, because a link somebody pasted by hand
+    carries whatever the title was at the time on the end of it."""
+    from wilbyte.bot import jobs
+
+    theirs = "https://trello.com/c/FsT9wtDC/15321-agent-setup-going-live-wednesday-08-26"
+    board = linking_board({"lo": f"@nic0l3\n\n{theirs}"})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert board.desc["lo"] == f"@nic0l3\n\n{theirs}", "written again"
+
+
+def test_a_link_pasted_with_a_different_slug_still_counts(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = linking_board({"lo": "https://trello.com/c/FsT9wtDC"})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert board.desc["lo"] == "https://trello.com/c/FsT9wtDC"
+
+
+def test_no_lead_order_card_for_that_day_is_said_not_swallowed(monkeypatch, config):
+    """The card still goes to Done. The missing link is worth a sentence."""
+    from wilbyte.bot import jobs
+
+    board = LinkingBoard({
+        "Quality Check": [
+            {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26",
+             "url": SETUP_URL},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert moved == 1
+    assert board.moves == [("s", "id-Done", "top")]
+    assert "no Lead Order card dated 08/26/26" in problems[0]
+
+
+def test_the_daily_cards_are_not_linked_anywhere(monkeypatch, config):
+    """Only setup cards. Ads going to Done is not a thread anybody follows."""
+    from wilbyte.bot import jobs
+
+    board = LinkingBoard({
+        "Quality Check": [{"id": "a", "name": "📊 Ads 08/25/26"}],
+        "Done": [],
+        "In Que": [{"id": "lo", "name": "Lead Order 08/26/26"}],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert board.desc == {}
+
+
+def test_six_oclock_does_not_link_anything(monkeypatch, config):
+    """Only the move to Done. At six the setup card is still being worked."""
+    from wilbyte.bot import jobs
+
+    board = LinkingBoard({
+        "In Que": [{"id": "lo", "name": "Lead Order 08/26/26"}],
+        "Today": [
+            {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26",
+             "url": SETUP_URL},
+        ],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_quality_check", day=date(2026, 8, 25))
+
+    assert board.desc == {}

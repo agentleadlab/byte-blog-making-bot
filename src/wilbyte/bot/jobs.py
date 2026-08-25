@@ -2059,6 +2059,50 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
+def note_setup_on_lead_order(client, lists, setup_card: dict, day: date) -> str | None:
+    """Put a setup card's link on the Lead Order card for the day it covers.
+
+    The setup card goes to Done with the rest of Quality Check, ticked or not.
+    This is the thread back to it: its agents go live on that day, so the Lead
+    Order card for that day is the one somebody is looking at when they need
+    to know who was set up and what they were sold - or which boxes never got
+    ticked.
+
+    Appended, never replaced. The description already carries the people it
+    concerns, and losing that would be worse than not adding the link.
+    Returns a problem to report, or None.
+    """
+    from .. import agents, dailyops, trello
+
+    title = str(setup_card.get("name", ""))
+    starts = agents.setup_starts(title, day)
+    if starts is None:
+        return None
+
+    every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+    target = dailyops.cards_for(every, starts).get("lead_order")
+    if target is None:
+        return f"{title} — no Lead Order card dated {starts:%m/%d/%y} to link it on"
+
+    link = str(setup_card.get("url") or setup_card.get("shortUrl") or "")
+    short = trello.linked_card_id(link)
+    if not short:
+        return None
+
+    target_id = str(target.get("id") or "")
+    try:
+        held = str(client.card_detail(target_id).get("desc") or "")
+        # By the card's own short id, not the whole URL: the slug on the end
+        # is the title at the time it was pasted, and a link somebody added by
+        # hand has a different one for the same card.
+        if short in held:
+            return None
+        client.set_description(target_id, f"{held.rstrip()}\n\n{link}" if held.strip() else link)
+    except Exception as exc:
+        return f"{title} — couldn't link it on {target.get('name')}: {_short(exc, 120)}"
+    return None
+
+
 def walk_to(card: dict, step: str, day: date) -> str:
     """Which list a card lands in for one step of the walk, by name.
 
@@ -2090,16 +2134,19 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     hand afterwards, which is the thing this replaces. Two exceptions, both in
     `walks_today`: a new agent's card, and a card dated for another day.
 
-    What is in the list is nearly all it touches: a card somebody already
-    dragged across is where they wanted it. The one thing fetched from
-    elsewhere is tomorrow's setup card, at six - see `next_setup_to_pull`.
+    What is in the list is nearly all it touches. Two things reach outside it,
+    both in the evening: the setup card tomorrow works on is fetched from
+    wherever it was made (`setups_to_pull`), and a setup card on its way to
+    Done gets its link put on the Lead Order card for the day its agents go
+    live (`note_setup_on_lead_order`).
     """
-    from .. import dailyops, trello
+    from .. import agents, dailyops, trello
 
     day = day or board_day(config)
     from_name, to_name = dailyops.STEP_LISTS[step]
     client = open_trello(config)
     moved, problems = 0, []
+    finished_setups = []
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         source = trello.find_list(lists, from_name)
@@ -2127,6 +2174,15 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
                 problems.append(f"{card.get('name')} — {_short(exc, 160)}")
                 continue
             moved += 1
+            if step == "to_done" and agents.is_setup_card(str(card.get("name", ""))):
+                finished_setups.append(card)
+
+        # After the moves, so the card is already in Done when the Lead Order
+        # card starts pointing at it.
+        for card in finished_setups:
+            problem = note_setup_on_lead_order(client, lists, card, day)
+            if problem:
+                problems.append(problem)
 
         # Last, so they land on top of In Que rather than under tomorrow's four.
         fetch, problem = setups_to_pull(client, lists, day, step)

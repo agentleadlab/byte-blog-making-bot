@@ -124,6 +124,15 @@ class TrelloClient:
             "PUT", f"/cards/{card_id}", params={"idList": list_id, "pos": position}
         )
 
+    def set_description(self, card_id: str, text: str) -> dict:
+        """Replace a card's description.
+
+        Replaces - there is no append in the API. Read `card_detail` first and
+        send the old text back with the new part on the end, or somebody's
+        notes go missing.
+        """
+        return self._request("PUT", f"/cards/{card_id}", params={"desc": text})
+
     def create_card(self, list_id: str, name: str, *, position: str = "top") -> dict:
         return self._request(
             "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
