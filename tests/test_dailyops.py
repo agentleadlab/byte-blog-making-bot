@@ -1163,3 +1163,84 @@ def test_a_card_that_cannot_be_re_read_is_not_written_to_blind(
 
     assert moved == 0 and board.items_added == []
     assert "couldn't re-read" in problems[0]
+
+
+# ------------------------------------- moving the cards along, when asked to
+
+# The three moves only existed inside the loop that runs them on a timer, and
+# Quality Check -> Done did not exist at all. With the timer off there was no
+# way to say "move them" at all.
+
+
+@pytest.mark.parametrize(
+    "said,step",
+    [
+        ("move today", "to_today"),
+        ("move to today", "to_today"),
+        ("move quality check", "to_quality_check"),
+        ("move qc", "to_quality_check"),
+        ("move done", "to_done"),
+        ("rollover", None),
+        ("board", None),
+    ],
+)
+def test_the_move_is_named_by_where_the_cards_end_up(said, step):
+    """Which is how anybody says it: "move them to Today", not "do the nine
+    o'clock one"."""
+    assert dailyops.move_named(said) == step
+
+
+def test_quality_check_to_done_is_a_move_but_not_a_step():
+    """Nobody has said when a card is finished, and the board says it is not a
+    clock - yesterday's sit split between the two lists."""
+    assert "to_done" in dailyops.STEP_LISTS
+    assert "to_done" not in dict((name, at) for at, name in dailyops.STEPS)
+    assert dailyops.steps_due(at_hour(23), set()) == [
+        "to_today", "to_quality_check", "rollover",
+    ]
+
+
+def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [
+            {"id": "c1", "name": "📊 Ads 08/25/26"},
+            {"id": "c2", "name": "Lead Order 08/24/26"},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
+
+    assert cards == ["📊 Ads 08/25/26"], "yesterday's card is not today's move"
+    assert problems == []
+    assert board.moves == [], "reading only"
+
+
+def test_a_missing_destination_is_said_before_the_button(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({"Quality Check": [{"id": "c1", "name": "📊 Ads 08/25/26"}]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
+
+    assert cards == []
+    assert "'Done'" in problems[0]
+
+
+def test_the_done_move_carries_todays_cards_out_of_quality_check(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [{"id": "c1", "name": "💻 Ops 08/25/26"}],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert moved == 1 and problems == []
+    assert board.moves == [("c1", "id-Done")]

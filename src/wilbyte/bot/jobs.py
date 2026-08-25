@@ -1929,6 +1929,35 @@ def board_today(config: Config, *, day=None) -> list[str]:
         client.close()
 
 
+def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], list[str]]:
+    """(card titles that would move, problems). Writes nothing.
+
+    The same read the move itself does, so what gets shown and what gets moved
+    cannot disagree.
+    """
+    from .. import dailyops, trello
+
+    day = day or board_day(config)
+    from_name, to_name = dailyops.STEP_LISTS[step]
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        source = trello.find_list(lists, from_name)
+        if source is None:
+            return [], [f"The board has no list called {from_name!r}"]
+        if trello.find_list(lists, to_name) is None:
+            return [], [f"The board has no list called {to_name!r}"]
+
+        found = []
+        for card in client.list_cards(str(source.get("id") or "")):
+            named = dailyops.parse_card_title(str(card.get("name", "")))
+            if named and named[1] == day:
+                found.append(str(card.get("name", "")))
+        return found, []
+    finally:
+        client.close()
+
+
 def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     """Move today's four cards from one list to the next. (moved, problems).
 

@@ -35,6 +35,7 @@ CARD_KINDS = {
 IN_QUE = "In Que"
 TODAY = "Today"
 QUALITY_CHECK = "Quality Check"
+DONE = "Done"
 
 # (hour, what happens). Local time on the board's own clock - the team's, not
 # the server's.
@@ -47,14 +48,39 @@ STEPS = (
 STEP_NAMES = {
     "to_today": f"{IN_QUE} → {TODAY}",
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
+    "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",
 }
 
 # Where each move goes. The rollover moves no cards, so it is not here.
+#
+# `to_done` is not in STEPS and has no hour: nobody has said when a card is
+# finished, and the board says it is not a clock - yesterday's cards sit split
+# between Quality Check and Done, which is what a judgement looks like from the
+# outside. So it is a move somebody asks for, not one that happens.
 STEP_LISTS = {
     "to_today": (IN_QUE, TODAY),
     "to_quality_check": (TODAY, QUALITY_CHECK),
+    "to_done": (QUALITY_CHECK, DONE),
 }
+
+# What somebody types to ask for a move, by where they want the cards to end
+# up. Named for the destination because that is how anybody says it: "move
+# them to Today", not "do the nine o'clock one".
+MOVE_WORDS = (
+    ("to_today", re.compile(r"\btoday\b", re.IGNORECASE)),
+    ("to_quality_check", re.compile(r"\bquality\s*check\b|\bqc\b", re.IGNORECASE)),
+    ("to_done", re.compile(r"\bdone\b", re.IGNORECASE)),
+)
+
+
+def move_named(text: str) -> str | None:
+    """Which move somebody asked for, by the list they named."""
+    said = " ".join((text or "").split())
+    for step, pattern in MOVE_WORDS:
+        if pattern.search(said):
+            return step
+    return None
 
 
 def steps_due(now, done_today: set[str]) -> list[str]:

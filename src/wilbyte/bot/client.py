@@ -662,6 +662,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await responder.send("\n".join(lines) or "The board is empty.")
                 return
 
+            if request.action == "move":
+                await _move_cards(responder, config, request.brief or "")
+                return
+
             if request.action == "rollover":
                 await _rollover(responder, config, named=request.brief or "")
                 return
@@ -2169,6 +2173,60 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
 
     sops.remember(getattr(message, "id", ""))
     await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
+
+
+async def _move_cards(responder: Responder, config: Config, named: str) -> None:
+    """Walk today's cards from one list to the next, once approved."""
+    from .. import dailyops
+
+    step = dailyops.move_named(named)
+    if step is None:
+        await responder.send(
+            "Which move? `@RYTE trello move today`, `move quality check`, or `move done`."
+        )
+        return
+
+    where = dailyops.STEP_NAMES[step]
+    try:
+        cards, problems = await asyncio.to_thread(
+            partial(jobs.moves_waiting, config, step)
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    if not cards:
+        await responder.send(
+            f"Nothing to move {where} — today's cards aren't sitting in "
+            f"{dailyops.STEP_LISTS[step][0]}."
+        )
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Move {len(cards)} card(s)",
+        emoji="📋",
+    )
+    listed = "\n".join(f"• {name}" for name in cards)
+    await responder.send(f"**{where}**\n{listed}", view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        moved, problems = await asyncio.to_thread(jobs.walk_board, config, step)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
+        return
+
+    note = f"📋 Moved {moved} card(s) {where}."
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note)
 
 
 async def _rollover(responder: Responder, config: Config, *, named: str = "") -> None:
