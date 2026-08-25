@@ -232,14 +232,32 @@ def test_a_card_that_cannot_be_read_says_which_half_is_missing():
     agent = read("First Name: Gustin\nOrder 25 Leads")
 
     assert agent.ready is False
-    assert "lead type" in agent.note and "launch date" in agent.note
+    said = agents.cannot_read(agent, needs_lead_type=True)
+    assert "lead type" in said and "launch date" in said
 
 
 def test_a_card_missing_only_the_date_says_only_that():
     agent = read("Lead Type: Text Verified IUL Plus")
 
-    assert "launch date" in agent.note
-    assert "lead type" not in agent.note
+    said = agents.cannot_read(agent, needs_lead_type=True)
+    assert "launch date" in said
+    assert "lead type" not in said
+
+
+def test_a_card_that_is_not_its_turn_yet_is_not_nagged_about_its_lead_type():
+    """Somebody fills it in before Thursday. Saying it is missing on Tuesday,
+    every five minutes, is how a warning stops being read."""
+    agent = read("Launch date is Friday, August 28")
+
+    assert agent.lead_type == ""
+    assert agents.cannot_read(agent, needs_lead_type=False) == ""
+
+
+def test_a_card_with_no_launch_date_always_needs_a_person():
+    """There is nothing to decide without it, and parking it would be a guess."""
+    agent = read("Lead Type: Text Verified IUL Plus")
+
+    assert "launch date" in agents.cannot_read(agent, needs_lead_type=False)
 
 
 def test_a_card_that_is_not_an_agent_is_not_read():
@@ -309,3 +327,50 @@ def test_a_card_needing_a_person_shows_the_reason_not_the_steps():
 
 def test_nothing_waiting_says_so():
     assert "No new agents" in agents.describe([])
+
+
+# ---------------------------------------- the waiting room, and getting out of it
+
+# Done means finished with. Franklin's list means waiting. A card parked on
+# Tuesday because it launches Thursday has to be looked at again on Wednesday,
+# when Thursday has become tomorrow - a waiting room nobody goes back to is a
+# place things get lost.
+
+
+def test_a_card_parked_on_tuesday_is_tomorrows_on_wednesday():
+    agent = read("Launch date is Thursday, August 27")
+
+    assert agent.when(date(2026, 8, 25)) == "later"
+    assert agent.when(date(2026, 8, 26)) == "tomorrow"
+    assert agent.when(date(2026, 8, 27)) == "today"
+
+
+def test_the_three_destinations_are_the_only_three():
+    """Filed and finished, or filed and finished, or waiting. Nothing else."""
+    for said, when in (
+        ("Launch date is today, August 25", "today"),
+        ("Launch date is Wednesday, August 26", "tomorrow"),
+        ("Launch date is Thursday, August 27", "later"),
+    ):
+        assert read(said).when(TUESDAY) == when
+
+
+def test_a_parked_card_still_waiting_is_not_moved_to_where_it_already_is():
+    """Moving it to the list it is in would put it at the top every five
+    minutes, which reorders somebody's waiting room all day."""
+    from wilbyte.bot import jobs
+
+    agent = read("Launch date is Friday, August 28")
+
+    already = jobs._plan_for(
+        None, agent, day=TUESDAY, tomorrow=date(2026, 8, 26),
+        dated={}, every_card=[], parked=True,
+    )
+    fresh = jobs._plan_for(
+        None, agent, day=TUESDAY, tomorrow=date(2026, 8, 26),
+        dated={}, every_card=[], parked=False,
+    )
+    assert already.problems == [] and fresh.problems == []
+
+    assert already.move_to == ""
+    assert fresh.move_to == agents.PARKED

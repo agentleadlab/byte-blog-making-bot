@@ -2038,8 +2038,14 @@ def read_agents(config: Config, *, day=None):
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         by_name = {" ".join(str(bl.get("name") or "").split()).casefold(): bl for bl in lists}
-        queue = trello.find_list(lists, agents.IN_QUE)
-        if queue is None:
+        # Both the new ones and the ones already parked. Franklin's list is a
+        # waiting room, not a destination: a card put there on Tuesday because
+        # it launches Thursday has to be looked at again on Wednesday, or it
+        # waits there for ever.
+        watched = [
+            trello.find_list(lists, name) for name in (agents.IN_QUE, agents.PARKED)
+        ]
+        if watched[0] is None:
             return [], {}, [f"The board has no list called {agents.IN_QUE!r}"]
 
         every_card = [
@@ -2047,8 +2053,13 @@ def read_agents(config: Config, *, day=None):
         ]
         dated = dailyops.cards_for(every_card, day)
 
+        waiting_cards = [
+            card for bl in watched if bl is not None
+            for card in client.list_cards(str(bl.get("id") or ""))
+        ]
+
         plans = []
-        for card in client.list_cards(str(queue.get("id") or "")):
+        for card in waiting_cards:
             if not agents.is_agent_card(str(card.get("name", ""))):
                 continue
             detail = client.card_detail(str(card.get("id") or ""))
@@ -2060,8 +2071,13 @@ def read_agents(config: Config, *, day=None):
             if agent is None:
                 continue
             plans.append(
-                _plan_for(client, agent, day=day, tomorrow=tomorrow,
-                          dated=dated, every_card=every_card)
+                _plan_for(
+                    client, agent, day=day, tomorrow=tomorrow, dated=dated,
+                    every_card=every_card,
+                    parked=str(card.get("idList") or "") == str(
+                        (watched[1] or {}).get("id") or "\0"
+                    ),
+                )
             )
 
         where = {
@@ -2079,18 +2095,30 @@ def read_agents(config: Config, *, day=None):
         client.close()
 
 
-def _plan_for(client, agent, *, day, tomorrow, dated, every_card):
+def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
     """One agent's plan, with the cards and checklists it needs already found."""
     from .. import agents as rules
     from .. import dailyops
 
     plan = rules.AgentPlan(agent=agent, when=agent.when(day))
-    if agent.note:
-        plan.problems.append(agent.note)
+
+    # Without a launch date there is nothing to decide, and parking it would
+    # be a guess. That one always needs a person.
+    if agent.launch is None:
+        plan.problems.append(rules.cannot_read(agent, needs_lead_type=False))
         return plan
 
     if plan.when == "later":
-        plan.move_to = rules.PARKED
+        # Its turn hasn't come. The lead type can still be missing - somebody
+        # fills it in before Thursday, and it is not needed until then.
+        # Already parked and still waiting: leave it exactly where it is
+        # rather than moving it to the list it is already in.
+        plan.move_to = "" if parked else rules.PARKED
+        return plan
+
+    problem = rules.cannot_read(agent, needs_lead_type=True)
+    if problem:
+        plan.problems.append(problem)
         return plan
 
     if plan.when == "tomorrow":

@@ -12,6 +12,11 @@ What happens depends only on when the agent goes live:
     tomorrow   -> onto tomorrow's "Agent Setup Going Live" card, then Done
     later      -> park it in Franklin's list until it becomes tomorrow
 
+Done means finished with. Franklin's list means waiting, and it is read every
+time In Que is - a card parked on Tuesday because it launches Thursday has to
+be picked up again on Wednesday, when Thursday has become tomorrow. A waiting
+room nobody goes back to is a place things get lost.
+
 Everything here is pure. It reads the card's description and comments and
 works out what should happen; nothing in this module writes to the board, so
 the reading can be tested against real descriptions without an API key.
@@ -265,13 +270,22 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         lead_type=find_lead_type(text),
         launch=find_launch(text, today=today),
     )
-    missing = [
-        what for what, got in (("a lead type", agent.lead_type), ("a launch date", agent.launch))
-        if not got
-    ]
-    if missing:
-        agent.note = f"I can't find {' or '.join(missing)} on this card."
     return agent
+
+
+def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
+    """What is missing, and only what is missing *yet*.
+
+    A card parked for next Friday needs a launch date and nothing else - the
+    lead type is often filled in later, and saying it is missing days before
+    anybody needs it is how a warning stops being read.
+    """
+    missing = []
+    if agent.launch is None:
+        missing.append("a launch date")
+    if needs_lead_type and not agent.lead_type:
+        missing.append("a lead type")
+    return f"I can't find {' or '.join(missing)} on this card." if missing else ""
 
 
 # ------------------------------------------- the card tomorrow's ones go on
