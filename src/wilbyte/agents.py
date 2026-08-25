@@ -43,16 +43,20 @@ DONE = "Done"
 # Life". Anything else goes on the checklist for its own lead type.
 OWN_SETUP = "own setup"
 
-OWN_SETUP_WORDS = re.compile(r"\bbasic\b|\binstant\b|\bfb\b|\bfacebook\b", re.IGNORECASE)
+# Instant and FB name no tier of their own and belong here anyway.
+OWN_SETUP_WORDS = re.compile(r"\binstant\b|\bfb\b|\bfacebook\b", re.IGNORECASE)
 
 
 def is_own_setup(lead_type: str) -> bool:
     """Whether these leads belong on the own-setup checklist.
 
-    FB, Instant and Basic - the ones an agent sets up themselves - as against
-    the OTP and text-verified orders, which have a checklist each.
+    The Standard tier is the self-setup half - basic, standard, instant, FB -
+    as against the Plus half, which is ordered and has a checklist each. So
+    Phoenix Standard goes here and PHX Plus does not, the same rule telling
+    them apart rather than Phoenix being an exception to it.
     """
-    return bool(OWN_SETUP_WORDS.search(lead_type or ""))
+    said = lead_type or ""
+    return tier_of(said) == "standard" or bool(OWN_SETUP_WORDS.search(said))
 
 # Who gets told, per card. Kath and Kathleen are one person; the checklists
 # are named differently on different cards and both mean her.

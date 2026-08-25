@@ -327,18 +327,29 @@ LEAD_ORDER_LISTS = ["OTP IUL Plus", "OTP Spanish IUL", "Phoenix Standard", "own 
 @pytest.mark.parametrize(
     "leads",
     ["40 Basic FB Spanish IUL", "Basic Spanish IUL", "Instant/Basic IUL Leads",
-     "FB Index Universal Life", "20 Spanish Basic 10"],
+     "FB Index Universal Life", "20 Spanish Basic 10", "Phoenix Standard",
+     "PHNX Standard"],
 )
-def test_the_self_setup_types_land_on_own_setup(leads):
-    """Every item on the real checklist is one of these."""
+def test_the_standard_tier_is_the_self_setup_half(leads):
+    """Every item on the real own-setup checklist is one of these, and Phoenix
+    Standard belongs with them - the same tier, not an exception."""
     assert agents.is_own_setup(leads) is True
 
 
 @pytest.mark.parametrize(
-    "leads", ["Text Verified IUL Plus", "OTP VET Plus", "UPRISE PHX PLUS"],
+    "leads",
+    ["Text Verified IUL Plus", "OTP VET Plus", "UPRISE PHX PLUS", "PHNX Plus"],
 )
-def test_an_ordered_type_is_not_a_self_setup(leads):
+def test_the_plus_tier_is_ordered_and_keeps_its_own_checklist(leads):
+    """PHX Plus is where Phoenix stops being like the rest: a Plus customer
+    has a checklist, a Standard one sets themselves up."""
     assert agents.is_own_setup(leads) is False
+
+
+def test_the_two_phoenix_tiers_go_to_different_places():
+    """One rule telling them apart rather than Phoenix being special-cased."""
+    assert agents.is_own_setup("Phoenix Standard") is True
+    assert agents.is_own_setup("Phoenix Plus") is False
 
 
 BASIC_TODAY = """Package Selected: Basic Spanish IUL
