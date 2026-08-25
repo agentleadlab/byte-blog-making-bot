@@ -1649,3 +1649,66 @@ def test_the_order_they_were_in_is_the_order_they_arrive_in(monkeypatch, config)
     jobs.walk_board(config, "to_today", day=date(2026, 8, 25))
 
     assert [card for card, _, _ in board.moves] == ["third", "second", "first"]
+
+
+def test_a_card_made_too_late_to_be_fetched_on_time_still_comes(monkeypatch, config):
+    """RYTE makes a setup card himself when an agent turns up for a day that
+    has none - which happens on that card's own working day, after its only
+    fetch has gone by. Late and on the board beats on time and invisible."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            # Worked Thursday, and it is Thursday evening. Already late.
+            {"id": "fri", "name": "Agent Setup Going Live Friday 08/28"},
+        ],
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 27))
+
+    assert board.moves == [("fri", "id-In Que", "top")]
+
+
+def test_a_card_whose_agents_are_already_live_is_left_where_it_is(monkeypatch, config):
+    """Last week's card is history. Fetching it would put a finished card back
+    in front of the team every evening."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": "old", "name": "Agent Setup Going Live Monday 08/17"},
+        ],
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 25)) == (0, [])
+
+
+def test_two_cards_to_fetch_arrive_soonest_on_top(monkeypatch, config):
+    """Each move goes to the top, so the one whose agents go live first has to
+    be moved last."""
+    from datetime import date as _date
+
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": "sat", "name": "Agent Setup Going Live Saturday 08/29"},
+            {"id": "fri", "name": "Agent Setup Going Live Friday 08/28"},
+        ],
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    # Thursday: Friday's card is late already, Saturday's is due tonight.
+    moved, problems = jobs.walk_board(config, "to_quality_check", day=_date(2026, 8, 27))
+
+    assert (moved, problems) == (2, [])
+    assert [c for c, _, _ in board.moves] == ["sat", "fri"]

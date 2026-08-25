@@ -1957,9 +1957,10 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
             # card going somewhere else is visible before it goes there.
             found.append(title if where == to_name else f"{title} → {where}")
 
-        card, problem = next_setup_to_pull(client, lists, day, step)
-        if card is not None:
-            found.append(f"{card.get('name')} → {dailyops.IN_QUE} (for tomorrow)")
+        fetch, problem = setups_to_pull(client, lists, day, step)
+        found.extend(
+            f"{card.get('name')} → {dailyops.IN_QUE} (for tomorrow)" for card in fetch
+        )
         return found, [problem] if problem else []
     finally:
         client.close()
@@ -1998,30 +1999,36 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
     return named[0] != "lead_order" and named[1] <= day
 
 
-def next_setup_to_pull(client, lists, day: date, step: str):
-    """The setup card tomorrow will be working on. (card, problem).
+def setups_to_pull(client, lists, day: date, step: str):
+    """The setup cards six in the evening should fetch into In Que. (cards, problem).
 
-    The setup cards are made in the Automation Department and sit there until
-    it is their turn. Six in the evening is their turn - the one that comes
-    over is the one *tomorrow* works on, which is the card for the day after
-    that, because agents are set up the day before they go live. Tuesday
-    evening fetches Thursday's card: Wednesday is the day it gets worked.
+    They are made in the Automation Department and sit there until it is their
+    turn. In Que is the only list nine the next morning looks in, so a card
+    still in Automation at nine spends its whole working day off to the side
+    of the board.
 
-    In Que is the only list nine the next morning looks in, so a card still in
-    Automation at nine spends its whole working day off to the side of the
-    board. Found by the dates in its title rather than by list, because they
-    do not always stay where they were made, and left alone once it has
-    reached one of the day's lists - the point is to fetch it, not to drag it
-    back.
+    The one that comes over is the one *tomorrow* works on - the card for the
+    day after that, because agents are set up the day before they go live.
+    Tuesday evening fetches Thursday's card: Wednesday is when it gets worked.
+
+    Anything whose working day has already gone by comes too, as long as its
+    agents have not gone live yet. A card nobody made until its own working
+    day - RYTE makes one himself when an agent turns up for a day that has no
+    card - would otherwise have missed its only chance to be fetched and sat
+    in Automation for good. Late and on the board beats on time and invisible.
+
+    Found by the dates in the title rather than by list, because they do not
+    always stay where they were made, and left alone once one has reached the
+    day's lists: the point is to fetch it, not to drag it back.
     """
     from .. import agents, dailyops, trello
 
     if step != "to_quality_check":
-        return None, None
+        return [], None
 
     in_que = trello.find_list(lists, dailyops.IN_QUE)
     if in_que is None:
-        return None, f"The board has no list called {dailyops.IN_QUE!r}"
+        return [], f"The board has no list called {dailyops.IN_QUE!r}"
 
     already = {
         str((trello.find_list(lists, name) or {}).get("id") or "\0")
@@ -2030,16 +2037,26 @@ def next_setup_to_pull(client, lists, day: date, step: str):
         )
     }
     tomorrow = dailyops.next_day(day)
+    found = []
     for card in (c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))):
         title = str(card.get("name", ""))
         if not agents.is_setup_card(title):
             continue
-        if agents.setup_worked_on(title, day) != tomorrow:
+        worked = agents.setup_worked_on(title, day)
+        starts = agents.setup_starts(title, day)
+        if worked is None or worked > tomorrow:
+            continue
+        # Its agents are already live. That card is history, wherever it sits.
+        if starts is None or starts < day:
             continue
         if str(card.get("idList") or "") in already:
-            return None, None
-        return card, None
-    return None, None
+            continue
+        found.append((starts, card))
+
+    # Furthest out first, because each move goes to the top: the one whose
+    # agents go live soonest is moved last and ends up above the rest.
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [card for _starts, card in found], None
 
 
 def walk_to(card: dict, step: str, day: date) -> str:
@@ -2111,17 +2128,17 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
                 continue
             moved += 1
 
-        # Last, so it lands on top of In Que rather than under tomorrow's four.
-        fetch, problem = next_setup_to_pull(client, lists, day, step)
+        # Last, so they land on top of In Que rather than under tomorrow's four.
+        fetch, problem = setups_to_pull(client, lists, day, step)
         if problem:
             problems.append(problem)
-        elif fetch is not None:
+        for card in fetch:
             in_que = trello.find_list(lists, dailyops.IN_QUE)
             try:
-                client.move_card(str(fetch.get("id") or ""), str(in_que.get("id") or ""))
+                client.move_card(str(card.get("id") or ""), str(in_que.get("id") or ""))
                 moved += 1
             except Exception as exc:
-                problems.append(f"{fetch.get('name')} — {_short(exc, 160)}")
+                problems.append(f"{card.get('name')} — {_short(exc, 160)}")
     finally:
         client.close()
     return moved, problems
