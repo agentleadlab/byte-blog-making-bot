@@ -1858,6 +1858,20 @@ def _day_of(when: str):
 
 # ------------------------------------------------------ the daily board
 
+def board_day(config: Config) -> date:
+    """What day it is *on the board's clock*, not on the machine's.
+
+    `date.today()` reads the timezone of whatever computer RYTE happens to be
+    running on. The board belongs to a team working Eastern, and a Mac set to
+    Manila time is already tomorrow by mid-afternoon - so the 26th's cards read
+    as today's, the 25th's as yesterday's, and the rollover reports that
+    tomorrow has no cards at all while four of them sit in In Que.
+    """
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo(config.schedule.timezone)).date()
+
+
 def open_trello(config: Config):
     """A Trello session, or a clear refusal about what is missing."""
     from ..config import ConfigError
@@ -1884,11 +1898,11 @@ def board_today(config: Config, *, day=None) -> list[str]:
     """What the board looks like right now: which lists hold which day's cards."""
     from .. import dailyops, trello
 
-    day = day or date.today()
+    day = day or board_day(config)
     client = open_trello(config)
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
-        lines = []
+        lines = [f"Going by **{day:%a %b %d, %Y}** on the board's clock."]
         for board_list in lists:
             cards = client.list_cards(str(board_list.get("id") or ""))
             dated = dailyops.daily_cards(cards)
@@ -1925,7 +1939,7 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     """
     from .. import dailyops, trello
 
-    day = day or date.today()
+    day = day or board_day(config)
     from_name, to_name = dailyops.STEP_LISTS[step]
     client = open_trello(config)
     moved, problems = 0, []
@@ -1990,7 +2004,7 @@ def read_rollover(config: Config, *, day=None):
     """
     from .. import carried, dailyops
 
-    day = day or date.today()
+    day = day or board_day(config)
     tomorrow = dailyops.next_day(day)
     client = open_trello(config)
     try:
@@ -2048,7 +2062,7 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     """
     from .. import carried, dailyops
 
-    day = day or date.today()
+    day = day or board_day(config)
     client = open_trello(config)
     moved, problems = 0, []
     counted: list[str] = []

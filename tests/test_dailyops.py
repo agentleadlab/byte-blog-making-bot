@@ -847,3 +847,64 @@ def test_the_right_card_existing_is_not_a_complaint():
     cards = [{"name": "📊 Ads 08/26/26"}]
 
     assert "year on it is wrong" not in dailyops.why_missing(cards, "ads", date(2026, 8, 26))
+
+
+# ------------------------------- whose "today" the board is dated against
+
+# The board showed all four of tomorrow's cards in In Que and the rollover said
+# there were none. The board was right and the years were right: RYTE was
+# asking `date.today()`, which reads the timezone of whatever machine it runs
+# on. A Mac set to Manila time is already tomorrow by mid-afternoon Eastern.
+
+
+def test_the_board_is_dated_by_its_own_clock_not_the_machines(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    # 4:31pm Eastern on the 25th is 4:31am Manila on the 26th. The machine
+    # would say the 26th; the board is still on the 25th.
+    eastern = _dt(2026, 8, 25, 16, 31, tzinfo=ZoneInfo("America/New_York"))
+    assert eastern.astimezone(ZoneInfo("Asia/Manila")).date() == date(2026, 8, 26)
+
+    class Clock:
+        @staticmethod
+        def now(tz):
+            return eastern.astimezone(tz)
+
+    monkeypatch.setattr(jobs, "datetime", Clock)
+
+    assert jobs.board_day(config) == date(2026, 8, 25)
+
+
+def test_the_whole_board_reads_right_on_the_day_it_actually_is(monkeypatch, config):
+    """The exact board that failed: In Que holds tomorrow's four, and they are
+    found."""
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["Lead Order 08/26/26", "💎 General 08/26/26",
+                   "💻 Ops 08/26/26", "📊 Ads 08/26/26"],
+        "Today": ["💎 General 08/25/26", "📊 Ads 08/25/26", "💻 Ops 08/25/26",
+                  "Agent Setup Going Live Wednesday 08/26"],
+        "Quality Check": ["Lead Order 08/25/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    plans, missing, targets = jobs.read_rollover(config, day=date(2026, 8, 25))
+
+    assert missing == [], missing
+    assert sorted(targets) == ["ads", "general", "lead_order", "ops"]
+    assert len(plans) == 4
+
+
+def test_the_setup_card_is_not_mistaken_for_one_of_the_four(monkeypatch, config):
+    """`Agent Setup Going Live Wednesday 08/26` sits in Today and is not part
+    of the routine."""
+    assert dailyops.parse_card_title("Agent Setup Going Live Wednesday 08/26") is None
