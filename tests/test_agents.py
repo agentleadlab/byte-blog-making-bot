@@ -288,6 +288,35 @@ class Stub:
         return self.held
 
 
+SEBASTIAN = """First Name: Sebastian
+Last Name: Espinoza
+Package Selected: Text Verified
+Lead Type: Phoenix Campaign
+States: all states except for FL and CA.
+
+Veteran
+
+Uprise
+
+Phoenix Standard
+$350
+
+live fri, aug 28
+"""
+
+TAYLER = """First Name: Tayler
+Last Name: Collins
+Package Selected: Apex Client
+Lead Type: VETS
+Target Areas for Marketing: All states besides CA
+
+Live fri, aug 28
+
+$1050/WEEK- UPRISE PHX PLUS
+
+RINGY INTEGRATION
+"""
+
 VICENTE = """Package Selected: Basic Spanish IUL
 Lead Type: Index Universal Life
 
@@ -533,3 +562,72 @@ def test_two_agents_with_the_same_leads_both_go_on(monkeypatch, config):
     file_them(monkeypatch, config, plans, board)
 
     assert len([p for p, _ in board.added if p == "Therese"]) == 2
+
+
+# ------------------------ the tier is on the card even when the field omits it
+
+# "Lead Type: vets" with "30 otp vtes" below it. The otp is right there and
+# filing him as plain vets throws away the half that says which vets.
+
+BENJAMIN = """-- New Client Onboarded --
+
+First Name: Benjamin
+Last Name: Zuniga
+Phone: 954-882-8608
+Email: benjaminzunigafinancial@gmail.com
+Package Selected: Text Verified
+Lead Type: vets
+Target Areas for Marketing:  VA, NM, FL, TX
+
+30 otp vtes
+
+Live thurs, aug 27
+
+AEP
+"""
+
+
+def test_the_otp_on_the_card_qualifies_the_lead_type():
+    assert agents.stated_lead_type(BENJAMIN) == "otp vets"
+
+
+def test_the_card_s_own_word_is_the_one_repeated_back():
+    """"otp" and "text verified" are one tier and two words. Swapping theirs
+    for the other reads as RYTE having decided something."""
+    assert agents.tier_word(BENJAMIN) == "otp"
+
+
+def test_the_form_s_own_field_is_not_where_the_order_is_written():
+    """"Package Selected: Text Verified" says the tier in the form's words.
+    "30 otp vtes" is somebody writing down what was bought."""
+    assert "Text Verified" not in agents.stated_lead_type(BENJAMIN)
+
+
+def test_with_nothing_but_the_field_the_field_is_used():
+    """No unlabelled line says a tier, so the labelled one is all there is."""
+    said = "Package Selected: Text Verified\nLead Type: vets\n\nlive thu"
+
+    assert agents.stated_lead_type(said) == "Text Verified vets"
+
+
+def test_a_phrase_that_names_its_own_tier_is_left_alone():
+    for card, expected in (
+        (SEBASTIAN, "Phoenix Standard"),
+        (TAYLER, "UPRISE PHX PLUS"),
+        (REAL, "Text Verified IUL Plus"),
+        (VICENTE, "Basic Spanish IUL"),
+    ):
+        assert agents.stated_lead_type(card) == expected
+
+
+def test_a_card_saying_no_tier_anywhere_says_no_tier():
+    assert agents.stated_lead_type("Lead Type: vets\n\nlive thu") == "vets"
+
+
+def test_the_qualified_type_routes_by_its_tier():
+    """"otp vets" is Plus, so it goes to its own checklist. Plain "vets" names
+    no tier and would have gone nowhere in particular."""
+    assert agents.is_own_setup(agents.stated_lead_type(BENJAMIN)) is False
+    assert agents.shape_of(agents.stated_lead_type(BENJAMIN)) == (
+        "vet", "plus", frozenset()
+    )

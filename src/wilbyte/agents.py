@@ -213,19 +213,48 @@ def named_lead_types(text: str) -> list[str]:
     return said
 
 
+def tier_word(text: str) -> str:
+    """The word the card used for the tier, not the tier it means.
+
+    "otp" and "text verified" and "plus" are one tier and three words, and the
+    card's own word is the one to repeat back - inventing a different one
+    reads as RYTE having decided something.
+    """
+    # The lines nobody labelled first. "30 otp vtes" is somebody writing down
+    # the order; "Package Selected: Text Verified" is the form's own field, and
+    # it says the same tier in the words the form uses rather than theirs.
+    lines = (text or "").splitlines()
+    loose = "\n".join(line for line in lines if not _LABEL_PREFIX.match(line.strip()))
+    for where in (loose, text or ""):
+        found = STANDARD.search(where) or PLUS.search(where)
+        if found:
+            return found.group(0)
+    return ""
+
+
 def stated_lead_type(text: str) -> str:
     """The most specific thing the card says the leads are.
 
     No board to check against - this is for the lines that go on a setup card,
     which has a checklist per person rather than per lead type, and for saying
-    what an agent is before anything has been matched. The rule is the same
-    one: a phrase naming its tier beats a phrase that leaves it out.
+    what an agent is before anything has been matched. A phrase naming its
+    tier beats a phrase that leaves it out.
+
+    And where the best phrase names no tier but the card does somewhere else,
+    the card's word goes in front of it. "Lead Type: vets" with "30 otp vtes"
+    below is OTP vets, and filing that as plain vets throws away the half that
+    says which vets.
     """
     said = named_lead_types(text)
     if not said:
         return find_lead_type(text)
+
     tiered = [phrase for phrase in said if tier_of(phrase)]
-    return (tiered or said)[0]
+    if tiered:
+        return tiered[0]
+
+    word = tier_word(text)
+    return f"{word} {said[0]}".strip() if word else said[0]
 
 
 def candidates(
@@ -309,19 +338,48 @@ def named_lead_types(text: str) -> list[str]:
     return said
 
 
+def tier_word(text: str) -> str:
+    """The word the card used for the tier, not the tier it means.
+
+    "otp" and "text verified" and "plus" are one tier and three words, and the
+    card's own word is the one to repeat back - inventing a different one
+    reads as RYTE having decided something.
+    """
+    # The lines nobody labelled first. "30 otp vtes" is somebody writing down
+    # the order; "Package Selected: Text Verified" is the form's own field, and
+    # it says the same tier in the words the form uses rather than theirs.
+    lines = (text or "").splitlines()
+    loose = "\n".join(line for line in lines if not _LABEL_PREFIX.match(line.strip()))
+    for where in (loose, text or ""):
+        found = STANDARD.search(where) or PLUS.search(where)
+        if found:
+            return found.group(0)
+    return ""
+
+
 def stated_lead_type(text: str) -> str:
     """The most specific thing the card says the leads are.
 
     No board to check against - this is for the lines that go on a setup card,
     which has a checklist per person rather than per lead type, and for saying
-    what an agent is before anything has been matched. The rule is the same
-    one: a phrase naming its tier beats a phrase that leaves it out.
+    what an agent is before anything has been matched. A phrase naming its
+    tier beats a phrase that leaves it out.
+
+    And where the best phrase names no tier but the card does somewhere else,
+    the card's word goes in front of it. "Lead Type: vets" with "30 otp vtes"
+    below is OTP vets, and filing that as plain vets throws away the half that
+    says which vets.
     """
     said = named_lead_types(text)
     if not said:
         return find_lead_type(text)
+
     tiered = [phrase for phrase in said if tier_of(phrase)]
-    return (tiered or said)[0]
+    if tiered:
+        return tiered[0]
+
+    word = tier_word(text)
+    return f"{word} {said[0]}".strip() if word else said[0]
 
 
 def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, list[str]]:
