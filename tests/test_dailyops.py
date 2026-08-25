@@ -1227,6 +1227,34 @@ def test_the_setup_card_is_not_mistaken_for_one_of_the_four(monkeypatch, config)
     assert dailyops.parse_card_title("Agent Setup Going Live Wednesday 08/26") is None
 
 
+def test_the_carry_never_touches_the_setup_card(monkeypatch, config):
+    """Its unticked boxes are agents being set up, not a person's day of work.
+    Copying them onto tomorrow's General card would put somebody's agents on
+    somebody else's list, and the card itself is the record of them."""
+    from wilbyte.bot import jobs
+
+    setup = {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26"}
+    board = FakeBoard({
+        "Quality Check": [setup, {"id": "g", "name": "\U0001f48e General 08/25/26"}],
+        "In Que": [{"id": "g2", "name": "\U0001f48e General 08/26/26"}],
+    })
+    board.card_checklists = lambda card_id: [
+        {"id": "cl", "name": "Therese", "checkItems": [
+            {"id": "i0", "name": "not ticked", "state": "incomplete"},
+        ]},
+    ]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    plans, _missing, targets = jobs.read_rollover(config, day=date(2026, 8, 25))
+
+    assert [plan.kind for plan in plans] == ["general"]
+    assert sorted(targets) == ["general"]
+    assert all(
+        "Agent Setup" not in plan.from_title and "Agent Setup" not in plan.to_title
+        for plan in plans
+    )
+
+
 # ------------------------------------- running it twice must not double the card
 
 # 62 items became 124 would not be unpicked by hand. Somebody would delete the
