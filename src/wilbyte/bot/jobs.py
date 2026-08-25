@@ -1949,7 +1949,7 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
 
         found = []
         for card in client.list_cards(str(source.get("id") or "")):
-            if not walks_today(card, day):
+            if not walks_today(card, day, step=step):
                 continue
             title = str(card.get("name", ""))
             where = walk_to(card, step, day)
@@ -1961,7 +1961,7 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
         client.close()
 
 
-def walks_today(card: dict, day: date) -> bool:
+def walks_today(card: dict, day: date, *, step: str) -> bool:
     """Whether the daily walk should move this card at all.
 
     Everything in the list except two kinds. A new agent's card is in In Que
@@ -1970,6 +1970,12 @@ def walks_today(card: dict, day: date) -> bool:
     for it. And a card dated for another day is not today's: In Que holds
     tomorrow's four from the evening before, and taking them across at nine in
     the morning starts the day a day early.
+
+    The last move is the exception to the date. Nothing arrives in Quality
+    Check ahead of its day, so a card dated before today is one that got left
+    behind rather than one waiting its turn, and leaving it is how Quality
+    Check silts up - "as long as the cards are on quality check ... you move
+    them to done".
     """
     from .. import agents, dailyops
 
@@ -1977,7 +1983,9 @@ def walks_today(card: dict, day: date) -> bool:
     if agents.is_agent_card(title):
         return False
     named = dailyops.parse_card_title(title)
-    return named is None or named[1] == day
+    if named is None:
+        return True
+    return named[1] <= day if step == "to_done" else named[1] == day
 
 
 def walk_to(card: dict, step: str, day: date) -> str:
@@ -2031,7 +2039,7 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
         # first and the first card ends up above it. The list arrives in the
         # order it left in rather than reversed.
         for card in reversed(client.list_cards(str(source.get("id") or ""))):
-            if not walks_today(card, day):
+            if not walks_today(card, day, step=step):
                 continue
             where = walk_to(card, step, day)
             landing = target if where == to_name else trello.find_list(lists, where)

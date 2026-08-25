@@ -39,10 +39,15 @@ DONE = "Done"
 
 # (hour, what happens). Local time on the board's own clock - the team's, not
 # the server's.
+#
+# Two things happen at nine, in this order: "after you move those unchecked
+# lists to their respective new list you move them to done". The carry has to
+# read the cards while they are still the day's, so it goes first.
 STEPS = (
     (9, "to_today"),
     (18, "to_quality_check"),
     (21, "rollover"),
+    (21, "to_done"),
 )
 
 STEP_NAMES = {
@@ -53,11 +58,6 @@ STEP_NAMES = {
 }
 
 # Where each move goes. The rollover moves no cards, so it is not here.
-#
-# `to_done` is not in STEPS and has no hour: nobody has said when a card is
-# finished, and the board says it is not a clock - yesterday's cards sit split
-# between Quality Check and Done, which is what a judgement looks like from the
-# outside. So it is a move somebody asks for, not one that happens.
 STEP_LISTS = {
     "to_today": (IN_QUE, TODAY),
     "to_quality_check": (TODAY, QUALITY_CHECK),

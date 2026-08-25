@@ -615,18 +615,30 @@ def at_hour(hour, minute=0):
         (9, ["to_today"]),
         (17, ["to_today"]),
         (18, ["to_today", "to_quality_check"]),
-        (21, ["to_today", "to_quality_check", "rollover"]),
-        (23, ["to_today", "to_quality_check", "rollover"]),
+        (21, ["to_today", "to_quality_check", "rollover", "to_done"]),
+        (23, ["to_today", "to_quality_check", "rollover", "to_done"]),
     ],
 )
 def test_the_day_unfolds_in_order(hour, expected):
     assert dailyops.steps_due(at_hour(hour), set()) == expected
 
 
+def test_the_carry_happens_before_the_cards_leave_for_done():
+    """"After you move those unchecked lists to their respective new list you
+    move them to done" - both at nine, and that way round."""
+    due = dailyops.steps_due(at_hour(21), set())
+
+    assert due.index("rollover") < due.index("to_done")
+
+
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check"}) == ["rollover"]
-    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check", "rollover"}) == []
+    assert dailyops.steps_due(at_hour(21), {"to_today", "to_quality_check"}) == [
+        "rollover", "to_done",
+    ]
+    assert dailyops.steps_due(
+        at_hour(21), {"to_today", "to_quality_check", "rollover", "to_done"}
+    ) == []
 
 
 def test_starting_late_catches_up_rather_than_skipping():
@@ -634,7 +646,7 @@ def test_starting_late_catches_up_rather_than_skipping():
     something to rely on. A board moved late beats one left in In Que."""
     assert dailyops.steps_due(at_hour(11), set()) == ["to_today"]
     assert dailyops.steps_due(at_hour(22, 30), set()) == [
-        "to_today", "to_quality_check", "rollover",
+        "to_today", "to_quality_check", "rollover", "to_done",
     ]
 
 
@@ -1356,17 +1368,17 @@ def test_the_move_is_named_by_where_the_cards_end_up(said, step):
     assert dailyops.move_named(said) == step
 
 
-def test_quality_check_to_done_is_a_move_but_not_a_step():
-    """Nobody has said when a card is finished, and the board says it is not a
-    clock - yesterday's sit split between the two lists."""
+def test_quality_check_to_done_is_a_step_as_well_as_a_move():
+    """It runs itself at nine, and it is still there to ask for by name."""
     assert "to_done" in dailyops.STEP_LISTS
-    assert "to_done" not in dict((name, at) for at, name in dailyops.STEPS)
-    assert dailyops.steps_due(at_hour(23), set()) == [
-        "to_today", "to_quality_check", "rollover",
-    ]
+    assert dict((name, at) for at, name in dailyops.STEPS)["to_done"] == 21
+    assert dailyops.move_named("trello move done") == "to_done"
 
 
 def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
+    """Everything sitting in Quality Check, today's and the ones left behind.
+    Nothing lands there ahead of its day, so an older card is a straggler
+    rather than one waiting its turn."""
     from wilbyte.bot import jobs
 
     board = FakeBoard({
@@ -1380,9 +1392,42 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
 
     cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
 
-    assert cards == ["📊 Ads 08/25/26"], "yesterday's card is not today's move"
+    assert cards == ["📊 Ads 08/25/26", "Lead Order 08/24/26"]
     assert problems == []
     assert board.moves == [], "reading only"
+
+
+def test_a_card_dated_ahead_still_waits_its_turn_for_done(monkeypatch, config):
+    """The date rule loosens for stragglers, not for cards from the future."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [
+            {"id": "c1", "name": "📊 Ads 08/25/26"},
+            {"id": "c2", "name": "📊 Ads 08/26/26"},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    cards, _ = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
+
+    assert cards == ["📊 Ads 08/25/26"]
+
+
+def test_an_agent_card_never_gets_swept_into_done(monkeypatch, config):
+    """It leaves In Que by being filed. In Done nothing would ever file it."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "Quality Check": [{"id": "c1", "name": "New Agent - Gustin Elrod"}],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
+
+    assert (moved, problems, board.moves) == (0, [], [])
 
 
 def test_a_missing_destination_is_said_before_the_button(monkeypatch, config):

@@ -853,7 +853,8 @@ async def board_loop(bot: "WilByteBot") -> None:
     """Walk the daily board through its day: 9am, 6pm, 9pm.
 
     In Que to Today, Today to Quality Check, then whatever is still unticked
-    onto tomorrow's cards - which Zapier has already made and left in In Que.
+    onto tomorrow's cards - which Zapier has already made and left in In Que -
+    and last, the cards themselves out of Quality Check into Done.
     """
     while not bot.is_closed():
         try:
