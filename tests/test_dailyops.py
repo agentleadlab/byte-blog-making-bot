@@ -2142,71 +2142,87 @@ def test_no_done_list_is_said(monkeypatch, config):
 # --------------------------------------------------- what the nudge says
 
 
-def note(config, found, step=None):
-    from wilbyte.bot.client import _unmarked_note
+def note(config, found, step=None, *, ping=True):
+    from wilbyte.bot.client import _unmarked_card, _unmarked_ping
 
-    return _unmarked_note(config, step or dailyops.UNMARKED[0], found)
-
-
-def test_the_nudge_names_the_time_the_count_and_the_cards(config):
-    said = note(config, [UNTICKED, NEVER_SET])
-
-    assert "3:30pm" in said
-    assert "2 New Agent card(s)" in said
-    assert "NEW AGENT- Tayler Collins" in said
-    assert "https://trello.com/c/bbb" in said
+    if not found:
+        return "", None
+    return (
+        _unmarked_ping(config, ping=ping),
+        _unmarked_card(step or dailyops.UNMARKED[0], found),
+    )
 
 
-def test_nothing_outstanding_says_nothing_at_all(config):
-    """A line every afternoon reporting that all is well is a line nobody
-    reads, and then the one that matters is not read either."""
-    assert note(config, []) == ""
+def test_the_card_names_the_time_the_count_and_the_agents(config):
+    _ping, card = note(config, [UNTICKED, NEVER_SET])
+
+    assert "3:30pm" in card.author.name
+    assert card.title == "2 agent(s) need ticking"
+    assert "NEW AGENT- Tayler Collins" in card.description
+    assert "https://trello.com/c/bbb" in card.description
 
 
-def test_it_pings_when_there_is_somebody_to_ping(config):
+def test_the_link_goes_behind_the_name(config):
+    """Eight raw Trello URLs is eight lines of hex nobody reads."""
+    _ping, card = note(config, [UNTICKED])
+
+    assert "[NEW AGENT- Tayler Collins](https://trello.com/c/bbb)" in card.description
+
+
+def test_a_card_with_no_link_is_still_listed(config):
+    _ping, card = note(config, [{"id": "z", "name": "New Agent - Nobody"}])
+
+    assert "• New Agent - Nobody" in card.description
+
+
+def test_the_ping_is_message_text_not_embed_text(config):
+    """Discord renders a mention inside an embed and notifies nobody, so a
+    ping in there is a ping that never arrives."""
     from dataclasses import replace
 
     with_user = replace(config, secrets=replace(config.secrets,
                                                 discord_notify_user_id="42"))
+    ping, card = note(with_user, [UNTICKED])
 
-    assert note(with_user, [UNTICKED]).startswith("<@42> ")
+    assert ping == "<@42>"
+    assert "42" not in (card.description or "")
 
 
-def test_without_a_user_it_still_says_it(config):
-    """The message is the point; the ping is the improvement."""
-    said = note(config, [UNTICKED])
+def test_without_a_user_the_card_still_goes_out(config):
+    """The card is the point; the ping is the improvement."""
+    ping, card = note(config, [UNTICKED])
 
-    assert not said.startswith("<@")
-    assert "Tayler Collins" in said
+    assert ping == ""
+    assert "Tayler Collins" in card.description
 
 
 def test_a_long_list_is_cut_and_says_it_was(config):
-    """Discord stops at 2000 characters, and a list that was quietly truncated
-    reads as if that was all of them."""
+    """An embed description stops at 4096 characters, and a list quietly cut
+    short reads as if that was all of them."""
     from wilbyte.bot import client
 
     many = [dict(UNTICKED, id=str(n), name=f"New Agent - Person {n}") for n in range(40)]
 
-    said = note(config, many)
+    _ping, card = note(config, many)
 
-    assert said.count("\n•") == client.UNMARKED_SHOWN
-    assert f"…and {40 - client.UNMARKED_SHOWN} more." in said
-    assert len(said) < 2000
+    assert card.description.count("\n• ") == client.UNMARKED_SHOWN - 1
+    assert f"…and {40 - client.UNMARKED_SHOWN} more." in card.description
+    assert len(card.description) <= 4096
 
 
 def test_the_second_look_says_its_own_time(config):
-    assert "5:30pm" in note(config, [UNTICKED], step=dailyops.UNMARKED[1])
+    _ping, card = note(config, [UNTICKED], step=dailyops.UNMARKED[1])
+
+    assert "5:30pm" in card.author.name
 
 
 def test_asking_for_it_now_does_not_ping(config):
     """Somebody who just typed the command is already looking at the channel."""
     from dataclasses import replace
 
-    from wilbyte.bot.client import _unmarked_note
-
     with_user = replace(config, secrets=replace(config.secrets,
                                                 discord_notify_user_id="42"))
-    said = _unmarked_note(with_user, dailyops.UNMARKED[0], [UNTICKED], ping=False)
+    ping, card = note(with_user, [UNTICKED], ping=False)
 
-    assert not said.startswith("<@")
-    assert "Tayler Collins" in said
+    assert ping == ""
+    assert "Tayler Collins" in card.description

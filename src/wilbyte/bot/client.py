@@ -883,37 +883,32 @@ async def _board_steps(bot: "WilByteBot") -> None:
         await _board_step(bot, step, today)
 
 
-# Enough of them to see who is outstanding, not so many that the message is
-# scrolled past. Discord cuts a message off at 2000 characters anyway, and a
-# truncated list reads as if that was all of them.
+# Enough of them to see who is outstanding, not so many that the card is
+# scrolled past. An embed description caps at 4096 characters anyway, and a
+# list quietly cut short reads as if that was all of them.
 UNMARKED_SHOWN = 15
 
 
-def _unmarked_note(
-    config: Config, step: str, found: list[dict], *, ping: bool = True
-) -> str:
-    """The afternoon nudge, or "" when every agent in Done has been ticked.
+def _unmarked_ping(config: Config, *, ping: bool = True) -> str:
+    """Who to tap on the shoulder, as message text rather than embed text.
 
-    Pings if there is somebody to ping. This one is not a report of what RYTE
-    did - it is a job for a person, and a line in a channel nobody has open is
-    not a job anybody does.
+    Outside the embed on purpose: Discord renders a mention inside one but
+    does not notify anybody, so a ping in there is a ping that never arrives.
+
+    This one is a job for a person rather than a report of what RYTE did, and
+    a card in a channel nobody has open is not a job anybody does.
     """
+    who = config.secrets.discord_notify_user_id if ping else None
+    return f"<@{who}>" if who else ""
+
+
+def _unmarked_card(step: str, found: list[dict]):
+    """The afternoon look at Done, as something to read."""
     from .. import dailyops
 
-    if not found:
-        return ""
-
-    who = config.secrets.discord_notify_user_id if ping else None
-    head = f"<@{who}> " if who else ""
-    lines = [
-        f"{head}🔔 {dailyops.said_at(step)} — {len(found)} New Agent card(s) in "
-        f"{dailyops.DONE} nobody has ticked:"
-    ]
-    for card in found[:UNMARKED_SHOWN]:
-        lines.append(f"• {card.get('name')} — {card.get('url') or card.get('shortUrl') or ''}")
-    if len(found) > UNMARKED_SHOWN:
-        lines.append(f"…and {len(found) - UNMARKED_SHOWN} more.")
-    return "\n".join(lines)
+    return embeds.unticked_agents(
+        found, said_at=dailyops.said_at(step) or "now", shown=UNMARKED_SHOWN
+    )
 
 
 async def _send_unticked(responder: Responder, config: Config) -> None:
@@ -935,7 +930,7 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
         )
         return
     # No ping: somebody just asked, so they are already looking at it.
-    await responder.send(_unmarked_note(config, dailyops.UNMARKED[0], found, ping=False))
+    await responder.send(embed=_unmarked_card(dailyops.UNMARKED[0], found))
 
 
 async def _board_step(bot: "WilByteBot", step: str, today) -> None:
@@ -943,6 +938,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     from .. import boardclock, dailyops
 
     responder = _board_responder(bot)
+    card = None
     try:
         if step == "make_setup":
             title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
@@ -951,7 +947,11 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             note = f"📋 {dailyops.said_at(step)} — made `{title}`." if title else ""
         elif step in dailyops.UNMARKED:
             found, problems = await asyncio.to_thread(jobs.unmarked_agents, bot.config)
-            note = _unmarked_note(bot.config, step, found)
+            # Nothing outstanding says nothing at all. A card every afternoon
+            # reporting that all is well is how the one that matters stops
+            # being looked at.
+            note = _unmarked_ping(bot.config) if found else ""
+            card = _unmarked_card(step, found) if found else None
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (
@@ -985,10 +985,10 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     await asyncio.to_thread(boardclock.mark, step, today)
     if problems:
         note = (note + "\n⚠ " + "\n⚠ ".join(problems)).lstrip("\n")
-    # Each branch leaves `note` empty when its step had nothing to say. A line
+    # Each branch leaves both empty when its step had nothing to say. A line
     # every morning reporting that nothing happened is a line nobody reads.
-    if responder and note:
-        await responder.send(note)
+    if responder and (note or card):
+        await responder.send(note or None, embed=card)
 
 
 def _board_responder(bot: "WilByteBot"):

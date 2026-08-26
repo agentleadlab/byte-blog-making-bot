@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import discord
 
@@ -13,6 +13,10 @@ GREEN = 0x35D07F
 GREY = 0x4F5660
 RED = 0xE0525F
 AMBER = 0xE0A32E
+
+# Named here rather than imported: embeds knows what things look like, not
+# what the board is called.
+DONE_LIST = "Done"
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -283,6 +287,32 @@ def check_report(
 def _checklist(rows: list[tuple[bool, str]]) -> str:
     marks = {True: "✅", False: "❌", None: "▫️"}
     return "\n".join(f"{marks.get(ok, '▫️')} {text}" for ok, text in rows)
+
+
+def unticked_agents(cards: list[dict], *, said_at: str, shown: int) -> discord.Embed:
+    """The afternoon look at Done, as a card rather than a wall of URLs.
+
+    The links go behind the names. Eight raw Trello URLs is eight lines of
+    hex nobody reads, and the name is the only part anybody is scanning for.
+    """
+    embed = discord.Embed(
+        title=f"{len(cards)} agent(s) need ticking",
+        colour=AMBER,
+    )
+    embed.set_author(name=f"🔔 {said_at} · nobody has marked these complete")
+
+    lines = []
+    for card in cards[:shown]:
+        name = _truncate(str(card.get("name") or "?"), 90)
+        link = str(card.get("url") or card.get("shortUrl") or "")
+        lines.append(f"• [{name}]({link})" if link else f"• {name}")
+    if len(cards) > shown:
+        lines.append(f"*…and {len(cards) - shown} more.*")
+    embed.description = _truncate("\n".join(lines), 4096)
+
+    embed.set_footer(text=f"In {DONE_LIST} · tick them on the card, not here")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
 
 
 def error(message: str) -> discord.Embed:
