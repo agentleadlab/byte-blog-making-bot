@@ -448,6 +448,77 @@ def checklist_item(url: str, lead_type: str) -> str:
     return f"{url} {lead_type}".strip()
 
 
+# ----------------------------------------- what was actually set up, and for whom
+
+# The confirmation Therese and Kathleen leave when a setup is finished. Three
+# real ones, all with the lead type sitting immediately before the words:
+#
+#   "OTP SPANISH FEX ON DISTRO HUB setup is complete for ALIANA AREVALO"
+#   "OTP VET ON DISTRO HUB setup is complete for MILLS FINANCIAL LLC"
+#   "Updated previous setup of BRODY SULLIVAN for OTP VET ON DISTRO HUB"
+#
+# Four words back, no more. Further and a surname starts being read as a lead
+# type, and this comparison exists to catch a wrong one - it must not invent
+# them.
+DISTRO_HUB = re.compile(
+    r"((?:[\w/&+-]+[ \t]+){0,3}[\w/&+-]+)[ \t]+on[ \t]+distro[ \t]+hub",
+    re.IGNORECASE,
+)
+
+
+# The words a lead type is made of. Anything in front of the first of them is
+# somebody's name or a connecting word - "Updated previous setup of BRODY
+# SULLIVAN for OTP VET" is four words back, and two of them are Brody.
+_LEAD_WORDS = tuple(pattern for _name, pattern in FAMILIES + QUALIFIERS) + (
+    STANDARD, PLUS, LINE,
+)
+
+
+def _from_the_leads(phrase: str) -> str:
+    """The phrase from its first lead-type word onwards."""
+    words = (phrase or "").split()
+    for at, word in enumerate(words):
+        if any(pattern.search(word) for pattern in _LEAD_WORDS):
+            return " ".join(words[at:])
+    return ""
+
+
+def setup_said(comments) -> str:
+    """The lead type a Distro Hub confirmation says was set up, or "".
+
+    The last confirmation on the card, because a setup gets redone: Brody
+    Sullivan's comment begins "Updated previous setup of".
+    """
+    found = [
+        _from_the_leads(match.group(1))
+        for said in comments or []
+        for match in DISTRO_HUB.finditer(said or "")
+    ]
+    found = [phrase for phrase in found if phrase]
+    return found[-1] if found else ""
+
+
+def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
+    """(what was ordered, what was set up) when they are not the same leads.
+
+    Compared by shape rather than by wording, so "OTP Vets - 30 more OTP vets"
+    against "OTP VET" is a match and nobody is bothered about it. What is not
+    a match is Vets against Final Expense, and that is somebody's money going
+    to the wrong campaign with the card in Done and nothing looking wrong.
+
+    None when either side says nothing. A card with no confirmation yet is not
+    a card set up wrongly, and neither is one whose confirmation nobody wrote
+    a lead type into.
+    """
+    said = setup_said(comments)
+    if not ordered or not said:
+        return None
+    theirs = shape_of(said)
+    if theirs[0] is None:
+        return None
+    return None if shape_of(ordered) == theirs else (ordered, said)
+
+
 # ------------------------------------------------------ when they go live
 
 _MONTHS = {

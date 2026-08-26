@@ -112,6 +112,10 @@ ACTION_WORDS = {
     "unchecked": "unticked",
     # The nightly clear-out of the aged-leads list.
     "archive": "archive",
+    # Agents set up on leads they did not order.
+    "setups": "setups",
+    "setup": "setups",
+    "mismatch": "setups",
     # Find out what GHL's update endpoint actually accepts, on a throwaway
     # draft rather than on fifteen live articles.
     "probe": "probe",
@@ -352,7 +356,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         after = _first_action_word(rest.lower())
         return MentionRequest(
             action=after
-            if after in ("board", "rollover", "move", "agents", "unticked", "archive")
+            if after in ("board", "rollover", "move", "agents", "unticked",
+                         "archive", "setups")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -439,7 +444,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
-        "unticked", "archive",
+        "unticked", "archive", "setups",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -625,6 +630,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
+> @RYTE **trello setups** — agents set up on leads they didn't order
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8pm carry over then Done, 10pm archive\n> Unticked agents in Done get chased at 3:30 and 5:30
 > @RYTE **host** — attach an image, get a permanent public link back

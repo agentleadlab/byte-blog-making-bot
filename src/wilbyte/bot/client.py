@@ -161,6 +161,7 @@ class WilByteBot(discord.Client):
         self.caption_task: asyncio.Task | None = None
         self.board_task: asyncio.Task | None = None
         self.agent_task: asyncio.Task | None = None
+        self.setup_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -243,6 +244,12 @@ class WilByteBot(discord.Client):
             self.agent_task is None or self.agent_task.done()
         ):
             self.agent_task = self.loop.create_task(agent_loop(self))
+        # Same switch: both are about the agents rather than about the board's
+        # own routine, and wanting one is wanting the other.
+        if self.config.secrets.trello_agents_auto and (
+            self.setup_task is None or self.setup_task.done()
+        ):
+            self.setup_task = self.loop.create_task(setup_check_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -673,6 +680,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _file_agents(responder, config)
                 return
 
+            if request.action == "setups":
+                await _send_wrong_setups(responder, config)
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -939,6 +950,26 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
         return
     # No ping: somebody just asked, so they are already looking at it.
     await responder.send(embed=_unmarked_card(found))
+
+
+async def _send_wrong_setups(responder: Responder, config: Config) -> None:
+    """The same look the watcher takes, when somebody asks for it now."""
+    try:
+        found, problems = await asyncio.to_thread(jobs.wrong_setups, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    if not found:
+        await responder.send(
+            "Every agent set up in the last couple of days matches what they ordered."
+        )
+        return
+    # No ping: somebody just asked, so they are already looking at it.
+    await responder.send(embed=embeds.wrong_setups(found, shown=UNMARKED_SHOWN))
 
 
 async def _archive_aged(responder: Responder, config: Config) -> None:
@@ -2418,6 +2449,44 @@ async def _report_stuck(responder: Responder, stuck) -> None:
 # per token and a pass costs about sixteen, so twenty seconds is nowhere near
 # the ceiling - the real floor is how long a pass takes to run.
 AGENT_CHECK_SECONDS = 20
+
+
+SETUP_CHECK_SECONDS = 600
+
+
+async def setup_check_loop(bot: "WilByteBot") -> None:
+    """Watch for agents set up on leads they did not order.
+
+    Ten minutes rather than twenty seconds: the confirmation comment lands
+    hours after the card is filed, so there is nothing to gain from looking
+    more often, and this one reads every list on the board.
+    """
+    from .. import setupseen
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            if responder is not None:
+                found, problems = await asyncio.to_thread(jobs.wrong_setups, bot.config)
+                marks = [
+                    setupseen.mark(str(c.get("id") or ""), c["ordered"], c["setup"])
+                    for c in found
+                ]
+                said = await asyncio.to_thread(setupseen.load)
+                fresh = [c for c, held in zip(found, marks) if held not in said]
+                if fresh:
+                    await responder.send(
+                        _unmarked_ping(bot.config) or None,
+                        embed=embeds.wrong_setups(fresh, shown=UNMARKED_SHOWN),
+                    )
+                    await asyncio.to_thread(setupseen.remember, marks)
+                if problems:
+                    log.warning("Setup check: %s", "; ".join(problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Setup check failed; will try again shortly")
+        await asyncio.sleep(SETUP_CHECK_SECONDS)
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

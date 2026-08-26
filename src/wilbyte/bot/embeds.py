@@ -325,5 +325,36 @@ def unticked_agents(
     return embed
 
 
+def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
+    """Agents set up on leads they did not order.
+
+    Red rather than amber. The unticked nudge is a job somebody has not got to
+    yet; this is money already going to the wrong campaign.
+    """
+    embed = discord.Embed(
+        title=f"{len(found)} agent(s) set up wrong",
+        colour=RED,
+    )
+    embed.set_author(name="⚠ ordered one thing, set up on another")
+
+    lines = []
+    for card in found[:shown]:
+        name = _truncate(str(card.get("agent") or card.get("name") or "?"), 60)
+        link = str(card.get("url") or card.get("shortUrl") or "")
+        head = f"[{name}]({link})" if link else name
+        lines.append(
+            f"**{head}**\n"
+            f"  ordered `{_truncate(str(card.get('ordered') or '?'), 60)}`\n"
+            f"  set up  `{_truncate(str(card.get('setup') or '?'), 60)}`"
+        )
+    if len(found) > shown:
+        lines.append(f"*…and {len(found) - shown} more.*")
+    embed.description = _truncate("\n".join(lines), 4096)
+
+    embed.set_footer(text="From the Distro Hub confirmation on the card")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(title="Something went wrong", description=_truncate(message, 4000), colour=RED)

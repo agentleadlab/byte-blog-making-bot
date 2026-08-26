@@ -1246,3 +1246,85 @@ def test_a_states_line_is_not_a_lead_type_either():
 )
 def test_the_lower_phrase_wins(text, expected):
     assert agents.stated_lead_type(text) == expected
+
+
+# ----------------------------- set up on leads they did not order
+
+
+BRODY_ORDERED = "OTP Vets - 30 more OTP vets"
+BRODY_SAID = [
+    "@card\n✅ Updated previous setup of BRODY SULLIVAN for OTP VET ON DISTRO HUB\n"
+    "✅ Used the same sheet with stopper. States updated.\n\nReady to go live WED, AUG 26",
+]
+
+
+@pytest.mark.parametrize(
+    "comment,expected",
+    [
+        ("✅ Updated previous setup of BRODY SULLIVAN for OTP VET ON DISTRO HUB",
+         "OTP VET"),
+        ("✅ OTP SPANISH FEX ON DISTRO HUB setup is complete for ALIANA AREVALO",
+         "OTP SPANISH FEX"),
+        ("✅ OTP VET ON DISTRO HUB setup is complete for MILLS FINANCIAL LLC",
+         "OTP VET"),
+        ("nothing about a hub here", ""),
+    ],
+)
+def test_the_confirmation_says_what_was_set_up(comment, expected):
+    """Three real ones. The name in front of the lead type is trimmed off -
+    "for BRODY SULLIVAN for OTP VET" must not read as Brody the lead type."""
+    assert agents.setup_said([comment]) == expected
+
+
+def test_the_latest_confirmation_is_the_one_that_counts():
+    """A setup gets redone - Brody's comment starts "Updated previous setup"."""
+    said = [
+        "OTP FEX ON DISTRO HUB setup is complete for BRODY SULLIVAN",
+        "Updated previous setup of BRODY SULLIVAN for OTP VET ON DISTRO HUB",
+    ]
+
+    assert agents.setup_said(said) == "OTP VET"
+
+
+def test_brody_as_he_really_is_is_not_flagged():
+    """"OTP Vets - 30 more OTP vets" against "OTP VET" is the same leads said
+    two ways, and nobody should be bothered about it."""
+    assert agents.wrong_setup(BRODY_ORDERED, BRODY_SAID) is None
+
+
+def test_brody_set_up_on_final_expense_is_flagged():
+    """Franklin's example. Somebody's money going to the wrong campaign, with
+    the card in Done and nothing on the board looking wrong."""
+    wrong = [c.replace("OTP VET ON", "OTP FEX ON") for c in BRODY_SAID]
+
+    assert agents.wrong_setup(BRODY_ORDERED, wrong) == (BRODY_ORDERED, "OTP FEX")
+
+
+def test_the_qualifier_counts_too():
+    """Spanish IUL and plain IUL are two different orders."""
+    said = ["OTP SPANISH IUL ON DISTRO HUB setup is complete"]
+
+    assert agents.wrong_setup("OTP IUL Plus", said) == ("OTP IUL Plus", "OTP SPANISH IUL")
+
+
+def test_the_tier_counts_too():
+    """Basic Spanish IUL is a different product from OTP Spanish IUL."""
+    said = ["OTP SPANISH IUL ON DISTRO HUB setup is complete"]
+
+    assert agents.wrong_setup("Basic Spanish IUL", said) is not None
+
+
+@pytest.mark.parametrize(
+    "ordered,comments",
+    [
+        # No confirmation yet is not a wrong setup.
+        ("OTP Vets", ["@card informed"]),
+        ("OTP Vets", []),
+        # A confirmation nobody wrote a lead type into.
+        ("OTP Vets", ["setup is complete ON DISTRO HUB"]),
+        # Nothing ordered to compare against.
+        ("", BRODY_SAID),
+    ],
+)
+def test_nothing_to_compare_is_not_a_complaint(ordered, comments):
+    assert agents.wrong_setup(ordered, comments) is None

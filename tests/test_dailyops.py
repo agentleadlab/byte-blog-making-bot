@@ -2686,3 +2686,147 @@ def test_the_card_says_which_day_each_one_goes_live(config):
 
     assert "— live today" in card.description
     assert "— live tomorrow" in card.description
+
+
+# ------------------------- agents set up on leads they did not order
+
+
+class SetupBoard(FakeBoard):
+    """A board with descriptions and comments on its cards."""
+
+    def __init__(self, lists, desc=None, said=None):
+        super().__init__(lists)
+        self.descs = desc or {}
+        self.said = said or {}
+        self.asked = []
+
+    def card_detail(self, card_id):
+        self.asked.append(card_id)
+        return {"id": card_id, "desc": self.descs.get(card_id, "")}
+
+    def card_comments(self, card_id):
+        return self.said.get(card_id, [])
+
+
+FRESH = "2099-01-01T00:00:00.000Z"     # always inside the window
+STALE = "2000-01-01T00:00:00.000Z"     # never is
+
+CONFIRMED = "✅ {} ON DISTRO HUB setup is complete for SOMEBODY"
+
+
+def brody(where="Done", *, ordered="Lead Type: OTP Vets", setup="OTP VET",
+          touched=FRESH, **others):
+    return SetupBoard(
+        {where: [{"id": "b", "name": "New Agent - Brody Sullivan",
+                  "url": "https://trello.com/c/bbb", "dateLastActivity": touched}],
+         **others},
+        desc={"b": ordered},
+        said={"b": [CONFIRMED.format(setup)]},
+    )
+
+
+def test_the_right_setup_is_not_flagged(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config) == ([], [])
+
+
+def test_the_wrong_setup_is_flagged_with_both_halves(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, problems = jobs.wrong_setups(config)
+
+    assert problems == []
+    assert len(found) == 1
+    assert found[0]["agent"] == "Brody Sullivan"
+    assert found[0]["ordered"] == "OTP Vets"
+    assert found[0]["setup"] == "OTP FEX"
+    assert found[0]["where"] == "Done"
+
+
+@pytest.mark.parametrize("where", ["Done", "In Que", "Today", "Franklin (Admin)"])
+def test_it_looks_everywhere_not_just_done(monkeypatch, config, where):
+    """A card still parked in Franklin's list can be set up early, and one
+    that only looked in Done would miss exactly the ones nobody moved on."""
+    from wilbyte.bot import jobs
+
+    board = brody(where, setup="OTP FEX")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.wrong_setups(config)
+
+    assert [c["where"] for c in found] == [where]
+
+
+def test_a_card_nobody_has_touched_in_days_is_not_reopened(monkeypatch, config):
+    """A comment moves dateLastActivity, so a new confirmation is inside the
+    window by definition - and the sixty stale cards cost one request."""
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", touched=STALE)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config) == ([], [])
+    assert board.asked == [], "it opened a card it did not need to"
+
+
+def test_a_daily_card_is_not_examined(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = SetupBoard({"Done": [
+        {"id": "g", "name": "💎 General 08/26/26", "dateLastActivity": FRESH},
+    ]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config) == ([], [])
+    assert board.asked == []
+
+
+def test_it_writes_nothing(monkeypatch, config):
+    """A wrong setup is for a person to put right. Nothing here moves a card,
+    ticks a box or edits a description."""
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.wrong_setups(config)
+
+    assert board.moves == []
+
+
+# ---------------------------------------------- saying it once, not forever
+
+
+def test_the_same_mismatch_is_remembered(tmp_path):
+    from wilbyte import setupseen
+
+    store = tmp_path / "said.json"
+    held = setupseen.mark("b", "OTP Vets", "OTP FEX")
+    setupseen.remember([held], store)
+
+    assert held in setupseen.load(store)
+
+
+def test_a_redone_setup_is_a_new_thing_to_say(tmp_path):
+    """Fixing it correctly makes it stop. Fixing it wrongly does not."""
+    from wilbyte import setupseen
+
+    store = tmp_path / "said.json"
+    setupseen.remember([setupseen.mark("b", "OTP Vets", "OTP FEX")], store)
+
+    assert setupseen.mark("b", "OTP Vets", "OTP MTG") not in setupseen.load(store)
+
+
+def test_the_mark_ignores_spacing_and_case(tmp_path):
+    from wilbyte import setupseen
+
+    assert setupseen.mark("b", "OTP  Vets", "otp fex") == (
+        setupseen.mark("b", "otp vets", "OTP FEX")
+    )

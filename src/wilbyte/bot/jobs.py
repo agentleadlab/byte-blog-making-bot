@@ -2141,6 +2141,80 @@ def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[
     return added, problems
 
 
+# How far back to look. A confirmation lands hours or a day after the card is
+# filed, and `dateLastActivity` moves when somebody comments - so two days
+# covers the gap and keeps the check to a handful of cards rather than the
+# whole board.
+SETUP_HOURS = 48
+
+
+def wrong_setups(config: Config, *, hours: int = SETUP_HOURS) -> tuple[list[dict], list[str]]:
+    """Agents set up on leads they did not order. (found, problems). Reads only.
+
+    Every list, not just Done. The confirmation lands whenever the setting up
+    is finished, and by then the card is usually in Done - but one still
+    parked in Franklin's list or sitting in In Que can be set up early, and a
+    check that only looks in Done would miss exactly the ones nobody has moved
+    on from.
+
+    Narrowed by when the card was last touched rather than by which list it is
+    in. A comment moves `dateLastActivity`, so anything with a new
+    confirmation on it is in the window by definition, and the sixty cards
+    that have not changed in a month cost one request between them.
+    """
+    from .. import agents, trello
+
+    client = open_trello(config)
+    found, problems = [], []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        fresh = _since(hours)
+        for card in (c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))):
+            title = str(card.get("name", ""))
+            if not agents.is_agent_card(title):
+                continue
+            if str(card.get("dateLastActivity") or "") < fresh:
+                continue
+            card_id = str(card.get("id") or "")
+            ordered = agents.stated_lead_type(
+                str(client.card_detail(card_id).get("desc") or "")
+            )
+            if not ordered:
+                continue
+            said = client.card_comments(card_id)
+            clash = agents.wrong_setup(ordered, said)
+            if clash is None:
+                continue
+            found.append({
+                **card,
+                "agent": agents.agent_name(title),
+                "ordered": clash[0],
+                "setup": clash[1],
+                "where": _list_named(lists, str(card.get("idList") or "")),
+            })
+    except Exception as exc:  # one bad card must not lose the rest
+        problems.append(_short(exc, 160))
+    finally:
+        client.close()
+    return found, problems
+
+
+def _since(hours: int) -> str:
+    """An ISO timestamp `hours` ago, to compare against dateLastActivity."""
+    from datetime import timezone
+
+    return (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _list_named(lists, list_id: str) -> str:
+    for held in lists:
+        if str(held.get("id") or "") == list_id:
+            return str(held.get("name") or "")
+    return ""
+
+
 def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
     """The ticked cards in the aged-leads list. (cards, problems). Reads only.
 
