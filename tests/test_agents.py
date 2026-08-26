@@ -1357,10 +1357,13 @@ def test_ascend_standard_is_read_off_the_price_line():
     assert agents.shape_of("Ascend Standard") == ("ascend", "standard", frozenset())
 
 
-def test_ascend_is_a_level_the_way_phoenix_is():
-    """"Lead Type: vets" with "ascend" somewhere below is Ascend vets, the
-    same as it would be for Uprise or Phoenix."""
-    assert agents.stated_lead_type("Lead Type: vets\nascend") == "ascend vets"
+def test_ascend_is_a_family_of_its_own_like_phoenix():
+    """Named on its own it is the lead type, the same as Phoenix is - not a
+    modifier waiting to be grafted onto something else."""
+    assert agents.family_of("Ascend Standard") == "ascend"
+    assert agents.stated_lead_type("Lead Type: IUL\n$350/week- Ascend Plus") == (
+        "Ascend Plus"
+    )
 
 
 def test_ascend_and_phoenix_are_not_the_same_order():
