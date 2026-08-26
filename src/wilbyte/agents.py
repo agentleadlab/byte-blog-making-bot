@@ -173,9 +173,20 @@ def agent_name(title: str) -> str:
 
 
 def find_lead_type(text: str) -> str:
-    """The lead type as the form wrote it, or "" if the line isn't there."""
-    found = LEAD_TYPE_LINE.search(text or "") or LEAD_TYPE_BLOCK.search(text or "")
-    return " ".join(found.group(1).split()) if found else ""
+    """The lead type as the form wrote it, or "" if the line isn't there.
+
+    The *last* one when a card carries more than one. A correction gets
+    written by pasting a fresh block underneath rather than by editing what is
+    already there - Colton Ramon's card says "Text Verified Veteran Plus" up
+    top and "Lead type: OTP Widows" further down, and the one further down is
+    the one that is current.
+    """
+    found = sorted(
+        list(LEAD_TYPE_LINE.finditer(text or ""))
+        + list(LEAD_TYPE_BLOCK.finditer(text or "")),
+        key=lambda at: at.start(),
+    )
+    return " ".join(found[-1].group(1).split()) if found else ""
 
 
 def family_of(text: str) -> str | None:
@@ -368,7 +379,10 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
     board actually has that checklist.
 
     Two phrases naming different checklists, both with a tier, is the card
-    disagreeing with itself. Both come back and a person is asked.
+    disagreeing with itself - unless one of them is the card's own Lead Type
+    line, which is the current word on it: a correction gets pasted below and
+    `find_lead_type` reads the lowest one. Otherwise both come back and a
+    person is asked.
     """
     hint = tier_of(text)
     found = []
@@ -390,6 +404,13 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
     picked = tiered or found
     landings = {item[2] for item in picked}
     if len(landings) > 1:
+        # Colton Ramon's card says "Text Verified Veteran Plus" up top and
+        # "Lead type: OTP Widows" below. That is not a card to ask about -
+        # somebody corrected it, and the labelled line is where they said so.
+        field = find_lead_type(text)
+        for _tiered, phrase, landed in picked:
+            if field and phrase == field:
+                return phrase, landed, []
         return picked[0][1], None, sorted(landings)
     return picked[0][1], picked[0][2], []
 

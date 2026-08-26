@@ -1050,3 +1050,65 @@ def test_the_three_cards_get_the_line():
         "Lead Order 08/26/26", "📊 Ads 08/26/26", "💻 Ops 08/26/26",
     }
     assert any(step.checklist == "OTP VET Plus" for step in plan.steps)
+
+
+# --------------------------------- a card corrected by pasting a block below
+
+
+COLTON = """-- New Client Onboarded --
+
+First Name: Colton
+Last Name: Ramon
+Phone: +18018857693
+Email: colton.ramon@tryeverlife.com
+Package Selected: Text Verified
+Lead Type: Text Verified Veteran Plus
+Target Areas for Marketing:
+
+Name: Colton Ramon
+Lead type: OTP Widows - 50 OTP Widows
+States: VA AR MS GA MO AZ IN - States: Same States
+Notes: Black Label
+
+Live Friday, August 28
+"""
+
+
+def test_the_lower_lead_type_line_is_the_one_that_counts():
+    """A correction gets pasted underneath rather than typed over the top, so
+    the block further down is the current one. Colton Ramon is OTP Widows, not
+    the Text Verified Veteran Plus the form wrote first."""
+    assert agents.find_lead_type(COLTON) == "OTP Widows - 50 OTP Widows"
+    assert agents.shape_of(agents.stated_lead_type(COLTON)) == (
+        "widows", "plus", frozenset()
+    )
+
+
+def test_one_lead_type_line_is_unaffected():
+    assert agents.find_lead_type(REAL) == "Text Verified IUL Plus"
+    assert agents.find_lead_type(SPARK) == "veteran-final-expense"
+
+
+def test_a_block_correction_under_a_line_one_still_wins():
+    """Spark writes the label on its own line, a person writes it with a
+    colon. Whichever is further down is the later word on it."""
+    said = "Lead Type: vets\n\nLead type\nOTP Widows\n"
+
+    assert agents.find_lead_type(said) == "OTP Widows"
+
+
+def test_a_line_correction_under_a_block_one_still_wins():
+    said = "Lead type\nvets\n\nLead Type: OTP Widows\n"
+
+    assert agents.find_lead_type(said) == "OTP Widows"
+
+
+def test_colton_lands_on_the_widows_checklist():
+    """The point of reading the lower block: OTP Widows leads on a card filed
+    as Veteran Plus go to the wrong person's order."""
+    said, landed, could = agents.best_lead_type(
+        COLTON, ["OTP VET Plus", "OTP Widows", "own setup"]
+    )
+
+    assert landed == "OTP Widows"
+    assert could == []
