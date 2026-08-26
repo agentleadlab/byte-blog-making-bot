@@ -105,6 +105,7 @@ FAMILIES = (
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
     ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
     ("phnx", re.compile(r"\bpho?e?nix\b|\bphnx\b|\bphx\b", re.IGNORECASE)),
+    ("ascend", re.compile(r"\bascend\b", re.IGNORECASE)),
 )
 
 # Variants that sit alongside the plain one and are not it. "OTP Spanish IUL"
@@ -122,10 +123,14 @@ PLUS = re.compile(r"\bplus\b|\btext[\s-]*verified\b|\botp\b", re.IGNORECASE)
 
 # The customer level, which is part of what the leads are rather than a
 # description of them - "when its uprise/phnx/phoenix always include this".
+# Ascend is one of these as well as a family of its own, the same way Phoenix
+# is: Ascend Standard and Phoenix Standard are two different things to buy.
 # A card can name it away from the lead type line entirely: "Lead Type: vets"
 # up top and "uprise- $350/week standard" three lines down is Uprise leads,
 # and filing that as plain standard vets loses the half that says which.
-LINE = re.compile(r"\buprise\b|\bpho?e?nix\b|\bphnx\b|\bphx\b", re.IGNORECASE)
+LINE = re.compile(
+    r"\buprise\b|\bpho?e?nix\b|\bphnx\b|\bphx\b|\bascend\b", re.IGNORECASE
+)
 
 
 @dataclass

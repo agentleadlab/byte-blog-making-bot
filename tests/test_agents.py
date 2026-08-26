@@ -1328,3 +1328,56 @@ def test_the_tier_counts_too():
 )
 def test_nothing_to_compare_is_not_a_complaint(ordered, comments):
     assert agents.wrong_setup(ordered, comments) is None
+
+
+# --------------------------------------------------- Ascend, the newest one
+
+
+LARS = """-- New Client Onboarded --
+
+First Name: Lars
+Last Name: Christofferson
+Phone: +1 406-589-1110
+Email: larschristofferson41@gmail.com
+Package Selected: Text Verified
+Lead Type: IUL
+Target Areas for Marketing: same states
+
+$350/week- Ascend Standard
+Live Fri, aug 28
+
+connect crm
+"""
+
+
+def test_ascend_standard_is_read_off_the_price_line():
+    """"Lead Type: IUL" up top and "$350/week- Ascend Standard" below. The
+    price comes off the front; the level and the tier are what he bought."""
+    assert agents.stated_lead_type(LARS) == "Ascend Standard"
+    assert agents.shape_of("Ascend Standard") == ("ascend", "standard", frozenset())
+
+
+def test_ascend_is_a_level_the_way_phoenix_is():
+    """"Lead Type: vets" with "ascend" somewhere below is Ascend vets, the
+    same as it would be for Uprise or Phoenix."""
+    assert agents.stated_lead_type("Lead Type: vets\nascend") == "ascend vets"
+
+
+def test_ascend_and_phoenix_are_not_the_same_order():
+    """Both are Standard tier and neither is the other. Reading them as one
+    would let an Ascend agent be set up on Phoenix with nothing flagged."""
+    assert agents.shape_of("Ascend Standard") != agents.shape_of("Phoenix Standard")
+    assert agents.wrong_setup(
+        "Ascend Standard", ["PHOENIX STANDARD ON DISTRO HUB setup is complete"]
+    ) == ("Ascend Standard", "PHOENIX STANDARD")
+
+
+def test_ascend_standard_is_a_self_setup_type():
+    """Standard is the self-setup half, and Ascend is no exception to that -
+    the same rule that puts Phoenix Standard there."""
+    assert agents.is_own_setup("Ascend Standard") is True
+    assert agents.is_own_setup("Ascend Plus") is False
+
+
+def test_lars_goes_live_on_the_friday():
+    assert agents.find_launch(LARS, today=date(2026, 8, 27)) == date(2026, 8, 28)
