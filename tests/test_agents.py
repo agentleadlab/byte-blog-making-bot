@@ -891,9 +891,19 @@ def test_the_level_does_not_change_which_checklist_it_matches():
 
 def test_it_is_carried_onto_a_bare_lead_type_line_too():
     """The branch where the card names nothing but the field."""
-    assert agents.stated_lead_type("Lead Type: whatever\nuprise- $350") == (
-        "uprise whatever"
-    )
+    assert agents.stated_lead_type("Lead Type: vets\nuprise") == "uprise vets"
+
+
+def test_a_level_on_its_own_line_is_not_the_lead_type():
+    """Sebastian Espinoza's card has "Uprise" sitting alone above "Phoenix
+    Standard". It says something about the leads without saying what they
+    are, and reading it as the answer would file him as Uprise."""
+    said = "Lead Type: Phoenix Campaign\n\nVeteran\n\nUprise\n\nPhoenix Standard\n"
+
+    assert agents.named_lead_types(said) == [
+        "Phoenix Campaign", "Veteran", "Phoenix Standard",
+    ]
+    assert agents.stated_lead_type(said) == "Phoenix Standard"
 
 
 # ------------------------------- when the card argues with itself about the day
@@ -1148,11 +1158,17 @@ def aliana(desc=ALIANA, *, comments=STALE, today=date(2026, 8, 26)):
 def test_a_stale_comment_does_not_become_the_lead_type():
     """These cards get copied from one agent to the next with the comments
     attached. A week-old note about somebody else's Distro Hub setup is not
-    what these leads are."""
+    what these leads are - and Final Expense is what it would have made this."""
     agent = aliana()
 
-    assert agent.stated == "Text Verified Spanish IUL"
+    assert "FEX" not in agent.stated and "Final Expense" not in agent.stated
     assert agents.shape_of(agent.stated) == ("iul", "plus", frozenset({"spanish"}))
+
+
+def test_the_lower_line_is_aliana_s_real_lead_type():
+    """The field says "Text Verified Spanish IUL"; four lines down the card
+    says "14 Spanish OTP IUL". The lower one is the corrected one."""
+    assert aliana().stated == "14 Spanish OTP IUL"
 
 
 def test_a_description_naming_nothing_is_held_rather_than_guessed_at():
@@ -1199,3 +1215,34 @@ def test_what_gets_matched_is_the_description_too():
 
     assert landed == "OTP Spanish IUL"
     assert could == []
+
+
+def test_a_sentence_about_the_leads_is_not_a_lead_type():
+    """Gustin Elrod's card says "Gustin Elrod paid for OTP IUL leads and with
+    Don A setup for immediate launch" underneath the field. True, and not the
+    name of anything you can buy - so the field stands."""
+    assert agents.stated_lead_type(REAL) == "Text Verified IUL Plus"
+    assert "paid for" not in agents.stated_lead_type(REAL)
+
+
+def test_a_states_line_is_not_a_lead_type_either():
+    said = (
+        "Lead Type: Text Verified Spanish IUL\n"
+        "States: FL, SC, MO, VA, TX, NC, NE, PA, OH, WV, WI, TN, NJ, MS, MN, MD.\n"
+    )
+
+    assert agents.stated_lead_type(said) == "Text Verified Spanish IUL"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # The one the card was corrected to, every time.
+        ("Lead Type: vets\n\n14 Spanish OTP IUL", "14 Spanish OTP IUL"),
+        ("Lead Type: OTP Widows\n\nLead type: OTP IUL Plus", "OTP IUL Plus"),
+        # One mention stays one mention.
+        ("Lead Type: OTP Widows", "OTP Widows"),
+    ],
+)
+def test_the_lower_phrase_wins(text, expected):
+    assert agents.stated_lead_type(text) == expected

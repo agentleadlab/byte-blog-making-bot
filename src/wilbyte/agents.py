@@ -236,28 +236,44 @@ def tidy_lead_type(phrase: str) -> str:
     return _PRICE_PREFIX.sub("", said).strip(" -–—:")
 
 
-def named_lead_types(text: str) -> list[str]:
-    """Every phrase on the card that names a kind of leads.
+# A lead type is a phrase, not a sentence. Gustin Elrod's card says "Gustin
+# Elrod paid for OTP IUL leads and with Don A setup for immediate launch" -
+# true, and not the name of anything you can buy.
+MOST_WORDS = 8
 
-    The Lead Type line first, then each line of the rest. A card says it more
-    than once and not always in the same words: "Lead Type: VETS" up top and
-    "$1050/WEEK- UPRISE PHX PLUS" further down are both somebody saying what
-    was bought.
+
+def named_lead_types(text: str) -> list[str]:
+    """Every phrase on the card that names a kind of leads, in the order they
+    are written.
+
+    In order, because that is what decides which one is current: a correction
+    gets pasted below rather than typed over the top. Aliana Arevalo's card
+    says "Lead Type: Text Verified Spanish IUL" and then, four lines down,
+    "14 Spanish OTP IUL" - and the one further down is the one that counts.
 
     A line naming the customer level counts even when it names no family.
     Benji Missey's card says "Lead Type: vets" and then "uprise- $350/week
-    standard", and that second line is the one to copy - it says which leads
-    they are in the words the order was written in.
+    standard", and that second line says which leads they are in the words the
+    order was written in.
+
+    The Lead Type field is here on its own terms - it is one of these lines -
+    and only falls back to being read as a field when no line qualifies.
     """
     said = []
-    field = find_lead_type(text)
-    if field:
-        said.append(field)
     for line in (text or "").splitlines():
-        line = " ".join(line.split())
-        if line and line != field and (family_of(line) or LINE.search(line)):
-            said.append(tidy_lead_type(line))
-    return said
+        phrase = tidy_lead_type(" ".join(line.split()))
+        if not phrase or len(phrase.split()) > MOST_WORDS:
+            continue
+        # A level on its own is a modifier, not a lead type. Sebastian
+        # Espinoza's card has "Uprise" sitting alone on a line above "Phoenix
+        # Standard" - it says something about the leads without saying what
+        # they are, and `with_line` is what grafts it back on.
+        if family_of(phrase) or (LINE.search(phrase) and tier_of(phrase)):
+            said.append(phrase)
+    if said:
+        return said
+    field = find_lead_type(text)
+    return [field] if field else []
 
 
 def tier_word(text: str) -> str:
@@ -296,12 +312,14 @@ def stated_lead_type(text: str) -> str:
     if not said:
         return with_line(find_lead_type(text), text)
 
+    # The last one, not the first. A card that says it twice has been
+    # corrected, and the correction is written underneath.
     tiered = [phrase for phrase in said if tier_of(phrase)]
     if tiered:
-        return with_line(tiered[0], text)
+        return with_line(tiered[-1], text)
 
     word = tier_word(text)
-    return with_line(f"{word} {said[0]}".strip() if word else said[0], text)
+    return with_line(f"{word} {said[-1]}".strip() if word else said[-1], text)
 
 
 def line_word(text: str) -> str:
