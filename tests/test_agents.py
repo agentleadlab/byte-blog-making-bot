@@ -1384,3 +1384,62 @@ def test_ascend_standard_is_a_self_setup_type():
 
 def test_lars_goes_live_on_the_friday():
     assert agents.find_launch(LARS, today=date(2026, 8, 27)) == date(2026, 8, 28)
+
+
+# --------------------------- the eight correct setups that got raised as wrong
+
+
+HUB = "✅ {} ON DISTRO HUB setup is complete for SOMEBODY"
+
+
+@pytest.mark.parametrize(
+    "ordered,setup",
+    [
+        # "OTP WIDOW VET" names two kinds of leads. Whether it is widows,
+        # veterans, or widows of veterans as one product is not something to
+        # work out from the words.
+        ("20 otp widow", "OTP WIDOW VET"),
+        ("OTP Widows", "OTP WIDOW VET"),
+        ("13 OTP Widow leads", "OTP WIDOW VET"),
+        ("paid for OTP Widows and is with Fearless", "OTP WIDOW VET"),
+        # "IULs" is IUL leads. The pattern wanted the singular.
+        ("OTP IULs - 10 more otp IULs", "OTP IUL"),
+    ],
+)
+def test_these_were_set_up_right_and_must_not_be_flagged(ordered, setup):
+    assert agents.wrong_setup(ordered, [HUB.format(setup)]) is None
+
+
+@pytest.mark.parametrize(
+    "said,expected",
+    [
+        ("OTP IUL", "iul"),
+        ("OTP IULs", "iul"),
+        ("OTP IULs - 10 more otp IULs", "iul"),
+        ("25 Text Verified IUL leads w/discount", "iul"),
+    ],
+)
+def test_iul_is_read_singular_or_plural(said, expected):
+    assert agents.family_of(said) == expected
+
+
+def test_a_phrase_naming_two_kinds_of_leads_is_read_as_both():
+    assert agents.families_in("OTP WIDOW VET") == {"widows", "vet"}
+    assert agents.families_in("OTP Widows") == {"widows"}
+    assert agents.families_in("nothing here") == set()
+
+
+@pytest.mark.parametrize(
+    "ordered,setup",
+    [
+        ("OTP Vets - 30 more OTP vets", "OTP FEX"),
+        ("14 Spanish OTP IUL", "OTP SPANISH FEX"),
+        ("Ascend Standard", "PHOENIX STANDARD"),
+        # Same leads, different tier - still a different product.
+        ("Basic Spanish IUL", "OTP SPANISH IUL"),
+        # Same leads, different qualifier.
+        ("OTP IUL Plus", "OTP SPANISH IUL"),
+    ],
+)
+def test_a_real_mismatch_still_fires(ordered, setup):
+    assert agents.wrong_setup(ordered, [HUB.format(setup)]) is not None

@@ -99,7 +99,7 @@ LEAD_TYPE_BLOCK = re.compile(
 
 # What kind of leads. The word that matters, whatever it is dressed in.
 FAMILIES = (
-    ("iul", re.compile(r"\biul\b", re.IGNORECASE)),
+    ("iul", re.compile(r"\biuls?\b", re.IGNORECASE)),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
@@ -199,6 +199,19 @@ def family_of(text: str) -> str | None:
         if pattern.search(text or ""):
             return name
     return None
+
+
+def families_in(text: str) -> set[str]:
+    """Every kind of leads a phrase names, not just the first one found.
+
+    "OTP WIDOW VET" names two. Which of them it means - widows, veterans, or
+    widows of veterans as one product - is not something to work out from the
+    words, and `family_of` picking whichever comes first in the table is a
+    coin toss dressed as an answer.
+    """
+    return {
+        name for name, pattern in FAMILIES if pattern.search(text or "")
+    }
 
 
 def tier_of(text: str) -> str | None:
@@ -511,17 +524,19 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
     a match is Vets against Final Expense, and that is somebody's money going
     to the wrong campaign with the card in Done and nothing looking wrong.
 
-    None when either side says nothing. A card with no confirmation yet is not
-    a card set up wrongly, and neither is one whose confirmation nobody wrote
-    a lead type into.
+    None when either side says nothing, or says too much. A card with no
+    confirmation yet is not a card set up wrongly; neither is one whose
+    confirmation nobody wrote a lead type into; and neither is one where a
+    phrase names two kinds of leads at once. "OTP WIDOW VET" is one campaign
+    or it is two, and a check that cannot tell has nothing to report - eight
+    correct setups raised as wrong is a check nobody will read the ninth time.
     """
     said = setup_said(comments)
     if not ordered or not said:
         return None
-    theirs = shape_of(said)
-    if theirs[0] is None:
+    if len(families_in(ordered)) != 1 or len(families_in(said)) != 1:
         return None
-    return None if shape_of(ordered) == theirs else (ordered, said)
+    return None if shape_of(ordered) == shape_of(said) else (ordered, said)
 
 
 # ------------------------------------------------------ when they go live
