@@ -1,8 +1,8 @@
 """The Agent Lead Lab daily board routine, as rules rather than clicks.
 
-Four dated cards walk In Que -> Today -> Quality Check each day. By half
-past eight every
-item still unticked has to land on tomorrow's card, on the *same person's*
+Four dated cards walk In Que -> Today -> Quality Check each day. By half past
+eight every item still unticked has to land on tomorrow's card, on the *same
+person's*
 checklist and the *same card type*. Nicole's unfinished General items go to
 Nicole's checklist on tomorrow's General card - not into Ops, not into a
 general pile.
@@ -38,9 +38,11 @@ TODAY = "Today"
 QUALITY_CHECK = "Quality Check"
 DONE = "Done"
 
-# The two afternoon looks at Done, named apart because the clock remembers
-# what has run by name and each has to happen once.
-UNMARKED = ("unmarked_agents_1530", "unmarked_agents_1730")
+# The two evening looks at Done, named apart because the clock remembers what
+# has run by name and each has to happen once. The names carry their times, so
+# moving one means renaming it - which is the point: a step called 1530 that
+# runs at half six is a lie somebody will read one day.
+UNMARKED = ("unmarked_agents_1830", "unmarked_agents_1930")
 
 # The one list the nightly archive is allowed to touch, by name. Nothing else
 # on the board is read by it, let alone archived - see `jobs.aged_to_archive`.
@@ -53,9 +55,10 @@ AGED_DONE = "Aged Leads Order Done"
 # worked the day before its agents go live, so the one made this morning has
 # to be in In Que by this evening for tomorrow to work on it.
 #
-# Two things happen at half eight, in this order: "after you move those unchecked
-# lists to their respective new list you move them to done". The carry has to
-# read the cards while they are still the day's, so it goes first.
+# Two things happen at half eight, in this order: "after you move those
+# unchecked lists to their respective new list you move them to done". The
+# carry has to read the cards while they are still the day's, so it goes
+# first.
 STEPS = (
     (6, 0, "make_setup"),
     (9, 0, "to_today"),
@@ -63,9 +66,11 @@ STEPS = (
     # card they belong to was made at six. Half an hour of margin, and a late
     # batch is reported rather than silently skipped.
     (11, 30, "link_setup"),
-    (15, 30, UNMARKED[0]),
-    (17, 30, UNMARKED[1]),
     (18, 0, "to_quality_check"),
+    # After the six o'clock move, so the day's cards have been through Quality
+    # Check by the time anybody is asked about them.
+    (18, 30, UNMARKED[0]),
+    (19, 30, UNMARKED[1]),
     (20, 30, "rollover"),
     (20, 30, "to_done"),
     (22, 0, "archive_aged"),

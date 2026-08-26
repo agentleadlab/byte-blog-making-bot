@@ -611,10 +611,10 @@ def at_hour(hour, minute=0):
 MORNING = ["make_setup"]
 WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
-AFTERNOON = MIDDAY + [dailyops.UNMARKED[0]]
-LATE = AFTERNOON + [dailyops.UNMARKED[1]]
-EVENING = LATE + ["to_quality_check"]
-NIGHT = EVENING + ["rollover", "to_done"]
+EVENING = MIDDAY + ["to_quality_check"]
+CHASED = EVENING + [dailyops.UNMARKED[0]]
+CHASED_AGAIN = CHASED + [dailyops.UNMARKED[1]]
+NIGHT = CHASED_AGAIN + ["rollover", "to_done"]
 LATE_NIGHT = NIGHT + ["archive_aged"]
 
 
@@ -629,12 +629,13 @@ LATE_NIGHT = NIGHT + ["archive_aged"]
         (11, 29, WORKING),
         (11, 30, MIDDAY),
         (15, 29, MIDDAY),
-        (15, 30, AFTERNOON),
-        (17, 29, AFTERNOON),
-        (17, 30, LATE),
+        (17, 30, MIDDAY),
         (18, 0, EVENING),
-        (19, 0, EVENING),
-        (20, 29, EVENING),
+        (18, 29, EVENING),
+        (18, 30, CHASED),
+        (19, 29, CHASED),
+        (19, 30, CHASED_AGAIN),
+        (20, 29, CHASED_AGAIN),
         (20, 30, NIGHT),
         (22, 0, LATE_NIGHT),
         (23, 0, LATE_NIGHT),
@@ -654,7 +655,9 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(20, 30), set(EVENING)) == ["rollover", "to_done"]
+    assert dailyops.steps_due(at_hour(20, 30), set(CHASED_AGAIN)) == [
+        "rollover", "to_done",
+    ]
     assert dailyops.steps_due(at_hour(20, 30), set(NIGHT)) == []
 
 
@@ -1562,10 +1565,10 @@ def test_the_hour_is_reported_the_way_anybody_says_it(hour, minute, said):
     assert dailyops.clock(hour, minute) == said
 
 
-def test_the_afternoon_looks_are_half_past():
-    assert dailyops.time_of(dailyops.UNMARKED[0]) == (15, 30)
-    assert dailyops.time_of(dailyops.UNMARKED[1]) == (17, 30)
-    assert dailyops.said_at(dailyops.UNMARKED[0]) == "3:30pm"
+def test_the_two_chases_are_half_past_six_and_seven():
+    assert dailyops.time_of(dailyops.UNMARKED[0]) == (18, 30)
+    assert dailyops.time_of(dailyops.UNMARKED[1]) == (19, 30)
+    assert dailyops.said_at(dailyops.UNMARKED[0]) == "6:30pm"
 
 
 def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
@@ -2179,7 +2182,7 @@ def note(config, found, step=None, *, ping=True):
 def test_the_card_names_the_time_the_count_and_the_agents(config):
     _ping, card = note(config, [UNTICKED, NEVER_SET])
 
-    assert "3:30pm" in card.author.name
+    assert "6:30pm" in card.author.name
     assert card.title == "2 agent(s) need ticking"
     assert "NEW AGENT- Tayler Collins" in card.description
     assert "https://trello.com/c/bbb" in card.description
@@ -2236,17 +2239,17 @@ def test_a_long_list_is_cut_and_says_it_was(config):
 def test_the_second_look_says_its_own_time(config):
     _ping, card = note(config, [UNTICKED], step=dailyops.UNMARKED[1])
 
-    assert "5:30pm" in card.author.name
+    assert "7:30pm" in card.author.name
 
 
 def test_asking_for_it_now_claims_no_particular_time(config):
-    """Saying "3:30pm" at half ten in the morning is worse than saying
+    """Saying "6:30pm" at half ten in the morning is worse than saying
     nothing, and the message carries its own timestamp anyway."""
     from wilbyte.bot.client import _unmarked_card
 
     card = _unmarked_card([UNTICKED])
 
-    assert "3:30pm" not in card.author.name
+    assert "6:30pm" not in card.author.name
     assert card.author.name == "🔔 going live today or tomorrow, not ticked"
 
 
