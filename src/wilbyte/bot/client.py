@@ -869,7 +869,7 @@ BOARD_CHECK_SECONDS = 240
 
 
 async def board_loop(bot: "WilByteBot") -> None:
-    """Walk the daily board through its day: 6am, 9am, 6pm, 8pm.
+    """Walk the daily board through its day: 6am, 9am, 6pm, 8:30pm.
 
     In Que to Today, Today to Quality Check, then whatever is still unticked
     onto tomorrow's cards - which Zapier has already made and left in In Que -

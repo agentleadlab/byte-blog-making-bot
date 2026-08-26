@@ -5,8 +5,9 @@ finds the day's cards by the date in the title, anywhere on the board, so
 dragging one into another list does not stop it - the only way to say no is
 to say no.
 
-Kept per day and read by the 8pm run, so it is a standing instruction rather
-than a one-off: saying it at four in the afternoon still holds at eight.
+Kept per day and read by the evening run, so it is a standing instruction
+rather than a one-off: saying it at four in the afternoon still holds at half
+past eight.
 Yesterday's entries are dropped on the next write, which makes tomorrow start
 clean without anybody having to remember to undo it.
 """

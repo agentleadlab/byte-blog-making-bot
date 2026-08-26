@@ -1,6 +1,7 @@
 """The Agent Lead Lab daily board routine, as rules rather than clicks.
 
-Four dated cards walk In Que -> Today -> Quality Check each day. At 8pm every
+Four dated cards walk In Que -> Today -> Quality Check each day. By half
+past eight every
 item still unticked has to land on tomorrow's card, on the *same person's*
 checklist and the *same card type*. Nicole's unfinished General items go to
 Nicole's checklist on tomorrow's General card - not into Ops, not into a
@@ -30,7 +31,7 @@ CARD_KINDS = {
 
 # The day, as three moves and a carry-over. From how it is actually run:
 # "from In Que, by 9am the cards are moved to Today; Today by 6pm the cards are
-# moved to Quality Check; by 8pm all checklist items that aren't checked are
+# moved to Quality Check; by 8:30pm all checklist items that aren't checked are
 # moved to next day's cards, which are on In Que."
 IN_QUE = "In Que"
 TODAY = "Today"
@@ -52,7 +53,7 @@ AGED_DONE = "Aged Leads Order Done"
 # worked the day before its agents go live, so the one made this morning has
 # to be in In Que by this evening for tomorrow to work on it.
 #
-# Two things happen at eight, in this order: "after you move those unchecked
+# Two things happen at half eight, in this order: "after you move those unchecked
 # lists to their respective new list you move them to done". The carry has to
 # read the cards while they are still the day's, so it goes first.
 STEPS = (
@@ -65,8 +66,8 @@ STEPS = (
     (15, 30, UNMARKED[0]),
     (17, 30, UNMARKED[1]),
     (18, 0, "to_quality_check"),
-    (20, 0, "rollover"),
-    (20, 0, "to_done"),
+    (20, 30, "rollover"),
+    (20, 30, "to_done"),
     (22, 0, "archive_aged"),
 )
 

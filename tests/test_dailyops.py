@@ -634,7 +634,8 @@ LATE_NIGHT = NIGHT + ["archive_aged"]
         (17, 30, LATE),
         (18, 0, EVENING),
         (19, 0, EVENING),
-        (20, 0, NIGHT),
+        (20, 29, EVENING),
+        (20, 30, NIGHT),
         (22, 0, LATE_NIGHT),
         (23, 0, LATE_NIGHT),
     ],
@@ -646,15 +647,15 @@ def test_the_day_unfolds_in_order(hour, minute, expected):
 def test_the_carry_happens_before_the_cards_leave_for_done():
     """"After you move those unchecked lists to their respective new list you
     move them to done" - both at nine, and that way round."""
-    due = dailyops.steps_due(at_hour(20), set())
+    due = dailyops.steps_due(at_hour(20, 30), set())
 
     assert due.index("rollover") < due.index("to_done")
 
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(20), set(EVENING)) == ["rollover", "to_done"]
-    assert dailyops.steps_due(at_hour(20), set(NIGHT)) == []
+    assert dailyops.steps_due(at_hour(20, 30), set(EVENING)) == ["rollover", "to_done"]
+    assert dailyops.steps_due(at_hour(20, 30), set(NIGHT)) == []
 
 
 def test_starting_late_catches_up_rather_than_skipping():
@@ -1535,7 +1536,7 @@ def test_the_move_is_named_by_where_the_cards_end_up(said, step):
 def test_quality_check_to_done_is_a_step_as_well_as_a_move():
     """It runs itself in the evening, and is still there to ask for by name."""
     assert "to_done" in dailyops.STEP_LISTS
-    assert dailyops.time_of("to_done") == (20, 0)
+    assert dailyops.time_of("to_done") == (20, 30)
     assert dailyops.move_named("trello move done") == "to_done"
 
 
@@ -1552,8 +1553,9 @@ def test_a_move_nobody_scheduled_has_no_hour():
 @pytest.mark.parametrize(
     "hour,minute,said",
     [
-        (9, 0, "9am"), (12, 0, "12pm"), (18, 0, "6pm"), (20, 0, "8pm"),
+        (9, 0, "9am"), (12, 0, "12pm"), (18, 0, "6pm"),
         (0, 0, "12am"), (15, 30, "3:30pm"), (17, 30, "5:30pm"), (6, 5, "6:05am"),
+        (20, 30, "8:30pm"),
     ],
 )
 def test_the_hour_is_reported_the_way_anybody_says_it(hour, minute, said):
@@ -2443,8 +2445,8 @@ def test_ten_at_night_is_when_it_runs():
 
 
 def test_the_archive_runs_after_the_move_to_done():
-    """A card that reaches the list at eight has two hours to be ticked, and
-    only then does it go."""
+    """A card that reaches the list at half eight has ninety minutes to be
+    ticked, and only then does it go."""
     due = dailyops.steps_due(at_hour(22), set())
 
     assert due.index("to_done") < due.index("archive_aged")
