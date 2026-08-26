@@ -3034,3 +3034,11 @@ def test_nothing_held_carries_all_four(monkeypatch, config):
     )
 
     assert sorted(targets) == ["ads", "general", "lead_order", "ops"]
+
+
+def test_one_card_held_reads_as_one_and_two_as_two():
+    from wilbyte.bot.client import _held_as_words
+
+    assert "its unticked items" in _held_as_words(["ads"])
+    assert "their unticked items" in _held_as_words(["ads", "lead_order"])
+    assert _held_as_words([]) == "Nothing is being held back tonight."

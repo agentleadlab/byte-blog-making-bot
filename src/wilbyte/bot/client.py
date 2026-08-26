@@ -2601,7 +2601,8 @@ def _held_as_words(held) -> str:
     if not held:
         return "Nothing is being held back tonight."
     named = ", ".join(dailyops.CARD_KINDS.get(kind, kind) for kind in held)
-    return f"Holding back tonight: **{named}** — its unticked items stay put."
+    whose = "its" if len(held) == 1 else "their"
+    return f"Holding back tonight: **{named}** — {whose} unticked items stay put."
 
 
 async def _rollover(responder: Responder, config: Config, *, named: str = "") -> None:
