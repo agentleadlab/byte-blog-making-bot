@@ -673,6 +673,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _file_agents(responder, config)
                 return
 
+            if request.action == "archive":
+                await _archive_aged(responder, config)
+                return
+
             if request.action == "unticked":
                 await _send_unticked(responder, config)
                 return
@@ -937,6 +941,55 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
     await responder.send(embed=_unmarked_card(found))
 
 
+async def _archive_aged(responder: Responder, config: Config) -> None:
+    """Show what the nightly archive would take, then take it once approved."""
+    from .. import dailyops
+
+    try:
+        cards, problems = await asyncio.to_thread(jobs.aged_to_archive, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    if not cards:
+        await responder.send(
+            f"Nothing to archive — every card in {dailyops.AGED_DONE} is ticked."
+        )
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Archive {len(cards)} card(s)",
+        emoji="📦",
+    )
+    listed = "\n".join(f"• {card.get('name')}" for card in cards[:UNMARKED_SHOWN])
+    if len(cards) > UNMARKED_SHOWN:
+        listed += f"\n…and {len(cards) - UNMARKED_SHOWN} more."
+    await responder.send(
+        f"**{dailyops.AGED_DONE}** — unticked, so they would be archived:\n{listed}\n"
+        "Archived, not deleted. They can be brought back.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        gone, problems = await asyncio.to_thread(jobs.archive_aged, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't archive them\n{exc}"))
+        return
+
+    note = f"📦 Archived {len(gone)} card(s) from {dailyops.AGED_DONE}."
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note)
+
+
 async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     """Do one step and say what happened, then never do it again today."""
     from .. import boardclock, dailyops
@@ -956,6 +1009,12 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # being looked at.
             note = _unmarked_ping(bot.config) if found else ""
             card = _unmarked_card(found, step=step) if found else None
+        elif step == "archive_aged":
+            gone, problems = await asyncio.to_thread(jobs.archive_aged, bot.config)
+            note = (
+                f"📦 {dailyops.said_at(step)} — archived {len(gone)} card(s) from "
+                f"{dailyops.AGED_DONE}."
+            ) if gone else ""
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (

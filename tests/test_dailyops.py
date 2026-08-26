@@ -614,6 +614,7 @@ AFTERNOON = WORKING + [dailyops.UNMARKED[0]]
 LATE = AFTERNOON + [dailyops.UNMARKED[1]]
 EVENING = LATE + ["to_quality_check"]
 NIGHT = EVENING + ["rollover", "to_done"]
+LATE_NIGHT = NIGHT + ["archive_aged"]
 
 
 @pytest.mark.parametrize(
@@ -631,7 +632,8 @@ NIGHT = EVENING + ["rollover", "to_done"]
         (18, 0, EVENING),
         (19, 0, EVENING),
         (20, 0, NIGHT),
-        (23, 0, NIGHT),
+        (22, 0, LATE_NIGHT),
+        (23, 0, LATE_NIGHT),
     ],
 )
 def test_the_day_unfolds_in_order(hour, minute, expected):
@@ -656,7 +658,7 @@ def test_starting_late_catches_up_rather_than_skipping():
     """RYTE is restarted often enough that "it was running at nine" is not
     something to rely on. A board moved late beats one left in In Que."""
     assert dailyops.steps_due(at_hour(11), set()) == WORKING
-    assert dailyops.steps_due(at_hour(22, 30), set()) == NIGHT
+    assert dailyops.steps_due(at_hour(22, 30), set()) == LATE_NIGHT
 
 
 def test_the_clock_remembers_across_a_restart(tmp_path):
@@ -2260,3 +2262,161 @@ def test_the_watched_lists_are_not_fetched_twice(monkeypatch, config):
     jobs.read_agents(config, day=date(2026, 8, 25))
 
     assert len(asked) == len(set(asked)) == len(board.lists), asked
+
+
+# ------------------------------- the nightly archive, and what it cannot reach
+
+
+class ArchivingBoard(FakeBoard):
+    """A board that remembers what was archived."""
+
+    def __init__(self, lists):
+        super().__init__(lists)
+        self.archived = []
+
+    def archive_card(self, card_id):
+        self.archived.append(card_id)
+        return {}
+
+
+AGED = "Aged Leads Order Done"
+
+ANSON = {"id": "anson", "name": "AGED LEAD - Anson Call"}
+KENE = {"id": "kene", "name": "AGED LEAD - Kene Ubakanma", "dueComplete": True}
+STEPHANIE = {"id": "steph", "name": "AGED LEAD - Stephanie Huish", "dueComplete": True}
+
+
+def aged_board(*cards, **elsewhere):
+    return ArchivingBoard({AGED: list(cards), **elsewhere})
+
+
+def test_only_the_unticked_ones_go(monkeypatch, config):
+    """The real list: Anson Call has no tick, Kene and Stephanie do."""
+    from wilbyte.bot import jobs
+
+    board = aged_board(ANSON, KENE, STEPHANIE)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    cards, problems = jobs.aged_to_archive(config)
+
+    assert problems == []
+    assert [c["id"] for c in cards] == ["anson"]
+
+
+def test_archiving_takes_exactly_what_was_shown(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = aged_board(ANSON, KENE, STEPHANIE)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    gone, problems = jobs.archive_aged(config)
+
+    assert (gone, problems) == (["AGED LEAD - Anson Call"], [])
+    assert board.archived == ["anson"]
+
+
+def test_nothing_outside_that_one_list_is_even_read(monkeypatch, config):
+    """The guarantee. Every other list is stocked with unticked cards - the
+    four daily ones, the agents, the setup card - and none of them is fetched,
+    let alone archived. Not fetched and then filtered: not reachable."""
+    from wilbyte.bot import jobs
+
+    others = {
+        "In Que": [{"id": "q1", "name": "Lead Order 08/26/26"}],
+        "Today": [{"id": "t1", "name": "💎 General 08/26/26"},
+                  {"id": "t2", "name": "Agent Setup Going Live Thursday 08/27"}],
+        "Quality Check": [{"id": "c1", "name": "📊 Ads 08/25/26"}],
+        "Done": [{"id": "d1", "name": "New Agent - Somebody"}],
+        "Franklin (Admin)": [{"id": "f1", "name": "New Agent - Parked"}],
+        "AUTOMATION DEPARTMENT": [{"id": "a1", "name": "THERESE GUBA"}],
+        "Archives - NO TOUCHING 😡": [{"id": "x1", "name": "do not touch"}],
+    }
+    board = aged_board(ANSON, **others)
+    asked = []
+    plain = board.list_cards
+    board.list_cards = lambda list_id: (asked.append(list_id), plain(list_id))[1]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.archive_aged(config)
+
+    assert board.archived == ["anson"]
+    assert asked == [f"id-{AGED}"], "it read a list it has no business in"
+
+
+def test_everything_ticked_archives_nothing(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = aged_board(KENE, STEPHANIE)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.archive_aged(config) == ([], [])
+    assert board.archived == []
+
+
+def test_an_empty_list_archives_nothing(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = aged_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.archive_aged(config) == ([], [])
+
+
+def test_no_such_list_is_said_and_nothing_happens(monkeypatch, config):
+    """If somebody renames it, the archive stops rather than picking another."""
+    from wilbyte.bot import jobs
+
+    board = ArchivingBoard({"Done": [{"id": "d1", "name": "New Agent - Somebody"}]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    gone, problems = jobs.archive_aged(config)
+
+    assert gone == []
+    assert "Aged Leads Order Done" in problems[0]
+    assert board.archived == []
+
+
+def test_one_card_refusing_does_not_stop_the_rest(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    second = {"id": "other", "name": "AGED LEAD - Someone Else"}
+    board = aged_board(ANSON, second)
+
+    def refuse(card_id):
+        if card_id == "anson":
+            raise RuntimeError("Trello said no")
+        board.archived.append(card_id)
+        return {}
+
+    board.archive_card = refuse
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    gone, problems = jobs.archive_aged(config)
+
+    assert gone == ["AGED LEAD - Someone Else"]
+    assert "Trello said no" in problems[0]
+
+
+def test_it_archives_and_never_deletes(monkeypatch, config):
+    """A wrong archive is an afternoon. A wrong delete is gone."""
+    from wilbyte.bot import jobs
+
+    board = aged_board(ANSON)
+    board.delete_card = lambda card_id: pytest.fail("it deleted a card")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.archive_aged(config)
+
+    assert board.archived == ["anson"]
+
+
+def test_ten_at_night_is_when_it_runs():
+    assert dailyops.time_of("archive_aged") == (22, 0)
+    assert dailyops.said_at("archive_aged") == "10pm"
+
+
+def test_the_archive_runs_after_the_move_to_done():
+    """A card that reaches the list at eight has two hours to be ticked."""
+    due = dailyops.steps_due(at_hour(22), set())
+
+    assert due.index("to_done") < due.index("archive_aged")

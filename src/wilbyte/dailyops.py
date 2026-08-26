@@ -41,6 +41,10 @@ DONE = "Done"
 # what has run by name and each has to happen once.
 UNMARKED = ("unmarked_agents_1530", "unmarked_agents_1730")
 
+# The one list the nightly archive is allowed to touch, by name. Nothing else
+# on the board is read by it, let alone archived - see `jobs.aged_to_archive`.
+AGED_DONE = "Aged Leads Order Done"
+
 # (hour, minute, what happens). Local time on the board's own clock - the
 # team's, not the server's.
 #
@@ -59,6 +63,7 @@ STEPS = (
     (18, 0, "to_quality_check"),
     (20, 0, "rollover"),
     (20, 0, "to_done"),
+    (22, 0, "archive_aged"),
 )
 
 STEP_NAMES = {
@@ -69,6 +74,7 @@ STEP_NAMES = {
     "rollover": "carry the unfinished items to tomorrow",
     UNMARKED[0]: f"the New Agent cards in {DONE} nobody has ticked",
     UNMARKED[1]: f"the New Agent cards in {DONE} nobody has ticked",
+    "archive_aged": f"archive the unticked cards in {AGED_DONE}",
 }
 
 # Where each move goes. The rollover and the 6am make move no cards, so

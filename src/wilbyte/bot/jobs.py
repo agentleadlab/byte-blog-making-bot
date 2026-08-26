@@ -2059,6 +2059,67 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
+def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
+    """The unticked cards in the aged-leads list. (cards, problems). Reads only.
+
+    One list, by name, and nothing else on the board is fetched at all - not
+    fetched and then filtered, which is the version that goes wrong when
+    somebody edits the filter. A card in any other list is not reachable from
+    here.
+
+    Unticked, because the green tick is somebody saying that one still wants
+    looking at. The ones nobody marked are the ones that have run their
+    course.
+    """
+    from .. import dailyops, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        aged = trello.find_list(lists, dailyops.AGED_DONE)
+        if aged is None:
+            return [], [f"The board has no list called {dailyops.AGED_DONE!r}"]
+
+        held = str(aged.get("id") or "")
+        return [
+            card for card in client.list_cards(held)
+            # Belt and braces. The cards came from that list's own endpoint, so
+            # this cannot be false - and if Trello ever hands back something
+            # else, it is not getting archived on my watch.
+            if str(card.get("idList") or held) == held
+            and not card.get("dueComplete")
+        ], []
+    finally:
+        client.close()
+
+
+def archive_aged(config: Config) -> tuple[list[str], list[str]]:
+    """Archive them. (titles archived, problems).
+
+    Reads through `aged_to_archive` so what gets shown and what gets archived
+    cannot drift. Archived, not deleted - Trello keeps the card and it can be
+    brought back, which is the difference between a bad evening and a bad
+    week.
+    """
+    cards, problems = aged_to_archive(config)
+    if problems or not cards:
+        return [], problems
+
+    client = open_trello(config)
+    archived = []
+    try:
+        for card in cards:
+            try:
+                client.archive_card(str(card.get("id") or ""))
+            except Exception as exc:
+                problems.append(f"{card.get('name')} — {_short(exc, 160)}")
+                continue
+            archived.append(str(card.get("name") or ""))
+    finally:
+        client.close()
+    return archived, problems
+
+
 def unmarked_agents(config: Config) -> tuple[list[dict], list[str]]:
     """New Agent cards sitting in Done that nobody ticked. (cards, problems).
 

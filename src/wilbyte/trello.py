@@ -139,6 +139,15 @@ class TrelloClient:
         """
         return self._request("PUT", f"/cards/{card_id}", params={"desc": text})
 
+    def archive_card(self, card_id: str) -> dict:
+        """Archive a card. Reversible - Trello keeps it and it can come back.
+
+        Deliberately not the DELETE endpoint. Nothing in this codebase deletes
+        a card, because a wrong archive is an afternoon and a wrong delete is
+        gone.
+        """
+        return self._request("PUT", f"/cards/{card_id}", params={"closed": "true"})
+
     def create_card(self, list_id: str, name: str, *, position: str = "top") -> dict:
         return self._request(
             "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
