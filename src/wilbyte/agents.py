@@ -120,6 +120,13 @@ QUALIFIERS = (
 STANDARD = re.compile(r"\bstandard\b|\bbasic\b", re.IGNORECASE)
 PLUS = re.compile(r"\bplus\b|\btext[\s-]*verified\b|\botp\b", re.IGNORECASE)
 
+# The customer level, which is part of what the leads are rather than a
+# description of them - "when its uprise/phnx/phoenix always include this".
+# A card can name it away from the lead type line entirely: "Lead Type: vets"
+# up top and "uprise- $350/week standard" three lines down is Uprise leads,
+# and filing that as plain standard vets loses the half that says which.
+LINE = re.compile(r"\buprise\b|\bpho?e?nix\b|\bphnx\b|\bphx\b", re.IGNORECASE)
+
 
 @dataclass
 class Agent:
@@ -267,18 +274,37 @@ def stated_lead_type(text: str) -> str:
     And where the best phrase names no tier but the card does somewhere else,
     the card's word goes in front of it. "Lead Type: vets" with "30 otp vtes"
     below is OTP vets, and filing that as plain vets throws away the half that
-    says which vets.
+    says which vets. The same goes for the customer level - see `with_line`.
     """
     said = named_lead_types(text)
     if not said:
-        return find_lead_type(text)
+        return with_line(find_lead_type(text), text)
 
     tiered = [phrase for phrase in said if tier_of(phrase)]
     if tiered:
-        return tiered[0]
+        return with_line(tiered[0], text)
 
     word = tier_word(text)
-    return f"{word} {said[0]}".strip() if word else said[0]
+    return with_line(f"{word} {said[0]}".strip() if word else said[0], text)
+
+
+def line_word(text: str) -> str:
+    """Uprise or Phoenix as the card wrote it, or "" if it names neither."""
+    found = LINE.search(text or "")
+    return found.group(0) if found else ""
+
+
+def with_line(phrase: str, text: str) -> str:
+    """The phrase with the card's Uprise/Phoenix word in front, if it needs one.
+
+    Only when the phrase names no level of its own. "Phoenix Standard" on a
+    card that also says "Uprise" is already saying which, and a card naming
+    both is naming one thing twice rather than two things.
+    """
+    if not phrase or LINE.search(phrase):
+        return phrase
+    word = line_word(text)
+    return f"{word} {phrase}" if word else phrase
 
 
 def candidates(

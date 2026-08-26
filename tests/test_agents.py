@@ -812,3 +812,65 @@ def test_the_moment_the_card_exists_the_parked_agent_goes_on_it():
 
 def test_nothing_in_a_plan_ever_asks_for_a_card_to_be_made():
     assert not hasattr(agents.AgentPlan(agent=None, when="today"), "make_card")
+
+
+# ------------------------------------------ the customer level, wherever it is
+
+
+BENJI = """-- New Client Onboarded --
+
+First Name: Benji
+Last Name: Missey
+Phone: 3148456456
+Email: bnmissey05@gmail.com
+Package Selected: Text Verified
+Lead Type: vets
+Target Areas for Marketing:  all states except for FL, CA, IL, GA, IA, KY.
+
+uprise- $350/week standard
+
+live fri, aug 27
+"""
+
+
+def test_uprise_is_carried_even_when_the_lead_type_line_leaves_it_out():
+    """"Lead Type: vets" up top, "uprise- $350/week standard" three lines
+    down. Filing that as plain standard vets loses which vets they are."""
+    assert agents.stated_lead_type(BENJI) == "uprise standard vets"
+
+
+@pytest.mark.parametrize("said", ["uprise", "UPRISE", "Uprise", "phnx", "PHX", "Phoenix"])
+def test_every_way_of_writing_the_level_is_found(said):
+    assert agents.line_word(f"{said}- $350/week standard") != ""
+
+
+def test_the_card_s_own_word_is_the_one_repeated_back():
+    """Not a tidied one. Inventing a spelling reads as RYTE having decided
+    something about somebody's order."""
+    assert agents.line_word("UPRISE- $350/week") == "UPRISE"
+    assert agents.line_word("phnx plus") == "phnx"
+
+
+def test_a_phrase_that_already_names_its_level_is_left_alone():
+    """"Phoenix Standard" on a card that also says "Uprise" is naming one
+    thing twice, not two things."""
+    assert agents.stated_lead_type(SEBASTIAN) == "Phoenix Standard"
+    assert agents.with_line("Phoenix Standard", "uprise phoenix") == "Phoenix Standard"
+
+
+def test_a_card_naming_no_level_gains_nothing():
+    assert agents.stated_lead_type(REAL) == "Text Verified IUL Plus"
+    assert agents.stated_lead_type(BENJAMIN) == "otp vets"
+
+
+def test_the_level_does_not_change_which_checklist_it_matches():
+    """It is part of what to write down, not part of what the leads are for
+    matching - "uprise standard vets" is still standard vets."""
+    assert agents.shape_of("uprise standard vets") == agents.shape_of("standard vets")
+
+
+def test_it_is_carried_onto_a_bare_lead_type_line_too():
+    """The branch where the card names nothing but the field."""
+    assert agents.stated_lead_type("Lead Type: whatever\nuprise- $350") == (
+        "uprise whatever"
+    )
