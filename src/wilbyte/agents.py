@@ -573,25 +573,41 @@ def _made(month: int, day: int, year: str | None, *, today: date) -> date | None
     return None
 
 
-def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
+def read_agent(
+    card: dict, *, text: str, today: date, comments: tuple[str, ...] = ()
+) -> Agent | None:
     """One agent card read into what RYTE needs, or None if it isn't one.
 
-    `text` is the description and every comment run together: the launch date
-    turns up in either, and which one it is in is nobody's decision to make.
+    `text` is the description. The comments are read for the launch date,
+    because it turns up in either and which one it is in is nobody's decision
+    to make - but never for what the leads are.
+
+    That split is the whole point. These cards get copied from one agent to
+    the next with the comments attached, and a week-old "OTP SPANISH FEX on
+    Distro Hub setup is complete" is a note about somebody else's order. Read
+    as a lead type it beat a description that plainly said Spanish IUL.
+
+    A description that names no lead type comes back with none, and the card
+    is held for a person. Guessing one out of the comments is how a stale note
+    ends up on somebody's order with nothing on the board looking wrong.
     """
     title = str(card.get("name", ""))
     if not is_agent_card(title):
         return None
 
+    said = text or ""
+    everything = "\n".join([said, *comments])
     agent = Agent(
         name=agent_name(title),
         card_id=str(card.get("id") or ""),
         url=str(card.get("shortUrl") or card.get("url") or ""),
-        lead_type=find_lead_type(text),
-        launch=find_launch(text, today=today),
-        said=text or "",
-        stated=stated_lead_type(text),
-        note=launch_conflict(text, today=today),
+        lead_type=find_lead_type(said),
+        launch=find_launch(everything, today=today),
+        # What gets matched against the board's checklists, so it carries the
+        # same restriction.
+        said=said,
+        stated=stated_lead_type(said),
+        note=launch_conflict(everything, today=today),
     )
     return agent
 

@@ -2480,11 +2480,12 @@ def read_agents(config: Config, *, day=None):
             if not agents.is_agent_card(str(card.get("name", ""))):
                 continue
             detail = client.card_detail(str(card.get("id") or ""))
-            said = "\n".join(
-                [str(detail.get("desc") or "")]
-                + client.card_comments(str(card.get("id") or ""))
+            agent = agents.read_agent(
+                {**card, **detail},
+                text=str(detail.get("desc") or ""),
+                comments=tuple(client.card_comments(str(card.get("id") or ""))),
+                today=day,
             )
-            agent = agents.read_agent({**card, **detail}, text=said, today=day)
             if agent is None:
                 continue
             plans.append(

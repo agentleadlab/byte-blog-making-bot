@@ -1112,3 +1112,90 @@ def test_colton_lands_on_the_widows_checklist():
 
     assert landed == "OTP Widows"
     assert could == []
+
+
+# ------------------------------- comments say when, never what the leads are
+
+
+STALE = (
+    "✅ OTP SPANISH FEX ON DISTRO HUB setup is complete for ALIANA AREVALO\n"
+    "✅ Fired a test in the Discord channel and Google Sheet.",
+    "SCHEDULE ADDED @card",
+)
+
+ALIANA = """-- New Client Onboarded --
+
+First Name: Aliana
+Last Name: Arevalo
+Phone: +19542983662
+Email: alianaarevalo7@gmail.com
+Package Selected: Text Verified
+Lead Type: Text Verified Spanish IUL
+Target Areas for Marketing: Aliana Arevalo
+(954) 298-3662
+14 Spanish OTP IUL
+States: FL, SC, MO, VA, TX, NC, NE, PA, OH, WV, WI, TN, NJ.
+Launch Date: Thursday, August 27
+"""
+
+
+def aliana(desc=ALIANA, *, comments=STALE, today=date(2026, 8, 26)):
+    return agents.read_agent(
+        card("New Agent - Aliana Arevalo"), text=desc, comments=comments, today=today
+    )
+
+
+def test_a_stale_comment_does_not_become_the_lead_type():
+    """These cards get copied from one agent to the next with the comments
+    attached. A week-old note about somebody else's Distro Hub setup is not
+    what these leads are."""
+    agent = aliana()
+
+    assert agent.stated == "Text Verified Spanish IUL"
+    assert agents.shape_of(agent.stated) == ("iul", "plus", frozenset({"spanish"}))
+
+
+def test_a_description_naming_nothing_is_held_rather_than_guessed_at():
+    """Not fallen back to the comments. A stale note filed onto somebody's
+    order leaves nothing on the board looking wrong."""
+    thin = "First Name: Aliana\nPackage Selected: Text Verified\nLaunch Date: Thursday, August 27\n"
+    agent = aliana(thin)
+
+    assert agent.stated == ""
+    assert agents.cannot_read(agent, needs_lead_type=True) == (
+        "I can't find a lead type on this card."
+    )
+
+
+def test_the_launch_date_is_still_read_out_of_a_comment():
+    """It turns up in either, and which one is nobody's decision to make."""
+    agent = aliana(
+        "First Name: Aliana\nLead Type: Text Verified Spanish IUL\n",
+        comments=("launch date is Thursday, August 27",),
+    )
+
+    assert agent.launch == date(2026, 8, 27)
+    assert agent.stated == "Text Verified Spanish IUL"
+
+
+def test_the_description_beats_a_comment_on_the_date():
+    agent = aliana(comments=("Launch date is Monday, August 24",) + STALE)
+
+    assert agent.launch == date(2026, 8, 27)
+
+
+def test_aliana_is_tomorrow_not_today():
+    agent = aliana()
+
+    assert agent.when(date(2026, 8, 26)) == "tomorrow"
+
+
+def test_what_gets_matched_is_the_description_too():
+    """`said` is what goes up against the board's checklists, so a comment
+    cannot pull it onto the wrong one either."""
+    said, landed, could = agents.best_lead_type(
+        aliana().said, ["OTP Spanish IUL", "OTP Spanish FEX", "own setup"]
+    )
+
+    assert landed == "OTP Spanish IUL"
+    assert could == []
