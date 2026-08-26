@@ -833,10 +833,30 @@ live fri, aug 27
 """
 
 
-def test_uprise_is_carried_even_when_the_lead_type_line_leaves_it_out():
+def test_the_level_line_is_copied_as_it_was_written():
     """"Lead Type: vets" up top, "uprise- $350/week standard" three lines
-    down. Filing that as plain standard vets loses which vets they are."""
-    assert agents.stated_lead_type(BENJI) == "uprise standard vets"
+    down. The second line is the one that says what the order actually was,
+    and it goes down in the words somebody wrote it in - price and all."""
+    assert agents.stated_lead_type(BENJI) == "uprise- $350/week standard"
+
+
+def test_a_level_line_beats_the_lead_type_field_when_it_names_a_tier():
+    """The field says "vets" and stops. The line below says which vets."""
+    said = "Lead Type: vets\n\nuprise- $350/week standard"
+
+    assert agents.stated_lead_type(said) == "uprise- $350/week standard"
+
+
+def test_a_price_in_front_still_comes_off():
+    """"$1050/WEEK- UPRISE PHX PLUS" is a price and then the leads. Copying
+    the line as written does not mean copying the invoice."""
+    assert agents.stated_lead_type(TAYLER) == "UPRISE PHX PLUS"
+
+
+def test_the_level_word_on_its_own_does_not_win():
+    """Sebastian's card says "Uprise" on one line and "Phoenix Standard" on
+    another. The one naming a tier is the one that says what was bought."""
+    assert agents.stated_lead_type(SEBASTIAN) == "Phoenix Standard"
 
 
 @pytest.mark.parametrize("said", ["uprise", "UPRISE", "Uprise", "phnx", "PHX", "Phoenix"])

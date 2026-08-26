@@ -232,6 +232,11 @@ def named_lead_types(text: str) -> list[str]:
     than once and not always in the same words: "Lead Type: VETS" up top and
     "$1050/WEEK- UPRISE PHX PLUS" further down are both somebody saying what
     was bought.
+
+    A line naming the customer level counts even when it names no family.
+    Benji Missey's card says "Lead Type: vets" and then "uprise- $350/week
+    standard", and that second line is the one to copy - it says which leads
+    they are in the words the order was written in.
     """
     said = []
     field = find_lead_type(text)
@@ -239,7 +244,7 @@ def named_lead_types(text: str) -> list[str]:
         said.append(field)
     for line in (text or "").splitlines():
         line = " ".join(line.split())
-        if line and line != field and family_of(line):
+        if line and line != field and (family_of(line) or LINE.search(line)):
             said.append(tidy_lead_type(line))
     return said
 
