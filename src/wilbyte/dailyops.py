@@ -38,11 +38,18 @@ TODAY = "Today"
 QUALITY_CHECK = "Quality Check"
 DONE = "Done"
 
-# The two evening looks at Done, named apart because the clock remembers what
-# has run by name and each has to happen once. The names carry their times, so
+# The four looks at Done, named apart because the clock remembers what has run
+# by name and each has to happen once. Two either side of the six o'clock
+# move: the afternoon pair while there is still a working day to fix it in,
+# and the evening pair once the cards have been through Quality Check. The names carry their times, so
 # moving one means renaming it - which is the point: a step called 1530 that
 # runs at half six is a lie somebody will read one day.
-UNMARKED = ("unmarked_agents_1830", "unmarked_agents_1930")
+UNMARKED = (
+    "unmarked_agents_1530",
+    "unmarked_agents_1730",
+    "unmarked_agents_1830",
+    "unmarked_agents_1930",
+)
 
 # The one list the nightly archive is allowed to touch, by name. Nothing else
 # on the board is read by it, let alone archived - see `jobs.aged_to_archive`.
@@ -66,11 +73,11 @@ STEPS = (
     # card they belong to was made at six. Half an hour of margin, and a late
     # batch is reported rather than silently skipped.
     (11, 30, "link_setup"),
+    (15, 30, UNMARKED[0]),
+    (17, 30, UNMARKED[1]),
     (18, 0, "to_quality_check"),
-    # After the six o'clock move, so the day's cards have been through Quality
-    # Check by the time anybody is asked about them.
-    (18, 30, UNMARKED[0]),
-    (19, 30, UNMARKED[1]),
+    (18, 30, UNMARKED[2]),
+    (19, 30, UNMARKED[3]),
     (20, 30, "rollover"),
     (20, 30, "to_done"),
     (22, 0, "archive_aged"),
@@ -83,8 +90,10 @@ STEP_NAMES = {
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",
-    UNMARKED[0]: f"the New Agent cards in {DONE} nobody has ticked",
-    UNMARKED[1]: f"the New Agent cards in {DONE} nobody has ticked",
+    **{
+        step: f"the New Agent cards in {DONE} nobody has ticked"
+        for step in UNMARKED
+    },
     "archive_aged": f"archive the ticked cards in {AGED_DONE}",
 }
 
