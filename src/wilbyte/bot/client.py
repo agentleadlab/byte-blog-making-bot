@@ -673,6 +673,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _file_agents(responder, config)
                 return
 
+            if request.action == "unticked":
+                await _send_unticked(responder, config)
+                return
+
             if request.action == "move":
                 await _move_cards(responder, config, request.brief or "")
                 return
@@ -879,6 +883,61 @@ async def _board_steps(bot: "WilByteBot") -> None:
         await _board_step(bot, step, today)
 
 
+# Enough of them to see who is outstanding, not so many that the message is
+# scrolled past. Discord cuts a message off at 2000 characters anyway, and a
+# truncated list reads as if that was all of them.
+UNMARKED_SHOWN = 15
+
+
+def _unmarked_note(
+    config: Config, step: str, found: list[dict], *, ping: bool = True
+) -> str:
+    """The afternoon nudge, or "" when every agent in Done has been ticked.
+
+    Pings if there is somebody to ping. This one is not a report of what RYTE
+    did - it is a job for a person, and a line in a channel nobody has open is
+    not a job anybody does.
+    """
+    from .. import dailyops
+
+    if not found:
+        return ""
+
+    who = config.secrets.discord_notify_user_id if ping else None
+    head = f"<@{who}> " if who else ""
+    lines = [
+        f"{head}🔔 {dailyops.said_at(step)} — {len(found)} New Agent card(s) in "
+        f"{dailyops.DONE} nobody has ticked:"
+    ]
+    for card in found[:UNMARKED_SHOWN]:
+        lines.append(f"• {card.get('name')} — {card.get('url') or card.get('shortUrl') or ''}")
+    if len(found) > UNMARKED_SHOWN:
+        lines.append(f"…and {len(found) - UNMARKED_SHOWN} more.")
+    return "\n".join(lines)
+
+
+async def _send_unticked(responder: Responder, config: Config) -> None:
+    """The same look the afternoon takes, when somebody asks for it now."""
+    from .. import dailyops
+
+    try:
+        found, problems = await asyncio.to_thread(jobs.unmarked_agents, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    if not found:
+        await responder.send(
+            f"Every New Agent card in {dailyops.DONE} has been ticked."
+        )
+        return
+    # No ping: somebody just asked, so they are already looking at it.
+    await responder.send(_unmarked_note(config, dailyops.UNMARKED[0], found, ping=False))
+
+
 async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     """Do one step and say what happened, then never do it again today."""
     from .. import boardclock, dailyops
@@ -889,14 +948,14 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
             # Silent when one already existed. Most mornings it makes one, and
             # a line every day saying nothing happened is a line nobody reads.
-            note = (
-                f"📋 {dailyops.clock(dailyops.hour_of(step))} — made `{title}`."
-                if title else ""
-            )
+            note = f"📋 {dailyops.said_at(step)} — made `{title}`." if title else ""
+        elif step in dailyops.UNMARKED:
+            found, problems = await asyncio.to_thread(jobs.unmarked_agents, bot.config)
+            note = _unmarked_note(bot.config, step, found)
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (
-                f"📋 {dailyops.clock(dailyops.hour_of(step))} — carried {moved} "
+                f"📋 {dailyops.said_at(step)} — carried {moved} "
                 "unfinished item(s) onto tomorrow's cards."
             )
             if flagged:
@@ -911,7 +970,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # Nothing to move is not news either. Somebody already did it by
             # hand, which is the usual reason.
             note = (
-                f"📋 {dailyops.clock(dailyops.hour_of(step))} — moved {moved} card(s) "
+                f"📋 {dailyops.said_at(step)} — moved {moved} card(s) "
                 f"{dailyops.STEP_NAMES[step]}."
             ) if moved else ""
     except PIPELINE_ERRORS as exc:

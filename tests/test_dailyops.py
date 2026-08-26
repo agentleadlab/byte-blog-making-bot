@@ -610,26 +610,32 @@ def at_hour(hour, minute=0):
 
 MORNING = ["make_setup"]
 WORKING = MORNING + ["to_today"]
-EVENING = WORKING + ["to_quality_check"]
+AFTERNOON = WORKING + [dailyops.UNMARKED[0]]
+LATE = AFTERNOON + [dailyops.UNMARKED[1]]
+EVENING = LATE + ["to_quality_check"]
 NIGHT = EVENING + ["rollover", "to_done"]
 
 
 @pytest.mark.parametrize(
-    "hour,expected",
+    "hour,minute,expected",
     [
-        (5, []),
-        (6, MORNING),
-        (8, MORNING),
-        (9, WORKING),
-        (17, WORKING),
-        (18, EVENING),
-        (19, EVENING),
-        (20, NIGHT),
-        (23, NIGHT),
+        (5, 0, []),
+        (6, 0, MORNING),
+        (8, 0, MORNING),
+        (9, 0, WORKING),
+        # Half past matters now, so both sides of it are worth pinning.
+        (15, 29, WORKING),
+        (15, 30, AFTERNOON),
+        (17, 29, AFTERNOON),
+        (17, 30, LATE),
+        (18, 0, EVENING),
+        (19, 0, EVENING),
+        (20, 0, NIGHT),
+        (23, 0, NIGHT),
     ],
 )
-def test_the_day_unfolds_in_order(hour, expected):
-    assert dailyops.steps_due(at_hour(hour), set()) == expected
+def test_the_day_unfolds_in_order(hour, minute, expected):
+    assert dailyops.steps_due(at_hour(hour, minute), set()) == expected
 
 
 def test_the_carry_happens_before_the_cards_leave_for_done():
@@ -642,9 +648,7 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(
-        at_hour(20), {"make_setup", "to_today", "to_quality_check"}
-    ) == ["rollover", "to_done"]
+    assert dailyops.steps_due(at_hour(20), set(EVENING)) == ["rollover", "to_done"]
     assert dailyops.steps_due(at_hour(20), set(NIGHT)) == []
 
 
@@ -1526,24 +1530,35 @@ def test_the_move_is_named_by_where_the_cards_end_up(said, step):
 def test_quality_check_to_done_is_a_step_as_well_as_a_move():
     """It runs itself in the evening, and is still there to ask for by name."""
     assert "to_done" in dailyops.STEP_LISTS
-    assert dailyops.hour_of("to_done") == 20
+    assert dailyops.time_of("to_done") == (20, 0)
     assert dailyops.move_named("trello move done") == "to_done"
 
 
 def test_the_evening_pair_run_at_the_same_hour():
     """One hour, two steps. Changing it must not leave them on different ones."""
-    assert dailyops.hour_of("rollover") == dailyops.hour_of("to_done")
+    assert dailyops.time_of("rollover") == dailyops.time_of("to_done")
 
 
 def test_a_move_nobody_scheduled_has_no_hour():
-    assert dailyops.hour_of("not a step") is None
+    assert dailyops.time_of("not a step") is None
+    assert dailyops.said_at("not a step") == ""
 
 
 @pytest.mark.parametrize(
-    "hour,said", [(9, "9am"), (12, "12pm"), (18, "6pm"), (20, "8pm"), (0, "12am")]
+    "hour,minute,said",
+    [
+        (9, 0, "9am"), (12, 0, "12pm"), (18, 0, "6pm"), (20, 0, "8pm"),
+        (0, 0, "12am"), (15, 30, "3:30pm"), (17, 30, "5:30pm"), (6, 5, "6:05am"),
+    ],
 )
-def test_the_hour_is_reported_the_way_anybody_says_it(hour, said):
-    assert dailyops.clock(hour) == said
+def test_the_hour_is_reported_the_way_anybody_says_it(hour, minute, said):
+    assert dailyops.clock(hour, minute) == said
+
+
+def test_the_afternoon_looks_are_half_past():
+    assert dailyops.time_of(dailyops.UNMARKED[0]) == (15, 30)
+    assert dailyops.time_of(dailyops.UNMARKED[1]) == (17, 30)
+    assert dailyops.said_at(dailyops.UNMARKED[0]) == "3:30pm"
 
 
 def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
@@ -2042,3 +2057,156 @@ def test_no_automation_list_is_said_rather_than_guessed_at(monkeypatch, config):
     assert title == ""
     assert "AUTOMATION DEPARTMENT" in problems[0]
     assert board.made == []
+
+
+# ------------------------- the afternoon look at Done, twice
+
+
+def done_board(*cards):
+    return FakeBoard({
+        "Done": list(cards),
+        "In Que": [], "Today": [], "Quality Check": [],
+    })
+
+
+TICKED = {"id": "a", "name": "New Agent - Gustin Elrod",
+          "url": "https://trello.com/c/aaa", "dueComplete": True}
+UNTICKED = {"id": "b", "name": "NEW AGENT- Tayler Collins",
+            "url": "https://trello.com/c/bbb", "dueComplete": False}
+NEVER_SET = {"id": "c", "name": "New Agent - Sebastian Espinoza",
+             "url": "https://trello.com/c/ccc"}
+
+
+def test_only_the_agent_cards_nobody_ticked_come_back(monkeypatch, config):
+    """The green circle is how the team says an agent is actually set up. A
+    card in Done without it looks finished from across the board and isn't."""
+    from wilbyte.bot import jobs
+
+    board = done_board(TICKED, UNTICKED, NEVER_SET)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, problems = jobs.unmarked_agents(config)
+
+    assert problems == []
+    assert [c["id"] for c in found] == ["b", "c"]
+
+
+def test_a_card_that_is_not_an_agent_is_not_chased(monkeypatch, config):
+    """Done is full of finished daily cards. None of them get a tick."""
+    from wilbyte.bot import jobs
+
+    board = done_board(
+        {"id": "g", "name": "💎 General 08/25/26"},
+        {"id": "s", "name": "Agent Setup Going Live Wednesday 08/26"},
+        {"id": "o", "name": "New Agent Onboarding SOP"},
+    )
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.unmarked_agents(config) == ([], [])
+
+
+def test_everything_ticked_comes_back_empty(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = done_board(TICKED)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.unmarked_agents(config) == ([], [])
+
+
+def test_it_reads_and_never_ticks(monkeypatch, config):
+    """A tick is somebody saying they did it. Ticking it for them is the one
+    thing that would make the check worthless."""
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.unmarked_agents(config)
+
+    assert board.moves == []
+
+
+def test_no_done_list_is_said(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({"In Que": []})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, problems = jobs.unmarked_agents(config)
+
+    assert found == []
+    assert "'Done'" in problems[0]
+
+
+# --------------------------------------------------- what the nudge says
+
+
+def note(config, found, step=None):
+    from wilbyte.bot.client import _unmarked_note
+
+    return _unmarked_note(config, step or dailyops.UNMARKED[0], found)
+
+
+def test_the_nudge_names_the_time_the_count_and_the_cards(config):
+    said = note(config, [UNTICKED, NEVER_SET])
+
+    assert "3:30pm" in said
+    assert "2 New Agent card(s)" in said
+    assert "NEW AGENT- Tayler Collins" in said
+    assert "https://trello.com/c/bbb" in said
+
+
+def test_nothing_outstanding_says_nothing_at_all(config):
+    """A line every afternoon reporting that all is well is a line nobody
+    reads, and then the one that matters is not read either."""
+    assert note(config, []) == ""
+
+
+def test_it_pings_when_there_is_somebody_to_ping(config):
+    from dataclasses import replace
+
+    with_user = replace(config, secrets=replace(config.secrets,
+                                                discord_notify_user_id="42"))
+
+    assert note(with_user, [UNTICKED]).startswith("<@42> ")
+
+
+def test_without_a_user_it_still_says_it(config):
+    """The message is the point; the ping is the improvement."""
+    said = note(config, [UNTICKED])
+
+    assert not said.startswith("<@")
+    assert "Tayler Collins" in said
+
+
+def test_a_long_list_is_cut_and_says_it_was(config):
+    """Discord stops at 2000 characters, and a list that was quietly truncated
+    reads as if that was all of them."""
+    from wilbyte.bot import client
+
+    many = [dict(UNTICKED, id=str(n), name=f"New Agent - Person {n}") for n in range(40)]
+
+    said = note(config, many)
+
+    assert said.count("\n•") == client.UNMARKED_SHOWN
+    assert f"…and {40 - client.UNMARKED_SHOWN} more." in said
+    assert len(said) < 2000
+
+
+def test_the_second_look_says_its_own_time(config):
+    assert "5:30pm" in note(config, [UNTICKED], step=dailyops.UNMARKED[1])
+
+
+def test_asking_for_it_now_does_not_ping(config):
+    """Somebody who just typed the command is already looking at the channel."""
+    from dataclasses import replace
+
+    from wilbyte.bot.client import _unmarked_note
+
+    with_user = replace(config, secrets=replace(config.secrets,
+                                                discord_notify_user_id="42"))
+    said = _unmarked_note(with_user, dailyops.UNMARKED[0], [UNTICKED], ping=False)
+
+    assert not said.startswith("<@")
+    assert "Tayler Collins" in said

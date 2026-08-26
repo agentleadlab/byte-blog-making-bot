@@ -2059,6 +2059,34 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
+def unmarked_agents(config: Config) -> tuple[list[dict], list[str]]:
+    """New Agent cards sitting in Done that nobody ticked. (cards, problems).
+
+    The green circle on the card front is how the team says an agent is
+    actually set up, and Trello carries it as `dueComplete` whether or not the
+    card has a due date. A card in Done without it is work that looks finished
+    from across the board and isn't.
+
+    Reads only. Nothing here ticks anything - that is somebody saying they
+    did it, which is the whole value of the tick.
+    """
+    from .. import agents, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        done = trello.find_list(lists, agents.DONE)
+        if done is None:
+            return [], [f"The board has no list called {agents.DONE!r}"]
+        return [
+            card for card in client.list_cards(str(done.get("id") or ""))
+            if agents.is_agent_card(str(card.get("name", "")))
+            and not card.get("dueComplete")
+        ], []
+    finally:
+        client.close()
+
+
 def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
     """Make the setup card for the day after tomorrow. (title made, problems).
 

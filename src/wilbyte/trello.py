@@ -70,7 +70,13 @@ class TrelloClient:
 
     def list_cards(self, list_id: str) -> list[dict]:
         return self._request(
-            "GET", f"/lists/{list_id}/cards", params={"fields": "name,idList,url,dateLastActivity"}
+            "GET", f"/lists/{list_id}/cards",
+            # dueComplete is the green tick on the card front. Trello reuses
+            # the due-date field for it, and it is set on cards that have no
+            # due date at all - which is all of these.
+            params={
+                "fields": "name,idList,url,dateLastActivity,dueComplete",
+            },
         )
 
     def card_checklists(self, card_id: str) -> list[dict]:

@@ -106,6 +106,10 @@ ACTION_WORDS = {
     "move": "move",
     "agents": "agents",
     "agent": "agents",
+    # The New Agent cards sitting in Done that nobody ticked. RYTE looks twice
+    # an afternoon on his own; this is for looking now.
+    "unticked": "unticked",
+    "unchecked": "unticked",
     # Find out what GHL's update endpoint actually accepts, on a throwaway
     # draft rather than on fifteen live articles.
     "probe": "probe",
@@ -345,7 +349,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         rest = _strip_word(text, ("trello",))
         after = _first_action_word(rest.lower())
         return MentionRequest(
-            action=after if after in ("board", "rollover", "move", "agents") else "board",
+            action=after
+            if after in ("board", "rollover", "move", "agents", "unticked")
+            else "board",
             brief=rest,
             today=wants_today(rest),
         )
@@ -431,6 +437,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
+        "unticked",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -614,8 +621,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello board** — what's on the board today, and what's missing
 > @RYTE **trello move today** / **move quality check** / **move done**
 > @RYTE **trello agents** — file the new agents waiting in In Que
+> @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > Each one shows which cards would move and waits for the button
-> @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8pm carry over then Done
+> @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8pm carry over then Done\n> Unticked agents in Done get chased at 3:30 and 5:30
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

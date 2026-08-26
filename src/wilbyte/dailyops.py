@@ -37,8 +37,12 @@ TODAY = "Today"
 QUALITY_CHECK = "Quality Check"
 DONE = "Done"
 
-# (hour, what happens). Local time on the board's own clock - the team's, not
-# the server's.
+# The two afternoon looks at Done, named apart because the clock remembers
+# what has run by name and each has to happen once.
+UNMARKED = ("unmarked_agents_1530", "unmarked_agents_1730")
+
+# (hour, minute, what happens). Local time on the board's own clock - the
+# team's, not the server's.
 #
 # Six makes the setup card, two days out. Two days, not one: a setup card is
 # worked the day before its agents go live, so the one made this morning has
@@ -48,11 +52,13 @@ DONE = "Done"
 # lists to their respective new list you move them to done". The carry has to
 # read the cards while they are still the day's, so it goes first.
 STEPS = (
-    (6, "make_setup"),
-    (9, "to_today"),
-    (18, "to_quality_check"),
-    (20, "rollover"),
-    (20, "to_done"),
+    (6, 0, "make_setup"),
+    (9, 0, "to_today"),
+    (15, 30, UNMARKED[0]),
+    (17, 30, UNMARKED[1]),
+    (18, 0, "to_quality_check"),
+    (20, 0, "rollover"),
+    (20, 0, "to_done"),
 )
 
 STEP_NAMES = {
@@ -61,6 +67,8 @@ STEP_NAMES = {
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",
+    UNMARKED[0]: f"the New Agent cards in {DONE} nobody has ticked",
+    UNMARKED[1]: f"the New Agent cards in {DONE} nobody has ticked",
 }
 
 # Where each move goes. The rollover and the 6am make move no cards, so
@@ -81,14 +89,21 @@ MOVE_WORDS = (
 )
 
 
-def hour_of(step: str) -> int | None:
+def time_of(step: str) -> tuple[int, int] | None:
     """When a step runs on its own, or None for one that only happens when asked."""
-    return dict((name, at) for at, name in STEPS).get(step)
+    return dict((name, (at, past)) for at, past, name in STEPS).get(step)
 
 
-def clock(hour: int) -> str:
-    """20 -> "8pm". The way anybody says it, for what gets reported."""
-    return f"{hour % 12 or 12}{'am' if hour < 12 else 'pm'}"
+def clock(hour: int, minute: int = 0) -> str:
+    """(15, 30) -> "3:30pm"; (6, 0) -> "6am". The way anybody says it."""
+    told = f"{hour % 12 or 12}{'am' if hour < 12 else 'pm'}"
+    return told if not minute else f"{hour % 12 or 12}:{minute:02d}{'am' if hour < 12 else 'pm'}"
+
+
+def said_at(step: str) -> str:
+    """The time a step runs, for the line it posts. "" if it has no hour."""
+    when = time_of(step)
+    return clock(*when) if when else ""
 
 
 def move_named(text: str) -> str | None:
@@ -110,8 +125,8 @@ def steps_due(now, done_today: set[str]) -> list[str]:
     Ordered, because the 6pm move takes cards the 9am move put there.
     """
     return [
-        step for hour, step in STEPS
-        if now.hour >= hour and step not in done_today
+        step for hour, minute, step in STEPS
+        if (now.hour, now.minute) >= (hour, minute) and step not in done_today
     ]
 
 

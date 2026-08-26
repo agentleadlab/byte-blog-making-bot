@@ -172,6 +172,10 @@ class Secrets:
     trello_agents_auto: bool = False
     # Where the board's own messages go. Falls back to the posting channel.
     discord_board_channel_id: str | None = None
+    # Who gets pinged when the board needs a person rather than a report.
+    # Without it the message still goes out, just without the tap on the
+    # shoulder - which for something checked twice an afternoon is the point.
+    discord_notify_user_id: str | None = None
     # The SOP library: a page to hold the database, and the channel it fills
     # from. RYTE files what lands in that channel and answers questions on it.
     notion_sop_page_id: str | None = None
@@ -275,6 +279,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 trello_agents_auto=(_env("TRELLO_AGENTS_AUTO") or "").strip().lower()
                 in ("1", "true", "yes"),
                 discord_board_channel_id=_env("DISCORD_BOARD_CHANNEL_ID"),
+                discord_notify_user_id=_env("DISCORD_NOTIFY_USER_ID"),
                 notion_token=_env("NOTION_TOKEN"),
                 notion_recordings_page_id=_env("NOTION_RECORDINGS_PAGE_ID"),
                 notion_cover_url=_env("NOTION_COVER_URL"),
