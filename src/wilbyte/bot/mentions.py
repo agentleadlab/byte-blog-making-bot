@@ -624,7 +624,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello move today** / **move quality check** / **move done**
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
-> @RYTE **trello archive** — archive the unticked cards in Aged Leads Order Done
+> @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8pm carry over then Done, 10pm archive\n> Unticked agents in Done get chased at 3:30 and 5:30
 > @RYTE **host** — attach an image, get a permanent public link back

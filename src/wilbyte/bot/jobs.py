@@ -2060,16 +2060,16 @@ def setups_to_pull(client, lists, day: date, step: str):
 
 
 def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
-    """The unticked cards in the aged-leads list. (cards, problems). Reads only.
+    """The ticked cards in the aged-leads list. (cards, problems). Reads only.
 
     One list, by name, and nothing else on the board is fetched at all - not
     fetched and then filtered, which is the version that goes wrong when
     somebody edits the filter. A card in any other list is not reachable from
     here.
 
-    Unticked, because the green tick is somebody saying that one still wants
-    looking at. The ones nobody marked are the ones that have run their
-    course.
+    Ticked, because the green tick is somebody saying that order is finished.
+    One nobody has marked is still somebody's job, and a job that gets
+    archived is a job that stops existing.
     """
     from .. import dailyops, trello
 
@@ -2087,7 +2087,7 @@ def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
             # this cannot be false - and if Trello ever hands back something
             # else, it is not getting archived on my watch.
             if str(card.get("idList") or held) == held
-            and not card.get("dueComplete")
+            and card.get("dueComplete")
         ], []
     finally:
         client.close()

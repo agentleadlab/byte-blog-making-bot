@@ -956,7 +956,7 @@ async def _archive_aged(responder: Responder, config: Config) -> None:
         return
     if not cards:
         await responder.send(
-            f"Nothing to archive — every card in {dailyops.AGED_DONE} is ticked."
+            f"Nothing to archive — no card in {dailyops.AGED_DONE} is ticked yet."
         )
         return
 
@@ -970,7 +970,7 @@ async def _archive_aged(responder: Responder, config: Config) -> None:
     if len(cards) > UNMARKED_SHOWN:
         listed += f"\n…and {len(cards) - UNMARKED_SHOWN} more."
     await responder.send(
-        f"**{dailyops.AGED_DONE}** — unticked, so they would be archived:\n{listed}\n"
+        f"**{dailyops.AGED_DONE}** — ticked, so they would be archived:\n{listed}\n"
         "Archived, not deleted. They can be brought back.",
         view=view,
     )

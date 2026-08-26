@@ -74,7 +74,7 @@ STEP_NAMES = {
     "rollover": "carry the unfinished items to tomorrow",
     UNMARKED[0]: f"the New Agent cards in {DONE} nobody has ticked",
     UNMARKED[1]: f"the New Agent cards in {DONE} nobody has ticked",
-    "archive_aged": f"archive the unticked cards in {AGED_DONE}",
+    "archive_aged": f"archive the ticked cards in {AGED_DONE}",
 }
 
 # Where each move goes. The rollover and the 6am make move no cards, so
