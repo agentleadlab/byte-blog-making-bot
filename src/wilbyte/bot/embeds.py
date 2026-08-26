@@ -301,17 +301,21 @@ def unticked_agents(
         title=f"{len(cards)} agent(s) need ticking",
         colour=AMBER,
     )
+    embed.description = ""
     # No time when nobody scheduled this - somebody asked for it, and the
     # message carries its own timestamp anyway. Saying "3:30pm" at half ten
     # in the morning is worse than saying nothing.
     when = f"{said_at} · " if said_at else ""
-    embed.set_author(name=f"🔔 {when}nobody has marked these complete")
+    embed.set_author(name=f"🔔 {when}going live today or tomorrow, not ticked")
 
     lines = []
     for card in cards[:shown]:
         name = _truncate(str(card.get("name") or "?"), 90)
         link = str(card.get("url") or card.get("shortUrl") or "")
-        lines.append(f"• [{name}]({link})" if link else f"• {name}")
+        said = f"[{name}]({link})" if link else name
+        # The day they go live, because that is what makes it urgent.
+        when = str(card.get("when") or "")
+        lines.append(f"• {said} — live {when}" if when else f"• {said}")
     if len(cards) > shown:
         lines.append(f"*…and {len(cards) - shown} more.*")
     embed.description = _truncate("\n".join(lines), 4096)

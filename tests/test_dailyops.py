@@ -2067,11 +2067,11 @@ def test_no_automation_list_is_said_rather_than_guessed_at(monkeypatch, config):
 # ------------------------- the afternoon look at Done, twice
 
 
-def done_board(*cards):
-    return FakeBoard({
+def done_board(*cards, said=None):
+    return dated(FakeBoard({
         "Done": list(cards),
         "In Que": [], "Today": [], "Quality Check": [],
-    })
+    }), said)
 
 
 TICKED = {"id": "a", "name": "New Agent - Gustin Elrod",
@@ -2080,6 +2080,21 @@ UNTICKED = {"id": "b", "name": "NEW AGENT- Tayler Collins",
             "url": "https://trello.com/c/bbb", "dueComplete": False}
 NEVER_SET = {"id": "c", "name": "New Agent - Sebastian Espinoza",
              "url": "https://trello.com/c/ccc"}
+# Whose card says when. Keyed by card id, read by the stub below.
+LAUNCHES = {
+    "a": "Live tonight, Wednesday, August 26",
+    "b": "Live tom, aug 27",
+    "c": "Live tonight, Wednesday, August 26",
+}
+WEDNESDAY = date(2026, 8, 26)
+
+
+def dated(board, said=None):
+    """Give a FakeBoard descriptions, so a launch date can be read off it."""
+    told = said or LAUNCHES
+    board.card_detail = lambda card_id: {"id": card_id, "desc": told.get(card_id, "")}
+    board.card_comments = lambda card_id: []
+    return board
 
 
 def test_only_the_agent_cards_nobody_ticked_come_back(monkeypatch, config):
@@ -2090,10 +2105,11 @@ def test_only_the_agent_cards_nobody_ticked_come_back(monkeypatch, config):
     board = done_board(TICKED, UNTICKED, NEVER_SET)
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    found, problems = jobs.unmarked_agents(config)
+    found, problems = jobs.unmarked_agents(config, day=WEDNESDAY)
 
     assert problems == []
-    assert [c["id"] for c in found] == ["b", "c"]
+    # Today's first: those are the ones that have run out of time.
+    assert [(c["id"], c["when"]) for c in found] == [("c", "today"), ("b", "tomorrow")]
 
 
 def test_a_card_that_is_not_an_agent_is_not_chased(monkeypatch, config):
@@ -2107,7 +2123,7 @@ def test_a_card_that_is_not_an_agent_is_not_chased(monkeypatch, config):
     )
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.unmarked_agents(config) == ([], [])
+    assert jobs.unmarked_agents(config, day=WEDNESDAY) == ([], [])
 
 
 def test_everything_ticked_comes_back_empty(monkeypatch, config):
@@ -2116,7 +2132,7 @@ def test_everything_ticked_comes_back_empty(monkeypatch, config):
     board = done_board(TICKED)
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.unmarked_agents(config) == ([], [])
+    assert jobs.unmarked_agents(config, day=WEDNESDAY) == ([], [])
 
 
 def test_it_reads_and_never_ticks(monkeypatch, config):
@@ -2127,7 +2143,7 @@ def test_it_reads_and_never_ticks(monkeypatch, config):
     board = done_board(UNTICKED)
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    jobs.unmarked_agents(config)
+    jobs.unmarked_agents(config, day=WEDNESDAY)
 
     assert board.moves == []
 
@@ -2138,7 +2154,7 @@ def test_no_done_list_is_said(monkeypatch, config):
     board = FakeBoard({"In Que": []})
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    found, problems = jobs.unmarked_agents(config)
+    found, problems = jobs.unmarked_agents(config, day=WEDNESDAY)
 
     assert found == []
     assert "'Done'" in problems[0]
@@ -2229,7 +2245,7 @@ def test_asking_for_it_now_claims_no_particular_time(config):
     card = _unmarked_card([UNTICKED])
 
     assert "3:30pm" not in card.author.name
-    assert card.author.name == "🔔 nobody has marked these complete"
+    assert card.author.name == "🔔 going live today or tomorrow, not ticked"
 
 
 def test_asking_for_it_now_does_not_ping(config):
@@ -2593,3 +2609,80 @@ def test_it_runs_after_the_in_que_cards_arrive():
     assert dailyops.time_of("link_setup") == (11, 30)
     assert dailyops.said_at("link_setup") == "11:30am"
     assert "link_setup" not in dailyops.steps_due(at_hour(11, 29), set())
+
+
+def test_an_agent_who_went_live_last_week_is_not_chased(monkeypatch, config):
+    """Done holds sixty cards and most of them are weeks old. Being reminded
+    about all of them is the same as being reminded about none."""
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED, NEVER_SET, said={
+        "b": "Live Thursday, August 20",
+        "c": "Live tom, aug 27",
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.unmarked_agents(config, day=WEDNESDAY)
+
+    assert [c["id"] for c in found] == ["c"]
+
+
+def test_an_agent_going_live_next_week_is_not_chased_yet(monkeypatch, config):
+    """Nobody is late on Friday's card on Wednesday afternoon."""
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED, said={"b": "Live Friday, August 28"})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.unmarked_agents(config, day=WEDNESDAY) == ([], [])
+
+
+def test_a_card_with_no_date_anywhere_is_left_out(monkeypatch, config):
+    """It is not going live today or tomorrow as far as anybody can tell."""
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED, said={"b": "no date on this one"})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.unmarked_agents(config, day=WEDNESDAY) == ([], [])
+
+
+def test_a_date_only_in_a_comment_still_counts(monkeypatch, config):
+    """Paid for only when the description is silent - one extra request per
+    card, not one for every card in Done."""
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED, said={"b": ""})
+    asked = []
+    board.card_comments = lambda card_id: (
+        asked.append(card_id), ["live tom, aug 27"]
+    )[1]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.unmarked_agents(config, day=WEDNESDAY)
+
+    assert [(c["id"], c["when"]) for c in found] == [("b", "tomorrow")]
+    assert asked == ["b"]
+
+
+def test_the_description_is_enough_for_most_of_them(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = done_board(UNTICKED)
+    asked = []
+    board.card_comments = lambda card_id: (asked.append(card_id), [])[1]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.unmarked_agents(config, day=WEDNESDAY)
+
+    assert asked == [], "it read comments it did not need"
+
+
+def test_the_card_says_which_day_each_one_goes_live(config):
+    """"Live today" is a different sort of late from "live tomorrow"."""
+    _ping, card = note(config, [
+        {**NEVER_SET, "when": "today"}, {**UNTICKED, "when": "tomorrow"},
+    ])
+
+    assert "— live today" in card.description
+    assert "— live tomorrow" in card.description

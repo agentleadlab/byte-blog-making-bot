@@ -2202,30 +2202,57 @@ def archive_aged(config: Config) -> tuple[list[str], list[str]]:
     return archived, problems
 
 
-def unmarked_agents(config: Config) -> tuple[list[dict], list[str]]:
-    """New Agent cards sitting in Done that nobody ticked. (cards, problems).
+def unmarked_agents(config: Config, *, day=None) -> tuple[list[dict], list[str]]:
+    """Unticked New Agent cards in Done going live today or tomorrow.
+
+    (cards, problems). Each card carries a `when` of "today" or "tomorrow".
 
     The green circle on the card front is how the team says an agent is
     actually set up, and Trello carries it as `dueComplete` whether or not the
     card has a due date. A card in Done without it is work that looks finished
     from across the board and isn't.
 
-    Reads only. Nothing here ticks anything - that is somebody saying they
-    did it, which is the whole value of the tick.
-    """
-    from .. import agents, trello
+    Narrowed to the two days that can still be acted on. Done holds sixty
+    cards and most of them went live weeks ago - being reminded about all of
+    them is the same as being reminded about none.
 
+    Reads only. Nothing here ticks anything: that is somebody saying they did
+    it, which is the whole value of the tick.
+    """
+    from .. import agents, dailyops, trello
+
+    day = day or board_day(config)
+    tomorrow = dailyops.next_day(day)
     client = open_trello(config)
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         done = trello.find_list(lists, agents.DONE)
         if done is None:
             return [], [f"The board has no list called {agents.DONE!r}"]
-        return [
-            card for card in client.list_cards(str(done.get("id") or ""))
-            if agents.is_agent_card(str(card.get("name", "")))
-            and not card.get("dueComplete")
-        ], []
+
+        found = []
+        for card in client.list_cards(str(done.get("id") or "")):
+            if not agents.is_agent_card(str(card.get("name", ""))):
+                continue
+            if card.get("dueComplete"):
+                continue
+            card_id = str(card.get("id") or "")
+            launch = agents.find_launch(
+                str(client.card_detail(card_id).get("desc") or ""), today=day
+            )
+            if launch is None:
+                # Some cards say it only in a comment, and that is another
+                # request each - so it is paid for only when the description
+                # is silent.
+                launch = agents.find_launch(
+                    "\n".join(client.card_comments(card_id)), today=day
+                )
+            if launch not in (day, tomorrow):
+                continue
+            found.append({**card, "when": "today" if launch == day else "tomorrow"})
+        # Today's first: those are the ones that have run out of time.
+        found.sort(key=lambda held: held["when"] != "today")
+        return found, []
     finally:
         client.close()
 
