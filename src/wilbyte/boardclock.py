@@ -1,8 +1,8 @@
 """Which of the day's board steps have already run.
 
-Four things happen to the daily board on a schedule - the 9am move, the 6pm
-move, and at 8pm the carry-over and then the move to Done - and each must
-happen once. Not twice, because
+Five things happen to the daily board on a schedule - the 6am setup card,
+the 9am move, the 6pm move, and at 8pm the carry-over and then the move to
+Done - and each must happen once. Not twice, because
 moving cards that already moved puts them somewhere nobody expects; and not
 never, because RYTE is restarted often enough that "it was running at nine" is
 not something to rely on.

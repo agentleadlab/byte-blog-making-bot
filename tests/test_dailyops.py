@@ -608,16 +608,24 @@ def at_hour(hour, minute=0):
     return _dt(2026, 8, 24, hour, minute)
 
 
+MORNING = ["make_setup"]
+WORKING = MORNING + ["to_today"]
+EVENING = WORKING + ["to_quality_check"]
+NIGHT = EVENING + ["rollover", "to_done"]
+
+
 @pytest.mark.parametrize(
     "hour,expected",
     [
-        (8, []),
-        (9, ["to_today"]),
-        (17, ["to_today"]),
-        (18, ["to_today", "to_quality_check"]),
-        (19, ["to_today", "to_quality_check"]),
-        (20, ["to_today", "to_quality_check", "rollover", "to_done"]),
-        (23, ["to_today", "to_quality_check", "rollover", "to_done"]),
+        (5, []),
+        (6, MORNING),
+        (8, MORNING),
+        (9, WORKING),
+        (17, WORKING),
+        (18, EVENING),
+        (19, EVENING),
+        (20, NIGHT),
+        (23, NIGHT),
     ],
 )
 def test_the_day_unfolds_in_order(hour, expected):
@@ -634,21 +642,17 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(20), {"to_today", "to_quality_check"}) == [
-        "rollover", "to_done",
-    ]
     assert dailyops.steps_due(
-        at_hour(20), {"to_today", "to_quality_check", "rollover", "to_done"}
-    ) == []
+        at_hour(20), {"make_setup", "to_today", "to_quality_check"}
+    ) == ["rollover", "to_done"]
+    assert dailyops.steps_due(at_hour(20), set(NIGHT)) == []
 
 
 def test_starting_late_catches_up_rather_than_skipping():
     """RYTE is restarted often enough that "it was running at nine" is not
     something to rely on. A board moved late beats one left in In Que."""
-    assert dailyops.steps_due(at_hour(11), set()) == ["to_today"]
-    assert dailyops.steps_due(at_hour(22, 30), set()) == [
-        "to_today", "to_quality_check", "rollover", "to_done",
-    ]
+    assert dailyops.steps_due(at_hour(11), set()) == WORKING
+    assert dailyops.steps_due(at_hour(22, 30), set()) == NIGHT
 
 
 def test_the_clock_remembers_across_a_restart(tmp_path):
@@ -659,9 +663,10 @@ def test_the_clock_remembers_across_a_restart(tmp_path):
     store = tmp_path / "clock.json"
     today = _date(2026, 8, 24)
 
+    boardclock.mark("make_setup", today, store)
     boardclock.mark("to_today", today, store)
 
-    assert boardclock.done_on(today, store) == {"to_today"}
+    assert boardclock.done_on(today, store) == {"make_setup", "to_today"}
     assert dailyops.steps_due(at_hour(9), boardclock.done_on(today, store)) == []
 
 
@@ -1901,3 +1906,139 @@ def test_six_oclock_does_not_link_anything(monkeypatch, config):
     jobs.walk_board(config, "to_quality_check", day=date(2026, 8, 25))
 
     assert board.desc == {}
+
+
+# --------------------------------------------- six in the morning makes one
+
+
+class MakingBoard(FakeBoard):
+    """A board that remembers cards created on it."""
+
+    def __init__(self, lists):
+        super().__init__(lists)
+        self.made = []
+
+    def create_card(self, list_id, name, *, position="top"):
+        self.made.append((list_id, name, position))
+        self.lists[list_id.removeprefix("id-")].append({"id": f"new-{name}", "name": name})
+        return {"id": f"new-{name}", "name": name}
+
+
+def making_board(*existing):
+    return MakingBoard({
+        "AUTOMATION DEPARTMENT": [
+            {"id": f"c{i}", "name": name} for i, name in enumerate(existing)
+        ],
+        "In Que": [], "Today": [], "Quality Check": [], "Done": [],
+    })
+
+
+def test_six_makes_the_card_for_the_day_after_tomorrow(monkeypatch, config):
+    """Two days out, because a setup card is worked the day before its agents
+    go live: made Tuesday morning, fetched Tuesday evening, worked Wednesday."""
+    from wilbyte.bot import jobs
+
+    board = making_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    title, problems = jobs.make_setup_card(config, day=date(2026, 8, 25))
+
+    assert problems == []
+    assert title == "Agent Setup Going Live Thursday 08/27"
+    assert board.made == [("id-AUTOMATION DEPARTMENT", title, "top")]
+
+
+def test_it_lands_where_the_fetch_will_find_it(monkeypatch, config):
+    """Made in the Automation Department, same as the ones made by hand, and
+    six in the evening brings it over from there."""
+    from wilbyte.bot import jobs
+
+    board = making_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.make_setup_card(config, day=date(2026, 8, 25))
+    moved, problems = jobs.walk_board(config, "to_quality_check", day=date(2026, 8, 25))
+
+    assert problems == []
+    assert moved == 1
+    assert [where for _c, where, _p in board.moves] == ["id-In Que"]
+
+
+def test_a_card_somebody_already_made_is_not_made_twice(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = making_board("Agent Setup Going Live Thursday 08/27")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    title, problems = jobs.make_setup_card(config, day=date(2026, 8, 25))
+
+    assert (title, problems, board.made) == ("", [], [])
+
+
+def test_one_already_fetched_into_in_que_still_counts(monkeypatch, config):
+    """Yesterday's has moved on. Looking only in Automation would make a
+    second card for the same day."""
+    from wilbyte.bot import jobs
+
+    board = MakingBoard({
+        "AUTOMATION DEPARTMENT": [],
+        "In Que": [{"id": "x", "name": "Agent Setup Going Live Thursday 08/27"}],
+        "Today": [], "Quality Check": [], "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.make_setup_card(config, day=date(2026, 8, 25)) == ("", [])
+    assert board.made == []
+
+
+def test_thursday_morning_makes_one_card_for_the_whole_weekend(monkeypatch, config):
+    """Saturday is two days out, and Saturday's card covers through Monday -
+    nobody is setting anybody up on the Saturday."""
+    from wilbyte.bot import jobs
+
+    board = making_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    # Thursday 08/27; two days out is Saturday 08/29.
+    title, problems = jobs.make_setup_card(config, day=date(2026, 8, 27))
+
+    assert problems == []
+    assert title == "Agent Setup Going Live Saturday-Monday 08/29-08/31"
+
+
+def test_the_weekend_card_stops_the_next_two_mornings_making_more(monkeypatch, config):
+    """Friday would want Sunday's and Saturday would want Monday's. Both are
+    on the card already made."""
+    from wilbyte.bot import jobs
+
+    weekend = "Agent Setup Going Live Saturday-Monday 08/29-08/31"
+    for morning in (date(2026, 8, 28), date(2026, 8, 29)):
+        board = making_board(weekend)
+        monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+        assert jobs.make_setup_card(config, day=morning) == ("", []), morning
+
+
+def test_sunday_morning_makes_tuesdays(monkeypatch, config):
+    """The weekend card runs out at Monday, so Tuesday's is the next one."""
+    from wilbyte.bot import jobs
+
+    board = making_board("Agent Setup Going Live Saturday-Monday 08/29-08/31")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    title, _ = jobs.make_setup_card(config, day=date(2026, 8, 30))
+
+    assert title == "Agent Setup Going Live Tuesday 09/01"
+
+
+def test_no_automation_list_is_said_rather_than_guessed_at(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = MakingBoard({"In Que": [], "Today": []})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    title, problems = jobs.make_setup_card(config, day=date(2026, 8, 25))
+
+    assert title == ""
+    assert "AUTOMATION DEPARTMENT" in problems[0]
+    assert board.made == []

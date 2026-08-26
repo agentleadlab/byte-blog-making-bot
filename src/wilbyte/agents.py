@@ -13,9 +13,10 @@ go on exists yet:
     a setup card covers the day -> that card
     no card for the day yet     -> wait in Franklin's list
 
-Nothing here makes a card. The setup cards are made on their own schedule at
-eleven, and a second one made in the meantime would split a day's agents
-across two cards - so an agent whose card does not exist yet waits for it.
+Filing an agent never makes a card. The setup cards are made once a day at
+six, two days ahead, and a second one made mid-morning because an agent
+turned up would split a day's agents across two of them - so an agent whose
+card does not exist yet waits for it.
 
 Everything filed ends up in Done, at the top of it. Franklin's list means
 waiting, and it is read every time In Que is - an agent put there on Monday
@@ -513,6 +514,26 @@ _SETUP_CARD = re.compile(r"agent\s+setup", re.IGNORECASE)
 # No word boundary in front: the real ones are typed "Wednesday08/26" as often
 # as "Wednesday 08/26", and a boundary needs a space that isn't there.
 _SETUP_DATE = re.compile(r"(\d{1,2})/(\d{1,2})(?!\d)")
+
+
+# Fridays make one card for the whole weekend - "Agent Setup Going Live
+# Saturday-Monday 08/22-08/24" - so an agent going live on the Sunday is set
+# up on the Friday along with the Saturday's.
+SATURDAY = 5
+
+
+def weekend_span(day: date) -> tuple[date, date] | None:
+    """(Saturday, Monday) when `day` is a Saturday, else None."""
+    if day.weekday() != SATURDAY:
+        return None
+    return day, day + timedelta(days=2)
+
+
+def setup_title(day: date, through: date | None = None) -> str:
+    """"Agent Setup Going Live Wednesday 08/26", or a weekend's worth of one."""
+    if through is None or through == day:
+        return f"{SETUP_TITLE} {day:%A} {day:%m/%d}"
+    return f"{SETUP_TITLE} {day:%A}-{through:%A} {day:%m/%d}-{through:%m/%d}"
 
 
 def setup_covers(title: str, day: date) -> bool:

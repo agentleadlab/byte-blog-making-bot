@@ -40,10 +40,15 @@ DONE = "Done"
 # (hour, what happens). Local time on the board's own clock - the team's, not
 # the server's.
 #
+# Six makes the setup card, two days out. Two days, not one: a setup card is
+# worked the day before its agents go live, so the one made this morning has
+# to be in In Que by this evening for tomorrow to work on it.
+#
 # Two things happen at eight, in this order: "after you move those unchecked
 # lists to their respective new list you move them to done". The carry has to
 # read the cards while they are still the day's, so it goes first.
 STEPS = (
+    (6, "make_setup"),
     (9, "to_today"),
     (18, "to_quality_check"),
     (20, "rollover"),
@@ -51,13 +56,15 @@ STEPS = (
 )
 
 STEP_NAMES = {
+    "make_setup": "make the setup card for the day after tomorrow",
     "to_today": f"{IN_QUE} → {TODAY}",
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",
 }
 
-# Where each move goes. The rollover moves no cards, so it is not here.
+# Where each move goes. The rollover and the 6am make move no cards, so
+# neither is here.
 STEP_LISTS = {
     "to_today": (IN_QUE, TODAY),
     "to_quality_check": (TODAY, QUALITY_CHECK),

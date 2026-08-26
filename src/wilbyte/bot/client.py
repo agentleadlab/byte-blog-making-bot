@@ -850,7 +850,7 @@ BOARD_CHECK_SECONDS = 240
 
 
 async def board_loop(bot: "WilByteBot") -> None:
-    """Walk the daily board through its day: 9am, 6pm, 8pm.
+    """Walk the daily board through its day: 6am, 9am, 6pm, 8pm.
 
     In Que to Today, Today to Quality Check, then whatever is still unticked
     onto tomorrow's cards - which Zapier has already made and left in In Que -
@@ -885,7 +885,15 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
 
     responder = _board_responder(bot)
     try:
-        if step == "rollover":
+        if step == "make_setup":
+            title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
+            # Silent when one already existed. Most mornings it makes one, and
+            # a line every day saying nothing happened is a line nobody reads.
+            note = (
+                f"📋 {dailyops.clock(dailyops.hour_of(step))} — made `{title}`."
+                if title else ""
+            )
+        elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (
                 f"📋 {dailyops.clock(dailyops.hour_of(step))} — carried {moved} "
@@ -900,10 +908,12 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 )
         else:
             moved, problems = await asyncio.to_thread(jobs.walk_board, bot.config, step)
+            # Nothing to move is not news either. Somebody already did it by
+            # hand, which is the usual reason.
             note = (
                 f"📋 {dailyops.clock(dailyops.hour_of(step))} — moved {moved} card(s) "
                 f"{dailyops.STEP_NAMES[step]}."
-            )
+            ) if moved else ""
     except PIPELINE_ERRORS as exc:
         # Not marked done: the next tick tries again, which is right for a
         # board sitting in the wrong list.
@@ -915,8 +925,10 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     # Discord hears about it, and doing it twice is the worse mistake.
     await asyncio.to_thread(boardclock.mark, step, today)
     if problems:
-        note += "\n⚠ " + "\n⚠ ".join(problems)
-    if responder and (moved or problems or step == "rollover"):
+        note = (note + "\n⚠ " + "\n⚠ ".join(problems)).lstrip("\n")
+    # Each branch leaves `note` empty when its step had nothing to say. A line
+    # every morning reporting that nothing happened is a line nobody reads.
+    if responder and note:
         await responder.send(note)
 
 

@@ -2059,6 +2059,51 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
+def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
+    """Make the setup card for the day after tomorrow. (title made, problems).
+
+    Two days out rather than one, because a setup card is worked the day
+    before its agents go live: the one made at six this morning is fetched
+    into In Que at six this evening, walks into Today at nine tomorrow, and
+    tomorrow is the day it gets worked.
+
+    A weekend is one card - "Saturday-Monday 08/29-08/31" - so the agents
+    going live on the Sunday are set up on the Friday along with the
+    Saturday's. Which means the two mornings after that find the weekend card
+    already covering their day and make nothing.
+
+    Returns "" for the title when one already exists, which is the normal
+    answer on any morning somebody got there first.
+    """
+    from .. import agents, trello
+
+    day = day or board_day(config)
+    wanted = day + timedelta(days=2)
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        home = trello.find_list(lists, agents.AUTOMATION)
+        if home is None:
+            return "", [f"The board has no list called {agents.AUTOMATION!r}"]
+
+        # Everywhere, not just the Automation Department: one made yesterday
+        # has already been fetched into In Que, and a second one would split
+        # the day's agents across two cards.
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        if agents.find_setup_card(every, wanted) is not None:
+            return "", []
+
+        span = agents.weekend_span(wanted)
+        title = agents.setup_title(wanted, span[1] if span else None)
+        try:
+            client.create_card(str(home.get("id") or ""), title)
+        except Exception as exc:
+            return "", [f"Couldn't make {title!r} — {_short(exc, 160)}"]
+        return title, []
+    finally:
+        client.close()
+
+
 def note_setup_on_lead_order(client, lists, setup_card: dict, day: date) -> str | None:
     """Put a setup card's link on the Lead Order card for the day it covers.
 
