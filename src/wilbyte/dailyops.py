@@ -58,6 +58,9 @@ AGED_DONE = "Aged Leads Order Done"
 STEPS = (
     (6, 0, "make_setup"),
     (9, 0, "to_today"),
+    # Straight after, because it needs both the day's cards and the setup card
+    # to have finished walking into Today.
+    (9, 0, "link_setup"),
     (15, 30, UNMARKED[0]),
     (17, 30, UNMARKED[1]),
     (18, 0, "to_quality_check"),
@@ -69,6 +72,7 @@ STEPS = (
 STEP_NAMES = {
     "make_setup": "make the setup card for the day after tomorrow",
     "to_today": f"{IN_QUE} → {TODAY}",
+    "link_setup": "put today's setup card on the Ads and Ops checklists",
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",

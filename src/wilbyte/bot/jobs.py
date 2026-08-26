@@ -2059,6 +2059,86 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
+def link_setup_on_day(config: Config, *, day=None) -> tuple[list[str], list[str]]:
+    """Put today's setup card on today's Ads and Ops cards. (added, problems).
+
+    Kath, Jenn and Nicole on Ads; Therese on Ops. They are the people doing
+    the setting up, and the card they are doing it from is not one of the four
+    they have open - a link on their own checklist is how it gets in front of
+    them.
+
+    The setup card worked *today*, which is the one for tomorrow's go-live.
+    Everything is in Today by nine: the daily four walked across, and the
+    setup card was fetched into In Que the evening before.
+
+    Safe to run twice. A checklist already carrying that card is left alone,
+    matched on the card's short id rather than the whole URL.
+    """
+    from .. import agents as rules
+    from .. import dailyops, trello
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    added, problems = [], []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+
+        setup = next(
+            (
+                card for card in every
+                if rules.is_setup_card(str(card.get("name", "")))
+                and rules.setup_worked_on(str(card.get("name", "")), day) == day
+            ),
+            None,
+        )
+        if setup is None:
+            return [], []
+
+        link = str(setup.get("url") or setup.get("shortUrl") or "")
+        short = trello.linked_card_id(link)
+        if not short:
+            return [], []
+
+        dated = dailyops.cards_for(every, day)
+        for kind, people in (("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE)):
+            card = dated.get(kind)
+            if card is None:
+                problems.append(
+                    f"No {dailyops.CARD_KINDS.get(kind, kind)} card dated {day:%m/%d/%y}"
+                )
+                continue
+            card_id = str(card.get("id") or "")
+            held = client.card_checklists(card_id)
+            by_name = {
+                " ".join(str(c.get("name") or "").split()).casefold(): c for c in held
+            }
+            for person in people:
+                found = by_name.get(" ".join(person.split()).casefold())
+                if found is None:
+                    # Not created here. The checklists are named by whoever
+                    # made the card, and "Kath" against a list that calls her
+                    # "Kathleen" would make a second one nobody reads.
+                    problems.append(f"{card.get('name')} has no {person!r} checklist")
+                    continue
+                if any(
+                    trello.linked_card_id(str(item.get("name") or "")) == short
+                    for item in found.get("checkItems") or []
+                ):
+                    continue
+                try:
+                    client.add_check_item(str(found.get("id") or ""), link)
+                except Exception as exc:
+                    problems.append(
+                        f"{card.get('name')} · {person} — {_short(exc, 120)}"
+                    )
+                    continue
+                added.append(f"{card.get('name')} · {person}")
+    finally:
+        client.close()
+    return added, problems
+
+
 def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
     """The ticked cards in the aged-leads list. (cards, problems). Reads only.
 
