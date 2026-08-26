@@ -289,7 +289,9 @@ def _checklist(rows: list[tuple[bool, str]]) -> str:
     return "\n".join(f"{marks.get(ok, '▫️')} {text}" for ok, text in rows)
 
 
-def unticked_agents(cards: list[dict], *, said_at: str, shown: int) -> discord.Embed:
+def unticked_agents(
+    cards: list[dict], *, shown: int, said_at: str = ""
+) -> discord.Embed:
     """The afternoon look at Done, as a card rather than a wall of URLs.
 
     The links go behind the names. Eight raw Trello URLs is eight lines of
@@ -299,7 +301,11 @@ def unticked_agents(cards: list[dict], *, said_at: str, shown: int) -> discord.E
         title=f"{len(cards)} agent(s) need ticking",
         colour=AMBER,
     )
-    embed.set_author(name=f"🔔 {said_at} · nobody has marked these complete")
+    # No time when nobody scheduled this - somebody asked for it, and the
+    # message carries its own timestamp anyway. Saying "3:30pm" at half ten
+    # in the morning is worse than saying nothing.
+    when = f"{said_at} · " if said_at else ""
+    embed.set_author(name=f"🔔 {when}nobody has marked these complete")
 
     lines = []
     for card in cards[:shown]:

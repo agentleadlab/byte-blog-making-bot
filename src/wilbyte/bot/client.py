@@ -902,12 +902,16 @@ def _unmarked_ping(config: Config, *, ping: bool = True) -> str:
     return f"<@{who}>" if who else ""
 
 
-def _unmarked_card(step: str, found: list[dict]):
-    """The afternoon look at Done, as something to read."""
+def _unmarked_card(found: list[dict], *, step: str = ""):
+    """The look at Done, as something to read.
+
+    The time is named only when the clock decided it. Somebody who just typed
+    the command knows what time it is.
+    """
     from .. import dailyops
 
     return embeds.unticked_agents(
-        found, said_at=dailyops.said_at(step) or "now", shown=UNMARKED_SHOWN
+        found, said_at=dailyops.said_at(step) if step else "", shown=UNMARKED_SHOWN
     )
 
 
@@ -930,7 +934,7 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
         )
         return
     # No ping: somebody just asked, so they are already looking at it.
-    await responder.send(embed=_unmarked_card(dailyops.UNMARKED[0], found))
+    await responder.send(embed=_unmarked_card(found))
 
 
 async def _board_step(bot: "WilByteBot", step: str, today) -> None:
@@ -951,7 +955,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # reporting that all is well is how the one that matters stops
             # being looked at.
             note = _unmarked_ping(bot.config) if found else ""
-            card = _unmarked_card(step, found) if found else None
+            card = _unmarked_card(found, step=step) if found else None
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (

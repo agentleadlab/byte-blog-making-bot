@@ -2149,7 +2149,7 @@ def note(config, found, step=None, *, ping=True):
         return "", None
     return (
         _unmarked_ping(config, ping=ping),
-        _unmarked_card(step or dailyops.UNMARKED[0], found),
+        _unmarked_card(found, step=step or dailyops.UNMARKED[0]),
     )
 
 
@@ -2214,6 +2214,17 @@ def test_the_second_look_says_its_own_time(config):
     _ping, card = note(config, [UNTICKED], step=dailyops.UNMARKED[1])
 
     assert "5:30pm" in card.author.name
+
+
+def test_asking_for_it_now_claims_no_particular_time(config):
+    """Saying "3:30pm" at half ten in the morning is worse than saying
+    nothing, and the message carries its own timestamp anyway."""
+    from wilbyte.bot.client import _unmarked_card
+
+    card = _unmarked_card([UNTICKED])
+
+    assert "3:30pm" not in card.author.name
+    assert card.author.name == "🔔 nobody has marked these complete"
 
 
 def test_asking_for_it_now_does_not_ping(config):
