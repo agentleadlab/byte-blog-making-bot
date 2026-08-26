@@ -1934,9 +1934,10 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
     The same read the move itself does, so what gets shown and what gets moved
     cannot disagree.
     """
-    from .. import dailyops, trello
+    from .. import dailyops, rollskip, trello
 
     day = day or board_day(config)
+    held = rollskip.for_day(day)
     from_name, to_name = dailyops.STEP_LISTS[step]
     client = open_trello(config)
     try:
@@ -1949,7 +1950,7 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
 
         found = []
         for card in client.list_cards(str(source.get("id") or "")):
-            if not walks_today(card, day, step=step):
+            if not walks_today(card, day, step=step, held=held):
                 continue
             title = str(card.get("name", ""))
             where = walk_to(card, step, day)
@@ -1966,7 +1967,7 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
         client.close()
 
 
-def walks_today(card: dict, day: date, *, step: str) -> bool:
+def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
     """Whether the daily walk should move this card at all.
 
     Everything in the list except two kinds. A new agent's card is in In Que
@@ -1985,6 +1986,10 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
     Lead Order is the exception to that exception: it walks the board like the
     others but it is not RYTE's to finish, so it stays in Quality Check until
     somebody puts it in Done themselves.
+
+    So is a card somebody held back from tonight's carry. Holding its items
+    back is saying the work is not finished, and filing the card away in the
+    same hour would put it out of sight with the work still on it.
     """
     from .. import agents, dailyops
 
@@ -1996,7 +2001,9 @@ def walks_today(card: dict, day: date, *, step: str) -> bool:
         return True
     if step != "to_done":
         return named[1] == day
-    return named[0] != "lead_order" and named[1] <= day
+    if named[0] == "lead_order" or named[0] in set(held):
+        return False
+    return named[1] <= day
 
 
 def setups_to_pull(client, lists, day: date, step: str):
@@ -2473,9 +2480,10 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     Done gets its link put on the Lead Order card for the day its agents go
     live (`note_setup_on_lead_order`).
     """
-    from .. import agents, dailyops, trello
+    from .. import agents, dailyops, rollskip, trello
 
     day = day or board_day(config)
+    held = rollskip.for_day(day)
     from_name, to_name = dailyops.STEP_LISTS[step]
     client = open_trello(config)
     moved, problems = 0, []
@@ -2492,7 +2500,7 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
         # first and the first card ends up above it. The list arrives in the
         # order it left in rather than reversed.
         for card in reversed(client.list_cards(str(source.get("id") or ""))):
-            if not walks_today(card, day, step=step):
+            if not walks_today(card, day, step=step, held=held):
                 continue
             where = walk_to(card, step, day)
             landing = target if where == to_name else trello.find_list(lists, where)

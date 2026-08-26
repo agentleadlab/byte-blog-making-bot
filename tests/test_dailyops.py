@@ -3042,3 +3042,75 @@ def test_one_card_held_reads_as_one_and_two_as_two():
     assert "its unticked items" in _held_as_words(["ads"])
     assert "their unticked items" in _held_as_words(["ads", "lead_order"])
     assert _held_as_words([]) == "Nothing is being held back tonight."
+
+
+def test_a_held_card_is_not_filed_away_either(monkeypatch, config, tmp_path):
+    """Holding its items back is saying the work is not finished. Filing the
+    card in the same hour would put it out of sight with the work still on
+    it."""
+    from wilbyte import rollskip
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 25)
+    rollskip.hold(day, ["ads"], store)
+    monkeypatch.setattr(rollskip, "SKIP_PATH", store)
+
+    board = FakeBoard({
+        "Quality Check": [
+            {"id": "a", "name": "📊 Ads 08/25/26"},
+            {"id": "g", "name": "💎 General 08/25/26"},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(config, "to_done", day=day)
+
+    assert (moved, problems) == (1, [])
+    assert [c for c, _, _ in board.moves] == ["g"], "it filed the held card"
+
+
+def test_holding_a_card_does_not_stop_the_other_moves(monkeypatch, config, tmp_path):
+    """Nine and six are unaffected - the card still walks its day, it just
+    does not finish it."""
+    from wilbyte import rollskip
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 25)
+    rollskip.hold(day, ["ads"], store)
+    monkeypatch.setattr(rollskip, "SKIP_PATH", store)
+
+    board = FakeBoard({
+        "In Que": [{"id": "a", "name": "📊 Ads 08/25/26"}],
+        "Today": [],
+        "Quality Check": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.walk_board(config, "to_today", day=day)[0] == 1
+
+
+def test_the_preview_leaves_the_held_card_out_too(monkeypatch, config, tmp_path):
+    """What gets shown and what gets moved cannot disagree."""
+    from wilbyte import rollskip
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 25)
+    rollskip.hold(day, ["ads"], store)
+    monkeypatch.setattr(rollskip, "SKIP_PATH", store)
+
+    board = FakeBoard({
+        "Quality Check": [
+            {"id": "a", "name": "📊 Ads 08/25/26"},
+            {"id": "g", "name": "💎 General 08/25/26"},
+        ],
+        "Done": [],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.moves_waiting(config, "to_done", day=day)
+
+    assert found == ["💎 General 08/25/26"]
