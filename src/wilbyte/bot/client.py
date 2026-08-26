@@ -2347,7 +2347,12 @@ async def _report_stuck(responder: Responder, stuck) -> None:
     )
 
 
-AGENT_CHECK_SECONDS = 300
+# As close to instant as polling gets. A card lands whenever a client signs
+# and somebody is watching the board for it to be picked up, so the wait is
+# the whole experience of this. Trello allows 100 requests every 10 seconds
+# per token and a pass costs about sixteen, so twenty seconds is nowhere near
+# the ceiling - the real floor is how long a pass takes to run.
+AGENT_CHECK_SECONDS = 20
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

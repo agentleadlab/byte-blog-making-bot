@@ -2237,3 +2237,26 @@ def test_asking_for_it_now_does_not_ping(config):
 
     assert ping == ""
     assert "Tayler Collins" in card.description
+
+
+def test_the_watched_lists_are_not_fetched_twice(monkeypatch, config):
+    """They are already in the board read. Three more round trips is three
+    more seconds between a card landing and it being filed."""
+    from wilbyte.bot import jobs
+
+    board = FakeBoard({
+        "In Que": [{"id": "a", "name": "New Agent - Somebody"}],
+        "Today": [], "Franklin (Admin)": [], "AUTOMATION DEPARTMENT": [],
+        "Done": [], "Quality Check": [],
+    })
+    asked = []
+    plain = board.list_cards
+    board.list_cards = lambda list_id: (asked.append(list_id), plain(list_id))[1]
+    board.card_detail = lambda card_id: {"id": card_id, "desc": ""}
+    board.card_comments = lambda card_id: []
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.read_agents(config, day=date(2026, 8, 25))
+
+    assert len(asked) == len(set(asked)) == len(board.lists), asked

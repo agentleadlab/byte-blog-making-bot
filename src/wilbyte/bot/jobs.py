@@ -2322,9 +2322,14 @@ def read_agents(config: Config, *, day=None):
         ]
         dated = dailyops.cards_for(every_card, day)
 
+        # Sifted out of the board read rather than fetched again. The watched
+        # lists are already in `every_card`, and three more round trips is
+        # three more seconds between a card landing and it being filed.
+        waiting = {
+            str(bl.get("id") or "") for bl in watched.values() if bl is not None
+        }
         waiting_cards = [
-            card for bl in watched.values() if bl is not None
-            for card in client.list_cards(str(bl.get("id") or ""))
+            card for card in every_card if str(card.get("idList") or "") in waiting
         ]
 
         plans = []
