@@ -2893,3 +2893,144 @@ def test_a_card_with_no_launch_date_is_left_alone(monkeypatch, config):
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
     assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
+
+
+# ---------------------------------- holding a card back from tonight's carry
+
+
+@pytest.mark.parametrize(
+    "said,expected",
+    [
+        ("trello rollover skip ads", ("hold", ["ads"])),
+        ("rollover skip ads and ops", ("hold", ["ops", "ads"])),
+        ("rollover don't carry lead order", ("hold", ["lead_order"])),
+        ("rollover hold back general", ("hold", ["general"])),
+        ("rollover unskip ads", ("release", ["ads"])),
+        ("rollover skip none", ("release", [])),
+        ("rollover carry all", ("release", [])),
+        # Nothing about skipping - these still run the rollover.
+        ("trello rollover", None),
+        ("rollover general", None),
+    ],
+)
+def test_what_somebody_asked_about_skipping(said, expected):
+    assert dailyops.skip_asked(said) == expected
+
+
+def test_unskip_is_not_read_as_a_skip():
+    """The word is inside the other one, so order matters."""
+    assert dailyops.skip_asked("rollover unskip ads")[0] == "release"
+
+
+def test_holding_a_card_lasts_until_the_evening(tmp_path):
+    """A standing instruction, not a one-off. Said at four, still true at
+    eight, which is the whole point - the eight o'clock run is the one that
+    would have carried it."""
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 26)
+
+    assert rollskip.hold(day, ["ads"], store) == ("ads",)
+    assert rollskip.for_day(day, store) == ("ads",)
+
+
+def test_it_only_holds_the_day_it_was_said_for(tmp_path):
+    """Tomorrow starts clean without anybody remembering to undo it."""
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    rollskip.hold(date(2026, 8, 26), ["ads"], store)
+
+    assert rollskip.for_day(date(2026, 8, 27), store) == ()
+
+
+def test_holding_twice_does_not_double_it(tmp_path):
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 26)
+    rollskip.hold(day, ["ads"], store)
+
+    assert rollskip.hold(day, ["ads", "ops"], store) == ("ads", "ops")
+
+
+def test_releasing_one_leaves_the_others(tmp_path):
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 26)
+    rollskip.hold(day, ["ads", "ops"], store)
+
+    assert rollskip.release(day, ["ads"], store) == ("ops",)
+
+
+def test_releasing_none_named_releases_all(tmp_path):
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    day = date(2026, 8, 26)
+    rollskip.hold(day, ["ads", "ops"], store)
+
+    assert rollskip.release(day, None, store) == ()
+    assert rollskip.for_day(day, store) == ()
+
+
+def test_a_note_from_last_month_is_dropped(tmp_path):
+    """A forgotten one must not quietly hold a card back in September."""
+    from wilbyte import rollskip
+
+    store = tmp_path / "skip.json"
+    rollskip.hold(date(2026, 7, 1), ["ads"], store)
+    rollskip.hold(date(2026, 8, 26), ["ops"], store)
+
+    assert rollskip.for_day(date(2026, 7, 1), store) == ()
+
+
+def test_the_held_card_is_left_out_of_the_carry(monkeypatch, config):
+    """The rollover finds the day's cards by the date in the title wherever
+    they are, so dragging one into another list does not stop it. This does."""
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["Lead Order 08/26/26", "💎 General 08/26/26",
+                   "💻 Ops 08/26/26", "📊 Ads 08/26/26"],
+        "Quality Check": ["Lead Order 08/25/26", "💎 General 08/25/26",
+                          "💻 Ops 08/25/26", "📊 Ads 08/25/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    plans, _missing, targets = jobs.read_rollover(
+        config, day=date(2026, 8, 25), skip=["ads"]
+    )
+
+    assert "ads" not in [plan.kind for plan in plans]
+    assert sorted(targets) == ["general", "lead_order", "ops"]
+
+
+def test_nothing_held_carries_all_four(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["Lead Order 08/26/26", "💎 General 08/26/26",
+                   "💻 Ops 08/26/26", "📊 Ads 08/26/26"],
+        "Quality Check": ["Lead Order 08/25/26", "💎 General 08/25/26",
+                          "💻 Ops 08/25/26", "📊 Ads 08/25/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    _plans, _missing, targets = jobs.read_rollover(
+        config, day=date(2026, 8, 25), skip=[]
+    )
+
+    assert sorted(targets) == ["ads", "general", "lead_order", "ops"]

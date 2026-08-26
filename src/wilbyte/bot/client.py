@@ -2561,6 +2561,49 @@ async def _move_cards(responder: Responder, config: Config, named: str) -> None:
     await responder.send(note)
 
 
+async def _hold_back(responder: Responder, config: Config, asked) -> None:
+    """"rollover skip ads" - keep a card's items off tomorrow's card tonight.
+
+    Recorded rather than run. Dragging the card into another list does not
+    stop the carry, because the rollover finds the day's cards by the date in
+    the title wherever they are - so saying no has to be an instruction, and
+    one that still holds when eight o'clock comes round.
+    """
+    from .. import dailyops, rollskip
+
+    doing, kinds = asked
+    day = await asyncio.to_thread(jobs.board_day, config)
+
+    if doing == "hold" and not kinds:
+        held = await asyncio.to_thread(rollskip.for_day, day)
+        await responder.send(
+            _held_as_words(held)
+            + "\nName one: `trello rollover skip ads`, or `general`, `ops`, "
+            "`lead order`."
+        )
+        return
+
+    if doing == "hold":
+        held = await asyncio.to_thread(rollskip.hold, day, kinds)
+    else:
+        held = await asyncio.to_thread(
+            rollskip.release, day, kinds if kinds else None
+        )
+    await responder.send(
+        f"📋 {_held_as_words(held)} Everything else carries as usual at "
+        f"{dailyops.said_at('rollover')}."
+    )
+
+
+def _held_as_words(held) -> str:
+    from .. import dailyops
+
+    if not held:
+        return "Nothing is being held back tonight."
+    named = ", ".join(dailyops.CARD_KINDS.get(kind, kind) for kind in held)
+    return f"Holding back tonight: **{named}** — its unticked items stay put."
+
+
 async def _rollover(responder: Responder, config: Config, *, named: str = "") -> None:
     """Move today's unfinished items onto tomorrow's cards, once approved.
 
@@ -2569,7 +2612,12 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
     blog date nobody sees it happen - the item just quietly isn't where they
     left it. So the plan is shown and the button is the decision.
     """
-    from .. import dailyops
+    from .. import dailyops, rollskip
+
+    asked = dailyops.skip_asked(named)
+    if asked is not None:
+        await _hold_back(responder, config, asked)
+        return
 
     only = dailyops.kind_named(named)
     which = dailyops.CARD_KINDS.get(only, "") if only else ""

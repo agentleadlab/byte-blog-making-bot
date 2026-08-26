@@ -167,6 +167,38 @@ def kind_named(text: str) -> str | None:
     return None
 
 
+# "rollover skip ads" - hold one card back tonight. "unskip" and "skip none"
+# take it off again, and both are checked before `skip` so that "unskip" is
+# not read as somebody asking to skip.
+UNSKIP = re.compile(r"\bunskip\b|\bskip\s+(?:none|nothing)\b|\bcarry\s+all\b", re.IGNORECASE)
+SKIP = re.compile(r"\bskip\b|\bexcept\b|\bhold\s+back\b|\bdo\s*n[o']?t\s+carry\b", re.IGNORECASE)
+
+
+def kinds_named(text: str) -> list[str]:
+    """Every one of the four somebody named, in the order the table has them.
+
+    More than one, unlike `kind_named` - "skip ads and ops" is two cards held
+    back, and answering with the first would quietly carry the second.
+    """
+    said = " ".join((text or "").split())
+    return [kind for kind, pattern in _KIND_PATTERNS if pattern.search(said)]
+
+
+def skip_asked(text: str) -> tuple[str, list[str]] | None:
+    """("hold"|"release", kinds) when somebody asked about skipping, else None.
+
+    An empty kinds list on a release means all of them; on a hold it means
+    somebody said "skip" and named no card, which is a question rather than an
+    instruction and is answered as one.
+    """
+    said = " ".join((text or "").split())
+    if UNSKIP.search(said):
+        return "release", kinds_named(said)
+    if SKIP.search(said):
+        return "hold", kinds_named(said)
+    return None
+
+
 def parse_card_title(title: str) -> tuple[str, date] | None:
     """('general', date(2026, 8, 20)) for `💎 General 08/20/26`, else None.
 

@@ -2540,11 +2540,22 @@ def run_rollover(config: Config, *, day=None, only: str | None = None) -> tuple[
     stay put: an item whose linked card already reads Done, and one carried
     three nights running. Those come back to be said out loud rather than
     moved while nobody is watching.
+
+    A card somebody held back is named in the problems, so the night's message
+    says what did not happen as well as what did - a silent skip is a card
+    nobody notices is still sitting there tomorrow.
     """
+    from .. import dailyops, rollskip
+
+    day = day or board_day(config)
     plans, missing, targets = read_rollover(config, day=day, only=only)
     moved, problems = apply_rollover(config, plans, targets, day=day)
     if missing:
         problems.append(f"No card for tomorrow yet: {', '.join(missing)}")
+    held = rollskip.for_day(day)
+    if held:
+        named = ", ".join(dailyops.CARD_KINDS.get(k, k) for k in held)
+        problems.append(f"Held back at your request: {named}")
     flagged = [item for plan in plans for item in plan.needs_a_look]
     return moved, problems, flagged
 
@@ -2825,7 +2836,7 @@ def rollover_plan(config: Config, *, day=None) -> str:
     return report
 
 
-def read_rollover(config: Config, *, day=None, only: str | None = None):
+def read_rollover(config: Config, *, day=None, only: str | None = None, skip=None):
     """(plans, cards missing for tomorrow, where each item goes).
 
     Read-only, and the same read the write uses - so what gets shown and what
@@ -2833,9 +2844,12 @@ def read_rollover(config: Config, *, day=None, only: str | None = None):
     and checklists, because working them out twice is how a rollover ends up
     writing to a card nobody was shown.
     """
-    from .. import carried, dailyops
+    from .. import carried, dailyops, rollskip
 
     day = day or board_day(config)
+    # Cards somebody told to stay put tonight. Read here rather than passed
+    # in, so the eight o'clock run and the button honour the same instruction.
+    held = set(rollskip.for_day(day) if skip is None else skip)
     tomorrow = dailyops.next_day(day)
     client = open_trello(config)
     try:
@@ -2849,6 +2863,8 @@ def read_rollover(config: Config, *, day=None, only: str | None = None):
 
         if only:
             today_cards = {k: v for k, v in today_cards.items() if k == only}
+        if held:
+            today_cards = {k: v for k, v in today_cards.items() if k not in held}
 
         plans, targets = [], {}
         for kind, card in today_cards.items():
