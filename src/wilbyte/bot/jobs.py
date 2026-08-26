@@ -2148,8 +2148,15 @@ def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[
 SETUP_HOURS = 48
 
 
-def wrong_setups(config: Config, *, hours: int = SETUP_HOURS) -> tuple[list[dict], list[str]]:
+def wrong_setups(
+    config: Config, *, day=None, hours: int = SETUP_HOURS
+) -> tuple[list[dict], list[str]]:
     """Agents set up on leads they did not order. (found, problems). Reads only.
+
+    Only the ones going live today or tomorrow. An agent who went live last
+    week was either put right at the time or was not, and either way it is not
+    tonight's problem - the point of this is to catch a wrong setup while
+    there is still time to fix it before the leads start flowing.
 
     Every list, not just Done. The confirmation lands whenever the setting up
     is finished, and by then the card is usually in Done - but one still
@@ -2157,13 +2164,15 @@ def wrong_setups(config: Config, *, hours: int = SETUP_HOURS) -> tuple[list[dict
     check that only looks in Done would miss exactly the ones nobody has moved
     on from.
 
-    Narrowed by when the card was last touched rather than by which list it is
-    in. A comment moves `dateLastActivity`, so anything with a new
-    confirmation on it is in the window by definition, and the sixty cards
-    that have not changed in a month cost one request between them.
+    The activity window is a cheap first cut before any card is opened. A
+    confirmation is a comment and a comment moves `dateLastActivity`, so a
+    card that has not changed in two days has nothing new to disagree about -
+    and the sixty of them cost one request between them rather than sixty.
     """
-    from .. import agents, trello
+    from .. import agents, dailyops, trello
 
+    day = day or board_day(config)
+    tomorrow = dailyops.next_day(day)
     client = open_trello(config)
     found, problems = [], []
     try:
@@ -2176,12 +2185,16 @@ def wrong_setups(config: Config, *, hours: int = SETUP_HOURS) -> tuple[list[dict
             if str(card.get("dateLastActivity") or "") < fresh:
                 continue
             card_id = str(card.get("id") or "")
-            ordered = agents.stated_lead_type(
-                str(client.card_detail(card_id).get("desc") or "")
-            )
+            desc = str(client.card_detail(card_id).get("desc") or "")
+            ordered = agents.stated_lead_type(desc)
             if not ordered:
                 continue
             said = client.card_comments(card_id)
+            launch = agents.find_launch(desc, today=day) or agents.find_launch(
+                "\n".join(said), today=day
+            )
+            if launch not in (day, tomorrow):
+                continue
             clash = agents.wrong_setup(ordered, said)
             if clash is None:
                 continue
@@ -2190,12 +2203,15 @@ def wrong_setups(config: Config, *, hours: int = SETUP_HOURS) -> tuple[list[dict
                 "agent": agents.agent_name(title),
                 "ordered": clash[0],
                 "setup": clash[1],
+                "when": "today" if launch == day else "tomorrow",
                 "where": _list_named(lists, str(card.get("idList") or "")),
             })
     except Exception as exc:  # one bad card must not lose the rest
         problems.append(_short(exc, 160))
     finally:
         client.close()
+    # Today's first: those are the ones with hours left rather than a day.
+    found.sort(key=lambda held: held["when"] != "today")
     return found, problems
 
 

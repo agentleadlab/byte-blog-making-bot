@@ -965,7 +965,7 @@ async def _send_wrong_setups(responder: Responder, config: Config) -> None:
         return
     if not found:
         await responder.send(
-            "Every agent set up in the last couple of days matches what they ordered."
+            "Every agent going live today or tomorrow is set up on what they ordered."
         )
         return
     # No ping: somebody just asked, so they are already looking at it.

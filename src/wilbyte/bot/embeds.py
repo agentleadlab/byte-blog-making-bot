@@ -335,15 +335,16 @@ def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
         title=f"{len(found)} agent(s) set up wrong",
         colour=RED,
     )
-    embed.set_author(name="⚠ ordered one thing, set up on another")
+    embed.set_author(name="⚠ going live today or tomorrow, set up on the wrong leads")
 
     lines = []
     for card in found[:shown]:
         name = _truncate(str(card.get("agent") or card.get("name") or "?"), 60)
         link = str(card.get("url") or card.get("shortUrl") or "")
         head = f"[{name}]({link})" if link else name
+        when = str(card.get("when") or "")
         lines.append(
-            f"**{head}**\n"
+            f"**{head}**{f' — live {when}' if when else ''}\n"
             f"  ordered `{_truncate(str(card.get('ordered') or '?'), 60)}`\n"
             f"  set up  `{_truncate(str(card.get('setup') or '?'), 60)}`"
         )

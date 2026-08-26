@@ -2714,13 +2714,17 @@ STALE = "2000-01-01T00:00:00.000Z"     # never is
 CONFIRMED = "✅ {} ON DISTRO HUB setup is complete for SOMEBODY"
 
 
+# Brody goes live tomorrow unless a test says otherwise.
+LIVE_TOMORROW = "Live Thursday, August 27"
+
+
 def brody(where="Done", *, ordered="Lead Type: OTP Vets", setup="OTP VET",
-          touched=FRESH, **others):
+          touched=FRESH, live=LIVE_TOMORROW, **others):
     return SetupBoard(
         {where: [{"id": "b", "name": "New Agent - Brody Sullivan",
                   "url": "https://trello.com/c/bbb", "dateLastActivity": touched}],
          **others},
-        desc={"b": ordered},
+        desc={"b": f"{ordered}\n{live}"},
         said={"b": [CONFIRMED.format(setup)]},
     )
 
@@ -2731,7 +2735,7 @@ def test_the_right_setup_is_not_flagged(monkeypatch, config):
     board = brody()
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.wrong_setups(config) == ([], [])
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
 
 
 def test_the_wrong_setup_is_flagged_with_both_halves(monkeypatch, config):
@@ -2740,7 +2744,7 @@ def test_the_wrong_setup_is_flagged_with_both_halves(monkeypatch, config):
     board = brody(setup="OTP FEX")
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    found, problems = jobs.wrong_setups(config)
+    found, problems = jobs.wrong_setups(config, day=WEDNESDAY)
 
     assert problems == []
     assert len(found) == 1
@@ -2748,6 +2752,7 @@ def test_the_wrong_setup_is_flagged_with_both_halves(monkeypatch, config):
     assert found[0]["ordered"] == "OTP Vets"
     assert found[0]["setup"] == "OTP FEX"
     assert found[0]["where"] == "Done"
+    assert found[0]["when"] == "tomorrow"
 
 
 @pytest.mark.parametrize("where", ["Done", "In Que", "Today", "Franklin (Admin)"])
@@ -2759,7 +2764,7 @@ def test_it_looks_everywhere_not_just_done(monkeypatch, config, where):
     board = brody(where, setup="OTP FEX")
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    found, _ = jobs.wrong_setups(config)
+    found, _ = jobs.wrong_setups(config, day=WEDNESDAY)
 
     assert [c["where"] for c in found] == [where]
 
@@ -2772,7 +2777,7 @@ def test_a_card_nobody_has_touched_in_days_is_not_reopened(monkeypatch, config):
     board = brody(setup="OTP FEX", touched=STALE)
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.wrong_setups(config) == ([], [])
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
     assert board.asked == [], "it opened a card it did not need to"
 
 
@@ -2784,7 +2789,7 @@ def test_a_daily_card_is_not_examined(monkeypatch, config):
     ]})
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.wrong_setups(config) == ([], [])
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
     assert board.asked == []
 
 
@@ -2796,7 +2801,7 @@ def test_it_writes_nothing(monkeypatch, config):
     board = brody(setup="OTP FEX")
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    jobs.wrong_setups(config)
+    jobs.wrong_setups(config, day=WEDNESDAY)
 
     assert board.moves == []
 
@@ -2830,3 +2835,61 @@ def test_the_mark_ignores_spacing_and_case(tmp_path):
     assert setupseen.mark("b", "OTP  Vets", "otp fex") == (
         setupseen.mark("b", "otp vets", "OTP FEX")
     )
+
+
+def test_an_agent_who_went_live_last_week_is_not_raised(monkeypatch, config):
+    """Either it was put right at the time or it wasn't, and either way it is
+    not tonight's problem. The point is catching it before the leads flow."""
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", live="Live Thursday, August 20")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
+
+
+def test_an_agent_going_live_next_week_is_not_raised_yet(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", live="Live Friday, August 28")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
+
+
+def test_going_live_today_is_raised_and_listed_first(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", live="Live Wednesday, August 26")
+    board.lists["Done"].append({
+        "id": "c", "name": "New Agent - Somebody Else",
+        "url": "https://trello.com/c/ccc", "dateLastActivity": FRESH,
+    })
+    board.descs["c"] = "Lead Type: OTP Vets\nLive Thursday, August 27"
+    board.said["c"] = [CONFIRMED.format("OTP MTG")]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.wrong_setups(config, day=WEDNESDAY)
+
+    assert [c["when"] for c in found] == ["today", "tomorrow"]
+
+
+def test_a_launch_date_only_in_a_comment_still_counts(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", live="")
+    board.said["b"] = board.said["b"] + ["going live thursday, august 27"]
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.wrong_setups(config, day=WEDNESDAY)
+
+    assert [c["when"] for c in found] == ["tomorrow"]
+
+
+def test_a_card_with_no_launch_date_is_left_alone(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = brody(setup="OTP FEX", live="")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], [])
