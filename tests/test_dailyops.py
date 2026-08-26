@@ -609,8 +609,9 @@ def at_hour(hour, minute=0):
 
 
 MORNING = ["make_setup"]
-WORKING = MORNING + ["to_today", "link_setup"]
-AFTERNOON = WORKING + [dailyops.UNMARKED[0]]
+WORKING = MORNING + ["to_today"]
+MIDDAY = WORKING + ["link_setup"]
+AFTERNOON = MIDDAY + [dailyops.UNMARKED[0]]
 LATE = AFTERNOON + [dailyops.UNMARKED[1]]
 EVENING = LATE + ["to_quality_check"]
 NIGHT = EVENING + ["rollover", "to_done"]
@@ -625,7 +626,9 @@ LATE_NIGHT = NIGHT + ["archive_aged"]
         (8, 0, MORNING),
         (9, 0, WORKING),
         # Half past matters now, so both sides of it are worth pinning.
-        (15, 29, WORKING),
+        (11, 29, WORKING),
+        (11, 30, MIDDAY),
+        (15, 29, MIDDAY),
         (15, 30, AFTERNOON),
         (17, 29, AFTERNOON),
         (17, 30, LATE),
@@ -2450,7 +2453,7 @@ class LinkingChecklists(FakeBoard):
         return {}
 
 
-SETUP_LINK = "https://trello.com/c/Th27abcd/1-agent-setup-going-live-thursday-08-27"
+SETUP_LINK = "https://trello.com/c/Fr28abcd/1-agent-setup-going-live-friday-08-28"
 
 
 def person_lists(*people, holding=()):
@@ -2461,13 +2464,13 @@ def person_lists(*people, holding=()):
     ]
 
 
-def setup_link_board(held=None, *, setup="Agent Setup Going Live Thursday 08/27"):
+def setup_link_board(held=None, *, setup="Agent Setup Going Live Friday 08/28"):
     return LinkingChecklists({
         "Today": [
             {"id": "setup", "name": setup, "url": SETUP_LINK},
-            {"id": "ads", "name": "📊 Ads 08/26/26"},
-            {"id": "ops", "name": "💻 Ops 08/26/26"},
-            {"id": "lo", "name": "Lead Order 08/26/26"},
+            {"id": "ads", "name": "📊 Ads 08/27/26"},
+            {"id": "ops", "name": "💻 Ops 08/27/26"},
+            {"id": "lo", "name": "Lead Order 08/27/26"},
         ],
         "In Que": [],
     }, held=held or {
@@ -2485,7 +2488,7 @@ def test_the_setup_card_lands_on_ads_and_ops(monkeypatch, config):
     board = setup_link_board()
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    added, problems = jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    added, problems = jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert problems == []
     assert {cl for cl, _name in board.items} == {
@@ -2502,26 +2505,27 @@ def test_lead_order_and_general_are_left_out_of_it(monkeypatch, config):
     board = setup_link_board()
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert not any(cl == "cl-Therese" and False for cl, _ in board.items)
     # Therese appears once, from Ops - not twice, from Lead Order as well.
     assert [cl for cl, _ in board.items].count("cl-Therese") == 1
 
 
-def test_the_card_worked_today_is_the_one_linked(monkeypatch, config):
-    """Thursday's card is Wednesday's work, so on Wednesday that is the link.
-    Friday's card is sitting there too and is not today's business."""
+def test_the_card_worked_that_day_is_the_one_linked(monkeypatch, config):
+    """The 08/27 cards are worked on the 27th, and the card worked on the 27th
+    is Friday 08/28's. Thursday 08/27's is sitting there too - that one is
+    today's work, and it went on the 08/26 cards yesterday."""
     from wilbyte.bot import jobs
 
     board = setup_link_board()
     board.lists["Today"].append(
-        {"id": "fri", "name": "Agent Setup Going Live Friday 08/28",
-         "url": "https://trello.com/c/Fr28abcd/1-friday"}
+        {"id": "thu", "name": "Agent Setup Going Live Thursday 08/27",
+         "url": "https://trello.com/c/Th27abcd/1-thursday"}
     )
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert {name for _cl, name in board.items} == {SETUP_LINK}
 
@@ -2533,12 +2537,12 @@ def test_running_it_twice_adds_nothing_the_second_time(monkeypatch, config):
 
     board = setup_link_board(held={
         "ads": person_lists("Jenn", "Kath", "Nicole",
-                          holding=["https://trello.com/c/Th27abcd"]),
-        "ops": person_lists("Therese", holding=["https://trello.com/c/Th27abcd/other"]),
+                          holding=["https://trello.com/c/Fr28abcd"]),
+        "ops": person_lists("Therese", holding=["https://trello.com/c/Fr28abcd/other"]),
     })
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    added, problems = jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    added, problems = jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert (added, problems, board.items) == ([], [], [])
 
@@ -2551,21 +2555,21 @@ def test_a_missing_checklist_is_said_not_created(monkeypatch, config):
     board = setup_link_board(held={"ads": person_lists("Jenn"), "ops": person_lists("Therese")})
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    added, problems = jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    added, problems = jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert [cl for cl, _ in board.items] == ["cl-Jenn", "cl-Therese"]
     assert any("'Kath'" in p for p in problems)
     assert any("'Nicole'" in p for p in problems)
 
 
-def test_no_setup_card_for_today_does_nothing_quietly(monkeypatch, config):
-    """Nobody made one, or its day is not today. Not a problem worth saying."""
+def test_no_setup_card_for_that_day_does_nothing_quietly(monkeypatch, config):
+    """Nobody made one, or its working day is another. Not worth saying."""
     from wilbyte.bot import jobs
 
     board = setup_link_board(setup="Agent Setup Going Live Monday 08/31")
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    assert jobs.link_setup_on_day(config, day=date(2026, 8, 26)) == ([], [])
+    assert jobs.link_setup_on_day(config, for_day=date(2026, 8, 27)) == ([], [])
     assert board.items == []
 
 
@@ -2578,15 +2582,14 @@ def test_a_missing_ads_card_is_said(monkeypatch, config):
     ]
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    added, problems = jobs.link_setup_on_day(config, day=date(2026, 8, 26))
+    added, problems = jobs.link_setup_on_day(config, for_day=date(2026, 8, 27))
 
     assert [cl for cl, _ in board.items] == ["cl-Therese"]
     assert "Ads" in problems[0]
 
 
-def test_it_runs_right_after_the_nine_oclock_move():
-    """It needs both the day's cards and the setup card to have got to Today."""
-    due = dailyops.steps_due(at_hour(9), set())
-
-    assert due.index("to_today") < due.index("link_setup")
-    assert dailyops.time_of("link_setup") == (9, 0)
+def test_it_runs_after_the_in_que_cards_arrive():
+    """"The in que cards comes in by 11am" - half eleven leaves margin."""
+    assert dailyops.time_of("link_setup") == (11, 30)
+    assert dailyops.said_at("link_setup") == "11:30am"
+    assert "link_setup" not in dailyops.steps_due(at_hour(11, 29), set())

@@ -1012,7 +1012,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
         elif step == "link_setup":
             added, problems = await asyncio.to_thread(jobs.link_setup_on_day, bot.config)
             note = (
-                f"🔗 {dailyops.said_at(step)} — put today's setup card on "
+                f"🔗 {dailyops.said_at(step)} — put the setup card on "
                 f"{len(added)} checklist(s)."
             ) if added else ""
         elif step == "archive_aged":

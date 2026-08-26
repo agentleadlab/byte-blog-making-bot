@@ -2059,17 +2059,19 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], None
 
 
-def link_setup_on_day(config: Config, *, day=None) -> tuple[list[str], list[str]]:
-    """Put today's setup card on today's Ads and Ops cards. (added, problems).
+def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[str]]:
+    """Put a day's setup card on that day's Ads and Ops cards. (added, problems).
 
     Kath, Jenn and Nicole on Ads; Therese on Ops. They are the people doing
     the setting up, and the card they are doing it from is not one of the four
     they have open - a link on their own checklist is how it gets in front of
     them.
 
-    The setup card worked *today*, which is the one for tomorrow's go-live.
-    Everything is in Today by nine: the daily four walked across, and the
-    setup card was fetched into In Que the evening before.
+    `for_day` is the date on the Ads and Ops cards, and the setup card that
+    goes on them is the one worked that same day. Called with tomorrow: the
+    four land in In Que around eleven and the setup card was made at six, so
+    by then both halves exist and the link is on the card before anybody opens
+    it.
 
     Safe to run twice. A checklist already carrying that card is left alone,
     matched on the card's short id rather than the whole URL.
@@ -2077,7 +2079,7 @@ def link_setup_on_day(config: Config, *, day=None) -> tuple[list[str], list[str]
     from .. import agents as rules
     from .. import dailyops, trello
 
-    day = day or board_day(config)
+    day = for_day or dailyops.next_day(board_day(config))
     client = open_trello(config)
     added, problems = [], []
     try:
