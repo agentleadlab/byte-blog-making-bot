@@ -419,12 +419,25 @@ _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 # "live fri, aug 28" is how it is actually written about half the time.
 _SHORT_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
+# An existing agent buying more of what they already have. "Add to his active
+# order - Wednesday, August 26" is not a launch, so none of the words below
+# appear on the card - and it is the usual same-day job, onto that day's Lead
+# Order, Ads and Ops cards.
+ADD_TO_ORDER = re.compile(
+    r"\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+)?to\b[^.\n]*\border\b",
+    re.IGNORECASE,
+)
+
 # The ways people say when somebody goes live, strongest first. "Launch date"
 # is unmistakable; a bare "live" is not - "Live transfer leads" is a product -
 # so it is looked at last and only counts if a date is sitting next to it.
 _WHEN_SAID = (
     re.compile(r"[^.\n]*\blaunch\s*date\b[^.\n]*", re.IGNORECASE),
     re.compile(r"[^.\n]*\b(?:launch(?:ing|es|ed)?|go(?:es|ing)?\s+live)\b[^.\n]*", re.IGNORECASE),
+    re.compile(
+        r"[^.\n]*\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+)?to\b[^.\n]*\border\b[^.\n]*",
+        re.IGNORECASE,
+    ),
     re.compile(r"[^.\n]*\blive\b[^.\n]*", re.IGNORECASE),
 )
 
@@ -503,6 +516,11 @@ def _date_in(sentence: str, *, today: date) -> date | None:
 
     said = sentence.lower()
     if re.search(r"\btoday\b|\bimmediate(?:ly)?\b", said):
+        return today
+    # "Add to his active order" with no date on it. Adding to an order that
+    # already exists is the same-day job, so today is what it means rather
+    # than a guess about what it might mean.
+    if ADD_TO_ORDER.search(said):
         return today
     if "tomorrow" in said:
         return today + timedelta(days=1)

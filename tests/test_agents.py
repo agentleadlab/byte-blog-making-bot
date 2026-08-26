@@ -958,3 +958,95 @@ def test_the_conflict_stops_the_agent_being_filed_anywhere():
     assert plan.steps == []
     assert plan.move_to == ""
     assert "Which day do they go live?" in plan.problems[0]
+
+
+# ---------------------------------- an existing agent adding to what they have
+
+
+EVAN = """-- New Client Onboarded --
+
+First Name: Evan
+Last Name: Scott
+Phone: +14049901006
+Email: ecscott27@gmail.com
+Package Selected: Text Verified
+Lead Type: Veteran
+Target Areas for Marketing:
+
+Need 25 OTP Vets
+with Fearless Shepherds
+same states last time
+
+add to his active order - Wednesday, August 26
+"""
+
+WEDNESDAY = date(2026, 8, 26)
+
+
+def test_adding_to_an_existing_order_is_a_launch_day():
+    """Nothing on Evan Scott's card launches or goes live - he is already
+    live. "Add to his active order" is the sentence that says when."""
+    assert agents.find_launch(EVAN, today=WEDNESDAY) == WEDNESDAY
+
+
+def test_it_is_the_same_day_and_so_the_usual_three_cards():
+    agent = agents.read_agent(
+        card("New Agent - Evan Scott"), text=EVAN, today=WEDNESDAY
+    )
+
+    assert agent.when(WEDNESDAY) == "today"
+    assert agents.shape_of(agent.stated) == ("vet", "plus", frozenset())
+    assert agent.note == ""
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "add to his active order",
+        "added to their current order",
+        "add these to the existing order",
+        "adding it to her order",
+    ],
+)
+def test_no_date_on_it_means_today(said):
+    """Adding to an order that already exists is the same-day job."""
+    assert agents.find_launch(said, today=WEDNESDAY) == WEDNESDAY
+
+
+def test_a_date_on_it_still_wins():
+    said = "add to his active order - Friday, August 28"
+
+    assert agents.find_launch(said, today=WEDNESDAY) == date(2026, 8, 28)
+
+
+def test_a_real_launch_date_is_not_lost_to_it():
+    """"Launch date" is read first, so a card carrying both is unaffected."""
+    said = "Launch date is Thursday, August 27\nadd to his active order"
+
+    assert agents.find_launch(said, today=WEDNESDAY) == date(2026, 8, 27)
+
+
+def test_the_three_cards_get_the_line():
+    """The usual: that day's Lead Order, Ads and Ops, then the card to Done."""
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent(
+        card("New Agent - Evan Scott"), text=EVAN, today=WEDNESDAY
+    )
+    held = [{"id": "l0", "name": "OTP VET Plus", "checkItems": []}]
+    plan = jobs._plan_for(
+        Stub(held), agent, day=WEDNESDAY, tomorrow=date(2026, 8, 27),
+        dated={
+            "lead_order": {"id": "lo", "name": "Lead Order 08/26/26"},
+            "ads": {"id": "ad", "name": "📊 Ads 08/26/26"},
+            "ops": {"id": "op", "name": "💻 Ops 08/26/26"},
+        },
+        every_card=[],
+    )
+
+    assert plan.problems == []
+    assert plan.move_to == agents.DONE
+    assert {step.card_title for step in plan.steps} == {
+        "Lead Order 08/26/26", "📊 Ads 08/26/26", "💻 Ops 08/26/26",
+    }
+    assert any(step.checklist == "OTP VET Plus" for step in plan.steps)
