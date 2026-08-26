@@ -448,6 +448,43 @@ def find_launch(text: str, *, today: date) -> date | None:
     return None
 
 
+def _weekday_named(sentence: str) -> int | None:
+    """Which day of the week a sentence names, if it names one."""
+    said = (sentence or "").lower()
+    for index, name in enumerate(_WEEKDAYS):
+        if re.search(rf"\b{name}\b|\b{_SHORT_DAYS[index]}\b", said):
+            return index
+    return None
+
+
+def launch_conflict(text: str, *, today: date) -> str:
+    """When the card names a weekday and a date that are not the same day.
+
+    "live fri, aug 27" - August 27 is a Thursday. One of the two is a typo,
+    and which one is not RYTE's to decide: taking the date puts the agent live
+    a day early if the writer meant the Friday, taking the weekday puts them
+    live a day late if the writer meant the date, and neither mistake looks
+    like anything on the board afterwards.
+
+    Only the sentence the launch date was read out of, so a "see you Friday"
+    somewhere else on the card is not an argument with anything.
+    """
+    for pattern in _WHEN_SAID:
+        for sentence in pattern.findall(text or ""):
+            found = _date_in(sentence, today=today)
+            if found is None:
+                continue
+            named = _weekday_named(sentence)
+            if named is None or named == found.weekday():
+                return ""
+            return (
+                f"The card says {_WEEKDAYS[named].title()} and "
+                f"{found:%B} {found.day}, which is a {found:%A}. "
+                "Which day do they go live?"
+            )
+    return ""
+
+
 def _date_in(sentence: str, *, today: date) -> date | None:
     numeric = _NUMERIC.search(sentence)
     if numeric:
@@ -510,6 +547,7 @@ def read_agent(card: dict, *, text: str, today: date) -> Agent | None:
         launch=find_launch(text, today=today),
         said=text or "",
         stated=stated_lead_type(text),
+        note=launch_conflict(text, today=today),
     )
     return agent
 

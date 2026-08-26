@@ -874,3 +874,67 @@ def test_it_is_carried_onto_a_bare_lead_type_line_too():
     assert agents.stated_lead_type("Lead Type: whatever\nuprise- $350") == (
         "uprise whatever"
     )
+
+
+# ------------------------------- when the card argues with itself about the day
+
+
+def test_a_weekday_that_is_not_that_date_is_raised_not_resolved():
+    """Benji Missey's card says "live fri, aug 27". August 27 is a Thursday.
+    Taking the date puts him live a day early if the writer meant the Friday;
+    taking the weekday puts him live a day late if they meant the date."""
+    said = agents.launch_conflict("live fri, aug 27", today=TUESDAY)
+
+    assert "Friday" in said and "August 27" in said and "Thursday" in said
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "live thu, aug 27",
+        "Live Thursday, August 27",
+        "Launch date is today, Tuesday, August 25",
+        "live fri, aug 28",
+        # One or the other on its own cannot disagree with anything.
+        "launch date is friday",
+        "Launch date is August 27",
+        "",
+    ],
+)
+def test_a_card_that_agrees_with_itself_says_nothing(said):
+    assert agents.launch_conflict(said, today=TUESDAY) == ""
+
+
+def test_a_friday_mentioned_elsewhere_is_not_an_argument():
+    """Only the sentence the launch date was read out of."""
+    said = "Launch date is Thursday, August 27\n\nHe is away from Friday."
+
+    assert agents.launch_conflict(said, today=TUESDAY) == ""
+
+
+def test_the_conflict_travels_on_the_agent():
+    agent = read("Lead Type: vets\nlive fri, aug 27")
+
+    assert "Thursday" in agent.note
+
+
+def test_a_card_that_agrees_carries_no_note():
+    assert read("Lead Type: vets\nlive thu, aug 27").note == ""
+
+
+def test_the_conflict_stops_the_agent_being_filed_anywhere():
+    """Everything turns on the date - which setup card they go on, and whether
+    they park or get filed now. Guessing it wrong is not recoverable by
+    looking at the board."""
+    from wilbyte.bot import jobs
+
+    agent = read("Lead Type: vets\nlive fri, aug 27")
+    plan = jobs._plan_for(
+        Stub(), agent, day=TUESDAY, tomorrow=date(2026, 8, 26), dated={},
+        every_card=[{"id": "s", "name": "Agent Setup Going Live Thursday 08/27"}],
+    )
+
+    assert plan.doable is False
+    assert plan.steps == []
+    assert plan.move_to == ""
+    assert "Which day do they go live?" in plan.problems[0]

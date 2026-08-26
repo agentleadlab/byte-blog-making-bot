@@ -2375,6 +2375,12 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         plan.problems.append(rules.cannot_read(agent, needs_lead_type=False))
         return plan
 
+    # Before anything is decided on the date, because everything is: which
+    # setup card they go on, and whether they park or get filed now.
+    if agent.note:
+        plan.problems.append(agent.note)
+        return plan
+
     if plan.when != "today":
         # Whether they can be done yet turns on whether the card they go on
         # exists, not on how far off the launch is. A Thursday card made on
