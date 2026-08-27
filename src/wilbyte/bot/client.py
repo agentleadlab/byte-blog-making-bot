@@ -1611,6 +1611,12 @@ async def _send_segments(
                 )
         except (youtube.IngestError, segmenting.SegmentError) as exc:
             await responder.send(embed=embeds.error(str(exc)))
+            # The evidence goes in its own message rather than the embed: it is
+            # a list of what Zoom actually returned, and it is what tells a
+            # recording RYTE can't see from one it can't recognise.
+            detail = getattr(exc, "detail", "")
+            if detail:
+                await responder.send(detail)
             return
         except PIPELINE_ERRORS as exc:
             await responder.send(embed=embeds.error(f"Couldn't read that recording: {exc}"))

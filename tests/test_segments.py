@@ -290,6 +290,17 @@ def test_segment_takes_a_fathom_link():
     assert request.source == "https://fathom.video/share/xyz789"
 
 
+def test_a_failure_can_carry_the_evidence_behind_it():
+    """"I couldn't find it" has three causes and they look identical in Discord."""
+    exc = SegmentError("Nothing matched.", detail="What Zoom returned: ...")
+    assert str(exc) == "Nothing matched."
+    assert exc.detail == "What Zoom returned: ..."
+
+
+def test_an_error_with_nothing_to_add_says_nothing_extra():
+    assert SegmentError("Zoom has no transcript for that call.").detail == ""
+
+
 def test_a_zoom_link_on_its_own_still_files_the_call():
     """The verb is the whole difference - a bare link has always meant 'file this'."""
     assert mentions.parse("<@1> https://us02web.zoom.us/rec/share/abc").action == "recording"

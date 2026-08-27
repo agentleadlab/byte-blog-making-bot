@@ -1030,11 +1030,23 @@ def _zoom_cues(config: Config, rec) -> tuple[list, str]:
             meetings, link=rec.url, passcode=rec.passcode, page_topic=page_topic
         )
         if found is None:
-            seen = f" The share page called it “{page_topic}”." if page_topic else ""
+            seen = f" The share page calls it “{page_topic}”." if page_topic else ""
+            read = (
+                f"I read the passcode as `{rec.passcode}`"
+                if rec.passcode
+                else "No passcode was posted with it"
+            )
             raise SegmentError(
-                "I can't tell which recording that link points at — Zoom's API "
-                f"can't resolve share links, and nothing else matched.{seen} Post "
-                "the passcode with it, or attach the .vtt."
+                "I can't tell which recording that link points at. Zoom's API "
+                f"can't resolve share links, so I compared it against the "
+                f"{len(meetings)} recording(s) on the account from the last "
+                f"{SEGMENT_LOOKBACK_DAYS} days, by name and by passcode, and "
+                f"none matched. {read}.{seen}\n\n"
+                "If it isn't in the list below, it was recorded on a Zoom "
+                "account this app can't read and was only shared with us — open "
+                "the share page, download the transcript, and attach the .vtt "
+                "here instead.",
+                detail=zoom.describe_match(meetings, rec.url, limit=8),
             )
         if not found.has_transcript:
             raise SegmentError(

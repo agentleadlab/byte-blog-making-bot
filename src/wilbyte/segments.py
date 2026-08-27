@@ -56,7 +56,17 @@ ALWAYS_TAGGED = "agentleadlab"
 
 
 class SegmentError(RuntimeError):
-    """Raised when segmenting fails or comes back unusable."""
+    """Raised when segmenting fails or comes back unusable.
+
+    `detail` carries evidence too long for the error line - what was actually
+    compared when a link didn't match, say. "I couldn't find that recording"
+    has three quite different causes and they are indistinguishable from
+    Discord unless the strings are printed.
+    """
+
+    def __init__(self, message: str, *, detail: str = ""):
+        super().__init__(message)
+        self.detail = detail
 
 
 @dataclass
