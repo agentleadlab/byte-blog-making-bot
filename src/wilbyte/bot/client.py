@@ -690,6 +690,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_wrong_setups(responder, config)
                 return
 
+            if request.action == "spread":
+                await _spread_setup(responder, config, request.brief or "")
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -958,6 +962,32 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
     await responder.send(embed=_unmarked_card(found))
 
 
+async def _spread_setup(responder: Responder, config: Config, said: str) -> None:
+    """Put the setup card's agents onto the Lead Order card, on request."""
+    from .. import dailyops
+
+    day = dailyops.day_named(said, today=_today(config))
+    try:
+        added, problems = await asyncio.to_thread(
+            jobs.spread_to_lead_order, config, day=day
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if added:
+        await responder.send(
+            f"Put {len(added)} agent(s) on the Lead Order card:\n"
+            + "\n".join(f"· {line}" for line in added)
+        )
+    elif not problems:
+        await responder.send(
+            "Every agent on the setup card is already on the Lead Order card."
+        )
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+
+
 async def _send_wrong_setups(responder: Responder, config: Config) -> None:
     """The same look the watcher takes, when somebody asks for it now."""
     try:
@@ -1058,6 +1088,14 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"📦 {dailyops.said_at(step)} — archived {len(gone)} card(s) from "
                 f"{dailyops.AGED_DONE}."
             ) if gone else ""
+        elif step == "to_lead_order":
+            added, problems = await asyncio.to_thread(
+                jobs.spread_to_lead_order, bot.config
+            )
+            note = (
+                f"📋 {dailyops.said_at(step)} — put {len(added)} setup-card "
+                f"agent(s) on today's Lead Order card."
+            ) if added else ""
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
             note = (

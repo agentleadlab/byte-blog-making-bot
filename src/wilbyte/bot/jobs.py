@@ -2634,6 +2634,66 @@ def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
         client.close()
 
 
+def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[str]]:
+    """Put today's setup-card agents onto today's Lead Order card. (added, problems).
+
+    The setup card is filed by who does the setting up; the Lead Order card is
+    filed by what was bought. An agent set up days in advance only ever reaches
+    the first - their New Agent card went to Done the day it was read, so
+    nothing puts them on the second when their day finally arrives.
+
+    Runs before the cards move to Done, because a card in Done is finished and
+    writing onto one after the fact is how a line gets missed.
+    """
+    from .. import agents as rules, dailyops
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+
+        setup = rules.find_setup_card(every, day)
+        if setup is None:
+            return [], [f"No setup card covering {day:%m/%d/%y} anywhere on the board."]
+
+        order = dailyops.cards_for(every, day).get("lead_order")
+        if order is None:
+            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
+
+        order_id = str(order.get("id") or "")
+        held = client.card_checklists(order_id)
+        spreads, problems = rules.plan_spread(
+            client.card_checklists(str(setup.get("id") or "")), held
+        )
+        if not spreads:
+            return [], problems
+
+        # Read back between writes rather than trusting the plan: one agent's
+        # line may have just made the checklist the next one is looking for.
+        by_name = {
+            " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
+            for c in held
+        }
+        added: list[str] = []
+        for spread in spreads:
+            key = " ".join(spread.checklist.split()).casefold()
+            try:
+                if key not in by_name:
+                    made = client.create_checklist(order_id, spread.checklist)
+                    by_name[key] = str(made.get("id") or "")
+                client.add_check_item(
+                    by_name[key], rules.checklist_item(spread.url, spread.label)
+                )
+            except Exception as exc:
+                problems.append(f"{spread.label} — {_short(exc, 160)}")
+                continue
+            added.append(f"{spread.label} → {spread.checklist}")
+        return added, problems
+    finally:
+        client.close()
+
+
 def note_setup_on_lead_order(client, lists, setup_card: dict, day: date) -> str | None:
     """Put a setup card's link on the Lead Order card for the day it covers.
 

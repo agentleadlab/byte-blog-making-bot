@@ -1634,3 +1634,123 @@ def test_two_orders_land_on_two_lead_order_checklists():
         if step.card_title == "Lead Order 08/29/26"
     }
     assert landed == {"OTP VETS", "OTP FEX"}
+
+
+# --------------------------------- the setup card's agents onto the Lead Order
+
+
+def _item(url, label):
+    return {"name": f"{url} {label}"}
+
+
+def _person(name, items):
+    return {"id": name, "name": name, "checkItems": [_item(u, l) for u, l in items]}
+
+
+# Friday 08/28's setup card, as it actually reads: the same list under each of
+# the three people who do the setting up.
+FRIDAY = [
+    _person(person, [
+        ("https://trello.com/c/aaa", "UPRISE PHX PLUS"),
+        ("https://trello.com/c/bbb", "Phoenix Standard"),
+        ("https://trello.com/c/ccc", "Text Verified Veteran Plus"),
+    ])
+    for person in agents.SETUP_PEOPLE
+]
+
+
+def test_the_agents_are_read_once_not_once_per_person():
+    """Therese, Kathleen and Nicole each get the same list."""
+    assert agents.setup_agents(FRIDAY) == [
+        ("https://trello.com/c/aaa", "UPRISE PHX PLUS"),
+        ("https://trello.com/c/bbb", "Phoenix Standard"),
+        ("https://trello.com/c/ccc", "Text Verified Veteran Plus"),
+    ]
+
+
+def test_a_line_splits_into_the_card_and_what_it_says():
+    assert agents.split_item("https://trello.com/c/aaa 25 OTP VETS") == (
+        "https://trello.com/c/aaa", "25 OTP VETS"
+    )
+    assert agents.split_item("just words") == ("", "just words")
+
+
+def test_each_agent_lands_under_the_lead_type_they_bought():
+    """Phoenix Standard is the self-setup tier, so it goes where those go -
+    the same rule the same-day path already files by."""
+    order = [
+        {"id": "1", "name": "PHNX PLUS", "checkItems": []},
+        {"id": "2", "name": agents.OWN_SETUP, "checkItems": []},
+        {"id": "3", "name": "OTP VET Plus", "checkItems": []},
+    ]
+    spreads, problems = agents.plan_spread(FRIDAY, order)
+
+    assert problems == []
+    assert [(s.url[-3:], s.checklist) for s in spreads] == [
+        ("aaa", "PHNX PLUS"),
+        ("bbb", agents.OWN_SETUP),
+        ("ccc", "OTP VET Plus"),
+    ]
+    assert not any(s.make_checklist for s in spreads)
+
+
+def test_an_agent_already_on_the_lead_order_card_is_not_doubled():
+    """The same-day path may have put them there hours earlier."""
+    order = [
+        {"id": "1", "name": "PHNX PLUS",
+         "checkItems": [_item("https://trello.com/c/aaa", "UPRISE PHX PLUS")]},
+        {"id": "3", "name": "OTP VET Plus", "checkItems": []},
+    ]
+    spreads, _ = agents.plan_spread(FRIDAY, order)
+
+    assert "https://trello.com/c/aaa" not in [s.url for s in spreads]
+    assert len(spreads) == 2
+
+
+def test_a_lead_type_with_no_checklist_yet_gets_one_made():
+    order = [{"id": "1", "name": "PHNX PLUS", "checkItems": []}]
+    spreads, _ = agents.plan_spread(FRIDAY, order)
+
+    made = {s.checklist: s.make_checklist for s in spreads}
+    assert made["PHNX PLUS"] is False
+    assert all(value for name, value in made.items() if name != "PHNX PLUS")
+
+
+def test_the_plus_tier_is_not_swept_into_own_setup():
+    """The half that is ordered keeps a checklist each."""
+    spreads, _ = agents.plan_spread(FRIDAY, [])
+    landed = {s.url[-3:]: s.checklist for s in spreads}
+
+    assert landed["aaa"] == "UPRISE PHX PLUS"
+    assert landed["ccc"] == "Text Verified Veteran Plus"
+    assert landed["bbb"] == agents.OWN_SETUP
+
+
+def test_the_self_setup_ones_all_go_on_the_one_checklist():
+    setup = [_person("Nicole", [("https://trello.com/c/ddd", "25 Instant FB leads")])]
+    order = [{"id": "1", "name": agents.OWN_SETUP, "checkItems": []}]
+    spreads, _ = agents.plan_spread(setup, order)
+
+    assert spreads[0].checklist == agents.OWN_SETUP
+    assert spreads[0].make_checklist is False
+
+
+def test_a_line_that_never_said_what_the_leads_are_is_reported():
+    """Filing it somewhere invented is worse than saying it can't be placed."""
+    setup = [_person("Nicole", [("https://trello.com/c/eee", "")])]
+    spreads, problems = agents.plan_spread(setup, [])
+
+    assert spreads == []
+    assert len(problems) == 1
+    assert "https://trello.com/c/eee" in problems[0]
+
+
+def test_the_line_written_keeps_what_the_setup_card_said():
+    """Not the checklist's name: "25 OTP VETS" says the count, "OTP VETS" doesn't."""
+    order = [{"id": "3", "name": "OTP VET Plus", "checkItems": []}]
+    setup = [_person("Nicole", [("https://trello.com/c/fff", "25 OTP Vets")])]
+    spreads, _ = agents.plan_spread(setup, order)
+
+    assert agents.checklist_item(spreads[0].url, spreads[0].label) == (
+        "https://trello.com/c/fff 25 OTP Vets"
+    )

@@ -112,6 +112,10 @@ ACTION_WORDS = {
     "unchecked": "unticked",
     # The nightly clear-out of the aged-leads list.
     "archive": "archive",
+    # Today's setup-card agents onto today's Lead Order card, filed by what
+    # they bought rather than by who set them up.
+    "spread": "spread",
+    "leadorder": "spread",
     # Agents set up on leads they did not order.
     "setups": "setups",
     "setup": "setups",
@@ -363,7 +367,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked",
-                         "archive", "setups")
+                         "archive", "setups", "spread")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -461,7 +465,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
-        "unticked", "archive", "setups",
+        "unticked", "archive", "setups", "spread",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -654,6 +658,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
+> @RYTE **trello spread** — put today's setup-card agents on today's Lead Order
+> card, each under the lead type they bought
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> @RYTE **trello rollover yesterday** — carry a day you held back

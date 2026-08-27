@@ -83,6 +83,7 @@ STEPS = (
     (18, 30, UNMARKED[2]),
     (19, 30, UNMARKED[3]),
     (20, 30, "rollover"),
+    (20, 30, "to_lead_order"),
     (20, 30, "to_done"),
     (22, 0, "archive_aged"),
 )
@@ -94,6 +95,7 @@ STEP_NAMES = {
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     "rollover": "carry the unfinished items to tomorrow",
+    "to_lead_order": "put today's setup-card agents on today's Lead Order card",
     **{
         step: f"the New Agent cards in {DONE} nobody has ticked"
         for step in UNMARKED

@@ -901,6 +901,96 @@ def setup_worked_on(title: str, near: date) -> date | None:
     return starts - timedelta(days=1) if starts is not None else None
 
 
+# A checklist line RYTE wrote: the agent's card, then what the leads are.
+_LINKED_ITEM = re.compile(r"(https?://(?:www\.)?trello\.com/c/\S+)\s*(.*)", re.IGNORECASE | re.DOTALL)
+
+
+def split_item(name: str) -> tuple[str, str]:
+    """(the agent card the line links to, what the rest of the line says)."""
+    found = _LINKED_ITEM.search(name or "")
+    if not found:
+        return "", " ".join((name or "").split())
+    return found.group(1), " ".join(found.group(2).split())
+
+
+@dataclass
+class Spread:
+    """One agent's line moving from the setup card onto the Lead Order card."""
+
+    url: str
+    label: str
+    checklist: str
+    make_checklist: bool = False
+
+
+def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
+    """(card url, lead type) for every agent on a setup card, once each.
+
+    The person checklists on a setup card are copies of one another - Therese,
+    Kathleen and Nicole each get the same list, because each of them does the
+    same setting up. So this reads all of them and keeps the first sighting of
+    each agent rather than trusting any one person's copy to be complete.
+    """
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for checklist in checklists or []:
+        for item in checklist.get("checkItems") or []:
+            url, label = split_item(str(item.get("name") or ""))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            found.append((url, label))
+    return found
+
+
+def plan_spread(
+    setup_held: list[dict], order_held: list[dict]
+) -> tuple[list[Spread], list[str]]:
+    """Which setup-card agents belong on the Lead Order card, and where.
+
+    The setup card is filed by who does the work; the Lead Order card is filed
+    by what was bought. An agent set up days in advance only ever reaches the
+    first, because their New Agent card went to Done the day it was read - so
+    on the day they go live nothing puts them on the second.
+
+    Returns the lines to add and the agents that couldn't be placed. An agent
+    already on the Lead Order card is skipped rather than doubled: the same-day
+    path may have put them there hours earlier.
+    """
+    already = {
+        split_item(str(item.get("name") or ""))[0]
+        for checklist in order_held or []
+        for item in checklist.get("checkItems") or []
+    }
+    names = {
+        " ".join(str(c.get("name") or "").split()).casefold()
+        for c in order_held or []
+    }
+    have = [str(c.get("name") or "") for c in order_held or []]
+
+    spreads: list[Spread] = []
+    problems: list[str] = []
+    for url, label in setup_agents(setup_held):
+        if url in already:
+            continue
+        if not label:
+            problems.append(f"{url} — the setup card's line doesn't say what the leads are")
+            continue
+
+        if is_own_setup(label):
+            landed = OWN_SETUP
+        else:
+            landed = match_checklist(label, have, tier=tier_of(label))
+        checklist = landed or label
+        spreads.append(Spread(
+            url=url,
+            label=label,
+            checklist=checklist,
+            make_checklist=" ".join(checklist.split()).casefold() not in names,
+        ))
+    return spreads, problems
+
+
 def find_setup_card(cards: list[dict], day: date) -> dict | None:
     """The setup card covering a day, wherever on the board it has got to.
 

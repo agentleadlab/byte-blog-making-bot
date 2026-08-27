@@ -616,7 +616,7 @@ CHASE_2 = CHASE_1 + [dailyops.UNMARKED[1]]
 EVENING = CHASE_2 + ["to_quality_check"]
 CHASE_3 = EVENING + [dailyops.UNMARKED[2]]
 CHASE_4 = CHASE_3 + [dailyops.UNMARKED[3]]
-NIGHT = CHASE_4 + ["rollover", "to_done"]
+NIGHT = CHASE_4 + ["rollover", "to_lead_order", "to_done"]
 LATE_NIGHT = NIGHT + ["archive_aged"]
 
 
@@ -658,10 +658,17 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
     assert due.index("rollover") < due.index("to_done")
 
 
+def test_the_setup_agents_reach_the_lead_order_card_before_it_leaves():
+    """A card in Done is finished; writing onto one after the fact is a line missed."""
+    due = dailyops.steps_due(at_hour(20, 30), set())
+
+    assert due.index("to_lead_order") < due.index("to_done")
+
+
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
     assert dailyops.steps_due(at_hour(20, 30), set(CHASE_4)) == [
-        "rollover", "to_done",
+        "rollover", "to_lead_order", "to_done",
     ]
     assert dailyops.steps_due(at_hour(20, 30), set(NIGHT)) == []
 
