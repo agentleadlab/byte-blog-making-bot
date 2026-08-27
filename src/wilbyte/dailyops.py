@@ -326,6 +326,10 @@ class Leftover:
     # A linked card whose badge already reads Done while the box stays unticked.
     # The work looks finished and nobody ticked it, so it is not ours to decide.
     looks_done: bool = False
+    # Already sitting on tomorrow's card. The write step has always skipped
+    # these; the plan needs to know as well, or it offers to move thirteen
+    # items and moves four, and somebody reasonably thinks it went wrong.
+    already: bool = False
     times_rolled: int = 0
 
     @property
@@ -347,11 +351,17 @@ class RolloverPlan:
 
     @property
     def needs_a_look(self) -> list[Leftover]:
-        return [item for item in self.leftovers if item.looks_done or item.stuck]
+        return [
+            item for item in self.leftovers
+            if not item.already and (item.looks_done or item.stuck)
+        ]
 
     @property
     def carried(self) -> list[Leftover]:
-        return [item for item in self.leftovers if not item.looks_done]
+        return [
+            item for item in self.leftovers
+            if not item.looks_done and not item.already
+        ]
 
 
 def unchecked(checklists: list[dict]) -> list[tuple[str, dict]]:
@@ -397,6 +407,17 @@ def plan_rollover(
     existing = {
         " ".join(str(c.get("name") or "").split()).casefold() for c in target_checklists or []
     }
+    # Keyed the same way the write step keys it - person and item together, so
+    # Nicole's line does not count as already there because Kath has one that
+    # reads the same.
+    on_target = {
+        (
+            " ".join(str(c.get("name") or "").split()).casefold(),
+            " ".join(str(held.get("name") or "").split()),
+        )
+        for c in target_checklists or []
+        for held in c.get("checkItems") or []
+    }
     wanted: list[str] = []
 
     for person, item in unchecked(source_checklists):
@@ -412,6 +433,9 @@ def plan_rollover(
                 name=name,
                 carries_link=carries_link,
                 looks_done=looks_done,
+                already=(
+                    " ".join(person.split()).casefold(), " ".join(name.split())
+                ) in on_target,
                 times_rolled=history.get(item_key(kind, person, name), 0),
             )
         )

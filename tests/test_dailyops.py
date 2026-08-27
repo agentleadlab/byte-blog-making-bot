@@ -3224,3 +3224,71 @@ def test_carrying_yesterday_targets_today_not_tomorrow(monkeypatch, config):
 
     assert missing == []
     assert targets["ads"][0] == "In Que-0", "it aimed at the wrong card"
+
+
+# --------------------- items already carried, offered a second time
+
+
+def test_an_item_already_on_tomorrows_card_is_not_offered_again():
+    """"We already did General yesterday." The write step has always skipped
+    these; the plan needs to know too, or it offers thirteen and moves four
+    and somebody reasonably thinks it went wrong."""
+    result = plan(
+        [checklist("Nicole", todo("scan numbers"), todo("chase invoice"))],
+        [checklist("Nicole", todo("scan numbers"))],
+    )
+
+    assert [item.name for item in result.carried] == ["chase invoice"]
+    assert [item.already for item in result.leftovers] == [True, False]
+
+
+def test_a_whole_card_already_carried_offers_nothing():
+    result = plan(
+        [checklist("Nicole", todo("scan numbers"))],
+        [checklist("Nicole", todo("scan numbers"))],
+    )
+
+    assert result.carried == []
+
+
+def test_the_same_line_on_another_persons_list_is_not_the_same_item():
+    """Nicole's line is not already there because Kath has one that reads the
+    same - that is how somebody's work goes missing."""
+    result = plan(
+        [checklist("Nicole", todo("scan numbers"))],
+        [checklist("Kath", todo("scan numbers")), checklist("Nicole")],
+    )
+
+    assert [item.name for item in result.carried] == ["scan numbers"]
+
+
+def test_a_ticked_item_on_tomorrows_card_still_counts_as_there():
+    """Somebody carried it last night and then did it. Putting it back
+    unticked would undo their evening."""
+    result = plan(
+        [checklist("Nicole", todo("scan numbers"))],
+        [checklist("Nicole", done("scan numbers"))],
+    )
+
+    assert result.carried == []
+
+
+def test_one_already_there_is_not_also_raised_as_stuck():
+    """It is not waiting on anybody - it moved."""
+    key = dailyops.item_key("general", "Nicole", "scan numbers")
+    result = plan(
+        [checklist("Nicole", todo("scan numbers"))],
+        [checklist("Nicole", todo("scan numbers"))],
+        history={key: 3},
+    )
+
+    assert result.needs_a_look == []
+
+
+def test_spacing_does_not_make_it_look_new():
+    result = plan(
+        [checklist("Nicole", todo("scan  numbers"))],
+        [checklist("  nicole ", todo("scan numbers"))],
+    )
+
+    assert result.carried == []
