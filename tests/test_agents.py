@@ -1367,12 +1367,19 @@ def test_ascend_is_a_family_of_its_own_like_phoenix():
 
 
 def test_ascend_and_phoenix_are_not_the_same_order():
-    """Both are Standard tier and neither is the other. Reading them as one
-    would let an Ascend agent be set up on Phoenix with nothing flagged."""
+    """Both are Standard tier and neither is the other, which is what keeps
+    them on separate checklists."""
     assert agents.shape_of("Ascend Standard") != agents.shape_of("Phoenix Standard")
+
+
+def test_a_level_order_is_not_compared_against_the_hub():
+    """The Distro Hub is organised by level rather than by lead type, so an
+    Uprise order is confirmed as "PHX STANDARD" and the two words have nothing
+    to do with each other. Landon Brown was set up correctly and raised as
+    wrong."""
     assert agents.wrong_setup(
         "Ascend Standard", ["PHOENIX STANDARD ON DISTRO HUB setup is complete"]
-    ) == ("Ascend Standard", "PHOENIX STANDARD")
+    ) is None
 
 
 def test_ascend_standard_is_a_self_setup_type():
@@ -1434,7 +1441,6 @@ def test_a_phrase_naming_two_kinds_of_leads_is_read_as_both():
     [
         ("OTP Vets - 30 more OTP vets", "OTP FEX"),
         ("14 Spanish OTP IUL", "OTP SPANISH FEX"),
-        ("Ascend Standard", "PHOENIX STANDARD"),
         # Same leads, different tier - still a different product.
         ("Basic Spanish IUL", "OTP SPANISH IUL"),
         # Same leads, different qualifier.
@@ -1505,3 +1511,35 @@ def test_the_older_wordings_still_read_the_same():
     assert agents.find_launch(SPARK, today=today) == date(2026, 8, 27)
     assert agents.find_launch(EVAN, today=today) == date(2026, 8, 26)
     assert agents.find_launch(LARS, today=today) == date(2026, 8, 28)
+
+
+# ------------------ three more correct setups that got raised, 27 Aug
+
+
+@pytest.mark.parametrize(
+    "who,ordered,setup",
+    [
+        # The Distro Hub names the level, not the leads.
+        ("Landon Brown", "Uprise vets", "PHX STANDARD"),
+        ("Caleb Stewart", "Uprise Phoenix Standards JUST FOR ONE WEEK", "PHX STANDARD"),
+        ("Freddy Leon", "phoenix standards", "PHX STANDARD"),
+    ],
+)
+def test_a_level_order_is_never_raised_as_wrong(who, ordered, setup):
+    assert agents.wrong_setup(ordered, [HUB.format(setup)]) is None, who
+
+
+@pytest.mark.parametrize(
+    "said,expected",
+    [
+        ("PHX STANDARD", "standard"),
+        ("phoenix standards", "standard"),
+        ("Uprise Phoenix Standards JUST FOR ONE WEEK", "standard"),
+        ("20 Spanish Basics", "standard"),
+        ("Basic Spanish IUL", "standard"),
+    ],
+)
+def test_standard_is_read_singular_or_plural(said, expected):
+    """"phoenix standards" was reading as naming no tier at all, which made it
+    disagree with a confirmation that named one."""
+    assert agents.tier_of(said) == expected

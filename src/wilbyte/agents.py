@@ -118,7 +118,7 @@ QUALIFIERS = (
 
 # Franklin's rule: standard or basic means Standard; text-verified or OTP
 # means Plus. OTP and text-verified are the same thing said two ways.
-STANDARD = re.compile(r"\bstandard\b|\bbasic\b", re.IGNORECASE)
+STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b", re.IGNORECASE)
 PLUS = re.compile(r"\bplus\b|\btext[\s-]*verified\b|\botp\b", re.IGNORECASE)
 
 # The customer level, which is part of what the leads are rather than a
@@ -524,15 +524,24 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
     a match is Vets against Final Expense, and that is somebody's money going
     to the wrong campaign with the card in Done and nothing looking wrong.
 
-    None when either side says nothing, or says too much. A card with no
-    confirmation yet is not a card set up wrongly; neither is one whose
-    confirmation nobody wrote a lead type into; and neither is one where a
-    phrase names two kinds of leads at once. "OTP WIDOW VET" is one campaign
-    or it is two, and a check that cannot tell has nothing to report - eight
-    correct setups raised as wrong is a check nobody will read the ninth time.
+    None whenever the two cannot honestly be compared, which is often:
+
+    - No confirmation yet, or one nobody wrote a lead type into.
+    - A phrase naming two kinds of leads at once. "OTP WIDOW VET" is one
+      campaign or it is two, and nothing here can tell.
+    - Either side naming a customer level. The Distro Hub is organised by
+      level rather than by lead type, so an Uprise order is confirmed as "PHX
+      STANDARD" and the two words have nothing to do with each other. Landon
+      Brown ordered Uprise vets, was set up correctly, and was raised as
+      wrong.
+
+    Eleven correct setups raised as wrong and none caught is a check nobody
+    reads the twelfth time, so where it cannot tell it says nothing.
     """
     said = setup_said(comments)
     if not ordered or not said:
+        return None
+    if line_word(ordered) or line_word(said):
         return None
     if len(families_in(ordered)) != 1 or len(families_in(said)) != 1:
         return None
