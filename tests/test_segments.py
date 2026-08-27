@@ -360,6 +360,18 @@ def test_a_zoom_topic_is_trimmed_back_to_the_name():
     assert segments.card_title("Maddy Grundig's Zoom Meeting") == "Maddy Grundig Interview"
 
 
+def test_the_name_is_found_when_it_comes_after_the_dash():
+    """"Strategy Session - Maddy Grundig" filed as "Strategy Session Interview"."""
+    assert segments.card_title("Strategy Session - Maddy Grundig") == "Maddy Grundig Interview"
+    assert segments.card_title("Zoom Meeting — Luke Venzlaff") == "Luke Venzlaff Interview"
+
+
+def test_the_first_real_name_wins_when_neither_side_is_filler():
+    assert segments.card_title("Ariel Yezid Castro Barrera - Llamada Con Santiago") == (
+        "Ariel Yezid Castro Barrera Interview"
+    )
+
+
 def test_a_topic_that_already_says_interview_is_not_told_twice():
     assert segments.card_title("Jonny Interview") == "Jonny Interview"
 
@@ -422,6 +434,19 @@ def test_the_play_passcode_comes_off_a_meeting_however_zoom_named_it():
     assert zoom.play_passcode({"recording_play_passcode": "783c%qGu"}) == "783c%qGu"
     assert zoom.play_passcode({"password": "abc123"}) == "abc123"
     assert zoom.play_passcode({"topic": "no passcode here"}) == ""
+
+
+def test_zoom_s_encrypted_blob_is_not_a_passcode_anybody_can_type():
+    """A hundred characters of ciphertext under "Passcode" reached a card once."""
+    blob = "DPkvZkTMSDOb26EEEQAAIAAAAMrsK3w_oAA-4jsNaOZYnxE29lcxHzCa2ntA92x0AVKTWKfGSWtf6-2twQBafMvOODAwMDAwNA"
+    assert zoom.play_passcode({"recording_play_passcode": blob}) == ""
+
+
+def test_the_typed_passcode_wins_over_the_encrypted_one():
+    assert zoom.play_passcode({
+        "recording_play_passcode": "x" * 80,
+        "password": "783c%qGu",
+    }) == "783c%qGu"
 
 
 def test_a_recording_found_by_name_carries_its_passcode():

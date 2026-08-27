@@ -474,28 +474,43 @@ def _tool_block(response):
 
 # What a Zoom topic carries besides the person's name: "Antonio Bohorquez -
 # llamada con Agent Lead Lab", "Maddy Grundig's Zoom Meeting".
-_AFTER_A_DASH = re.compile(r"\s*[-–—|]\s*\S.*$")
+_DASH = re.compile(r"\s[-–—|]\s")
 _MEETING_WORDS = re.compile(
     r"(?:'s|’s)?\s*\b(?:zoom\s+)?(?:meeting|call|interview|strategy\s+session|session)\b.*$",
     re.IGNORECASE,
 )
 
 
+def _says_nothing(part: str) -> bool:
+    """Whether a piece of a topic is only meeting words - "Strategy Session"."""
+    return not _MEETING_WORDS.sub("", part).strip(" -–—|,")
+
+
 def client_name(topic: str) -> str:
     """The person's name out of whatever the recording was called.
 
-    Zoom topics are a name followed by whatever the person who scheduled it
-    typed, so the name is the part before the dash. Trimming is only ever
-    allowed to leave something behind: a topic that is *entirely* meeting words
-    comes back whole rather than empty, because a card called "Interview" names
-    nothing at all.
+    A dashed topic is a name on one side and whatever the person scheduling it
+    typed on the other, and the name is not reliably first: "Strategy Session -
+    Maddy Grundig" filed as "Strategy Session Interview" because the rule
+    assumed it was. So the side that is *not* purely meeting words wins, and
+    only if both sides are does the first one stand.
+
+    Trimming is never allowed to leave nothing behind. A card called
+    "Interview" names nobody, so a topic with no name in it comes back whole.
     """
     text = " ".join((topic or "").split())
-    for pattern in (_AFTER_A_DASH, _MEETING_WORDS):
-        trimmed = pattern.sub("", text).strip(" -–—|,")
-        if trimmed:
-            text = trimmed
-    return text
+    if not text:
+        return ""
+
+    parts = [part.strip(" -–—|,") for part in _DASH.split(text)]
+    parts = [part for part in parts if part]
+    named = [part for part in parts if not _says_nothing(part)]
+    if named:
+        text = named[0]
+    elif parts:
+        text = parts[0]
+
+    return _MEETING_WORDS.sub("", text).strip(" -–—|,") or text
 
 
 def card_title(topic: str) -> str:

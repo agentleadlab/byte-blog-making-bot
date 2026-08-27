@@ -270,11 +270,30 @@ def as_recording(meeting: dict) -> ZoomRecording:
     )
 
 
+# The longest a passcode somebody types can be. Zoom's own limit is ten
+# characters, so this has room to spare and still rules out what it is here to
+# rule out: `recording_play_passcode` frequently comes back as a hundred-odd
+# character encrypted blob, which is what gets appended to a share URL and is
+# emphatically not what a person types into the box. One reached a card.
+MOST_PASSCODE_CHARS = 20
+
+# Tried in this order for the passcode to *show*, plainest first. Matching a
+# pasted one still compares every field in PASSCODE_FIELDS, because there the
+# question is only whether two strings are equal.
+PLAY_PASSCODE_FIELDS = ("password", "recording_password", "recording_play_passcode")
+
+
 def play_passcode(meeting: dict) -> str:
-    """The passcode a viewer types to play the recording, however it's named."""
-    for field in PASSCODE_FIELDS:
+    """The passcode a viewer types to play the recording, or "" if Zoom didn't say.
+
+    Empty rather than a best guess. A card carrying a hundred characters of
+    ciphertext under the word "Passcode" is worse than one carrying no passcode
+    at all: the second is visibly incomplete, and the first wastes somebody's
+    afternoon before they conclude the link is broken.
+    """
+    for field in PLAY_PASSCODE_FIELDS:
         found = str((meeting or {}).get(field) or "").strip()
-        if found:
+        if found and len(found) <= MOST_PASSCODE_CHARS:
             return found
     return ""
 

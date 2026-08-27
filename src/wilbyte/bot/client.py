@@ -1598,6 +1598,7 @@ async def _send_segments(
 
     link = ""
     passcode = ""
+    searched = ""
     if cues is None:
         found = recordings.find_recording(source) if source else None
         try:
@@ -1606,6 +1607,9 @@ async def _send_segments(
                 cues, title, link, passcode = await asyncio.to_thread(
                     jobs.timed_call_by_name, config, wanted
                 )
+                # What was typed beats what Zoom calls it. Half these topics
+                # are "Strategy Session" with the guest's name nowhere in them.
+                searched = wanted
             elif found is not None and found.platform in ("Zoom", "Fathom"):
                 # A Zoom share link is a door with a passcode on it, and the
                 # passcode is how the call gets identified when the link can't.
@@ -1662,9 +1666,7 @@ async def _send_segments(
 
     await _file_interview(
         responder, config, keep,
-        # The name is what the recording is called; for a name search that is
-        # what was typed, which is the client's name already.
-        topic=title or wanted,
+        topic=searched or title,
         link=link or source or "",
         passcode=passcode,
     )
@@ -1689,8 +1691,17 @@ async def _file_interview(
 
     for problem in problems:
         await responder.send(f"⚠ {problem}")
-    if url:
-        await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
+    if not url:
+        return
+
+    await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
+    if link and not passcode:
+        # Zoom only returns a typed passcode on some recordings, and a card
+        # with a link nobody can open is worth one line rather than silence.
+        await responder.send(
+            "-# Zoom didn't give me a passcode for that one — add it to the card "
+            "if the link needs one."
+        )
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:
