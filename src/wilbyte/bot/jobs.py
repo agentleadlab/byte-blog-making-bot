@@ -1007,6 +1007,87 @@ def timed_call_transcript(config: Config, rec) -> tuple[list, str]:
     )
 
 
+def timed_call_by_name(config: Config, words: str) -> tuple[list, str]:
+    """A recording found by who is on it, as timed cues, and what it's called.
+
+    The way round the share link: Zoom's web interface and its API hand out
+    different tokens for the same recording, so a pasted link cannot be
+    matched - but the topic carries the guest's name on both sides.
+    """
+    from .. import zoom
+    from ..segments import SegmentError
+    from ..youtube import parse_timed_captions
+
+    if not (
+        config.secrets.zoom_account_id
+        and config.secrets.zoom_client_id
+        and config.secrets.zoom_client_secret
+    ):
+        raise SegmentError(
+            "Zoom isn't connected here, so I have nothing to search by name."
+        )
+
+    client = zoom.ZoomClient(
+        config.secrets.zoom_account_id,
+        config.secrets.zoom_client_id,
+        config.secrets.zoom_client_secret,
+    )
+    try:
+        meetings = client.account_recordings(days=SEGMENT_LOOKBACK_DAYS)
+        hits = zoom.search_topics(meetings, words)
+
+        if not hits:
+            raise SegmentError(
+                f"Nothing on the account in the last {SEGMENT_LOOKBACK_DAYS} days "
+                f"is named “{words.strip()}”. I looked through "
+                f"{len(meetings)} recording(s).",
+                detail=_topic_list(meetings, limit=25),
+            )
+
+        # Several is not a failure - a recurring call carries the same name
+        # every week - but picking for them would cut the wrong interview.
+        if len(hits) > 1:
+            raise SegmentError(
+                f"{len(hits)} recordings match “{words.strip()}”. Add the date "
+                "or more of the name and I'll take that one.",
+                detail="\n".join(
+                    f"· **{found.topic or '(no topic)'}** {(found.started_at or '')[:10]}"
+                    for found in hits[:15]
+                ),
+            )
+
+        found = hits[0]
+        if not found.has_transcript:
+            raise SegmentError(
+                f"Zoom has no transcript for “{found.topic}”. Audio transcript has "
+                "to be on *before* a call is recorded — it can't be made afterwards."
+            )
+        cues = parse_timed_captions(client.transcript_vtt(found))
+        if not cues:
+            raise SegmentError(f"Zoom's transcript for “{found.topic}” came back empty.")
+        return cues, found.topic
+    finally:
+        client.close()
+
+
+def _topic_list(meetings: list[dict], *, limit: int) -> str:
+    """What is actually on the account, so a miss is a name you can correct."""
+    from .. import zoom
+
+    ordered = sorted(
+        meetings or [], key=lambda m: str(m.get("start_time") or ""), reverse=True
+    )
+    lines = ["What's on the account, newest first:"]
+    for meeting in ordered[:limit]:
+        found = zoom.as_recording(meeting)
+        lines.append(
+            f"· **{found.topic or '(no topic)'}** {(found.started_at or '')[:10]}"
+        )
+    if len(ordered) > limit:
+        lines.append(f"-# …and {len(ordered) - limit} more.")
+    return "\n".join(lines)
+
+
 def _zoom_cues(config: Config, rec) -> tuple[list, str]:
     from .. import zoom
     from ..segments import SegmentError

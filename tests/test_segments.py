@@ -2,7 +2,7 @@
 
 import pytest
 
-from wilbyte import fathom, segments, youtube
+from wilbyte import fathom, segments, youtube, zoom
 from wilbyte.bot import mentions
 from wilbyte.segments import (
     ALWAYS_TAGGED,
@@ -304,6 +304,64 @@ def test_an_error_with_nothing_to_add_says_nothing_extra():
 def test_a_zoom_link_on_its_own_still_files_the_call():
     """The verb is the whole difference - a bare link has always meant 'file this'."""
     assert mentions.parse("<@1> https://us02web.zoom.us/rec/share/abc").action == "recording"
+
+
+# --- finding a Zoom recording by who is on it -------------------------------
+
+
+def _meeting(topic, start, **extra):
+    payload = {"uuid": topic, "topic": topic, "start_time": start}
+    payload.update(extra)
+    return payload
+
+
+ACCOUNT = [
+    _meeting("Antonio Bohorquez - llamada con Agent Lead Lab", "2026-08-03T15:00:00Z"),
+    _meeting("Arlene Linares", "2026-08-21T15:00:00Z"),
+    _meeting("Luke Venzlaff", "2026-08-21T18:00:00Z"),
+    _meeting("Weekly Sales Call", "2026-08-24T15:00:00Z"),
+    _meeting("Weekly Sales Call", "2026-08-17T15:00:00Z"),
+]
+
+
+def test_a_guest_name_finds_the_recording():
+    found = zoom.search_topics(ACCOUNT, "Antonio")
+    assert [r.topic for r in found] == ["Antonio Bohorquez - llamada con Agent Lead Lab"]
+
+
+def test_every_word_has_to_appear_so_a_second_one_narrows():
+    assert zoom.search_topics(ACCOUNT, "Arlene Linares")
+    assert zoom.search_topics(ACCOUNT, "Arlene Venzlaff") == []
+
+
+def test_filler_words_in_a_topic_do_not_widen_the_search():
+    """'Jonny interview' should find what 'Jonny' finds, not nothing."""
+    assert [r.topic for r in zoom.search_topics(ACCOUNT, "Antonio interview call")] == [
+        "Antonio Bohorquez - llamada con Agent Lead Lab"
+    ]
+
+
+def test_a_search_of_only_filler_matches_nothing():
+    """Otherwise 'the call' would return the whole account."""
+    assert zoom.search_topics(ACCOUNT, "the call") == []
+    assert zoom.search_topics(ACCOUNT, "") == []
+
+
+def test_a_repeating_call_comes_back_newest_first():
+    found = zoom.search_topics(ACCOUNT, "Weekly")
+    assert len(found) == 2
+    assert found[0].started_at.startswith("2026-08-24")
+
+
+def test_the_name_search_ignores_case():
+    assert zoom.search_topics(ACCOUNT, "ANTONIO") == zoom.search_topics(ACCOUNT, "antonio")
+
+
+def test_segment_by_name_carries_the_name_through():
+    request = mentions.parse("<@1> segment Antonio Bohorquez")
+    assert request.action == "segments"
+    assert request.source is None
+    assert request.brief == "Antonio Bohorquez"
 
 
 # --- Fathom's timings -------------------------------------------------------

@@ -651,7 +651,9 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "segments":
-                await _send_segments(responder, config, request.source, message)
+                await _send_segments(
+                    responder, config, request.source, message, named=request.brief or ""
+                )
                 return
 
             if request.action == "sweep":
@@ -1561,7 +1563,7 @@ async def _attached_cues(message) -> list | None:
 
 
 async def _send_segments(
-    responder: Responder, config: Config, source: str | None, message
+    responder: Responder, config: Config, source: str | None, message, *, named: str = ""
 ) -> None:
     """Cut one interview into clips and post them, ready to paste."""
     from .. import recordings
@@ -1581,18 +1583,28 @@ async def _send_segments(
             links = mentions.find_sources(replied.content or "")
             source = call.url if call else (links[0] if links else None)
 
-    if cues is None and not source:
+    # A name is the way round a Zoom share link: the web interface and the API
+    # hand out different tokens for the same recording, so the link can never
+    # be matched - but the topic carries the guest's name on both sides.
+    wanted = mentions.ANY_URL_RE.sub(" ", named).strip(" -–—:,")
+
+    if cues is None and not source and not wanted:
         await responder.send(
             "Give me the recording — `@RYTE segment <zoom, fathom or youtube "
-            "link>`, or reply to the message that has it. If the transcript "
-            "can't be reached I'll say so, and you can attach the `.vtt` instead."
+            "link>`, or `@RYTE segment <the guest's name>`, or reply to the "
+            "message that has the link. You can also attach the `.vtt`."
         )
         return
 
     if cues is None:
-        found = recordings.find_recording(source)
+        found = recordings.find_recording(source) if source else None
         try:
-            if found is not None and found.platform in ("Zoom", "Fathom"):
+            if found is None and not source:
+                await responder.send(f"Looking for a recording named “{wanted}”…")
+                cues, title = await asyncio.to_thread(
+                    jobs.timed_call_by_name, config, wanted
+                )
+            elif found is not None and found.platform in ("Zoom", "Fathom"):
                 # A Zoom share link is a door with a passcode on it, and the
                 # passcode is how the call gets identified when the link can't.
                 found.passcode = recordings.find_passcode(said)

@@ -411,6 +411,43 @@ def match_topic(meetings: list[dict], topic: str) -> ZoomRecording | None:
     return as_recording(hits[0])
 
 
+# Words that are in half the topics on the account and so narrow nothing.
+_NOT_A_NAME = {
+    "call", "calls", "meeting", "zoom", "recording", "interview", "con", "with",
+    "and", "the", "agent", "lead", "lab", "llamada", "sales",
+}
+
+
+def search_topics(meetings: list[dict], words: str) -> list[ZoomRecording]:
+    """Every recording whose name contains all of these words, newest first.
+
+    The share token Zoom's web interface hands out is not the one its API
+    returns, so a pasted link can never be matched. The topics, though, are
+    full of people's names - "Antonio Bohorquez - llamada con Agent Lead Lab" -
+    and naming the guest is both how somebody would ask for a call anyway and
+    the only identifier available on both sides.
+
+    Every word has to appear, so a second word narrows rather than widens. The
+    filler that shows up in most topics is ignored, so "Jonny interview" finds
+    the same thing "Jonny" does instead of nothing.
+    """
+    wanted = [
+        word
+        for word in re.findall(r"[a-z0-9]+", (words or "").casefold())
+        if len(word) > 1 and word not in _NOT_A_NAME
+    ]
+    if not wanted:
+        return []
+
+    hits = [
+        meeting
+        for meeting in meetings or []
+        if all(word in str(meeting.get("topic") or "").casefold() for word in wanted)
+    ]
+    hits.sort(key=lambda meeting: str(meeting.get("start_time") or ""), reverse=True)
+    return [as_recording(meeting) for meeting in hits]
+
+
 def choose(
     meetings: list[dict],
     *,
