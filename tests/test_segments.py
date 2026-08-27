@@ -346,6 +346,78 @@ def test_a_zoom_link_on_its_own_still_files_the_call():
     assert mentions.parse("<@1> https://us02web.zoom.us/rec/share/abc").action == "recording"
 
 
+# --- the board card ---------------------------------------------------------
+
+
+def test_the_card_is_named_after_the_client():
+    assert segments.card_title("Maddy Grundig") == "Maddy Grundig Interview"
+
+
+def test_a_zoom_topic_is_trimmed_back_to_the_name():
+    assert segments.card_title("Antonio Bohorquez - llamada con Agent Lead Lab") == (
+        "Antonio Bohorquez Interview"
+    )
+    assert segments.card_title("Maddy Grundig's Zoom Meeting") == "Maddy Grundig Interview"
+
+
+def test_a_topic_that_already_says_interview_is_not_told_twice():
+    assert segments.card_title("Jonny Interview") == "Jonny Interview"
+
+
+def test_trimming_never_leaves_the_card_with_no_name():
+    """A card called "Interview" names nothing, so a whole topic beats nothing."""
+    assert segments.card_title("Zoom Meeting") == "Zoom Meeting Interview"
+    assert segments.card_title("") == "Interview"
+
+
+def test_the_card_lists_every_stamp_and_title_then_the_recording():
+    keep, _ = parse_segments({"segments": [
+        _raw("00:00:01", "00:31:55", kind="long-form", yt_title="$55K a Month"),
+        _raw("00:00:22", "00:05:00", yt_title="First Call She Ever Made Was a Sale"),
+        _raw("00:05:00", "00:10:57", yt_title="She Tried the Full Script Once"),
+    ]})
+    text = segments.as_card(
+        keep, link="https://us06web.zoom.us/rec/share/abc", passcode="783c%qGu"
+    )
+    lines = [line for line in text.splitlines() if line]
+    assert lines[0] == "LONG-FORM / FULL INTERVIEW (00:00:22–00:31:55) $55K a Month"
+    assert lines[1] == "SEGMENT 1 (00:00:22–00:05:00) First Call She Ever Made Was a Sale"
+    assert lines[2] == "SEGMENT 2 (00:05:00–00:10:57) She Tried the Full Script Once"
+    assert lines[3] == "https://us06web.zoom.us/rec/share/abc"
+    assert lines[4] == "Passcode: 783c%qGu"
+
+
+def test_the_card_carries_no_passcode_line_when_there_is_no_passcode():
+    keep, _ = parse_segments({"segments": [_raw("00:00:00", "00:08:00")]})
+    assert "Passcode" not in segments.as_card(keep, link="https://youtu.be/abc")
+
+
+def test_the_clips_are_numbered_past_the_long_form_not_including_it():
+    keep, _ = parse_segments({"segments": [
+        _raw("00:00:00", "00:31:00", kind="long-form"),
+        _raw("00:00:00", "00:08:00"),
+    ]})
+    assert "SEGMENT 1 " in segments.as_card(keep)
+    assert "SEGMENT 2 " not in segments.as_card(keep)
+
+
+def test_the_play_passcode_comes_off_a_meeting_however_zoom_named_it():
+    assert zoom.play_passcode({"recording_play_passcode": "783c%qGu"}) == "783c%qGu"
+    assert zoom.play_passcode({"password": "abc123"}) == "abc123"
+    assert zoom.play_passcode({"topic": "no passcode here"}) == ""
+
+
+def test_a_recording_found_by_name_carries_its_passcode():
+    """There's no pasted link on a name search, so the card needs Zoom's own."""
+    found = zoom.as_recording({
+        "topic": "Maddy Grundig",
+        "share_url": "https://us06web.zoom.us/rec/share/xyz",
+        "recording_play_passcode": "783c%qGu",
+    })
+    assert found.share_url.endswith("xyz")
+    assert found.passcode == "783c%qGu"
+
+
 # --- finding a Zoom recording by who is on it -------------------------------
 
 

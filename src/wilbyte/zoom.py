@@ -50,6 +50,9 @@ class ZoomRecording:
     started_at: str = ""
     transcript_url: str = ""
     participants: tuple[str, ...] = ()
+    # What a viewer types to play it. Carried so a recording found by name can
+    # be handed on with the passcode that makes its link usable.
+    passcode: str = ""
     # Zoom's own identity for the meeting, so a call filed once isn't offered
     # again when the next link can't be matched.
     uid: str = ""
@@ -263,7 +266,17 @@ def as_recording(meeting: dict) -> ZoomRecording:
         started_at=str(meeting.get("start_time") or ""),
         transcript_url=pick_transcript(meeting.get("recording_files") or []),
         uid=meeting_id(meeting),
+        passcode=play_passcode(meeting),
     )
+
+
+def play_passcode(meeting: dict) -> str:
+    """The passcode a viewer types to play the recording, however it's named."""
+    for field in PASSCODE_FIELDS:
+        found = str((meeting or {}).get(field) or "").strip()
+        if found:
+            return found
+    return ""
 
 
 def links_on(meeting: dict) -> list[str]:

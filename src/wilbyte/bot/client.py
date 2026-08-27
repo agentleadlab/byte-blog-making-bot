@@ -1596,12 +1596,14 @@ async def _send_segments(
         )
         return
 
+    link = ""
+    passcode = ""
     if cues is None:
         found = recordings.find_recording(source) if source else None
         try:
             if found is None and not source:
                 await responder.send(f"Looking for a recording named “{wanted}”…")
-                cues, title = await asyncio.to_thread(
+                cues, title, link, passcode = await asyncio.to_thread(
                     jobs.timed_call_by_name, config, wanted
                 )
             elif found is not None and found.platform in ("Zoom", "Fathom"):
@@ -1609,7 +1611,7 @@ async def _send_segments(
                 # passcode is how the call gets identified when the link can't.
                 found.passcode = recordings.find_passcode(said)
                 await responder.send(f"Looking that {found.platform} recording up…")
-                cues, title = await asyncio.to_thread(
+                cues, title, link, passcode = await asyncio.to_thread(
                     jobs.timed_call_transcript, config, found
                 )
             else:
@@ -1658,51 +1660,37 @@ async def _send_segments(
     for segment in keep:
         await responder.send(segment.as_text(), quiet=True)
 
-    await _file_segments(
-        responder, keep, payload,
-        heading=title,
-        link=source or "",
-        said=f"{message.content or ''}\n{named}",
+    await _file_interview(
+        responder, config, keep,
+        # The name is what the recording is called; for a name search that is
+        # what was typed, which is the client's name already.
+        topic=title or wanted,
+        link=link or source or "",
+        passcode=passcode,
     )
 
 
-async def _file_segments(
-    responder: Responder, keep, payload: dict, *, heading: str, link: str, said: str
+async def _file_interview(
+    responder: Responder, config: Config, keep, *, topic: str, link: str, passcode: str
 ) -> None:
-    """Append the segments to the Google Doc, when one is set.
+    """Put the cut-up interview on the board as a card in Marketing Department."""
+    from .. import segments as segmenting
 
-    Nothing is written until SEGMENTS_DOC_ID is filled in or a doc link is
-    posted with the command. Writing into a shared document is not something to
-    start doing because a feature shipped - setting the variable is the act
-    that asks for it.
-    """
-    from .. import gdocs
-
-    wanted = ""
-    found = re.search(r"https://docs\.google\.com/document/\S+", said or "")
-    if found:
-        wanted = found.group(0).rstrip(".,;)>")
-    elif not gdocs.configured_doc():
-        await responder.send(
-            f"-# Set `{gdocs.DOC_ID_VAR}` in the .env, or paste the doc link with "
-            "the command, and I'll write these into it as well."
-        )
-        return
+    name = segmenting.card_title(topic)
+    description = segmenting.as_card(keep, link=link, passcode=passcode)
 
     try:
-        url = await asyncio.to_thread(
-            gdocs.append,
-            keep,
-            document=wanted,
-            heading=heading,
-            link=link,
-            summary=str(payload.get("summary") or "").strip(),
+        url, problems = await asyncio.to_thread(
+            jobs.file_interview, config, name=name, description=description
         )
-    except gdocs.DocsError as exc:
-        await responder.send(embed=embeds.error(f"Couldn't add these to the doc. {exc}"))
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't make the board card: {exc}"))
         return
 
-    await responder.send(f"Added to the doc: <{url}>", quiet=True)
+    for problem in problems:
+        await responder.send(f"⚠ {problem}")
+    if url:
+        await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:

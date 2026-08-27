@@ -472,6 +472,63 @@ def _tool_block(response):
     )
 
 
+# What a Zoom topic carries besides the person's name: "Antonio Bohorquez -
+# llamada con Agent Lead Lab", "Maddy Grundig's Zoom Meeting".
+_AFTER_A_DASH = re.compile(r"\s*[-–—|]\s*\S.*$")
+_MEETING_WORDS = re.compile(
+    r"(?:'s|’s)?\s*\b(?:zoom\s+)?(?:meeting|call|interview|strategy\s+session|session)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def client_name(topic: str) -> str:
+    """The person's name out of whatever the recording was called.
+
+    Zoom topics are a name followed by whatever the person who scheduled it
+    typed, so the name is the part before the dash. Trimming is only ever
+    allowed to leave something behind: a topic that is *entirely* meeting words
+    comes back whole rather than empty, because a card called "Interview" names
+    nothing at all.
+    """
+    text = " ".join((topic or "").split())
+    for pattern in (_AFTER_A_DASH, _MEETING_WORDS):
+        trimmed = pattern.sub("", text).strip(" -–—|,")
+        if trimmed:
+            text = trimmed
+    return text
+
+
+def card_title(topic: str) -> str:
+    """"Maddy Grundig" -> "Maddy Grundig Interview"."""
+    name = client_name(topic)
+    if not name:
+        return "Interview"
+    return name if name.casefold().endswith("interview") else f"{name} Interview"
+
+
+def as_card(segments: list[Segment], *, link: str = "", passcode: str = "") -> str:
+    """The card's description: every stamp and title, then the recording.
+
+    An index, not the copy. Whoever opens this card wants to see what the
+    interview was cut into and be able to go and watch it; the descriptions
+    themselves are in Discord to be pasted where they are actually used.
+    """
+    lines: list[str] = []
+    number = 0
+    for segment in segments:
+        if segment.long_form:
+            lines.append(f"LONG-FORM / FULL INTERVIEW ({segment.range}) {segment.yt_title}")
+            continue
+        number += 1
+        lines.append(f"SEGMENT {number} ({segment.range}) {segment.yt_title}")
+
+    if link:
+        lines.append(link)
+    if passcode:
+        lines.append(f"Passcode: {passcode}")
+    return "\n\n".join(lines)
+
+
 def opening(payload: dict, *, kept: int, short: list[Segment]) -> str:
     """What goes above the segments: the summary, the quote, and any drops."""
     lines: list[str] = []

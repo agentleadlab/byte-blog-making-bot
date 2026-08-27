@@ -988,8 +988,8 @@ def fathom_read(config: Config, rec, found, *, client=None) -> str:
 SEGMENT_LOOKBACK_DAYS = 90
 
 
-def timed_call_transcript(config: Config, rec) -> tuple[list, str]:
-    """A posted Zoom or Fathom recording as timed cues, and what it's called.
+def timed_call_transcript(config: Config, rec) -> tuple[list, str, str, str]:
+    """A recording as timed cues, plus its name, its link and its passcode.
 
     The same matching as filing, so a link resolves to the same call either
     way - but nothing is remembered as filed here. Segmenting is reading, and
@@ -1007,8 +1007,41 @@ def timed_call_transcript(config: Config, rec) -> tuple[list, str]:
     )
 
 
-def timed_call_by_name(config: Config, words: str) -> tuple[list, str]:
-    """A recording found by who is on it, as timed cues, and what it's called.
+def file_interview(config: Config, *, name: str, description: str) -> tuple[str, list[str]]:
+    """Put a cut-up interview on the board. (card url, problems).
+
+    A new card every time, never an edit of one already there: two interviews
+    with the same person are two videos, and the second silently overwriting
+    the first would lose a set of timestamps nobody has a copy of.
+    """
+    from .. import dailyops, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        home = trello.find_list(lists, dailyops.MARKETING)
+        if home is None:
+            return "", [f"The board has no list called {dailyops.MARKETING!r}."]
+
+        try:
+            card = client.create_card(str(home.get("id") or ""), name)
+        except Exception as exc:
+            return "", [f"Couldn't make the card — {_short(exc, 160)}"]
+
+        # The description is a second request, so it can fail on its own. Say
+        # so rather than reporting a card that is there and empty as filed.
+        problems: list[str] = []
+        try:
+            client.set_description(str(card.get("id") or ""), description)
+        except Exception as exc:
+            problems.append(f"Made the card but couldn't write its description — {_short(exc, 160)}")
+        return str(card.get("url") or ""), problems
+    finally:
+        client.close()
+
+
+def timed_call_by_name(config: Config, words: str) -> tuple[list, str, str, str]:
+    """A recording found by who is on it: cues, name, link and passcode.
 
     The way round the share link: Zoom's web interface and its API hand out
     different tokens for the same recording, so a pasted link cannot be
@@ -1065,7 +1098,7 @@ def timed_call_by_name(config: Config, words: str) -> tuple[list, str]:
         cues = parse_timed_captions(client.transcript_vtt(found))
         if not cues:
             raise SegmentError(f"Zoom's transcript for “{found.topic}” came back empty.")
-        return cues, found.topic
+        return cues, found.topic, found.share_url, found.passcode
     finally:
         client.close()
 
@@ -1088,7 +1121,7 @@ def _topic_list(meetings: list[dict], *, limit: int) -> str:
     return "\n".join(lines)
 
 
-def _zoom_cues(config: Config, rec) -> tuple[list, str]:
+def _zoom_cues(config: Config, rec) -> tuple[list, str, str, str]:
     from .. import zoom
     from ..segments import SegmentError
     from ..youtube import parse_timed_captions
@@ -1137,12 +1170,14 @@ def _zoom_cues(config: Config, rec) -> tuple[list, str]:
         cues = parse_timed_captions(client.transcript_vtt(found))
         if not cues:
             raise SegmentError(f"Zoom's transcript for “{found.topic}” came back empty.")
-        return cues, found.topic
+        # The pasted link rather than the API's: they are different tokens for
+        # the same recording, and the pasted one is what the team already uses.
+        return cues, found.topic, rec.url or found.share_url, rec.passcode or found.passcode
     finally:
         client.close()
 
 
-def _fathom_cues(config: Config, rec) -> tuple[list, str]:
+def _fathom_cues(config: Config, rec) -> tuple[list, str, str, str]:
     from .. import fathom
     from ..segments import SegmentError
     from ..youtube import Cue
@@ -1178,7 +1213,7 @@ def _fathom_cues(config: Config, rec) -> tuple[list, str]:
             else:
                 end = start + len(text.split()) / fathom.WORDS_A_SECOND
             cues.append(Cue(start=start, end=max(end, start + 1), text=text))
-        return cues, found.title
+        return cues, found.title, getattr(found, "url", "") or rec.url, ""
     finally:
         client.close()
 

@@ -55,6 +55,10 @@ UNMARKED = (
 # on the board is read by it, let alone archived - see `jobs.aged_to_archive`.
 AGED_DONE = "Aged Leads Order Done"
 
+# Where a cut-up interview is filed, as a card naming the client with the
+# segment stamps in its description.
+MARKETING = "Marketing Department"
+
 # (hour, minute, what happens). Local time on the board's own clock - the
 # team's, not the server's.
 #
