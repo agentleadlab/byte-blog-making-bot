@@ -290,6 +290,27 @@ def test_segment_takes_a_fathom_link():
     assert request.source == "https://fathom.video/share/xyz789"
 
 
+def test_a_short_segment_is_named_back_to_the_model_with_its_length():
+    """Dropping four of seven left holes in the video; folding them in doesn't."""
+    _keep, short = parse_segments({
+        "segments": [_raw("00:00:00", "00:08:00"), _raw("00:11:01", "00:14:34")],
+    })
+    note = segments.too_short_note(short)
+    assert "00:11:01–00:14:34 (3:33)" in note
+    assert "folded into the segment beside it" in note
+    assert "Do not simply drop them" in note
+
+
+def test_the_lengths_of_a_payload_that_is_entirely_too_short():
+    """Everything short raises rather than returning, so the retry needs this."""
+    payload = {"segments": [_raw("00:00:00", "00:03:00"), _raw("00:03:00", "00:06:00")]}
+    with pytest.raises(SegmentError):
+        parse_segments(payload)
+    assert [s.range for s in segments.parse_lengths(payload)] == [
+        "00:00:00–00:03:00", "00:03:00–00:06:00",
+    ]
+
+
 def test_a_failure_can_carry_the_evidence_behind_it():
     """"I couldn't find it" has three causes and they look identical in Discord."""
     exc = SegmentError("Nothing matched.", detail="What Zoom returned: ...")

@@ -1652,8 +1652,10 @@ async def _send_segments(
     await responder.send(segmenting.opening(payload, kept=len(keep), short=short))
     # One message per segment, in plain text rather than an embed: these get
     # copied straight into the doc, and an embed is not selectable that way.
+    # Quiet, because every description ends in four Agent Lead Lab links and
+    # four preview cards under each clip bury the text being copied.
     for segment in keep:
-        await responder.send(segment.as_text())
+        await responder.send(segment.as_text(), quiet=True)
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:

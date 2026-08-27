@@ -57,11 +57,16 @@ class Responder:
     requester_id: int | None
     channel_id: int | None
 
-    async def send(self, content=None, *, embed=None, file=None, view=None):
+    async def send(self, content=None, *, embed=None, file=None, view=None, quiet=False):
         """Send one reply, in as many pieces as Discord's limit requires.
 
         The embed, file and view ride on the last piece so the buttons end up
         under the whole thing rather than halfway through it.
+
+        `quiet` stops Discord unfurling the links in the message into preview
+        cards. Any message that is mostly there to be copied out wants it: the
+        segment descriptions end in four Agent Lead Lab links, and four preview
+        cards under every clip buries the text somebody is trying to select.
         """
         pieces = split_message(content) if content is not None else [None]
         last = None
@@ -72,14 +77,15 @@ class Responder:
                 embed=embed if final else None,
                 file=file if final else None,
                 view=view if final else None,
+                quiet=quiet,
             )
         return last
 
-    async def _send_one(self, content=None, *, embed=None, file=None, view=None):
+    async def _send_one(self, content=None, *, embed=None, file=None, view=None, quiet=False):
         raise NotImplementedError
 
     @staticmethod
-    def _kwargs(content, embed, file, view) -> dict:
+    def _kwargs(content, embed, file, view, quiet=False) -> dict:
         # discord.py treats an explicit None differently from an omitted kwarg
         # in some versions, so only pass what's actually set.
         payload = {}
@@ -91,6 +97,8 @@ class Responder:
             payload["file"] = file
         if view is not None:
             payload["view"] = view
+        if quiet:
+            payload["suppress_embeds"] = True
         return payload
 
 
@@ -100,9 +108,9 @@ class InteractionResponder(Responder):
         self.requester_id = interaction.user.id
         self.channel_id = interaction.channel_id
 
-    async def _send_one(self, content=None, *, embed=None, file=None, view=None):
+    async def _send_one(self, content=None, *, embed=None, file=None, view=None, quiet=False):
         return await self.interaction.followup.send(
-            **self._kwargs(content, embed, file, view)
+            **self._kwargs(content, embed, file, view, quiet)
         )
 
 
@@ -113,8 +121,8 @@ class MessageResponder(Responder):
         self.channel_id = message.channel.id
         self._replied = False
 
-    async def _send_one(self, content=None, *, embed=None, file=None, view=None):
-        payload = self._kwargs(content, embed, file, view)
+    async def _send_one(self, content=None, *, embed=None, file=None, view=None, quiet=False):
+        payload = self._kwargs(content, embed, file, view, quiet)
         # Reply to the mention once so the thread is easy to follow, then keep
         # the rest as plain channel messages to avoid a wall of reply chips.
         if not self._replied:
@@ -138,5 +146,5 @@ class ChannelResponder(Responder):
         self.requester_id = requester_id
         self.channel_id = getattr(channel, "id", None)
 
-    async def _send_one(self, content=None, *, embed=None, file=None, view=None):
-        return await self.channel.send(**self._kwargs(content, embed, file, view))
+    async def _send_one(self, content=None, *, embed=None, file=None, view=None, quiet=False):
+        return await self.channel.send(**self._kwargs(content, embed, file, view, quiet))

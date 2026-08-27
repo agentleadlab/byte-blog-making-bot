@@ -323,6 +323,30 @@ def _one_segment(raw: dict) -> Segment:
     )
 
 
+def too_short_note(short: list[Segment]) -> str:
+    """Told back to the model: which segments missed the floor, and by how much."""
+    named = "\n".join(
+        f"· {segment.range} ({length_of(segment.seconds)}) — {segment.yt_title}"
+        for segment in short
+    )
+    return (
+        f"These came back under {MIN_SECONDS // 60} minutes, so they can't be "
+        f"published and their part of the video is lost:\n{named}\n\n"
+        "Emit the complete set again with every one of them folded into the "
+        "segment beside it or extended to the next natural boundary. Merging two "
+        "adjacent short ones into a single longer segment is usually the right "
+        "move — rewrite the title and both descriptions to cover the whole of the "
+        "new span. Do not simply drop them: the video has to stay covered end to "
+        "end. Keep the segments that were already long enough as they are."
+    )
+
+
+# One retry. The floor is arithmetic the model can check itself, so being told
+# exactly which ranges missed it fixes almost every case; a second retry has
+# nothing new to say and costs another full pass over the transcript.
+RETRIES = 1
+
+
 def generate_segments(
     cues: list[Cue],
     config: Config,
@@ -330,8 +354,16 @@ def generate_segments(
     title: str = "",
     url: str = "",
     prompt_path: Path | None = None,
+    retries: int = RETRIES,
 ) -> tuple[dict, list[Segment], list[Segment]]:
-    """Call Claude and return (payload, segments to keep, segments too short)."""
+    """Call Claude and return (payload, segments to keep, segments too short).
+
+    A segment that lands under the floor is handed back to the model rather
+    than dropped on the first answer. Four of seven came back at three and a
+    half minutes on the first real interview, and dropping them left four holes
+    in a video that is supposed to be covered end to end - which is a worse
+    outcome than the long segment it should have been folded into.
+    """
     if not cues:
         raise SegmentError("The transcript came back with no lines in it.")
 
@@ -340,29 +372,59 @@ def generate_segments(
     from anthropic import Anthropic
 
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    system = [{
+        "type": "text",
+        "text": load_prompt(prompt_path),
+        "cache_control": {"type": "ephemeral"},
+    }]
+    messages = [{
+        "role": "user",
+        "content": build_user_message(cues, title=title, url=url),
+    }]
 
-    try:
-        response = client.messages.create(
-            model=config.copy.model,
-            max_tokens=MAX_TOKENS,
-            system=[{
-                "type": "text",
-                "text": load_prompt(prompt_path),
-                "cache_control": {"type": "ephemeral"},
-            }],
-            tools=[SEGMENT_TOOL],
-            tool_choice={"type": "tool", "name": "emit_segments"},
-            messages=[{
-                "role": "user",
-                "content": build_user_message(cues, title=title, url=url),
-            }],
-        )
-    except Exception as exc:
-        raise SegmentError(f"Anthropic request failed: {exc}") from exc
+    for attempt in range(retries + 1):
+        last = attempt == retries
+        try:
+            response = client.messages.create(
+                model=config.copy.model,
+                max_tokens=MAX_TOKENS,
+                system=system,
+                tools=[SEGMENT_TOOL],
+                tool_choice={"type": "tool", "name": "emit_segments"},
+                messages=messages,
+            )
+        except Exception as exc:
+            raise SegmentError(f"Anthropic request failed: {exc}") from exc
 
-    payload = _tool_input(response)
-    keep, short = parse_segments(payload)
-    return payload, keep, short
+        block = _tool_block(response)
+        payload = dict(block.input)
+        try:
+            keep, short = parse_segments(payload)
+        except SegmentError:
+            # Everything came back short. That is exactly the case worth
+            # asking again about, so it is only fatal on the last attempt.
+            if last:
+                raise
+            keep, short = [], parse_lengths(payload)
+
+        if not short or last:
+            return payload, keep, short
+
+        messages = messages + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": too_short_note(short),
+            }]},
+        ]
+
+    raise SegmentError("Segmenting produced nothing.")  # unreachable
+
+
+def parse_lengths(payload: dict) -> list[Segment]:
+    """Every segment in a payload, however short - for reporting one back."""
+    return [_one_segment(raw) for raw in payload.get("segments") or []]
 
 
 # A 40-minute interview comes back as a dozen entries with a description each,
@@ -370,7 +432,8 @@ def generate_segments(
 MAX_TOKENS = 16000
 
 
-def _tool_input(response) -> dict:
+def _tool_block(response):
+    """The emit_segments call itself - its id is what a retry replies to."""
     if getattr(response, "stop_reason", None) == "max_tokens":
         raise SegmentError(
             "The model ran out of room part-way through, so the last segments are "
@@ -378,7 +441,7 @@ def _tool_input(response) -> dict:
         )
     for block in response.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "emit_segments":
-            return dict(block.input)
+            return block
     raise SegmentError(
         "Model did not call emit_segments. Raw stop reason: "
         f"{getattr(response, 'stop_reason', 'unknown')}"
