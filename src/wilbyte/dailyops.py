@@ -168,6 +168,32 @@ _KIND_PATTERNS = (
 _DATE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 
 
+_YESTERDAY = re.compile(r"\byesterday\b|\blast\s+night\b", re.IGNORECASE)
+# A day typed into a command, where the year is usually left off.
+_DAY_SAID = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
+
+
+def day_named(text: str, *, today: date) -> date | None:
+    """The day somebody asked about, or None when they meant today.
+
+    "rollover yesterday" is how last night's skipped cards get carried in the
+    morning: the rollover always works from a day to the day after it, so
+    running it today would read today's cards and miss the ones held back.
+    """
+    said = " ".join((text or "").split())
+    if _YESTERDAY.search(said):
+        return today - timedelta(days=1)
+    found = _DAY_SAID.search(said)
+    if not found:
+        return None
+    month, day, year = found.groups()
+    number = int(year) + (2000 if year and int(year) < 100 else 0) if year else today.year
+    try:
+        return date(number, int(month), int(day))
+    except ValueError:
+        return None
+
+
 def kind_named(text: str) -> str | None:
     """Which of the four somebody meant, or None for all of them.
 
@@ -412,10 +438,20 @@ def next_day(day: date) -> date:
     return day + timedelta(days=1)
 
 
-def summarise(plans: list[RolloverPlan]) -> str:
-    """A short report of a rollover, for reading before anything is written."""
+def summarise(plans: list[RolloverPlan], *, missing=()) -> str:
+    """A short report of a rollover, for reading before anything is written.
+
+    No plans has two quite different causes and they were being reported as
+    the same one. Everything ticked is a day finished; nowhere to put it is a
+    card Zapier has not made yet, and saying the first when it is the second
+    sends somebody looking at the wrong thing.
+    """
     if not plans:
-        return "Nothing to roll over — every item is ticked."
+        return (
+            "Nothing to roll over — there's no card for tomorrow to move it onto."
+            if missing else
+            "Nothing to roll over — every item is ticked."
+        )
 
     lines = []
     for plan in plans:

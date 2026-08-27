@@ -2622,20 +2622,36 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
 
     only = dailyops.kind_named(named)
     which = dailyops.CARD_KINDS.get(only, "") if only else ""
+    today = await asyncio.to_thread(jobs.board_day, config)
+    # "rollover yesterday" - the carry always works from a day to the day
+    # after it, so running it today reads today's cards and leaves last
+    # night's held-back ones exactly where they are.
+    asked_for = dailyops.day_named(named, today=today)
+    day = asked_for or today
+    # A hold was "not on the automatic run". Asking for that day by hand is
+    # asking for it anyway, and honouring the hold here would make last
+    # night's skip impossible to undo the morning after.
+    skip = [] if asked_for else None
+
     await responder.send(
-        f"Reading {which or 'the board'} — nothing will move yet."
+        f"Reading {which or 'the board'}"
+        + (f" for {day:%a %b %d}" if asked_for else "")
+        + " — nothing will move yet."
     )
     try:
         plans, missing, targets = await asyncio.to_thread(
-            partial(jobs.read_rollover, config, only=only)
+            partial(jobs.read_rollover, config, only=only, day=day, skip=skip)
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
 
-    report = dailyops.summarise(plans)
+    report = dailyops.summarise(plans, missing=missing)
     if missing:
-        report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
+        report += (
+            f"\n⚠ No card for {dailyops.next_day(day):%m/%d/%y} yet: "
+            f"{', '.join(missing)}"
+        )
 
     movable = sum(
         1 for plan in plans for item in plan.carried if not item.stuck
@@ -2660,7 +2676,7 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
 
     try:
         moved, problems = await asyncio.to_thread(
-            jobs.apply_rollover, config, plans, targets
+            partial(jobs.apply_rollover, config, plans, targets, day=day)
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))

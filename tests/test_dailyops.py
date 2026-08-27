@@ -3136,3 +3136,91 @@ def test_the_preview_leaves_the_held_card_out_too(monkeypatch, config, tmp_path)
     found, _ = jobs.moves_waiting(config, "to_done", day=day)
 
     assert found == ["💎 General 08/25/26"]
+
+
+# ------------------------------- carrying a day that was held back last night
+
+
+@pytest.mark.parametrize(
+    "said,expected",
+    [
+        ("rollover yesterday", date(2026, 8, 26)),
+        ("rollover last night", date(2026, 8, 26)),
+        ("rollover lead order yesterday", date(2026, 8, 26)),
+        ("rollover 08/26", date(2026, 8, 26)),
+        ("rollover 08/26/26", date(2026, 8, 26)),
+        ("rollover 8/26", date(2026, 8, 26)),
+        # Nothing named means today, and the caller decides what that is.
+        ("rollover", None),
+        ("rollover general", None),
+        ("trello rollover skip ads", None),
+        # A date that is not one.
+        ("rollover 13/45", None),
+    ],
+)
+def test_which_day_somebody_asked_to_carry(said, expected):
+    assert dailyops.day_named(said, today=date(2026, 8, 27)) == expected
+
+
+def test_nothing_to_carry_says_which_of_the_two_reasons():
+    """Everything ticked is a day finished. Nowhere to put it is a card Zapier
+    has not made yet, and saying the first when it is the second sends
+    somebody looking at the wrong thing."""
+    assert "every item is ticked" in dailyops.summarise([])
+    assert "no card for tomorrow" in dailyops.summarise([], missing=["Lead Order"])
+
+
+def test_a_day_asked_for_by_hand_ignores_the_hold(monkeypatch, config, tmp_path):
+    """The hold was "not on the automatic run". Asking for that day by hand is
+    asking for it anyway - otherwise last night's skip is impossible to undo
+    the morning after."""
+    from wilbyte import rollskip
+    from wilbyte.bot import jobs
+
+    store = tmp_path / "skip.json"
+    yesterday = date(2026, 8, 26)
+    rollskip.hold(yesterday, ["lead_order", "ads"], store)
+    monkeypatch.setattr(rollskip, "SKIP_PATH", store)
+
+    names = {
+        "In Que": ["Lead Order 08/27/26", "📊 Ads 08/27/26"],
+        "Quality Check": ["Lead Order 08/26/26", "📊 Ads 08/26/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    # What the automatic run would have done last night: nothing.
+    _p, _m, held_back = jobs.read_rollover(config, day=yesterday)
+    assert held_back == {}
+
+    # What "rollover yesterday" does this morning.
+    _p, _m, targets = jobs.read_rollover(config, day=yesterday, skip=[])
+    assert sorted(targets) == ["ads", "lead_order"]
+
+
+def test_carrying_yesterday_targets_today_not_tomorrow(monkeypatch, config):
+    """The 08/26 cards' items land on the 08/27 cards, which is what was
+    skipped - not on 08/28, which does not exist yet."""
+    from wilbyte.bot import jobs
+
+    names = {
+        "In Que": ["📊 Ads 08/27/26"],
+        "Quality Check": ["📊 Ads 08/26/26"],
+    }
+    board = FakeBoard({
+        name: [{"id": f"{name}-{i}", "name": card} for i, card in enumerate(cards)]
+        for name, cards in names.items()
+    })
+    board.card_checklists = lambda card_id: []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    _plans, missing, targets = jobs.read_rollover(
+        config, day=date(2026, 8, 26), skip=[]
+    )
+
+    assert missing == []
+    assert targets["ads"][0] == "In Que-0", "it aimed at the wrong card"
