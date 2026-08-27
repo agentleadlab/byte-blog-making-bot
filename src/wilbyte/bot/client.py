@@ -1649,13 +1649,60 @@ async def _send_segments(
         await responder.send(embed=embeds.error(str(exc)))
         return
 
-    await responder.send(segmenting.opening(payload, kept=len(keep), short=short))
+    summary = segmenting.opening(payload, kept=len(keep), short=short)
+    await responder.send(summary)
     # One message per segment, in plain text rather than an embed: these get
     # copied straight into the doc, and an embed is not selectable that way.
     # Quiet, because every description ends in four Agent Lead Lab links and
     # four preview cards under each clip bury the text being copied.
     for segment in keep:
         await responder.send(segment.as_text(), quiet=True)
+
+    await _file_segments(
+        responder, keep, payload,
+        heading=title,
+        link=source or "",
+        said=f"{message.content or ''}\n{named}",
+    )
+
+
+async def _file_segments(
+    responder: Responder, keep, payload: dict, *, heading: str, link: str, said: str
+) -> None:
+    """Append the segments to the Google Doc, when one is set.
+
+    Nothing is written until SEGMENTS_DOC_ID is filled in or a doc link is
+    posted with the command. Writing into a shared document is not something to
+    start doing because a feature shipped - setting the variable is the act
+    that asks for it.
+    """
+    from .. import gdocs
+
+    wanted = ""
+    found = re.search(r"https://docs\.google\.com/document/\S+", said or "")
+    if found:
+        wanted = found.group(0).rstrip(".,;)>")
+    elif not gdocs.configured_doc():
+        await responder.send(
+            f"-# Set `{gdocs.DOC_ID_VAR}` in the .env, or paste the doc link with "
+            "the command, and I'll write these into it as well."
+        )
+        return
+
+    try:
+        url = await asyncio.to_thread(
+            gdocs.append,
+            keep,
+            document=wanted,
+            heading=heading,
+            link=link,
+            summary=str(payload.get("summary") or "").strip(),
+        )
+    except gdocs.DocsError as exc:
+        await responder.send(embed=embeds.error(f"Couldn't add these to the doc. {exc}"))
+        return
+
+    await responder.send(f"Added to the doc: <{url}>", quiet=True)
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:

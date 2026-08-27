@@ -290,6 +290,25 @@ def test_segment_takes_a_fathom_link():
     assert request.source == "https://fathom.video/share/xyz789"
 
 
+def test_the_full_interview_starts_where_the_first_clip_does():
+    """The 21 seconds before the first clip are the greetings, not the interview."""
+    keep, _ = parse_segments({"segments": [
+        _raw("00:00:01", "00:31:55", kind="long-form"),
+        _raw("00:00:22", "00:04:26"),
+        _raw("00:04:26", "00:11:01"),
+    ]})
+    assert keep[0].range == "00:00:22–00:31:55"
+
+
+def test_a_long_opening_is_content_and_is_kept():
+    """A first clip ten minutes in means the opening wasn't clippable, not dead."""
+    keep, _ = parse_segments({"segments": [
+        _raw("00:00:00", "00:31:55", kind="long-form"),
+        _raw("00:10:00", "00:16:00"),
+    ]})
+    assert keep[0].range == "00:00:00–00:31:55"
+
+
 def test_a_short_segment_is_named_back_to_the_model_with_its_length():
     """Dropping four of seven left holes in the video; folding them in doesn't."""
     _keep, short = parse_segments({

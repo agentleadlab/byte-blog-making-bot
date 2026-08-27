@@ -288,7 +288,31 @@ def parse_segments(payload: dict) -> tuple[list[Segment], list[Segment]]:
             f"Every segment came back under {MIN_SECONDS // 60} minutes, so there is "
             "nothing to publish."
         )
+    _trim_cold_open(keep)
     return keep, short
+
+
+# How much dead air at the top of a recording counts as a cold open rather than
+# content. Anything longer than this is the interview starting, and cutting it
+# off the full-interview upload would lose something real.
+COLD_OPEN_SECONDS = 60
+
+
+def _trim_cold_open(keep: list[Segment]) -> None:
+    """Start the full interview where the first clip does, not at 00:00:00.
+
+    The first clip is placed at a boundary the model judged worth starting on,
+    so the seconds before it are the greetings and the mic check. Only a short
+    gap is trimmed: a first clip that starts ten minutes in means the opening
+    was interview, just not clippable, and the full upload should keep it.
+    """
+    clips = [segment for segment in keep if not segment.long_form]
+    if not clips:
+        return
+    opens = min(clip.start for clip in clips)
+    for segment in keep:
+        if segment.long_form and 0 <= opens - segment.start <= COLD_OPEN_SECONDS:
+            segment.start = opens
 
 
 def _one_segment(raw: dict) -> Segment:

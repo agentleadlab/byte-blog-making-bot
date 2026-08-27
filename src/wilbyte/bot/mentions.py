@@ -626,6 +626,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Works on a Zoom, Fathom or YouTube link, or reply to the message with it
 > @RYTE **segment Antonio Bohorquez** — by who's on it. Zoom hands out a
 > different share token than its API returns, so the name is what matches
+> With `SEGMENTS_DOC_ID` set I write them into the Google Doc too
 > @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
