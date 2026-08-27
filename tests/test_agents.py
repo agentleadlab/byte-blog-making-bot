@@ -1543,3 +1543,94 @@ def test_standard_is_read_singular_or_plural(said, expected):
     """"phoenix standards" was reading as naming no tier at all, which made it
     disagree with a confirmation that named one."""
     assert agents.tier_of(said) == expected
+
+
+# --------------------------------- two things on one order
+
+
+CATHERINE = """-- New Client Onboarded --
+
+First Name: Catherine Y
+Last Name: Barney
+Phone: +14439398109
+Email: catcat.barney@gmail.com
+Package Selected: Text Verified
+Lead Type: Text Verified Veteran Plus
+Target Areas for Marketing: Name: Catherine Y Barney
+Lead Type: Text-Verified Final Expense and Vets
+Number of Requested Leads: 15 and 15
+States Leads In: MD
+Agency: tagteam
+Discount Code: SCREAM
+
+15 OTP VETS
+15 OTP FEX
+invincible agent
+launch date is Saturday, August 29
+"""
+
+
+def test_two_things_ordered_are_both_read():
+    """Catherine Y Barney paid for vets and FEX. She was filed under FEX."""
+    assert agents.ordered_lead_types(CATHERINE) == ["15 OTP VETS", "15 OTP FEX"]
+
+
+def test_both_go_on_the_line_that_names_the_order():
+    assert agents.stated_orders(CATHERINE) == "15 OTP VETS + 15 OTP FEX"
+
+
+def test_the_agent_carries_both():
+    agent = agents.read_agent(
+        card("New Agent - Catherine Y Barney"), text=CATHERINE, today=WEDNESDAY
+    )
+    assert agent.stated == "15 OTP VETS + 15 OTP FEX"
+
+
+def test_a_correction_is_still_one_order():
+    """Colton's two Lead Type fields name different families and he ordered once.
+
+    The form's own field never stacks - only lines somebody typed do.
+    """
+    assert agents.ordered_lead_types(COLTON) == []
+    assert agents.stated_orders(COLTON) == agents.stated_lead_type(COLTON)
+
+
+def test_the_same_family_twice_is_a_rewording_not_a_second_purchase():
+    """Aliana's card says Spanish IUL twice; the lower one is the current one."""
+    assert agents.ordered_lead_types(ALIANA) == []
+    assert agents.stated_orders(ALIANA) == "14 Spanish OTP IUL"
+
+
+def test_one_order_is_unchanged_everywhere():
+    for said in (REAL, SPARK, BENJI, EVAN):
+        assert agents.ordered_lead_types(said) == []
+        assert agents.stated_orders(said) == agents.stated_lead_type(said)
+
+
+def test_two_orders_land_on_two_lead_order_checklists():
+    """One line on the Lead Order card is half an order."""
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent(
+        card("New Agent - Catherine Y Barney"), text=CATHERINE, today=date(2026, 8, 29)
+    )
+    held = [
+        {"id": "l0", "name": "OTP VETS", "checkItems": []},
+        {"id": "l1", "name": "OTP FEX", "checkItems": []},
+    ]
+    plan = jobs._plan_for(
+        Stub(held), agent, day=date(2026, 8, 29), tomorrow=date(2026, 8, 30),
+        dated={
+            "lead_order": {"id": "lo", "name": "Lead Order 08/29/26"},
+            "ads": {"id": "ad", "name": "📊 Ads 08/29/26"},
+            "ops": {"id": "op", "name": "💻 Ops 08/29/26"},
+        },
+        every_card=[],
+    )
+
+    assert plan.problems == []
+    landed = {
+        step.checklist for step in plan.steps
+        if step.card_title == "Lead Order 08/29/26"
+    }
+    assert landed == {"OTP VETS", "OTP FEX"}

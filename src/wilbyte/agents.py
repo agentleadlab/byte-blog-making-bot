@@ -277,6 +277,15 @@ def named_lead_types(text: str) -> list[str]:
     The Lead Type field is here on its own terms - it is one of these lines -
     and only falls back to being read as a field when no line qualifies.
     """
+    said = _phrases_in(text)
+    if said:
+        return said
+    field = find_lead_type(text)
+    return [field] if field else []
+
+
+def _phrases_in(text: str) -> list[str]:
+    """The lines of `text` that name a kind of leads, in order."""
     said = []
     for line in (text or "").splitlines():
         phrase = tidy_lead_type(" ".join(line.split()))
@@ -288,10 +297,48 @@ def named_lead_types(text: str) -> list[str]:
         # they are, and `with_line` is what grafts it back on.
         if family_of(phrase) or (LINE.search(phrase) and tier_of(phrase)):
             said.append(phrase)
-    if said:
-        return said
-    field = find_lead_type(text)
-    return [field] if field else []
+    return said
+
+
+def ordered_lead_types(text: str) -> list[str]:
+    """Every *separate* order on the card, or [] when there is only one.
+
+    Catherine Y Barney's card ends "15 OTP VETS" then "15 OTP FEX". She paid
+    for both, and filing her under the second alone lost half the order.
+
+    Only the unlabelled lines stack. A "Lead Type:" field is the form's own,
+    and a second one is a correction rather than a second purchase - Colton
+    Ramon's card carries two of them naming different families and he ordered
+    once. Somebody typing lines at the bottom of a card is doing something
+    else, and each of those lines brings its own count.
+
+    The same family twice is still one order, corrected: Aliana Arevalo's card
+    says Spanish IUL twice, and the lower one is the current wording.
+    """
+    loose = "\n".join(
+        line for line in (text or "").splitlines()
+        if not _LABEL_PREFIX.match(line.strip())
+    )
+    said = _phrases_in(loose)
+    if len(said) < 2:
+        return []
+
+    latest: dict[str, str] = {}
+    for phrase in said:
+        latest[family_of(phrase) or phrase.casefold()] = phrase
+    if len(latest) < 2:
+        return []
+
+    kept = set(latest.values())
+    return [with_line(phrase, text) for phrase in said if phrase in kept]
+
+
+def stated_orders(text: str) -> str:
+    """What was ordered, both halves when there were two of them."""
+    several = ordered_lead_types(text)
+    if len(several) > 1:
+        return " + ".join(several)
+    return stated_lead_type(text)
 
 
 def tier_word(text: str) -> str:
@@ -731,7 +778,9 @@ def read_agent(
         # What gets matched against the board's checklists, so it carries the
         # same restriction.
         said=said,
-        stated=stated_lead_type(said),
+        # Both halves when two things were ordered - this is what the line on
+        # every checklist says, and half an order is worse than none.
+        stated=stated_orders(said),
         note=launch_conflict(everything, today=today),
     )
     return agent
