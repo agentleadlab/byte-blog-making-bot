@@ -333,12 +333,32 @@ def ordered_lead_types(text: str) -> list[str]:
     return [with_line(phrase, text) for phrase in said if phrase in kept]
 
 
+# How two orders are written on one line. The setup card has a checklist per
+# person, so an agent gets one line there however much they bought.
+ORDER_JOIN = " + "
+
+
 def stated_orders(text: str) -> str:
     """What was ordered, both halves when there were two of them."""
     several = ordered_lead_types(text)
     if len(several) > 1:
-        return " + ".join(several)
+        return ORDER_JOIN.join(several)
     return stated_lead_type(text)
+
+
+def order_parts(label: str) -> list[str]:
+    """A checklist line back into the orders it names.
+
+    The setup card gives an agent one line however much they bought, so two
+    orders are written on it as "15 OTP VETS + 15 OTP FEX". The Lead Order card
+    is filed by lead type, so there the same agent needs a line under each.
+
+    Only the joiner RYTE writes is split on. "Text-Verified Final Expense and
+    Vets" is one lead type with an "and" in the middle of it, and a line typed
+    by hand is left exactly as it was typed.
+    """
+    parts = [part.strip() for part in (label or "").split(ORDER_JOIN) if part.strip()]
+    return parts or ([label.strip()] if (label or "").strip() else [])
 
 
 def tier_word(text: str) -> str:
@@ -928,19 +948,28 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
 
     The person checklists on a setup card are copies of one another - Therese,
     Kathleen and Nicole each get the same list, because each of them does the
-    same setting up. So this reads all of them and keeps the first sighting of
-    each agent rather than trusting any one person's copy to be complete.
+    same setting up. So this reads all of them rather than trusting any one
+    person's copy to be complete.
+
+    An agent listed twice under different leads keeps both, joined the way one
+    line carrying two orders is written. Somebody who bought two things gets
+    two lines on the setup card as often as one, and taking the first sighting
+    of them threw the other order away.
     """
-    found: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    order: list[str] = []
+    labels: dict[str, list[str]] = {}
     for checklist in checklists or []:
         for item in checklist.get("checkItems") or []:
             url, label = split_item(str(item.get("name") or ""))
-            if not url or url in seen:
+            if not url:
                 continue
-            seen.add(url)
-            found.append((url, label))
-    return found
+            if url not in labels:
+                labels[url] = []
+                order.append(url)
+            for part in order_parts(label):
+                if part not in labels[url]:
+                    labels[url].append(part)
+    return [(url, ORDER_JOIN.join(labels[url])) for url in order]
 
 
 def plan_spread(
@@ -957,11 +986,16 @@ def plan_spread(
     already on the Lead Order card is skipped rather than doubled: the same-day
     path may have put them there hours earlier.
     """
-    already = {
-        split_item(str(item.get("name") or ""))[0]
-        for checklist in order_held or []
-        for item in checklist.get("checkItems") or []
-    }
+    anywhere: set[str] = set()
+    on_checklist: set[tuple[str, str]] = set()
+    for checklist in order_held or []:
+        where = " ".join(str(checklist.get("name") or "").split()).casefold()
+        for item in checklist.get("checkItems") or []:
+            url = split_item(str(item.get("name") or ""))[0]
+            if url:
+                anywhere.add(url)
+                on_checklist.add((url, where))
+
     names = {
         " ".join(str(c.get("name") or "").split()).casefold()
         for c in order_held or []
@@ -970,24 +1004,36 @@ def plan_spread(
 
     spreads: list[Spread] = []
     problems: list[str] = []
+    made: set[str] = set()
     for url, label in setup_agents(setup_held):
-        if url in already:
-            continue
         if not label:
             problems.append(f"{url} — the setup card's line doesn't say what the leads are")
             continue
 
-        if is_own_setup(label):
-            landed = OWN_SETUP
-        else:
-            landed = match_checklist(label, have, tier=tier_of(label))
-        checklist = landed or label
-        spreads.append(Spread(
-            url=url,
-            label=label,
-            checklist=checklist,
-            make_checklist=" ".join(checklist.split()).casefold() not in names,
-        ))
+        # Two orders are two lines, so an agent already filed under one of them
+        # still needs the other. With a single order, being anywhere on the card
+        # is enough - somebody may have filed them by hand under a name that
+        # matches nothing here, and a second line is worse than none.
+        parts = order_parts(label)
+        if len(parts) == 1 and url in anywhere:
+            continue
+
+        for part in parts:
+            landed = OWN_SETUP if is_own_setup(part) else match_checklist(
+                part, have, tier=tier_of(part)
+            )
+            checklist = landed or part
+            where = " ".join(checklist.split()).casefold()
+            if (url, where) in on_checklist:
+                continue
+            on_checklist.add((url, where))
+            spreads.append(Spread(
+                url=url,
+                label=part,
+                checklist=checklist,
+                make_checklist=where not in names and where not in made,
+            ))
+            made.add(where)
     return spreads, problems
 
 

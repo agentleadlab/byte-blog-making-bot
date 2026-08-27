@@ -1754,3 +1754,90 @@ def test_the_line_written_keeps_what_the_setup_card_said():
     assert agents.checklist_item(spreads[0].url, spreads[0].label) == (
         "https://trello.com/c/fff 25 OTP Vets"
     )
+
+
+# --------------------------------- two orders, spread onto two checklists
+
+
+CATHERINE_LINE = "https://trello.com/c/ggg"
+
+
+def test_one_line_carrying_two_orders_becomes_two():
+    """The setup card gives an agent one line; the Lead Order card needs two."""
+    setup = [
+        _person(person, [(CATHERINE_LINE, "15 OTP VETS + 15 OTP FEX")])
+        for person in agents.SETUP_PEOPLE
+    ]
+    order = [
+        {"id": "1", "name": "OTP VETS", "checkItems": []},
+        {"id": "2", "name": "OTP FEX", "checkItems": []},
+    ]
+    spreads, problems = agents.plan_spread(setup, order)
+
+    assert problems == []
+    assert [(s.checklist, s.label) for s in spreads] == [
+        ("OTP VETS", "15 OTP VETS"),
+        ("OTP FEX", "15 OTP FEX"),
+    ]
+
+
+def test_each_line_says_only_its_own_order():
+    """"15 OTP VETS + 15 OTP FEX" under OTP FEX reads as if she bought 30."""
+    setup = [_person("Nicole", [(CATHERINE_LINE, "15 OTP VETS + 15 OTP FEX")])]
+    spreads, _ = agents.plan_spread(setup, [])
+
+    assert all(agents.ORDER_JOIN not in s.label for s in spreads)
+
+
+def test_half_an_order_already_filed_still_gets_its_other_half():
+    setup = [_person("Nicole", [(CATHERINE_LINE, "15 OTP VETS + 15 OTP FEX")])]
+    order = [
+        {"id": "1", "name": "OTP VETS",
+         "checkItems": [_item(CATHERINE_LINE, "15 OTP VETS")]},
+        {"id": "2", "name": "OTP FEX", "checkItems": []},
+    ]
+    spreads, _ = agents.plan_spread(setup, order)
+
+    assert [(s.checklist, s.label) for s in spreads] == [("OTP FEX", "15 OTP FEX")]
+
+
+def test_an_agent_listed_twice_on_the_setup_card_keeps_both():
+    """Somebody who bought two things gets two lines as often as one."""
+    setup = [_person("Nicole", [
+        (CATHERINE_LINE, "15 OTP VETS"),
+        (CATHERINE_LINE, "15 OTP FEX"),
+    ])]
+    assert agents.setup_agents(setup) == [(CATHERINE_LINE, "15 OTP VETS + 15 OTP FEX")]
+
+
+def test_the_three_copies_still_collapse_to_one_order():
+    setup = [
+        _person(person, [(CATHERINE_LINE, "15 OTP VETS")])
+        for person in agents.SETUP_PEOPLE
+    ]
+    assert agents.setup_agents(setup) == [(CATHERINE_LINE, "15 OTP VETS")]
+
+
+def test_a_lead_type_with_and_in_its_name_is_not_split():
+    """"Text-Verified Final Expense and Vets" is one thing, not two."""
+    assert agents.order_parts("Text-Verified Final Expense and Vets") == [
+        "Text-Verified Final Expense and Vets"
+    ]
+
+
+def test_two_orders_needing_two_new_checklists_make_two():
+    setup = [_person("Nicole", [(CATHERINE_LINE, "15 OTP VETS + 15 OTP FEX")])]
+    spreads, _ = agents.plan_spread(setup, [])
+
+    assert [s.make_checklist for s in spreads] == [True, True]
+    assert len({s.checklist for s in spreads}) == 2
+
+
+def test_two_agents_wanting_the_same_new_checklist_only_make_it_once():
+    setup = [_person("Nicole", [
+        ("https://trello.com/c/hhh", "25 OTP VETS"),
+        ("https://trello.com/c/iii", "25 OTP VETS"),
+    ])]
+    spreads, _ = agents.plan_spread(setup, [])
+
+    assert [s.make_checklist for s in spreads] == [True, False]
