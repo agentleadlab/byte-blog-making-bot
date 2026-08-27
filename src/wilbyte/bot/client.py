@@ -650,6 +650,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_check(responder, config, request.source)
                 return
 
+            if request.action == "segments":
+                await _send_segments(responder, config, request.source, message)
+                return
+
             if request.action == "sweep":
                 await responder.send("Checking Zoom and Fathom for new calls…")
                 before = await asyncio.to_thread(jobs.new_recordings, config)
@@ -1534,6 +1538,79 @@ async def _send_schedule(responder: Responder, config: Config) -> None:
             f"posts made through its API. {waiting} waiting.{when} Keep me running "
             f"and they go out on time."
         )
+
+
+async def _attached_cues(message) -> list | None:
+    """Timed captions attached to the mention, if there are any.
+
+    The escape hatch for when YouTube won't serve captions to the machine RYTE
+    runs on. It has to be a `.vtt` or `.srt` here, unlike the blog pipeline: a
+    transcript pasted as plain text has no timings in it, and timings are the
+    whole point of cutting a video up.
+    """
+    for attachment in getattr(message, "attachments", []) or []:
+        if not attachment.filename.lower().endswith((".vtt", ".srt")):
+            continue
+        if attachment.size and attachment.size > MAX_LEARN_BYTES:
+            continue
+        raw = (await attachment.read()).decode("utf-8", errors="replace")
+        cues = youtube.parse_timed_captions(raw)
+        if cues:
+            return cues
+    return None
+
+
+async def _send_segments(
+    responder: Responder, config: Config, source: str | None, message
+) -> None:
+    """Cut one interview into clips and post them, ready to paste."""
+    from .. import segments as segmenting
+
+    cues = await _attached_cues(message)
+
+    video = None
+    if source:
+        try:
+            video = await asyncio.to_thread(youtube.video_from_link, source)
+        except youtube.IngestError as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+            return
+
+    if cues is None:
+        if video is None:
+            await responder.send(
+                "Give me the video — `@RYTE segment <youtube link>`. If YouTube "
+                "won't hand over the captions I'll say so, and you can attach the "
+                "`.vtt` or `.srt` instead."
+            )
+            return
+        await responder.send(f"Reading the transcript for **{video.title or video.video_id}**…")
+        try:
+            cues = await asyncio.to_thread(youtube.fetch_timed_transcript, video.video_id)
+        except youtube.IngestError as exc:
+            await responder.send(embed=embeds.error(str(exc)))
+            return
+
+    runs = youtube.length_of(cues[-1].end)
+    await responder.send(f"Got {len(cues)} lines running to {runs}. Cutting it up…")
+
+    try:
+        payload, keep, short = await asyncio.to_thread(
+            segmenting.generate_segments,
+            cues,
+            config,
+            title=(video.title if video else ""),
+            url=(video.short_url if video else (source or "")),
+        )
+    except segmenting.SegmentError as exc:
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+
+    await responder.send(segmenting.opening(payload, kept=len(keep), short=short))
+    # One message per segment, in plain text rather than an embed: these get
+    # copied straight into the doc, and an embed is not selectable that way.
+    for segment in keep:
+        await responder.send(segment.as_text())
 
 
 async def _send_check(responder: Responder, config: Config, source: str | None) -> None:

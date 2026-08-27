@@ -176,6 +176,12 @@ RECORDING_WORDS = ("recording", "recordings", "salescall", "callrecording")
 # "host" and "upload" turn up in ordinary copy briefs.
 HOST_WORDS = ("host", "upload", "imageurl")
 
+# Cut an interview into clips. Command-position only for the same reason as
+# HOST_WORDS, and a sharper one: "segment your audience" and "clips for the
+# reel" are things somebody asks a copywriter for, and reading either as a
+# command would answer a copy brief with a transcript.
+SEGMENT_WORDS = ("segment", "segments", "clips", "chapters", "cut")
+
 # Send a held post out now instead of on the day it was booked for. Command
 # position only, and for the plainest reason of all: "publish" and "post" are
 # what the blog pipeline is *about*. "write me a post about X" must not push
@@ -412,6 +418,15 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if _opens_with(text, HOST_WORDS):
         return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))
 
+    # Before the format check: a YouTube link already means "write a blog post",
+    # so the verb is what says to cut it up instead.
+    if _opens_with(text, SEGMENT_WORDS):
+        return MentionRequest(
+            action="segments",
+            source=_find_source(text),
+            brief=_strip_word(text, SEGMENT_WORDS),
+        )
+
     if action == "check":
         # A link is optional, but with one the check can prove YouTube works.
         return MentionRequest(action="check", source=_find_source(text))
@@ -604,6 +619,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **status** — what's posted, what's next
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
+> @RYTE **segment** `<link>` — cut an interview into clips with timestamps,
+> YT titles, website sections and both descriptions (nothing under 4 minutes)
 > @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day

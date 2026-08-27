@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -539,10 +540,10 @@ def fetch_transcript_via_api(
 PLAYER_CLIENTS = (None, "web", "mweb", "android")
 
 
-def fetch_transcript_via_ytdlp(
+def caption_file_via_ytdlp(
     video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
-) -> Transcript:
-    """Get captions through yt-dlp instead of the transcript API.
+) -> tuple[str, bool]:
+    """The raw caption file and whether it is auto-generated, through yt-dlp.
 
     Only the caption track is wanted, never the video, so this reads the track
     URL out of the extracted metadata and fetches it directly rather than going
@@ -550,6 +551,9 @@ def fetch_transcript_via_ytdlp(
     resolve a video format first, and YouTube will refuse those to a datacenter
     IP even on a signed-in request - which surfaced as "Requested format is not
     available" on a video whose captions were sitting right there.
+
+    The file comes back unparsed because two callers want different things out
+    of it: the blog pipeline wants prose, and segmenting wants the cue times.
     """
     from yt_dlp import YoutubeDL
 
@@ -585,7 +589,15 @@ def fetch_transcript_via_ytdlp(
     except httpx.HTTPError as exc:
         raise IngestError(f"Could not download the caption track: {exc}") from exc
 
-    text = clean_transcript(parse_captions(response.text))
+    return response.text, is_asr
+
+
+def fetch_transcript_via_ytdlp(
+    video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
+) -> Transcript:
+    """Get captions through yt-dlp instead of the transcript API."""
+    raw, is_asr = caption_file_via_ytdlp(video_id, languages=languages)
+    text = clean_transcript(parse_captions(raw))
     if not text.strip():
         raise IngestError(f"Caption file for {video_id} was empty.")
     return Transcript(
@@ -661,6 +673,190 @@ def parse_captions(raw: str) -> str:
             continue
         lines.append(line)
     return " ".join(lines)
+
+
+# A cue's times, in either of the two shapes captions use: "00:04:32.120" and
+# the hour-less "04:32.120". SRT writes the fraction with a comma.
+_CLOCK = r"(?:\d{1,3}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?"
+_CUE_TIMES = re.compile(rf"({_CLOCK})\s*-->\s*({_CLOCK})")
+
+
+@dataclass(frozen=True)
+class Cue:
+    """One caption line and the seconds it runs between."""
+
+    start: float
+    end: float
+    text: str
+
+
+def seconds_of(clock: str) -> float:
+    """"00:04:32.120" -> 272.12. Accepts mm:ss and hh:mm:ss, comma or dot."""
+    parts = clock.strip().replace(",", ".").split(":")
+    total = 0.0
+    for part in parts:
+        total = total * 60 + float(part or 0)
+    return total
+
+
+def timestamp(seconds: float) -> str:
+    """272.12 -> "00:04:32". The form YouTube chapters and the doc both use."""
+    whole = max(0, int(seconds))
+    return f"{whole // 3600:02d}:{whole // 60 % 60:02d}:{whole % 60:02d}"
+
+
+def length_of(seconds: float) -> str:
+    """A duration as people say it: 39:06, or 1:02:11 once it passes an hour."""
+    whole = max(0, int(seconds))
+    if whole >= 3600:
+        return f"{whole // 3600}:{whole // 60 % 60:02d}:{whole % 60:02d}"
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _cue_blocks(raw: str):
+    """(start, end, lines) for each cue in a VTT or SRT file."""
+    start = end = None
+    lines: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith(("WEBVTT", "Kind:", "Language:", "NOTE")):
+            continue
+        found = _CUE_TIMES.search(line) if "-->" in line else None
+        if found:
+            if start is not None and lines:
+                yield start, end, lines
+            start = seconds_of(found.group(1))
+            end = seconds_of(found.group(2))
+            lines = []
+            continue
+        if not line:
+            if start is not None and lines:
+                yield start, end, lines
+                start = end = None
+                lines = []
+            continue
+        if start is None:  # SRT cue numbers, and anything before the first cue
+            continue
+        cleaned = _INLINE_TAG.sub("", line).strip()
+        if cleaned:
+            lines.append(cleaned)
+    if start is not None and lines:
+        yield start, end, lines
+
+
+def parse_timed_captions(raw: str) -> list[Cue]:
+    """A VTT or SRT file as cues that keep their timings.
+
+    `parse_captions` throws the times away, which is right for writing a blog
+    post and useless for cutting a video into clips. The de-duplication is the
+    same as there - auto-generated captions scroll, so consecutive cues repeat
+    each other - except that absorbing a repeat extends the earlier cue's end
+    rather than dropping the line. The start stays where the words first
+    appeared, which is the timestamp somebody would actually cut on.
+    """
+    cues: list[Cue] = []
+    for start, end, lines in _cue_blocks(raw):
+        for line in lines:
+            if cues and (line == cues[-1].text or line in cues[-1].text):
+                cues[-1] = Cue(cues[-1].start, max(cues[-1].end, end), cues[-1].text)
+                continue
+            # A scrolling cue often repeats the previous line plus new words.
+            if cues and line.startswith(cues[-1].text):
+                cues[-1] = Cue(cues[-1].start, max(cues[-1].end, end), line)
+                continue
+            cues.append(Cue(start, end, line))
+    return cues
+
+
+def fetch_timed_transcript(
+    video_id: str, *, languages: tuple[str, ...] = ("en", "en-US", "en-GB")
+) -> list[Cue]:
+    """The transcript with its timings, by whichever route answers first.
+
+    The same routes as `fetch_transcript` and in the same order, for the same
+    reasons - the difference is only that the cue times survive. Every failure
+    is reported together rather than just the first.
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    from . import youtube_api
+
+    failures: list[tuple[str, Exception]] = []
+
+    if youtube_api.oauth_credentials():
+        try:
+            return _timed_via_api(video_id, languages=languages)
+        except (youtube_api.YouTubeAPIError, IngestError) as exc:
+            failures.append(("Data API", exc))
+
+    proxy_config = _proxy_config()
+    have_cookies = bool(cookie_file())
+
+    if have_cookies and not proxy_config:
+        try:
+            raw, _asr = caption_file_via_ytdlp(video_id, languages=languages)
+            cues = parse_timed_captions(raw)
+            if cues:
+                return cues
+            failures.append(("cookies", IngestError("caption file was empty")))
+        except IngestError as exc:
+            failures.append(("cookies", exc))
+
+    session = cookie_session()
+    label = "transcript API (signed in)" if session else "transcript API"
+    try:
+        api = YouTubeTranscriptApi(proxy_config=proxy_config, http_client=session)
+        fetched = api.fetch(video_id, languages=list(languages))
+        cues = [
+            Cue(
+                start=float(snippet.start),
+                end=float(snippet.start) + float(snippet.duration or 0),
+                text=snippet.text.strip(),
+            )
+            for snippet in fetched
+            if snippet.text and snippet.text.strip()
+        ]
+        if cues:
+            return cues
+        failures.append((label, IngestError("came back empty")))
+    except Exception as exc:
+        failures.append((label, exc))
+
+    if not have_cookies or proxy_config:
+        try:
+            raw, _asr = caption_file_via_ytdlp(video_id, languages=languages)
+            cues = parse_timed_captions(raw)
+            if cues:
+                return cues
+            failures.append(("yt-dlp", IngestError("caption file was empty")))
+        except IngestError as exc:
+            failures.append(("yt-dlp", exc))
+
+    raise IngestError(_transcript_failure(video_id, failures))
+
+
+def _timed_via_api(video_id: str, *, languages: tuple[str, ...]) -> list[Cue]:
+    """Timed captions through the Data API, as the channel owner."""
+    from . import youtube_api
+
+    tracks = youtube_api.list_captions(video_id)
+    if not tracks:
+        raise IngestError(f"No caption track published for {video_id}.")
+
+    last_error: Exception | None = None
+    for candidate in youtube_api.rank_caption_tracks(tracks, languages):
+        try:
+            raw = youtube_api.download_caption(candidate["id"])
+        except youtube_api.YouTubeAPIError as exc:
+            last_error = exc
+            continue
+        cues = parse_timed_captions(raw)
+        if cues:
+            return cues
+
+    if last_error is not None:
+        raise IngestError(str(last_error)) from last_error
+    raise IngestError(f"Every caption track for {video_id} was empty.")
 
 
 def _first_line(exc: Exception) -> str:
