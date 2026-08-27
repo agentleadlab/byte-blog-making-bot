@@ -563,7 +563,14 @@ ADD_TO_ORDER = re.compile(
 # so it is looked at last and only counts if a date is sitting next to it.
 _WHEN_SAID = (
     re.compile(r"[^.\n]*\blaunch\s*date\b[^.\n]*", re.IGNORECASE),
-    re.compile(r"[^.\n]*\b(?:launch(?:ing|es|ed)?|go(?:es|ing)?\s+live)\b[^.\n]*", re.IGNORECASE),
+    # "Going live" is one way of saying it. "Leads going by tomorrow" and
+    # "leads go out Friday" are two more, and neither contains the word live.
+    re.compile(
+        r"[^.\n]*\b(?:launch(?:ing|es|ed)?"
+        r"|go(?:es|ing)?\s+(?:live|out|by)"
+        r"|leads?\s+(?:are\s+)?go(?:es|ing)?)\b[^.\n]*",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"[^.\n]*\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+)?to\b[^.\n]*\border\b[^.\n]*",
         re.IGNORECASE,

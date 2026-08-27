@@ -1443,3 +1443,65 @@ def test_a_phrase_naming_two_kinds_of_leads_is_read_as_both():
 )
 def test_a_real_mismatch_still_fires(ordered, setup):
     assert agents.wrong_setup(ordered, [HUB.format(setup)]) is not None
+
+
+# ------------------------------ "leads going by tomorrow" - no launch, no live
+
+
+KARYN = """-- New Client Onboarded --
+
+First Name: Karyn
+Last Name: Giles
+Phone: +12406024770
+Email: karyngilesfflmd@gmail.com
+Package Selected: Text Verified
+Lead Type: Veteran Final Expense
+Target Areas for Marketing:
+
+Same States last time
+40 Text Verified Veteran leads
+
+leads going by tomorrow, Friday, August 28
+"""
+
+
+def test_leads_going_by_a_day_is_a_launch_date():
+    """Karyn Giles's card never says launch, live or going live. It says
+    "leads going by tomorrow, Friday, August 28", which is the same thing."""
+    assert agents.find_launch(KARYN, today=date(2026, 8, 27)) == date(2026, 8, 28)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "leads going by tomorrow, Friday, August 28",
+        "leads go out Friday, August 28",
+        "leads going out tomorrow, August 28",
+        "leads going tomorrow, August 28",
+        "lead going by August 28",
+    ],
+)
+def test_the_ways_people_say_the_leads_start(said):
+    assert agents.find_launch(said, today=date(2026, 8, 27)) == date(2026, 8, 28)
+
+
+def test_karyn_is_read_whole():
+    agent = agents.read_agent(
+        card("New Agent - Karyn Giles"), text=KARYN, today=date(2026, 8, 27)
+    )
+
+    assert agent.stated == "40 Text Verified Veteran leads"
+    assert agents.shape_of(agent.stated) == ("vet", "plus", frozenset())
+    assert agent.when(date(2026, 8, 27)) == "tomorrow"
+    assert agents.cannot_read(agent, needs_lead_type=True) == ""
+
+
+def test_the_older_wordings_still_read_the_same():
+    """Eleven real cards, none of them affected."""
+    today = date(2026, 8, 27)
+
+    assert agents.find_launch(REAL, today=today) == date(2026, 8, 25)
+    assert agents.find_launch(TAYLER, today=today) == date(2026, 8, 28)
+    assert agents.find_launch(SPARK, today=today) == date(2026, 8, 27)
+    assert agents.find_launch(EVAN, today=today) == date(2026, 8, 26)
+    assert agents.find_launch(LARS, today=today) == date(2026, 8, 28)
