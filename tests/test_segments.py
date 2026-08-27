@@ -370,7 +370,8 @@ def test_trimming_never_leaves_the_card_with_no_name():
     assert segments.card_title("") == "Interview"
 
 
-def test_the_card_lists_every_stamp_and_title_then_the_recording():
+def test_the_card_opens_with_the_recording_then_lists_every_stamp():
+    """The stamps are no use until the video is open, so the link comes first."""
     keep, _ = parse_segments({"segments": [
         _raw("00:00:01", "00:31:55", kind="long-form", yt_title="$55K a Month"),
         _raw("00:00:22", "00:05:00", yt_title="First Call She Ever Made Was a Sale"),
@@ -380,11 +381,27 @@ def test_the_card_lists_every_stamp_and_title_then_the_recording():
         keep, link="https://us06web.zoom.us/rec/share/abc", passcode="783c%qGu"
     )
     lines = [line for line in text.splitlines() if line]
-    assert lines[0] == "LONG-FORM / FULL INTERVIEW (00:00:22–00:31:55) $55K a Month"
-    assert lines[1] == "SEGMENT 1 (00:00:22–00:05:00) First Call She Ever Made Was a Sale"
-    assert lines[2] == "SEGMENT 2 (00:05:00–00:10:57) She Tried the Full Script Once"
-    assert lines[3] == "https://us06web.zoom.us/rec/share/abc"
-    assert lines[4] == "Passcode: 783c%qGu"
+    assert lines[0] == "https://us06web.zoom.us/rec/share/abc"
+    assert lines[1] == "Passcode: 783c%qGu"
+    assert lines[2] == "LONG-FORM / FULL INTERVIEW (00:00:22–00:31:55) $55K a Month"
+    assert lines[3] == "SEGMENT 1 (00:00:22–00:05:00) First Call She Ever Made Was a Sale"
+    assert lines[4] == "SEGMENT 2 (00:05:00–00:10:57) She Tried the Full Script Once"
+
+
+def test_the_passcode_sits_directly_under_its_link():
+    keep, _ = parse_segments({"segments": [_raw("00:00:00", "00:08:00")]})
+    text = segments.as_card(keep, link="https://fathom.video/share/xyz", passcode="abc123")
+    assert text.startswith("https://fathom.video/share/xyz\nPasscode: abc123\n\n")
+
+
+def test_a_passcode_with_no_link_still_lands_at_the_top():
+    keep, _ = parse_segments({"segments": [_raw("00:00:00", "00:08:00")]})
+    assert segments.as_card(keep, passcode="abc123").startswith("Passcode: abc123\n\n")
+
+
+def test_no_recording_at_all_leaves_no_gap_above_the_stamps():
+    keep, _ = parse_segments({"segments": [_raw("00:00:00", "00:08:00")]})
+    assert segments.as_card(keep).startswith("SEGMENT 1 ")
 
 
 def test_the_card_carries_no_passcode_line_when_there_is_no_passcode():

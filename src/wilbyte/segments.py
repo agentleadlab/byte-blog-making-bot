@@ -507,13 +507,27 @@ def card_title(topic: str) -> str:
 
 
 def as_card(segments: list[Segment], *, link: str = "", passcode: str = "") -> str:
-    """The card's description: every stamp and title, then the recording.
+    """The card's description: the recording, then every stamp and title.
 
     An index, not the copy. Whoever opens this card wants to see what the
     interview was cut into and be able to go and watch it; the descriptions
     themselves are in Discord to be pasted where they are actually used.
+
+    The link goes at the top with its passcode under it, because a timestamp is
+    only useful once you have the video open - and a list of stamps you have to
+    scroll past to reach the link has it backwards.
     """
     lines: list[str] = []
+    if link:
+        lines.append(link)
+    if passcode:
+        # No blank line between them: the passcode belongs to the link above it,
+        # and Trello renders the pair the way it was pasted by hand.
+        if lines:
+            lines[-1] = f"{lines[-1]}\nPasscode: {passcode}"
+        else:
+            lines.append(f"Passcode: {passcode}")
+
     number = 0
     for segment in segments:
         if segment.long_form:
@@ -521,11 +535,6 @@ def as_card(segments: list[Segment], *, link: str = "", passcode: str = "") -> s
             continue
         number += 1
         lines.append(f"SEGMENT {number} ({segment.range}) {segment.yt_title}")
-
-    if link:
-        lines.append(link)
-    if passcode:
-        lines.append(f"Passcode: {passcode}")
     return "\n\n".join(lines)
 
 
