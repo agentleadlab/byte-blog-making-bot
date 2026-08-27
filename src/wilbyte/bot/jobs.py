@@ -983,6 +983,113 @@ def fathom_read(config: Config, rec, found, *, client=None) -> str:
             client.close()
 
 
+# Further back than filing looks. A call is filed the day it happens; one being
+# cut into clips is whichever interview came up in the meeting.
+SEGMENT_LOOKBACK_DAYS = 90
+
+
+def timed_call_transcript(config: Config, rec) -> tuple[list, str]:
+    """A posted Zoom or Fathom recording as timed cues, and what it's called.
+
+    The same matching as filing, so a link resolves to the same call either
+    way - but nothing is remembered as filed here. Segmenting is reading, and
+    reading a recording twice should not change what happens to it.
+    """
+    from ..segments import SegmentError
+
+    if rec.platform == "Zoom":
+        return _zoom_cues(config, rec)
+    if rec.platform == "Fathom":
+        return _fathom_cues(config, rec)
+    raise SegmentError(
+        f"I can read Zoom and Fathom recordings and YouTube videos. "
+        f"{rec.platform} isn't one of them."
+    )
+
+
+def _zoom_cues(config: Config, rec) -> tuple[list, str]:
+    from .. import zoom
+    from ..segments import SegmentError
+    from ..youtube import parse_timed_captions
+
+    if not rec.transcribable(config):
+        raise SegmentError(
+            "Zoom isn't connected here — ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID and "
+            "ZOOM_CLIENT_SECRET need to be set before I can read a recording."
+        )
+
+    client = zoom.ZoomClient(
+        config.secrets.zoom_account_id,
+        config.secrets.zoom_client_id,
+        config.secrets.zoom_client_secret,
+    )
+    try:
+        meetings = client.account_recordings(days=SEGMENT_LOOKBACK_DAYS)
+        page_topic = client.share_page_topic(rec.url)
+        found, _how = zoom.choose(
+            meetings, link=rec.url, passcode=rec.passcode, page_topic=page_topic
+        )
+        if found is None:
+            seen = f" The share page called it “{page_topic}”." if page_topic else ""
+            raise SegmentError(
+                "I can't tell which recording that link points at — Zoom's API "
+                f"can't resolve share links, and nothing else matched.{seen} Post "
+                "the passcode with it, or attach the .vtt."
+            )
+        if not found.has_transcript:
+            raise SegmentError(
+                f"Zoom has no transcript for “{found.topic}”. Audio transcript has "
+                "to be on *before* a call is recorded — it can't be made afterwards."
+            )
+        cues = parse_timed_captions(client.transcript_vtt(found))
+        if not cues:
+            raise SegmentError(f"Zoom's transcript for “{found.topic}” came back empty.")
+        return cues, found.topic
+    finally:
+        client.close()
+
+
+def _fathom_cues(config: Config, rec) -> tuple[list, str]:
+    from .. import fathom
+    from ..segments import SegmentError
+    from ..youtube import Cue
+
+    if not rec.transcribable(config):
+        raise SegmentError(
+            "Fathom isn't connected here — FATHOM_API_KEY needs to be set before "
+            "I can read a call."
+        )
+
+    client = fathom.FathomClient(config.secrets.fathom_api_key)
+    try:
+        seen = client.meetings()
+        found, _how = fathom.choose(seen, link=rec.url)
+        if found is None:
+            raise SegmentError(f"I couldn't find that call in Fathom. {fathom.describe(seen)}")
+
+        meeting = client.meeting_with_transcript(fathom.meeting_id(found.raw or {}))
+        turns = fathom.timed_turns(meeting or {})
+        if not turns:
+            raise SegmentError(
+                f"Fathom gave me the transcript for “{found.title}” without any "
+                "timings on it, and I won't guess where a clip starts. Use the Zoom "
+                "recording of the same call, or attach the .vtt."
+            )
+
+        # A turn runs until the next one starts. The last has nothing after it,
+        # so it gets the time its own words would take to say.
+        cues = []
+        for index, (start, text) in enumerate(turns):
+            if index + 1 < len(turns):
+                end = turns[index + 1][0]
+            else:
+                end = start + len(text.split()) / fathom.WORDS_A_SECOND
+            cues.append(Cue(start=start, end=max(end, start + 1), text=text))
+        return cues, found.title
+    finally:
+        client.close()
+
+
 def summarise_call(config: Config, rec) -> str:
     """A short write-up of the call, where the recording can actually be read.
 

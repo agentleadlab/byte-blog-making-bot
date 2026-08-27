@@ -2,7 +2,7 @@
 
 import pytest
 
-from wilbyte import segments, youtube
+from wilbyte import fathom, segments, youtube
 from wilbyte.bot import mentions
 from wilbyte.segments import (
     ALWAYS_TAGGED,
@@ -276,3 +276,91 @@ def test_segment_in_a_copy_brief_is_not_a_command():
 def test_asking_with_no_link_at_all():
     assert mentions.parse("<@1> segment").action == "segments"
     assert mentions.parse("<@1> segment").source is None
+
+
+def test_segment_takes_a_zoom_link():
+    request = mentions.parse("<@1> segment https://us02web.zoom.us/rec/share/abc123")
+    assert request.action == "segments"
+    assert request.source == "https://us02web.zoom.us/rec/share/abc123"
+
+
+def test_segment_takes_a_fathom_link():
+    request = mentions.parse("<@1> clips https://fathom.video/share/xyz789")
+    assert request.action == "segments"
+    assert request.source == "https://fathom.video/share/xyz789"
+
+
+def test_a_zoom_link_on_its_own_still_files_the_call():
+    """The verb is the whole difference - a bare link has always meant 'file this'."""
+    assert mentions.parse("<@1> https://us02web.zoom.us/rec/share/abc").action == "recording"
+
+
+# --- Fathom's timings -------------------------------------------------------
+
+
+def test_seconds_come_back_from_whichever_field_fathom_used():
+    assert fathom.turn_seconds({"timestamp": 272}) == 272
+    assert fathom.turn_seconds({"start_time": "00:04:32"}) == pytest.approx(272.0)
+    assert fathom.turn_seconds({"offset": "272.5"}) == pytest.approx(272.5)
+    assert fathom.turn_seconds({"speaker": "Tre"}) is None
+
+
+def test_absolute_timestamps_become_an_offset_from_the_first_turn():
+    """A call that started at 2pm must not produce clips at 50,400 seconds."""
+    meeting = {"transcript": [
+        {"started_at": "2026-08-27T14:00:00Z", "speaker": "Tre", "text": "So walk me through it"},
+        {"started_at": "2026-08-27T14:00:30Z", "speaker": "Jonny", "text": "I was knocking doors"},
+    ]}
+    assert fathom.timed_turns(meeting) == [
+        (0.0, "Tre: So walk me through it"),
+        (30.0, "Jonny: I was knocking doors"),
+    ]
+
+
+def test_a_turn_with_no_time_on_it_is_left_out_not_guessed():
+    meeting = {"transcript": [
+        {"timestamp": 0, "speaker": "Tre", "text": "first"},
+        {"speaker": "Jonny", "text": "no time on this one"},
+        {"timestamp": 20, "speaker": "Tre", "text": "third"},
+    ]}
+    assert [text for _, text in fathom.timed_turns(meeting)] == ["Tre: first", "Tre: third"]
+
+
+def test_a_transcript_with_no_timings_at_all_comes_back_empty():
+    """An empty answer is what makes the caller say so instead of inventing times."""
+    assert fathom.timed_turns({"transcript": [{"speaker": "Tre", "text": "hello"}]}) == []
+    assert fathom.timed_turns({"transcript": "Tre: hello"}) == []
+
+
+def test_the_old_flat_transcript_still_reads_the_same():
+    """Adding timings must not change what the call summariser gets."""
+    meeting = {"transcript": [
+        {"timestamp": 0, "speaker": "Tre", "text": "So walk me through it"},
+        {"timestamp": 30, "speaker": "Jonny", "text": "I was knocking doors"},
+    ]}
+    assert fathom.transcript_text(meeting) == (
+        "Tre: So walk me through it\nJonny: I was knocking doors"
+    )
+
+
+# --- Zoom's transcript ------------------------------------------------------
+
+
+ZOOM_VTT = """WEBVTT
+
+1
+00:00:04.320 --> 00:00:09.100
+Tre: So walk me through how you got started
+
+2
+00:00:09.100 --> 00:00:14.880
+Jonny: I was knocking doors for pest control
+"""
+
+
+def test_zoom_speaker_labels_survive_into_the_cues():
+    """The labels are how the model finds Tre's questions, so they stay on."""
+    cues = parse_timed_captions(ZOOM_VTT)
+    assert cues[0].text == "Tre: So walk me through how you got started"
+    assert cues[0].start == pytest.approx(4.32)
+    assert cues[1].text.startswith("Jonny:")

@@ -1564,31 +1564,56 @@ async def _send_segments(
     responder: Responder, config: Config, source: str | None, message
 ) -> None:
     """Cut one interview into clips and post them, ready to paste."""
+    from .. import recordings
     from .. import segments as segmenting
 
     cues = await _attached_cues(message)
+    title = ""
 
-    video = None
-    if source:
-        try:
-            video = await asyncio.to_thread(youtube.video_from_link, source)
-        except youtube.IngestError as exc:
-            await responder.send(embed=embeds.error(str(exc)))
-            return
+    # Replying to whoever posted the recording is the natural way to ask for
+    # this, and it is the way filing already accepts.
+    said = message.content or ""
+    if not source:
+        replied = await _replied_to(message)
+        if replied is not None:
+            said = f"{said}\n{replied.content or ''}"
+            call = recordings.find_recording(replied.content or "")
+            links = mentions.find_sources(replied.content or "")
+            source = call.url if call else (links[0] if links else None)
+
+    if cues is None and not source:
+        await responder.send(
+            "Give me the recording — `@RYTE segment <zoom, fathom or youtube "
+            "link>`, or reply to the message that has it. If the transcript "
+            "can't be reached I'll say so, and you can attach the `.vtt` instead."
+        )
+        return
 
     if cues is None:
-        if video is None:
-            await responder.send(
-                "Give me the video — `@RYTE segment <youtube link>`. If YouTube "
-                "won't hand over the captions I'll say so, and you can attach the "
-                "`.vtt` or `.srt` instead."
-            )
-            return
-        await responder.send(f"Reading the transcript for **{video.title or video.video_id}**…")
+        found = recordings.find_recording(source)
         try:
-            cues = await asyncio.to_thread(youtube.fetch_timed_transcript, video.video_id)
-        except youtube.IngestError as exc:
+            if found is not None and found.platform in ("Zoom", "Fathom"):
+                # A Zoom share link is a door with a passcode on it, and the
+                # passcode is how the call gets identified when the link can't.
+                found.passcode = recordings.find_passcode(said)
+                await responder.send(f"Looking that {found.platform} recording up…")
+                cues, title = await asyncio.to_thread(
+                    jobs.timed_call_transcript, config, found
+                )
+            else:
+                video = await asyncio.to_thread(youtube.video_from_link, source)
+                title = video.title
+                await responder.send(
+                    f"Reading the transcript for **{title or video.video_id}**…"
+                )
+                cues = await asyncio.to_thread(
+                    youtube.fetch_timed_transcript, video.video_id
+                )
+        except (youtube.IngestError, segmenting.SegmentError) as exc:
             await responder.send(embed=embeds.error(str(exc)))
+            return
+        except PIPELINE_ERRORS as exc:
+            await responder.send(embed=embeds.error(f"Couldn't read that recording: {exc}"))
             return
 
     runs = youtube.length_of(cues[-1].end)
@@ -1599,8 +1624,8 @@ async def _send_segments(
             segmenting.generate_segments,
             cues,
             config,
-            title=(video.title if video else ""),
-            url=(video.short_url if video else (source or "")),
+            title=title,
+            url=source or "",
         )
     except segmenting.SegmentError as exc:
         await responder.send(embed=embeds.error(str(exc)))

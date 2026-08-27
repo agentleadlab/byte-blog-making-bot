@@ -3,6 +3,12 @@ of one video with a timestamp on every line, and you return the segments.
 
 Tre is the host. The other voice is the guest.
 
+Some transcripts label every line with who said it — `Tre: …`, `Jonny: …` —
+because Zoom and Fathom record who was speaking. Where the labels are there,
+use them: they are how you find Tre's questions exactly. Where they are not,
+work it out from the words. Either way the labels never appear in a title or a
+description; they are for you, not for the reader.
+
 ## Core instructions
 
 **Segment logic.** Start each timestamp at the beginning of one of Tre's

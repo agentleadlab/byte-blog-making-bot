@@ -15,6 +15,7 @@ print what actually arrived when something doesn't match.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -171,6 +172,96 @@ def transcript_text(meeting: dict) -> str:
     return "\n".join(lines).strip()
 
 
+# Where a turn's start time hides. Fathom's transcript shape has moved around
+# and the field is not documented as stable, so every name it has plausibly
+# carried is looked for rather than one being assumed.
+TIME_FIELDS = (
+    "timestamp", "start_time", "start", "started_at", "offset", "time",
+    "start_seconds", "offset_seconds", "recording_timestamp", "recording_offset",
+)
+
+_CLOCK = re.compile(r"^\d{1,3}:\d{1,2}(?::\d{1,2})?(?:[.,]\d+)?$")
+
+
+def turn_seconds(turn: dict) -> float | None:
+    """When a speaker turn starts, in seconds, or None when it doesn't say.
+
+    Three shapes turn up and all three are read: a plain number of seconds, a
+    clock string like "04:32", and an absolute timestamp. The absolute one is
+    returned as epoch seconds and made relative by `timed_turns`, which is the
+    only place that can see where the call began.
+    """
+    from datetime import datetime
+
+    # Not `first_of`: it treats a falsy value as absent, and a turn at second
+    # zero is the first turn of every call.
+    value = None
+    for field in TIME_FIELDS:
+        if (turn or {}).get(field) is not None:
+            value = turn[field]
+            break
+
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if _CLOCK.match(text):
+        from .youtube import seconds_of
+
+        return seconds_of(text)
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+# Roughly how fast people talk, used only to give the last turn an end time.
+WORDS_A_SECOND = 2.5
+
+
+def timed_turns(meeting: dict) -> list[tuple[float, str]]:
+    """(seconds from the start, "Name: what they said") for each turn.
+
+    Empty when Fathom didn't send timings. That is a real answer, not a
+    failure to work around: the caller says so rather than inventing times,
+    because a clip cut on a guessed timestamp starts in the wrong place and
+    nothing downstream can tell.
+    """
+    value = first_of(meeting, TRANSCRIPT_FIELDS)
+    if not isinstance(value, list):
+        return []
+
+    turns: list[tuple[float, str]] = []
+    for turn in value:
+        if not isinstance(turn, dict):
+            continue
+        said = str(turn.get("text") or turn.get("transcript") or "").strip()
+        when = turn_seconds(turn)
+        if not said or when is None:
+            continue
+        speaker = turn.get("speaker")
+        if isinstance(speaker, dict):
+            speaker = first_of(speaker, SPEAKER_FIELDS)
+        speaker = str(speaker or first_of(turn, SPEAKER_FIELDS) or "").strip()
+        turns.append((when, f"{speaker}: {said}" if speaker else said))
+
+    if not turns:
+        return []
+
+    # Absolute timestamps become an offset from the first turn. A call that
+    # started at 2pm must not produce clips at 50,400 seconds.
+    first = min(when for when, _ in turns)
+    return [(when - first, text) for when, text in turns]
+
+
 def match_share_url(meetings: list[dict], share_url: str) -> FathomCall | None:
     wanted = share_key(share_url)
     if not wanted:
@@ -312,18 +403,28 @@ class FathomClient:
                 break
         return found[:limit]
 
+    def meeting_with_transcript(self, wanted_id: str) -> dict | None:
+        """One call's full record, transcript included.
+
+        The whole meeting rather than its text, because segmenting needs the
+        speaker turns with their timings and flattening them first throws that
+        away.
+        """
+        if not wanted_id:
+            return None
+        for meeting in self.meetings(include_transcript=True):
+            if meeting_id(meeting) == wanted_id:
+                return meeting
+        return None
+
     def transcript_for(self, wanted_id: str) -> str:
         """The full transcript of one call, fetched only when it's needed.
 
         Which is rarely: Fathom writes a summary of every call and that is what
         goes on the card. This is the path for a call it hasn't summarised.
         """
-        if not wanted_id:
-            return ""
-        for meeting in self.meetings(include_transcript=True):
-            if meeting_id(meeting) == wanted_id:
-                return transcript_text(meeting)
-        return ""
+        found = self.meeting_with_transcript(wanted_id)
+        return transcript_text(found) if found else ""
 
     def find(self, share_url: str) -> tuple[FathomCall | None, list[dict]]:
         """The call behind a posted link, and everything seen while looking.

@@ -418,12 +418,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if _opens_with(text, HOST_WORDS):
         return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))
 
-    # Before the format check: a YouTube link already means "write a blog post",
-    # so the verb is what says to cut it up instead.
+    # Before the format check: a YouTube link already means "write a blog post"
+    # and a Zoom link already means "file this call", so the verb is what says
+    # to cut one up instead.
     if _opens_with(text, SEGMENT_WORDS):
+        call = RECORDING_URL_RE.search(text)
         return MentionRequest(
             action="segments",
-            source=_find_source(text),
+            source=_find_source(text) or (call.group(0).rstrip(".,;)>") if call else None),
             brief=_strip_word(text, SEGMENT_WORDS),
         )
 
@@ -620,7 +622,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **cover** Aged, Fresh, Premium | Why Agents Stall
 > @RYTE **check** `<link>` — test my GHL and YouTube connections
 > @RYTE **segment** `<link>` — cut an interview into clips with timestamps,
-> YT titles, website sections and both descriptions (nothing under 4 minutes)
+> YT titles, website sections and both descriptions (nothing under 4 minutes).
+> Works on a Zoom, Fathom or YouTube link, or reply to the message with it
 > @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
 > @RYTE **start** Aug 18 — don't schedule anything before that day
