@@ -116,6 +116,8 @@ ACTION_WORDS = {
     # they bought rather than by who set them up.
     "spread": "spread",
     "leadorder": "spread",
+    # Taking a spread back off a card it should not have gone on.
+    "unspread": "unspread",
     # Agents set up on leads they did not order.
     "setups": "setups",
     "setup": "setups",
@@ -391,7 +393,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked",
-                         "archive", "setups", "spread")
+                         "archive", "setups", "spread", "unspread")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -496,7 +498,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
-        "unticked", "archive", "setups", "spread",
+        "unticked", "archive", "setups", "spread", "unspread",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -689,8 +691,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
-> @RYTE **trello spread** — put today's setup-card agents on today's Lead Order
-> card, each under the lead type they bought
+> @RYTE **trello spread** — put the setup card's agents on the Lead Order card
+> for the day they go live, each under the lead type they bought
+> @RYTE **trello unspread 08/28** — list what a spread put on that day's Lead
+> Order card; add **confirm** to take those lines back off
 > @RYTE **comment on monday general card** Spanish lead discount 15% off
 > — or **add on trello**, **remind on trello**, or the card said last:
 > **comment** leads went out late **on monday general**. All the same thing.

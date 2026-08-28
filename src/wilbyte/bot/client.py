@@ -694,6 +694,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _comment_on_card(responder, config, request.brief or "")
                 return
 
+            if request.action == "unspread":
+                await _unspread(responder, config, request.brief or "")
+                return
+
             if request.action == "spread":
                 await _spread_setup(responder, config, request.brief or "")
                 return
@@ -995,6 +999,40 @@ async def _comment_on_card(responder: Responder, config: Config, said: str) -> N
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
     await responder.send(f"Said it on **{title}** — <{url}>")
+
+
+async def _unspread(responder: Responder, config: Config, said: str) -> None:
+    """List, and on a second word remove, the setup-card lines on a Lead Order card."""
+    from .. import dailyops
+
+    day = dailyops.day_named(said, today=_today(config))
+    sure = "confirm" in (said or "").lower()
+
+    try:
+        found, problems = await asyncio.to_thread(
+            jobs.unspread_lead_order, config, day=day, dry=not sure
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+    if not found:
+        await responder.send(
+            "Nothing on that Lead Order card came off a setup card."
+        )
+        return
+
+    head, *lines = found
+    listed = "\n".join(f"· {line}" for line in lines)
+    if sure:
+        await responder.send(f"Took {len(lines)} line(s) off {head}:\n{listed}")
+        return
+    await responder.send(
+        f"{len(lines)} line(s) on {head} came off a setup card:\n{listed}\n\n"
+        "-# Say it again with **confirm** on the end and I'll take them off."
+    )
 
 
 async def _spread_setup(responder: Responder, config: Config, said: str) -> None:

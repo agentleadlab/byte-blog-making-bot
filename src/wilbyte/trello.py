@@ -88,7 +88,20 @@ class TrelloClient:
         return self._request(
             "GET",
             f"/cards/{card_id}/checklists",
-            params={"checkItems": "all", "checkItem_fields": "name,state,pos"},
+            # `id` on the items because removing one needs it - see
+            # `remove_check_item`. Trello omits it unless it is asked for.
+            params={"checkItems": "all", "checkItem_fields": "id,name,state,pos"},
+        )
+
+    def remove_check_item(self, checklist_id: str, item_id: str) -> dict:
+        """Take one line off a checklist.
+
+        The only delete in this codebase, and it is here because the
+        alternative was somebody hand-removing thirty lines they could not
+        identify. Scoped to items RYTE wrote and can write again.
+        """
+        return self._request(
+            "DELETE", f"/checklists/{checklist_id}/checkItems/{item_id}"
         )
 
     def card(self, card_id: str) -> dict:

@@ -2719,6 +2719,7 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
             " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
             for c in held
         }
+        named = _by_url(every)
         added: list[str] = []
         for spread in spreads:
             key = " ".join(spread.checklist.split()).casefold()
@@ -2732,12 +2733,90 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
             except Exception as exc:
                 problems.append(f"{spread.label} — {_short(exc, 160)}")
                 continue
-            added.append(f"{spread.label} → {spread.checklist}")
+            added.append(f"{named.get(spread.url, spread.label)} — {spread.checklist}")
         if added:
             # Name both cards. The whole failure here was a wrong pairing, and
             # a count alone would have hidden it again.
             added.insert(0, f"**{setup.get('name')}** → **{order.get('name')}**")
         return added, problems
+    finally:
+        client.close()
+
+
+def _by_url(cards: list[dict]) -> dict[str, str]:
+    """Card name by URL, both the short and the long one.
+
+    A checklist item stores whichever URL was copied, and "PHX 2.0 → PHX 2.0"
+    is not something anybody can check. The agent's name is.
+    """
+    named: dict[str, str] = {}
+    for card in cards or []:
+        title = str(card.get("name") or "")
+        for field in ("url", "shortUrl"):
+            found = str(card.get(field) or "")
+            if found:
+                named[found] = title
+    return named
+
+
+def unspread_lead_order(
+    config: Config, *, day=None, dry: bool = True
+) -> tuple[list[str], list[str]]:
+    """Take back off a Lead Order card the lines that came from a setup card.
+
+    (what would go / went, problems). Reads only unless `dry` is False.
+
+    The undo for a spread that landed on the wrong card. An item counts only
+    when its text matches a setup card's line exactly, word for word - so a
+    line somebody wrote by hand, or one the same-day path wrote from the
+    agent's own description, is left alone even for the same agent.
+    """
+    from .. import agents as rules, dailyops
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+
+        order = dailyops.cards_for(every, day).get("lead_order")
+        if order is None:
+            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
+
+        # Every setup card's lines, not just one: which card a bad spread read
+        # is exactly what nobody knows afterwards.
+        from_setup: set[str] = set()
+        for card in every:
+            if rules.is_setup_card(str(card.get("name") or "")):
+                for checklist in client.card_checklists(str(card.get("id") or "")):
+                    for item in checklist.get("checkItems") or []:
+                        text = " ".join(str(item.get("name") or "").split())
+                        if text:
+                            from_setup.add(text)
+
+        named = _by_url(every)
+        found, problems = [], []
+        for checklist in client.card_checklists(str(order.get("id") or "")):
+            where = str(checklist.get("name") or "")
+            for item in checklist.get("checkItems") or []:
+                text = " ".join(str(item.get("name") or "").split())
+                if text not in from_setup:
+                    continue
+                who = named.get(rules.split_item(text)[0], text)
+                if dry:
+                    found.append(f"{who} — {where}")
+                    continue
+                try:
+                    client.remove_check_item(
+                        str(checklist.get("id") or ""), str(item.get("id") or "")
+                    )
+                except Exception as exc:
+                    problems.append(f"{who} — {_short(exc, 160)}")
+                    continue
+                found.append(f"{who} — {where}")
+        if found:
+            found.insert(0, f"**{order.get('name')}**")
+        return found, problems
     finally:
         client.close()
 
