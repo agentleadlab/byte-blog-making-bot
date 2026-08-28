@@ -673,8 +673,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
 > @RYTE **trello spread** — put today's setup-card agents on today's Lead Order
 > card, each under the lead type they bought
-> @RYTE **comment** leads went out late **on monday general** — say it on that
-> card. Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
+> @RYTE **comment on monday general card** Spanish lead discount 15% off
+> — or **comment** leads went out late **on monday general**, either way round.
+> Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> @RYTE **trello rollover yesterday** — carry a day you held back

@@ -973,9 +973,10 @@ async def _comment_on_card(responder: Responder, config: Config, said: str) -> N
     text, kind, day = dailyops.comment_target(said, today=_today(config))
     if not kind:
         await responder.send(
-            "Say which card and I'll post it — `@RYTE comment leads went out "
-            "late on monday general`. The four are general, ops, ads and lead "
-            "order; a weekday or a date picks the day, otherwise it's today's."
+            "Say which card and I'll post it — `@RYTE comment on monday "
+            "general card <what to say>`, or put the card at the end instead. "
+            "The four are general, ops, ads and lead order; a weekday or a "
+            "date picks the day, otherwise it's today's."
         )
         return
     if not text:

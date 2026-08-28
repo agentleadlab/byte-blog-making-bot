@@ -3363,3 +3363,52 @@ def test_a_written_date_beats_a_weekday_beside_it():
 def test_rollover_general_is_not_read_as_a_day():
     """The weekday reading must not turn ordinary commands into dated ones."""
     assert dailyops.day_named("rollover general", today=FRIDAY) is None
+
+
+def test_the_card_can_be_named_first_instead():
+    """"comment on monday general card <text>" is how Franklin actually typed it."""
+    assert dailyops.comment_target(
+        "on monday general card Spanish Lead discount OTP IUL and OTP FEX 15% OFF",
+        today=FRIDAY,
+    ) == (
+        "Spanish Lead discount OTP IUL and OTP FEX 15% OFF",
+        "general",
+        date(2026, 8, 31),
+    )
+
+
+def test_named_first_with_no_day_and_no_card_word():
+    assert dailyops.comment_target(
+        "on ads Spanish Lead discount 15% OFF", today=FRIDAY
+    ) == ("Spanish Lead discount 15% OFF", "ads", FRIDAY)
+
+
+def test_named_first_stops_at_the_first_word_of_the_comment():
+    text, kind, day = dailyops.comment_target(
+        "on general we should double check this", today=FRIDAY
+    )
+    assert (text, kind, day) == ("we should double check this", "general", FRIDAY)
+
+
+def test_the_word_card_ends_the_name_so_the_comment_keeps_its_first_word():
+    """Otherwise "on monday general card general cleanup" eats "general"."""
+    text, _kind, _day = dailyops.comment_target(
+        "on monday general card general cleanup needed", today=FRIDAY
+    )
+    assert text == "general cleanup needed"
+
+
+def test_named_first_takes_a_date_too():
+    _text, kind, day = dailyops.comment_target(
+        "on lead order 09/01 please redo the states", today=FRIDAY
+    )
+    assert (kind, day) == ("lead_order", date(2026, 9, 1))
+
+
+def test_a_leading_on_that_names_no_card_is_not_a_card_phrase():
+    """"on second thoughts, ..." is a comment, not a card."""
+    text, kind, _day = dailyops.comment_target(
+        "on second thoughts leave it", today=FRIDAY
+    )
+    assert kind is None
+    assert text == "on second thoughts leave it"

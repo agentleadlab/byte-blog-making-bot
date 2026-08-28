@@ -223,23 +223,65 @@ def day_named(text: str, *, today: date) -> date | None:
         return None
 
 
-# "comment this on monday general card" - the card is named after "on".
 _ON = re.compile(r"\s+on\s+", re.IGNORECASE)
+
+# The words a card can be named with, and nothing else. Everything from "on"
+# up to the first word that isn't one of these is the card; the rest is what
+# to say. "card" ends the phrase itself, so "on monday general card general
+# cleanup" doesn't swallow the first word of the comment.
+_CARD_WORDS = {
+    "on", "the", "for", "general", "ops", "ads", "lead", "order", "orders",
+    "today", "tomorrow", "yesterday", *WEEKDAYS,
+}
+_ENDS_IT = {"card", "cards"}
+
+
+def _leading_card(said: str) -> tuple[str, str] | None:
+    """("on monday general card", "the rest"), when the card is named first."""
+    words = said.split()
+    if not words or words[0].lower() != "on":
+        return None
+
+    taken = 0
+    for word in words:
+        plain = word.lower().strip(".,:;")
+        if plain in _ENDS_IT:
+            taken += 1
+            break
+        if plain in _CARD_WORDS or _DAY_SAID.fullmatch(plain):
+            taken += 1
+            continue
+        break
+
+    head = " ".join(words[:taken])
+    return (head, " ".join(words[taken:])) if kinds_named(head) else None
 
 
 def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
     """(what to say, which card, which day) out of one sentence.
 
-    The card is named at the end, after "on", because that is how anybody says
-    it. The split is at the *rightmost* "on" whose tail actually names one of
-    the four cards, so a comment with an "on" of its own survives intact -
-    "check the numbers on the ads on monday general" says the first two words
-    of that tail are still the comment.
+    Both ways round, because both are how people say it:
+
+        comment leads went out late on monday general
+        comment on monday general card Spanish lead discount 15% off
+
+    Said last, the split is at the *rightmost* "on" whose tail actually names
+    one of the four cards, so a comment carrying an "on" of its own survives -
+    "check the numbers on the ads on monday general" keeps the first half.
+
+    Said first, the card runs from "on" to the first word that isn't part of
+    naming one, and everything after it is the comment.
 
     No named card comes back as None rather than a guess. Commenting on the
     wrong card is a message somebody reads as being about their work.
     """
     said = " ".join((text or "").split())
+
+    first = _leading_card(said)
+    if first is not None:
+        head, rest = first
+        return rest.strip(" -–—:,"), kinds_named(head)[0], day_named(head, today=today) or today
+
     for found in reversed(list(_ON.finditer(said))):
         tail = said[found.start():]
         kinds = kinds_named(tail)
