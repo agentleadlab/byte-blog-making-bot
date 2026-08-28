@@ -693,6 +693,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
 > @RYTE **trello spread** — put the setup card's agents on the Lead Order card
 > for the day they go live, each under the lead type they bought
+> @RYTE **trello spread 08/28** — a day that was missed. The date is the day
+> the agents **go live**, the one on both cards
 > @RYTE **trello unspread 08/28** — list what a spread put on that day's Lead
 > Order card; add **confirm** to take those lines back off
 > @RYTE **comment on monday general card** Spanish lead discount 15% off

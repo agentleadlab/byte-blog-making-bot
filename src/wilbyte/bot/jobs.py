@@ -2675,35 +2675,39 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
     first - their New Agent card went to Done the day it was read, so nothing
     puts them on the second when their day finally arrives.
 
-    The pair is the setup card *worked today* and the Lead Order card for the
-    day its agents go live, which is not today either time. A setup card is
-    worked the day before its agents launch, so the one finished this evening
-    is headed Saturday-Monday and its agents belong on Lead Order 08/29 -
-    pairing today with today took the card that was worked yesterday and went
-    to Done last night, and filed onto a Lead Order card whose day was over.
+    `day` is the day the agents go live, which is the date on both the setup
+    card and the Lead Order card. Running at half eight it defaults to
+    tomorrow, because a setup card is worked the day before its agents launch:
+    the one finished this evening is headed Saturday-Monday and its agents
+    belong on Lead Order 08/29.
 
     Runs before the cards move to Done, because a card in Done is finished and
     writing onto one after the fact is how a line gets missed.
     """
     from .. import agents as rules, dailyops
 
-    day = day or board_day(config)
+    day = day or dailyops.next_day(board_day(config))
     client = open_trello(config)
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
 
-        setup = rules.find_setup_card(every, dailyops.next_day(day))
+        setup = rules.find_setup_card(every, day)
         if setup is None:
             return [], [
-                f"No setup card for the agents going live "
-                f"{dailyops.next_day(day):%m/%d/%y} anywhere on the board."
+                f"No setup card for the agents going live {day:%m/%d/%y} "
+                "anywhere on the board."
             ]
 
-        live = rules.setup_starts(str(setup.get("name") or ""), day) or dailyops.next_day(day)
-        order = dailyops.cards_for(every, live).get("lead_order")
+        # A weekend setup card runs Saturday to Monday and its Lead Order card
+        # is titled with the Saturday, so a Sunday falls back to the day the
+        # setup card starts rather than reporting a card that isn't missing.
+        order = dailyops.cards_for(every, day).get("lead_order")
+        starts = rules.setup_starts(str(setup.get("name") or ""), day)
+        if order is None and starts is not None and starts != day:
+            order = dailyops.cards_for(every, starts).get("lead_order")
         if order is None:
-            return [], [f"No Lead Order card dated {live:%m/%d/%y} anywhere on the board."]
+            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
 
         order_id = str(order.get("id") or "")
         held = client.card_checklists(order_id)

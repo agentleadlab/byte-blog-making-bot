@@ -3504,3 +3504,29 @@ def test_a_line_on_both_setup_cards_is_kept():
     mine = {shared}
     others = {shared} - mine
     assert others == set()
+
+
+def test_the_date_typed_is_the_day_the_agents_go_live():
+    """It used to be the day the setup card was *worked*, so restoring the
+    Friday card meant typing 08/27. Nobody thinks about the board that way."""
+    from wilbyte import agents
+
+    for live, wanted in (
+        (date(2026, 8, 28), "Agent Setup Going Live Friday 08/28"),
+        (date(2026, 8, 29), "Agent Setup Going Live Saturday-Monday 08/29-08/31"),
+    ):
+        assert agents.find_setup_card(SETUP_CARDS, live)["name"] == wanted
+
+
+def test_a_sunday_falls_back_to_the_weekend_cards_own_lead_order():
+    """The weekend Lead Order card is titled with the Saturday."""
+    from wilbyte import agents
+
+    sunday = date(2026, 8, 30)
+    setup = agents.find_setup_card(SETUP_CARDS, sunday)
+    assert dailyops.cards_for(ORDER_CARDS, sunday).get("lead_order") is None
+
+    starts = agents.setup_starts(setup["name"], sunday)
+    assert dailyops.cards_for(ORDER_CARDS, starts)["lead_order"]["name"] == (
+        "Lead Order 08/29/26-8/30/26"
+    )
