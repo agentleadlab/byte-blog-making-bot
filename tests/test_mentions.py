@@ -576,3 +576,38 @@ def test_an_unambiguous_word_outranks_a_format_name():
 def test_creating_something_is_still_a_procedure_question():
     """"create" and "make" are ordinary words in a procedure question."""
     assert parse(f"{BOT} how do we create a lead form").action == "findsop"
+
+
+# --------------------------------- asking for a Trello comment, any way round
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "comment on monday general card the discount is live",
+        "add on trello on monday general card the discount is live",
+        "remind on trello on monday general card the discount is live",
+        "put this on trello on monday general card the discount is live",
+        "note on trello: on monday general card the discount is live",
+        "trello comment on monday general card the discount is live",
+        "trello add on monday general card the discount is live",
+        "trello remind on monday general card the discount is live",
+    ],
+)
+def test_every_way_of_asking_for_a_card_comment(said):
+    request = parse(f"<@1> {said}")
+
+    assert request.action == "comment"
+    assert "the discount is live" in (request.brief or "")
+
+
+def test_naming_the_board_is_what_makes_add_a_command():
+    """"add the price" is an ordinary copy brief and must stay one."""
+    assert parse("<@1> email reminding agents to add the price").action == "write"
+    assert parse("<@1> add the price to the next ad").action != "comment"
+
+
+def test_filing_an_sop_still_wins_over_it():
+    """"add this to the sop" says add, and is not a board comment."""
+    request = parse("<@1> add this to the sop https://example.com/doc")
+    assert request.action == "filesop"

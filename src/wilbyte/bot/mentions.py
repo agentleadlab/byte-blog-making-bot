@@ -192,6 +192,20 @@ SEGMENT_WORDS = ("segment", "segments", "clips", "chapters", "cut")
 # deliberately not here - it is what the blog pipeline does.
 COMMENT_WORDS = ("comment", "note")
 
+# The same thing said the other way round: "add on trello", "remind on trello".
+# Naming the board is what makes these safe to read as a command - "add the
+# price" and "remind them about the webinar" are ordinary copy briefs, and
+# neither of them says trello.
+TRELLO_ASK = re.compile(
+    r"^\s*(?:add|remind|put|note|log|say|write|leave)\s+(?:me\s+|this\s+|it\s+|that\s+)?"
+    r"(?:on|to|in|onto|into)\s+(?:the\s+)?trello\b[\s:,\-–—]*",
+    re.IGNORECASE,
+)
+
+# After the word "trello" the verb no longer has to name the board, because the
+# message already did.
+TRELLO_COMMENT_WORDS = COMMENT_WORDS + ("add", "remind", "put", "log", "say")
+
 # Send a held post out now instead of on the day it was booked for. Command
 # position only, and for the plainest reason of all: "publish" and "post" are
 # what the blog pipeline is *about*. "write me a post about X" must not push
@@ -369,9 +383,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # means "show me the board", which is what somebody typing just that wants.
     if _opens_with(text, ("trello",)):
         rest = _strip_word(text, ("trello",))
-        if _opens_with(rest, COMMENT_WORDS):
+        if _opens_with(rest, TRELLO_COMMENT_WORDS):
             return MentionRequest(
-                action="comment", brief=_strip_word(rest, COMMENT_WORDS)
+                action="comment", brief=_strip_word(rest, TRELLO_COMMENT_WORDS)
             )
         after = _first_action_word(rest.lower())
         return MentionRequest(
@@ -428,6 +442,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if _opens_with(text, RECORDING_WORDS):
         return MentionRequest(action="recording", brief=_strip_word(text, RECORDING_WORDS))
+
+    asked = TRELLO_ASK.match(text)
+    if asked:
+        return MentionRequest(action="comment", brief=text[asked.end():].strip())
 
     if _opens_with(text, COMMENT_WORDS):
         return MentionRequest(action="comment", brief=_strip_word(text, COMMENT_WORDS))
@@ -674,7 +692,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello spread** — put today's setup-card agents on today's Lead Order
 > card, each under the lead type they bought
 > @RYTE **comment on monday general card** Spanish lead discount 15% off
-> — or **comment** leads went out late **on monday general**, either way round.
+> — or **add on trello**, **remind on trello**, or the card said last:
+> **comment** leads went out late **on monday general**. All the same thing.
 > Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > Each one shows which cards would move and waits for the button
