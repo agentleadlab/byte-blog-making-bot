@@ -3467,3 +3467,40 @@ def test_the_card_worked_today_is_never_the_one_covering_today():
 
     assert covering_today["name"] == "Agent Setup Going Live Friday 08/28"
     assert worked_today["name"] != covering_today["name"]
+
+
+# --------------------------------- what an unspread is allowed to remove
+
+
+def test_belonging_to_a_setup_card_is_not_what_makes_a_line_wrong():
+    """Every line the spread writes correctly matches a setup card - that is
+    the whole point of it. Removing everything that matched any setup card
+    took thirty wrong lines off Lead Order 08/28 and twenty-seven right ones."""
+    from wilbyte import agents
+
+    friday = "https://trello.com/c/aaa Text Verified Veteran Plus"
+    weekend = "https://trello.com/c/bbb 25 OTP VET"
+
+    mine = {friday}
+    others = {friday, weekend} - mine
+
+    # The Friday agent belongs on Lead Order 08/28 and must survive.
+    assert friday not in others
+    assert weekend in others
+    assert agents.split_item(friday)[0] == "https://trello.com/c/aaa"
+
+
+def test_the_belonging_card_is_the_one_covering_the_lead_orders_own_day():
+    """Not the one worked that day - that is the *next* day's agents."""
+    from wilbyte import agents
+
+    belongs = agents.find_setup_card(SETUP_CARDS, date(2026, 8, 28))
+    assert belongs["name"] == "Agent Setup Going Live Friday 08/28"
+
+
+def test_a_line_on_both_setup_cards_is_kept():
+    """The same agent can be listed twice; the day decides, not the sighting."""
+    shared = "https://trello.com/c/ccc 25 OTP VET"
+    mine = {shared}
+    others = {shared} - mine
+    assert others == set()

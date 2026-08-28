@@ -2766,10 +2766,15 @@ def unspread_lead_order(
 
     (what would go / went, problems). Reads only unless `dry` is False.
 
-    The undo for a spread that landed on the wrong card. An item counts only
-    when its text matches a setup card's line exactly, word for word - so a
-    line somebody wrote by hand, or one the same-day path wrote from the
-    agent's own description, is left alone even for the same agent.
+    The undo for a spread that landed on the wrong card, and the rule is only
+    ever about *which* setup card. Matching a setup card at all proves nothing:
+    every line the spread writes correctly matches one, which is the whole
+    point of it. Asked to remove everything that matched any setup card, this
+    took thirty wrong lines and twenty-seven right ones with them.
+
+    So: the setup card that belongs with this Lead Order card is the one whose
+    agents go live on its day. Lines matching *that* card stay. Lines matching
+    some other setup card - agents whose day is not this card's day - go.
     """
     from .. import agents as rules, dailyops
 
@@ -2783,16 +2788,27 @@ def unspread_lead_order(
         if order is None:
             return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
 
-        # Every setup card's lines, not just one: which card a bad spread read
-        # is exactly what nobody knows afterwards.
-        from_setup: set[str] = set()
+        belongs = rules.find_setup_card(every, day)
+        if belongs is None:
+            return [], [
+                f"No setup card covers {day:%m/%d/%y}, so I can't tell which lines "
+                f"on that Lead Order card belong there and which don't."
+            ]
+
+        mine: set[str] = set()
+        others: set[str] = set()
         for card in every:
-            if rules.is_setup_card(str(card.get("name") or "")):
-                for checklist in client.card_checklists(str(card.get("id") or "")):
-                    for item in checklist.get("checkItems") or []:
-                        text = " ".join(str(item.get("name") or "").split())
-                        if text:
-                            from_setup.add(text)
+            if not rules.is_setup_card(str(card.get("name") or "")):
+                continue
+            into = mine if card.get("id") == belongs.get("id") else others
+            for checklist in client.card_checklists(str(card.get("id") or "")):
+                for item in checklist.get("checkItems") or []:
+                    text = " ".join(str(item.get("name") or "").split())
+                    if text:
+                        into.add(text)
+        # A line on both cards is one this card's own agents own. The same
+        # agent can be listed on two setup cards, and the day decides.
+        others -= mine
 
         named = _by_url(every)
         found, problems = [], []
@@ -2800,7 +2816,7 @@ def unspread_lead_order(
             where = str(checklist.get("name") or "")
             for item in checklist.get("checkItems") or []:
                 text = " ".join(str(item.get("name") or "").split())
-                if text not in from_setup:
+                if text not in others:
                     continue
                 who = named.get(rules.split_item(text)[0], text)
                 if dry:
@@ -2815,7 +2831,11 @@ def unspread_lead_order(
                     continue
                 found.append(f"{who} — {where}")
         if found:
-            found.insert(0, f"**{order.get('name')}**")
+            found.insert(
+                0,
+                f"**{order.get('name')}** — keeping everything from "
+                f"**{belongs.get('name')}**",
+            )
         return found, problems
     finally:
         client.close()
