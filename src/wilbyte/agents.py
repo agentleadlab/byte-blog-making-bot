@@ -50,20 +50,32 @@ DONE = "Done"
 # Life". Anything else goes on the checklist for its own lead type.
 OWN_SETUP = "own setup"
 
-# Instant and FB name no tier of their own and belong here anyway.
-OWN_SETUP_WORDS = re.compile(r"\binstant\b|\bfb\b|\bfacebook\b", re.IGNORECASE)
+# What actually sits on the own-setup checklist: Basic, Instant and FB, in
+# every combination. Instant and FB name no tier of their own and belong here
+# anyway.
+OWN_SETUP_WORDS = re.compile(r"\binstant\b|\bfb\b|\bfacebook\b|\bbasics?\b", re.IGNORECASE)
 
 
 def is_own_setup(lead_type: str) -> bool:
     """Whether these leads belong on the own-setup checklist.
 
-    The Standard tier is the self-setup half - basic, standard, instant, FB -
-    as against the Plus half, which is ordered and has a checklist each. So
-    Phoenix Standard goes here and PHX Plus does not, the same rule telling
-    them apart rather than Phoenix being an exception to it.
+    Basic, Instant and FB set themselves up. A line product does not: Uprise,
+    Phoenix and Ascend are ordered, and Standard is a tier of them rather than
+    a synonym for self-setup, so "UPRISE STANDARDS- $350/WEEK" gets the same
+    checklist of its own that PHNX Plus does.
+
+    This used to send every Standard here, on the reading that Standard *was*
+    the self-setup half. It isn't: Carsen Anderson landed on own setup beside
+    six Basic Spanish IUL lines, and he had bought Uprise. Basic and Standard
+    reduce to one tier for comparing lead types, which is right for that job
+    and is what made the two look alike here.
     """
     said = lead_type or ""
-    return tier_of(said) == "standard" or bool(OWN_SETUP_WORDS.search(said))
+    if OWN_SETUP_WORDS.search(said):
+        return True
+    if LINE.search(said):
+        return False
+    return tier_of(said) == "standard"
 
 # Who gets told, per card. Kath and Kathleen are one person; the checklists
 # are named differently on different cards and both mean her.
@@ -104,7 +116,10 @@ FAMILIES = (
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
     ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
-    ("phnx", re.compile(r"\bpho?e?nix\b|\bphnx\b|\bphx\b", re.IGNORECASE)),
+    # Uprise and Phoenix are one product under two names - "PHNX Standard" and
+    # "UPRISE STANDARDS" are the same leads - so they reduce to one family and
+    # a card written either way lands on the same checklist.
+    ("phnx", re.compile(r"\bpho?e?nix\b|\bphnx\b|\bphx\b|\buprise\b", re.IGNORECASE)),
     ("ascend", re.compile(r"\bascend\b", re.IGNORECASE)),
 )
 
@@ -295,6 +310,8 @@ def _phrases_in(text: str) -> list[str]:
         # Espinoza's card has "Uprise" sitting alone on a line above "Phoenix
         # Standard" - it says something about the leads without saying what
         # they are, and `with_line` is what grafts it back on.
+        if _bare_line(phrase):
+            continue
         if family_of(phrase) or (LINE.search(phrase) and tier_of(phrase)):
             said.append(phrase)
     return said
@@ -405,6 +422,16 @@ def stated_lead_type(text: str) -> str:
 
     word = tier_word(text)
     return with_line(f"{word} {said[-1]}".strip() if word else said[-1], text)
+
+
+# A line word and nothing else. Phoenix is a family as well as a line, so
+# "Phoenix Campaign" names leads and a bare "Uprise" does not - the difference
+# is whether anything else is on the line with it.
+_JUST_A_LINE = re.compile(r"^(?:uprise|pho?e?nix|phnx|phx|ascend)$", re.IGNORECASE)
+
+
+def _bare_line(phrase: str) -> bool:
+    return bool(_JUST_A_LINE.match(" ".join((phrase or "").split())))
 
 
 def line_word(text: str) -> str:

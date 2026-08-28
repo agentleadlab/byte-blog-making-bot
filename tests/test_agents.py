@@ -382,19 +382,31 @@ def filed_today(agent, board_checklists):
     )
 
 
-LEAD_ORDER_LISTS = ["OTP IUL Plus", "OTP Spanish IUL", "Phoenix Standard", "own setup"]
+LEAD_ORDER_LISTS = ["OTP IUL Plus", "OTP Spanish IUL", "PHNX STANDARD", "own setup"]
 
 
 @pytest.mark.parametrize(
     "leads",
     ["40 Basic FB Spanish IUL", "Basic Spanish IUL", "Instant/Basic IUL Leads",
-     "FB Index Universal Life", "20 Spanish Basic 10", "Phoenix Standard",
-     "PHNX Standard"],
+     "FB Index Universal Life", "20 Spanish Basic 10"],
 )
-def test_the_standard_tier_is_the_self_setup_half(leads):
-    """Every item on the real own-setup checklist is one of these, and Phoenix
-    Standard belongs with them - the same tier, not an exception."""
+def test_basic_instant_and_fb_set_themselves_up(leads):
+    """Every item on the real own-setup checklist is one of these three."""
     assert agents.is_own_setup(leads) is True
+
+
+@pytest.mark.parametrize(
+    "leads",
+    ["Phoenix Standard", "PHNX Standard", "UPRISE STANDARDS- $350/WEEK",
+     "uprise- $350/week standard", "Ascend Standard"],
+)
+def test_a_line_product_is_ordered_even_at_the_standard_tier(leads):
+    """Standard is a tier of Uprise and Phoenix, not a synonym for self-setup.
+
+    Carsen Anderson landed on own setup beside six Basic Spanish IUL lines and
+    he had bought Uprise.
+    """
+    assert agents.is_own_setup(leads) is False
 
 
 @pytest.mark.parametrize(
@@ -402,15 +414,18 @@ def test_the_standard_tier_is_the_self_setup_half(leads):
     ["Text Verified IUL Plus", "OTP VET Plus", "UPRISE PHX PLUS", "PHNX Plus"],
 )
 def test_the_plus_tier_is_ordered_and_keeps_its_own_checklist(leads):
-    """PHX Plus is where Phoenix stops being like the rest: a Plus customer
-    has a checklist, a Standard one sets themselves up."""
     assert agents.is_own_setup(leads) is False
 
 
-def test_the_two_phoenix_tiers_go_to_different_places():
-    """One rule telling them apart rather than Phoenix being special-cased."""
-    assert agents.is_own_setup("Phoenix Standard") is True
-    assert agents.is_own_setup("Phoenix Plus") is False
+def test_basic_still_wins_over_the_line_it_is_written_beside():
+    """"Basic FB Spanish IUL" is self-setup however the card words it."""
+    assert agents.is_own_setup("40 Basic FB Spanish IUL") is True
+
+
+def test_uprise_and_phnx_are_one_product_under_two_names():
+    """"PHNX Standard" and "UPRISE STANDARDS" are the same leads."""
+    assert agents.shape_of("PHNX STANDARD") == agents.shape_of("UPRISE STANDARDS")
+    assert agents.family_of("UPRISE STANDARDS- $350/WEEK") == "phnx"
 
 
 BASIC_TODAY = """Package Selected: Basic Spanish IUL
@@ -1382,10 +1397,9 @@ def test_a_level_order_is_not_compared_against_the_hub():
     ) is None
 
 
-def test_ascend_standard_is_a_self_setup_type():
-    """Standard is the self-setup half, and Ascend is no exception to that -
-    the same rule that puts Phoenix Standard there."""
-    assert agents.is_own_setup("Ascend Standard") is True
+def test_ascend_is_ordered_at_either_tier():
+    """Ascend is a line like Uprise and Phoenix, so Standard is a tier of it."""
+    assert agents.is_own_setup("Ascend Standard") is False
     assert agents.is_own_setup("Ascend Plus") is False
 
 
@@ -1676,11 +1690,10 @@ def test_a_line_splits_into_the_card_and_what_it_says():
 
 
 def test_each_agent_lands_under_the_lead_type_they_bought():
-    """Phoenix Standard is the self-setup tier, so it goes where those go -
-    the same rule the same-day path already files by."""
+    """Each lands on the checklist for what they bought, Standard included."""
     order = [
         {"id": "1", "name": "PHNX PLUS", "checkItems": []},
-        {"id": "2", "name": agents.OWN_SETUP, "checkItems": []},
+        {"id": "2", "name": "PHNX STANDARD", "checkItems": []},
         {"id": "3", "name": "OTP VET Plus", "checkItems": []},
     ]
     spreads, problems = agents.plan_spread(FRIDAY, order)
@@ -1688,7 +1701,7 @@ def test_each_agent_lands_under_the_lead_type_they_bought():
     assert problems == []
     assert [(s.url[-3:], s.checklist) for s in spreads] == [
         ("aaa", "PHNX PLUS"),
-        ("bbb", agents.OWN_SETUP),
+        ("bbb", "PHNX STANDARD"),
         ("ccc", "OTP VET Plus"),
     ]
     assert not any(s.make_checklist for s in spreads)
@@ -1716,14 +1729,14 @@ def test_a_lead_type_with_no_checklist_yet_gets_one_made():
     assert all(value for name, value in made.items() if name != "PHNX PLUS")
 
 
-def test_the_plus_tier_is_not_swept_into_own_setup():
-    """The half that is ordered keeps a checklist each."""
+def test_nothing_ordered_is_swept_into_own_setup():
+    """A card with no checklist for it yet still files by what was bought."""
     spreads, _ = agents.plan_spread(FRIDAY, [])
     landed = {s.url[-3:]: s.checklist for s in spreads}
 
     assert landed["aaa"] == "UPRISE PHX PLUS"
+    assert landed["bbb"] == "Phoenix Standard"
     assert landed["ccc"] == "Text Verified Veteran Plus"
-    assert landed["bbb"] == agents.OWN_SETUP
 
 
 def test_the_self_setup_ones_all_go_on_the_one_checklist():
