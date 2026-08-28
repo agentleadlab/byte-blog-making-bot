@@ -75,7 +75,10 @@ class TrelloClient:
             # the due-date field for it, and it is set on cards that have no
             # due date at all - which is all of these.
             params={
-                "fields": "name,idList,url,dateLastActivity,dueComplete",
+                # shortUrl as well as url: a checklist item stores whichever
+                # was copied, and looking an agent's name up by the wrong one
+                # silently finds nothing.
+                "fields": "name,idList,url,shortUrl,dateLastActivity,dueComplete",
             },
         )
 

@@ -2727,10 +2727,19 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
         added: list[str] = []
         for spread in spreads:
             key = " ".join(spread.checklist.split()).casefold()
+            who = named.get(spread.url, spread.url)
+            if key not in by_name:
+                # Never invent one. The checklists on a Lead Order card are the
+                # lead types that exist, put there by hand, and a spread that
+                # makes its own leaves "22 OTP BC" sitting on the board as
+                # though it were a product. An agent RYTE can't place is one
+                # for somebody to place.
+                problems.append(
+                    f"{who} — “{spread.label}” doesn't match any checklist on "
+                    f"{order.get('name')}"
+                )
+                continue
             try:
-                if key not in by_name:
-                    made = client.create_checklist(order_id, spread.checklist)
-                    by_name[key] = str(made.get("id") or "")
                 client.add_check_item(
                     by_name[key], rules.checklist_item(spread.url, spread.label)
                 )

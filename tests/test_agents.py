@@ -1874,3 +1874,51 @@ def test_a_single_order_is_still_checked():
     """The point of the check survives: one order against a different one."""
     said = ["OTP FEX ON DISTRO HUB setup is complete"]
     assert agents.wrong_setup("30 OTP Vets", said) == ("30 OTP Vets", "OTP FEX")
+
+
+# --------------------------------- abbreviations that reached the board
+
+
+LEAD_ORDER_ON_THE_BOARD = [
+    "OTP IUL Plus", "OTP VET Plus", "OTP Widows", "OTP FEX", "OTP MTG Plus",
+    "OTP Blue Collar IUL", "OTP Spanish IUL", "own setup",
+    "PHNX PLUS", "PHNX STANDARD",
+]
+
+
+@pytest.mark.parametrize(
+    "said,wanted",
+    [
+        ("22 OTP BC", "OTP Blue Collar IUL"),
+        ("22 OTP BC leads", "OTP Blue Collar IUL"),
+        ("Text-Verified Blue Collar IUL Leads", "OTP Blue Collar IUL"),
+        ("25 OTP SIUL", "OTP Spanish IUL"),
+        ("50 Spanish OTP IUL", "OTP Spanish IUL"),
+        ("36 OTP IUL", "OTP IUL Plus"),
+        ("30 WIDOW", "OTP Widows"),
+        ("Uprise 30 OTP VET PLUS", "OTP VET Plus"),
+    ],
+)
+def test_the_short_ways_of_writing_a_lead_type_all_land(said, wanted):
+    """"22 OTP BC" and "25 OTP SIUL" became checklists of their own on the real
+    board, because neither abbreviation was known."""
+    assert agents.match_checklist(
+        said, LEAD_ORDER_ON_THE_BOARD, tier=agents.tier_of(said)
+    ) == wanted
+
+
+def test_bc_and_siul_are_iul_products():
+    assert agents.family_of("22 OTP BC") == "iul"
+    assert agents.family_of("25 OTP SIUL") == "iul"
+    assert "blue collar" in agents.qualifiers_of("22 OTP BC")
+    assert "spanish" in agents.qualifiers_of("25 OTP SIUL")
+
+
+def test_an_unplaceable_agent_is_reported_rather_than_given_a_new_checklist():
+    """The checklists on a Lead Order card are put there by hand. A spread that
+    makes its own leaves "22 OTP BC" on the board as though it were a product."""
+    setup = [_person("Nicole", [("https://trello.com/c/zzz", "40 Something Unheard Of")])]
+    spreads, _problems = agents.plan_spread(setup, [{"id": "1", "name": "OTP IUL Plus",
+                                                     "checkItems": []}])
+    # The plan still names where it *would* go; the writer is what refuses.
+    assert spreads[0].make_checklist is True

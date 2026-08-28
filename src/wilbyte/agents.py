@@ -111,7 +111,9 @@ LEAD_TYPE_BLOCK = re.compile(
 
 # What kind of leads. The word that matters, whatever it is dressed in.
 FAMILIES = (
-    ("iul", re.compile(r"\biuls?\b", re.IGNORECASE)),
+    # SIUL is Spanish IUL and BC is Blue Collar IUL - both are IUL products on
+    # this board, and the checklist is called "OTP Blue Collar IUL" outright.
+    ("iul", re.compile(r"\biuls?\b|\bsiul\b|\bbc\b", re.IGNORECASE)),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
@@ -127,8 +129,11 @@ FAMILIES = (
 # is a different checklist from "OTP IUL Plus" and filing into the wrong one
 # sends somebody's leads to the wrong place.
 QUALIFIERS = (
-    ("blue collar", re.compile(r"\bblue\s*collar\b", re.IGNORECASE)),
-    ("spanish", re.compile(r"\bspanish\b", re.IGNORECASE)),
+    # "22 OTP BC leads" and "25 OTP SIUL" are how these get written when
+    # somebody is typing fast. Both went onto the board as checklists of their
+    # own because neither abbreviation was known.
+    ("blue collar", re.compile(r"\bblue\s*collar\b|\bbc\b", re.IGNORECASE)),
+    ("spanish", re.compile(r"\bspanish\b|\bsiul\b", re.IGNORECASE)),
 )
 
 # Franklin's rule: standard or basic means Standard; text-verified or OTP
