@@ -1854,3 +1854,23 @@ def test_two_agents_wanting_the_same_new_checklist_only_make_it_once():
     spreads, _ = agents.plan_spread(setup, [])
 
     assert [s.make_checklist for s in spreads] == [True, False]
+
+
+def test_an_agent_who_ordered_two_things_is_not_raised_as_wrong():
+    """Catherine Y Barney bought vets and FEX. Set up on vets and compared
+    against FEX alone, she was flagged when she was right - and either half
+    being set up first is correct, so there is nothing to compare against."""
+    ordered = agents.stated_orders(CATHERINE)
+
+    assert ordered == "15 OTP VETS + 15 OTP FEX"
+    for confirmed in (
+        "OTP VET ON DISTRO HUB setup is complete for CATHERINE BARNEY",
+        "OTP FEX ON DISTRO HUB setup is complete for CATHERINE BARNEY",
+    ):
+        assert agents.wrong_setup(ordered, [confirmed]) is None
+
+
+def test_a_single_order_is_still_checked():
+    """The point of the check survives: one order against a different one."""
+    said = ["OTP FEX ON DISTRO HUB setup is complete"]
+    assert agents.wrong_setup("30 OTP Vets", said) == ("30 OTP Vets", "OTP FEX")

@@ -622,7 +622,10 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
 
     - No confirmation yet, or one nobody wrote a lead type into.
     - A phrase naming two kinds of leads at once. "OTP WIDOW VET" is one
-      campaign or it is two, and nothing here can tell.
+      campaign or it is two, and nothing here can tell. This also covers an
+      agent who genuinely ordered two things: setting Catherine Y Barney up on
+      vets is right, and so is setting her up on FEX, so there is nothing to
+      compare a single confirmation against.
     - Either side naming a customer level. The Distro Hub is organised by
       level rather than by lead type, so an Uprise order is confirmed as "PHX
       STANDARD" and the two words have nothing to do with each other. Landon

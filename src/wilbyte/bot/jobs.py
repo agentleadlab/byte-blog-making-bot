@@ -2428,7 +2428,10 @@ def wrong_setups(
                 continue
             card_id = str(card.get("id") or "")
             desc = str(client.card_detail(card_id).get("desc") or "")
-            ordered = agents.stated_lead_type(desc)
+            # Both halves when two things were ordered. Catherine Y Barney
+            # bought vets and FEX; set up on vets and compared against FEX
+            # alone, she was raised as wrong when she was right.
+            ordered = agents.stated_orders(desc)
             if not ordered:
                 continue
             said = client.card_comments(card_id)
