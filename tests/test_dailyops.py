@@ -616,7 +616,7 @@ CHASE_2 = CHASE_1 + [dailyops.UNMARKED[1]]
 EVENING = CHASE_2 + ["to_quality_check"]
 CHASE_3 = EVENING + [dailyops.UNMARKED[2]]
 CHASE_4 = CHASE_3 + [dailyops.UNMARKED[3]]
-NIGHT = CHASE_4 + ["rollover", "to_lead_order", "to_done"]
+NIGHT = CHASE_4 + ["rollover", "to_done"]
 LATE_NIGHT = NIGHT + ["archive_aged"]
 
 
@@ -658,17 +658,18 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
     assert due.index("rollover") < due.index("to_done")
 
 
-def test_the_setup_agents_reach_the_lead_order_card_before_it_leaves():
-    """A card in Done is finished; writing onto one after the fact is a line missed."""
-    due = dailyops.steps_due(at_hour(20, 30), set())
-
-    assert due.index("to_lead_order") < due.index("to_done")
+def test_the_spread_does_not_run_on_its_own():
+    """Asked for only, until it has been watched getting a few real days right.
+    It wrote onto the wrong Lead Order card and invented checklists on it."""
+    assert "to_lead_order" not in [step for _h, _m, step in dailyops.STEPS]
+    assert dailyops.time_of("to_lead_order") is None
+    assert "to_lead_order" not in dailyops.steps_due(at_hour(23, 59), set())
 
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
     assert dailyops.steps_due(at_hour(20, 30), set(CHASE_4)) == [
-        "rollover", "to_lead_order", "to_done",
+        "rollover", "to_done",
     ]
     assert dailyops.steps_due(at_hour(20, 30), set(NIGHT)) == []
 

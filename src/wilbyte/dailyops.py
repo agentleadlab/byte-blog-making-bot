@@ -83,7 +83,11 @@ STEPS = (
     (18, 30, UNMARKED[2]),
     (19, 30, UNMARKED[3]),
     (20, 30, "rollover"),
-    (20, 30, "to_lead_order"),
+    # to_lead_order is deliberately not here. It runs only when asked -
+    # `@RYTE trello spread` - until it has been watched getting the pairing
+    # and the matching right on a few real days. It wrote onto the wrong Lead
+    # Order card and invented checklists on it, and an unattended step that
+    # does that at half eight is one nobody sees until morning.
     (20, 30, "to_done"),
     (22, 0, "archive_aged"),
 )
