@@ -2671,9 +2671,16 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
     """Put today's setup-card agents onto today's Lead Order card. (added, problems).
 
     The setup card is filed by who does the setting up; the Lead Order card is
-    filed by what was bought. An agent set up days in advance only ever reaches
-    the first - their New Agent card went to Done the day it was read, so
-    nothing puts them on the second when their day finally arrives.
+    filed by what was bought. An agent set up in advance only ever reaches the
+    first - their New Agent card went to Done the day it was read, so nothing
+    puts them on the second when their day finally arrives.
+
+    The pair is the setup card *worked today* and the Lead Order card for the
+    day its agents go live, which is not today either time. A setup card is
+    worked the day before its agents launch, so the one finished this evening
+    is headed Saturday-Monday and its agents belong on Lead Order 08/29 -
+    pairing today with today took the card that was worked yesterday and went
+    to Done last night, and filed onto a Lead Order card whose day was over.
 
     Runs before the cards move to Done, because a card in Done is finished and
     writing onto one after the fact is how a line gets missed.
@@ -2686,13 +2693,17 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
 
-        setup = rules.find_setup_card(every, day)
+        setup = rules.find_setup_card(every, dailyops.next_day(day))
         if setup is None:
-            return [], [f"No setup card covering {day:%m/%d/%y} anywhere on the board."]
+            return [], [
+                f"No setup card for the agents going live "
+                f"{dailyops.next_day(day):%m/%d/%y} anywhere on the board."
+            ]
 
-        order = dailyops.cards_for(every, day).get("lead_order")
+        live = rules.setup_starts(str(setup.get("name") or ""), day) or dailyops.next_day(day)
+        order = dailyops.cards_for(every, live).get("lead_order")
         if order is None:
-            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
+            return [], [f"No Lead Order card dated {live:%m/%d/%y} anywhere on the board."]
 
         order_id = str(order.get("id") or "")
         held = client.card_checklists(order_id)
@@ -2722,6 +2733,10 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
                 problems.append(f"{spread.label} — {_short(exc, 160)}")
                 continue
             added.append(f"{spread.label} → {spread.checklist}")
+        if added:
+            # Name both cards. The whole failure here was a wrong pairing, and
+            # a count alone would have hidden it again.
+            added.insert(0, f"**{setup.get('name')}** → **{order.get('name')}**")
         return added, problems
     finally:
         client.close()

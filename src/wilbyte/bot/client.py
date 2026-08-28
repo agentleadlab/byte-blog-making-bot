@@ -1011,9 +1011,10 @@ async def _spread_setup(responder: Responder, config: Config, said: str) -> None
         return
 
     if added:
+        head, *lines = added
         await responder.send(
-            f"Put {len(added)} agent(s) on the Lead Order card:\n"
-            + "\n".join(f"· {line}" for line in added)
+            f"Put {len(lines)} agent(s) on the Lead Order card.\n{head}\n"
+            + "\n".join(f"· {line}" for line in lines)
         )
     elif not problems:
         await responder.send(
@@ -1128,8 +1129,8 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 jobs.spread_to_lead_order, bot.config
             )
             note = (
-                f"📋 {dailyops.said_at(step)} — put {len(added)} setup-card "
-                f"agent(s) on today's Lead Order card."
+                f"📋 {dailyops.said_at(step)} — put {len(added) - 1} setup-card "
+                f"agent(s) on the Lead Order card.\n" + "\n".join(added)
             ) if added else ""
         elif step == "rollover":
             moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)

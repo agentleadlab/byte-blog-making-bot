@@ -3412,3 +3412,58 @@ def test_a_leading_on_that_names_no_card_is_not_a_card_phrase():
     )
     assert kind is None
     assert text == "on second thoughts leave it"
+
+
+# --------------------------------- which two cards the spread pairs
+
+
+SETUP_CARDS = [
+    {"id": "s1", "name": "Agent Setup Going Live Friday 08/28"},
+    {"id": "s2", "name": "Agent Setup Going Live Saturday-Monday 08/29-08/31"},
+]
+ORDER_CARDS = [
+    {"id": "o1", "name": "Lead Order 08/28/26"},
+    {"id": "o2", "name": "Lead Order 08/29/26-8/30/26"},
+]
+
+
+def _pair(day):
+    """The pairing the spread makes: (setup card, lead order card)."""
+    from wilbyte import agents
+
+    setup = agents.find_setup_card(SETUP_CARDS, dailyops.next_day(day))
+    if setup is None:
+        return None, None
+    live = agents.setup_starts(setup["name"], day)
+    return setup["name"], (dailyops.cards_for(ORDER_CARDS, live) or {}).get(
+        "lead_order", {}
+    ).get("name")
+
+
+def test_friday_night_pairs_the_weekend_card_with_the_weekend_lead_order():
+    """The setup card worked tonight is headed Saturday-Monday, and its agents
+    go live on the 29th - not tonight, and not onto tonight's Lead Order."""
+    assert _pair(date(2026, 8, 28)) == (
+        "Agent Setup Going Live Saturday-Monday 08/29-08/31",
+        "Lead Order 08/29/26-8/30/26",
+    )
+
+
+def test_thursday_night_pairs_fridays_card_with_fridays_lead_order():
+    assert _pair(date(2026, 8, 27)) == (
+        "Agent Setup Going Live Friday 08/28",
+        "Lead Order 08/28/26",
+    )
+
+
+def test_the_card_worked_today_is_never_the_one_covering_today():
+    """A setup card is worked the day before its agents launch, so pairing
+    today with today takes the card that went to Done last night."""
+    from wilbyte import agents
+
+    day = date(2026, 8, 28)
+    covering_today = agents.find_setup_card(SETUP_CARDS, day)
+    worked_today = agents.find_setup_card(SETUP_CARDS, dailyops.next_day(day))
+
+    assert covering_today["name"] == "Agent Setup Going Live Friday 08/28"
+    assert worked_today["name"] != covering_today["name"]
