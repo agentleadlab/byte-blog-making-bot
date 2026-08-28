@@ -690,6 +690,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_wrong_setups(responder, config)
                 return
 
+            if request.action == "comment":
+                await _comment_on_card(responder, config, request.brief or "")
+                return
+
             if request.action == "spread":
                 await _spread_setup(responder, config, request.brief or "")
                 return
@@ -960,6 +964,36 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
         return
     # No ping: somebody just asked, so they are already looking at it.
     await responder.send(embed=_unmarked_card(found))
+
+
+async def _comment_on_card(responder: Responder, config: Config, said: str) -> None:
+    """Say something on one of the day's four cards."""
+    from .. import dailyops
+
+    text, kind, day = dailyops.comment_target(said, today=_today(config))
+    if not kind:
+        await responder.send(
+            "Say which card and I'll post it — `@RYTE comment leads went out "
+            "late on monday general`. The four are general, ops, ads and lead "
+            "order; a weekday or a date picks the day, otherwise it's today's."
+        )
+        return
+    if not text:
+        await responder.send("Give me something to say on it.")
+        return
+
+    try:
+        title, url, problems = await asyncio.to_thread(
+            jobs.comment_on_daily, config, kind=kind, day=day, text=text
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    await responder.send(f"Said it on **{title}** — <{url}>")
 
 
 async def _spread_setup(responder: Responder, config: Config, said: str) -> None:

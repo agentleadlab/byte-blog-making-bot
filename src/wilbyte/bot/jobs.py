@@ -2637,6 +2637,36 @@ def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
         client.close()
 
 
+def comment_on_daily(
+    config: Config, *, kind: str, day: date, text: str
+) -> tuple[str, str, list[str]]:
+    """Say something on one of the four dated cards. (title, url, problems).
+
+    Wherever the card has got to. A comment is about the day's work, and the
+    day's work is on that card whether it is still in Today or already in
+    Quality Check.
+    """
+    from .. import dailyops
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        card = dailyops.cards_for(every, day).get(kind)
+        if card is None:
+            named = dailyops.CARD_KINDS.get(kind, kind)
+            return "", "", [f"No {named} card dated {day:%m/%d/%y} anywhere on the board."]
+
+        title = str(card.get("name") or "")
+        try:
+            client.add_comment(str(card.get("id") or ""), text)
+        except Exception as exc:
+            return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
+        return title, str(card.get("url") or ""), []
+    finally:
+        client.close()
+
+
 def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[str]]:
     """Put today's setup-card agents onto today's Lead Order card. (added, problems).
 

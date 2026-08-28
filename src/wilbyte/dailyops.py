@@ -179,6 +179,24 @@ _YESTERDAY = re.compile(r"\byesterday\b|\blast\s+night\b", re.IGNORECASE)
 _DAY_SAID = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
 
 
+WEEKDAYS = (
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+)
+_TOMORROW = re.compile(r"\btomorrow\b", re.IGNORECASE)
+
+
+def _weekday_named(said: str, *, today: date) -> date | None:
+    """"monday" -> the next Monday on or after today.
+
+    Forwards, because the cards somebody names by weekday are the ones still
+    to come. Naming today's own weekday means today rather than a week away.
+    """
+    for number, name in enumerate(WEEKDAYS):
+        if re.search(rf"\b{name}\b", said, re.IGNORECASE):
+            return today + timedelta(days=(number - today.weekday()) % 7)
+    return None
+
+
 def day_named(text: str, *, today: date) -> date | None:
     """The day somebody asked about, or None when they meant today.
 
@@ -189,15 +207,49 @@ def day_named(text: str, *, today: date) -> date | None:
     said = " ".join((text or "").split())
     if _YESTERDAY.search(said):
         return today - timedelta(days=1)
+    if _TOMORROW.search(said):
+        return today + timedelta(days=1)
     found = _DAY_SAID.search(said)
     if not found:
-        return None
+        # A date beats a weekday when both are written: "monday 08/31" is one
+        # day said twice, and the numbers are the half that can't be off by a
+        # week.
+        return _weekday_named(said, today=today)
     month, day, year = found.groups()
     number = int(year) + (2000 if year and int(year) < 100 else 0) if year else today.year
     try:
         return date(number, int(month), int(day))
     except ValueError:
         return None
+
+
+# "comment this on monday general card" - the card is named after "on".
+_ON = re.compile(r"\s+on\s+", re.IGNORECASE)
+
+
+def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
+    """(what to say, which card, which day) out of one sentence.
+
+    The card is named at the end, after "on", because that is how anybody says
+    it. The split is at the *rightmost* "on" whose tail actually names one of
+    the four cards, so a comment with an "on" of its own survives intact -
+    "check the numbers on the ads on monday general" says the first two words
+    of that tail are still the comment.
+
+    No named card comes back as None rather than a guess. Commenting on the
+    wrong card is a message somebody reads as being about their work.
+    """
+    said = " ".join((text or "").split())
+    for found in reversed(list(_ON.finditer(said))):
+        tail = said[found.start():]
+        kinds = kinds_named(tail)
+        if kinds:
+            return (
+                said[:found.start()].strip(" -–—:,"),
+                kinds[0],
+                day_named(tail, today=today) or today,
+            )
+    return said, None, day_named(said, today=today) or today
 
 
 def kind_named(text: str) -> str | None:

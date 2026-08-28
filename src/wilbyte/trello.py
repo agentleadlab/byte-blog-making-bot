@@ -101,6 +101,12 @@ class TrelloClient:
             params={"fields": "name,idList,url,shortUrl,desc"},
         )
 
+    def add_comment(self, card_id: str, text: str) -> dict:
+        """Say something on a card, as whoever the token belongs to."""
+        return self._request(
+            "POST", f"/cards/{card_id}/actions/comments", params={"text": text}
+        )
+
     def card_comments(self, card_id: str) -> list[str]:
         """What people have said on a card, newest first.
 

@@ -3299,3 +3299,67 @@ def test_spacing_does_not_make_it_look_new():
     )
 
     assert result.carried == []
+
+
+# --------------------------------- saying something on one of the four cards
+
+
+FRIDAY = date(2026, 8, 28)
+
+
+def test_the_card_is_named_after_on():
+    assert dailyops.comment_target(
+        "leads went out late on monday general", today=FRIDAY
+    ) == ("leads went out late", "general", date(2026, 8, 31))
+
+
+def test_a_comment_with_its_own_on_in_it_survives():
+    """The split is at the rightmost "on" that actually names a card."""
+    text, kind, day = dailyops.comment_target(
+        "check the numbers on the ads on monday general card", today=FRIDAY
+    )
+    assert text == "check the numbers on the ads"
+    assert kind == "general"
+
+
+def test_no_day_means_today():
+    assert dailyops.comment_target("double check this on ads", today=FRIDAY) == (
+        "double check this", "ads", FRIDAY
+    )
+
+
+def test_a_date_picks_the_day():
+    _text, kind, day = dailyops.comment_target(
+        "this on lead order 09/01", today=FRIDAY
+    )
+    assert (kind, day) == ("lead_order", date(2026, 9, 1))
+
+
+def test_no_card_named_is_not_guessed_at():
+    """A comment on the wrong card reads as being about somebody's work."""
+    _text, kind, _day = dailyops.comment_target("nothing named here", today=FRIDAY)
+    assert kind is None
+
+
+def test_a_weekday_reads_forwards():
+    assert dailyops.day_named("monday", today=FRIDAY) == date(2026, 8, 31)
+    assert dailyops.day_named("saturday", today=FRIDAY) == date(2026, 8, 29)
+
+
+def test_todays_own_weekday_means_today_not_next_week():
+    assert dailyops.day_named("friday", today=FRIDAY) == FRIDAY
+
+
+def test_tomorrow_and_yesterday_still_read():
+    assert dailyops.day_named("tomorrow", today=FRIDAY) == date(2026, 8, 29)
+    assert dailyops.day_named("yesterday", today=FRIDAY) == date(2026, 8, 27)
+
+
+def test_a_written_date_beats_a_weekday_beside_it():
+    """"monday 08/31" is one day said twice, and the numbers can't be off by a week."""
+    assert dailyops.day_named("monday 09/07", today=FRIDAY) == date(2026, 9, 7)
+
+
+def test_rollover_general_is_not_read_as_a_day():
+    """The weekday reading must not turn ordinary commands into dated ones."""
+    assert dailyops.day_named("rollover general", today=FRIDAY) is None
