@@ -612,7 +612,7 @@ def at_hour(hour, minute=0):
 # cards get carried over then, because both are still worked after the board
 # has been put to bed.
 SMALL_HOURS = [dailyops.LATE_ROLLOVER, dailyops.LATE_DONE]
-MORNING = SMALL_HOURS + ["make_setup"]
+MORNING = ["make_setup"]
 WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
 CHASE_1 = MIDDAY + [dailyops.UNMARKED[0]]
@@ -630,7 +630,8 @@ LATE_NIGHT = NIGHT + ["archive_aged"]
         (1, 59, []),
         (2, 0, SMALL_HOURS),
         (5, 0, SMALL_HOURS),
-        (6, 0, MORNING),
+        # Six o'clock is the cut-off: after it the night pair is not caught up.
+        (6, 0, ["make_setup"]),
         (8, 0, MORNING),
         (9, 0, WORKING),
         # Half past matters now, so both sides of it are worth pinning.
@@ -3700,3 +3701,25 @@ def test_the_late_rollover_is_the_first_thing_in_the_day():
 def test_the_evening_carry_still_happens_before_the_cards_go_to_done():
     due = dailyops.steps_due(at_hour(20, 30), set())
     assert due.index("rollover") < due.index("to_done")
+
+
+def test_a_small_hours_step_is_never_caught_up_in_the_evening():
+    """A restart at half seven ran both of them: they carried the wrong day's
+    cards and filed away a Lead Order card the team was still working on."""
+    evening = dailyops.steps_due(at_hour(19, 34), set())
+
+    assert dailyops.LATE_ROLLOVER not in evening
+    assert dailyops.LATE_DONE not in evening
+
+
+def test_it_still_catches_up_within_the_small_hours():
+    """Missing 2am by an hour is worth catching up; missing it by fifteen is
+    tomorrow's problem."""
+    assert dailyops.LATE_ROLLOVER in dailyops.steps_due(at_hour(4, 0), set())
+    assert dailyops.LATE_DONE in dailyops.steps_due(at_hour(5, 59), set())
+    assert dailyops.LATE_DONE not in dailyops.steps_due(at_hour(6, 0), set())
+
+
+def test_the_ordinary_steps_still_catch_up_all_day():
+    late = dailyops.steps_due(at_hour(23, 0), set())
+    assert "to_today" in late and "to_done" in late

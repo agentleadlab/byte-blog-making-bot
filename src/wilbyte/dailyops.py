@@ -138,6 +138,13 @@ STEP_LISTS = {
 # `walks_today`; they share a destination and differ only in what they carry.
 DONE_STEPS = ("to_done", LATE_DONE)
 
+# The steps that work on yesterday's cards, and the hour after which they are
+# no longer allowed to catch up. A restart at half seven in the evening ran
+# both of these and filed away a Lead Order card the team was still working -
+# a step whose whole meaning is "last night" has no business running at dusk.
+NIGHT_STEPS = (LATE_ROLLOVER, LATE_DONE)
+CATCH_UP_UNTIL = 6
+
 # What somebody types to ask for a move, by where they want the cards to end
 # up. Named for the destination because that is how anybody says it: "move
 # them to Today", not "do the nine o'clock one".
@@ -181,11 +188,18 @@ def steps_due(now, done_today: set[str]) -> list[str]:
     board still sitting in In Que at eleven is worse than one moved late - the
     team's cards are where they should be either way, just later.
 
+    Catching up is right for a step that missed its hour by an hour or two.
+    It is wrong for the small-hours pair: those work on *yesterday's* cards, so
+    a restart at half seven in the evening had them carry the wrong day and
+    file a Lead Order card away that was still being worked on. They run in the
+    small hours or they wait for tomorrow's.
+
     Ordered, because the 6pm move takes cards the 9am move put there.
     """
     return [
         step for hour, minute, step in STEPS
         if (now.hour, now.minute) >= (hour, minute) and step not in done_today
+        and not (step in NIGHT_STEPS and now.hour >= CATCH_UP_UNTIL)
     ]
 
 
