@@ -1712,6 +1712,13 @@ async def _lead_masterlists(bot: "WilByteBot"):
     found: list[leadsheets.Masterlist] = []
     for channel in guild.text_channels:
         category = getattr(channel.category, "name", "") or "(no category)"
+        # The categories are the list of what counts: MTG Masterlist, IUL
+        # Masterlist, VET Masterlist, FEX Masterlist, AI Leads, INACTIVE.
+        # Anything filed outside them is a channel somebody made, not a lead
+        # type, and putting it on the live tab is what made the first sheet
+        # unreadable.
+        if not leadsheets.worth_listing(category):
+            continue
         held = leadsheets.Masterlist(
             category=category, name=leadsheets.tidy_name(channel.name)
         )
@@ -1811,16 +1818,23 @@ async def _send_lead_summary(
     )
     await _count_leads(found)
 
-    live, idle = leadsheets.split_by_state(found)
+    theirs, others = leadsheets.apart(found)
+    live, idle = leadsheets.split_by_state(theirs)
     try:
         url = await asyncio.to_thread(
-            partial(_write_lead_summary, into, live, idle, files=files)
+            partial(_write_lead_summary, into, live, idle, others, files=files)
         )
     except gsheets.SheetsError as exc:
         await responder.send(embed=embeds.error(f"Couldn't write the sheet. {exc}"))
         return
 
-    await responder.send(f"{leadsheets.describe(live, idle)}\n<{url}>", quiet=True)
+    said_back = leadsheets.describe(live, idle)
+    if others:
+        said_back += (
+            f"\n**{len(others)}** more sheet(s) in the folder with no channel, "
+            f"on the *{leadsheets.OTHER_TAB}* tab."
+        )
+    await responder.send(f"{said_back}\n<{url}>", quiet=True)
 
 
 # How many masterlists to count at once. Eighty-six sheets one after another
@@ -1883,7 +1897,9 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
         held.problem = ""
 
 
-def _write_lead_summary(into: str, live, idle, *, files: list[dict] | None = None) -> str:
+def _write_lead_summary(
+    into: str, live, idle, others=(), *, files: list[dict] | None = None
+) -> str:
     """Both tabs, live first. Runs off the event loop - it is all network.
 
     The only sheet RYTE ever writes to is this one. Every masterlist in the
@@ -1916,6 +1932,17 @@ def _write_lead_summary(into: str, live, idle, *, files: list[dict] | None = Non
         into, idle_rows, tab=leadsheets.INACTIVE_TAB, expect_header=header
     )
     gsheets.prettify(into, leadsheets.INACTIVE_TAB, rows=len(idle_rows))
+
+    # Sheets in the folder that no channel claimed. Kept, because they are real
+    # and somebody will want to find them - but off the two tabs that answer
+    # "what are we running".
+    if others:
+        gsheets.ensure_tab(into, leadsheets.OTHER_TAB)
+        other_rows = leadsheets.summary_rows(list(others))
+        gsheets.write_rows(
+            into, other_rows, tab=leadsheets.OTHER_TAB, expect_header=header
+        )
+        gsheets.prettify(into, leadsheets.OTHER_TAB, rows=len(other_rows))
     return url
 
 

@@ -748,3 +748,52 @@ def test_the_quota_message_is_not_four_lines_of_json():
     assert "per-minute read limit" in said
     assert "quota metric" not in said
     assert len(said) < 300
+
+
+# --------------------------------- Discord decides what is a lead type
+
+
+@pytest.mark.parametrize(
+    "category,wanted",
+    [
+        ("IUL Masterlist", True),
+        ("INACTIVE Masterlist", True),
+        ("AI Leads", True),
+        ("Text Channels", False),
+        ("(no category)", False),
+        ("", False),
+    ],
+)
+def test_only_a_real_category_counts_as_a_lead_type(category, wanted):
+    """A channel filed under no category is a channel somebody made."""
+    assert leadsheets.worth_listing(category) is wanted
+
+
+def test_the_drive_only_sheets_go_on_their_own_tab():
+    """They are real sheets, but they are not the team's lead types and they
+    do not belong on the tab somebody opens to ask what is live."""
+    found = leadsheets.combine(
+        [Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u")],
+        [{"id": "x", "name": "Jan 30 FEX", "url": "v"}],
+    )
+    theirs, others = leadsheets.apart(found)
+
+    assert [held.name for held in theirs] == ["LP IUL"]
+    assert [held.name for held in others] == ["Jan 30 FEX"]
+
+
+def test_the_third_tab_is_only_written_when_there_is_something_for_it(monkeypatch):
+    from wilbyte.bot import client
+
+    made = []
+    monkeypatch.setattr(gsheets, "ensure_tab", lambda into, tab: made.append(tab))
+    monkeypatch.setattr(gsheets, "write_rows", lambda *a, **k: "u")
+    monkeypatch.setattr(gsheets, "prettify", lambda *a, **k: None)
+    monkeypatch.setattr(gsheets, "sheet_id", lambda x: x)
+
+    client._write_lead_summary("into", [], [], [])
+    assert leadsheets.OTHER_TAB not in made
+
+    made.clear()
+    client._write_lead_summary("into", [], [], [Masterlist(category="x", name="y")])
+    assert leadsheets.OTHER_TAB in made

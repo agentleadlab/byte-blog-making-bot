@@ -45,6 +45,21 @@ INACTIVE = re.compile(r"\binactive\b", re.IGNORECASE)
 
 ACTIVE_TAB = "Active"
 INACTIVE_TAB = "Inactive"
+OTHER_TAB = "Other sheets"
+
+# Discord's categories are the list of what counts. A channel filed under no
+# category, or left in the default "Text Channels", is not a lead type - it is
+# a channel somebody made. The team keeps the categories tidy; that is the
+# whole reason to read them rather than guess from names.
+_NOT_A_CATEGORY = re.compile(
+    r"^\s*(?:text\s+channels?|voice\s+channels?|\(no\s+category\)|general)\s*$",
+    re.IGNORECASE,
+)
+
+
+def worth_listing(category: str) -> bool:
+    """Whether a Discord category is one the masterlists are filed under."""
+    return not _NOT_A_CATEGORY.match(category or "") and bool((category or "").strip())
 
 
 @dataclass
@@ -210,6 +225,18 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
         if str(file.get("id") or "") not in claimed
     ]
     return list(found) + extra
+
+
+def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
+    """(the lead types, the Drive files nobody claimed).
+
+    The second lot are real sheets and worth keeping sight of, but they are not
+    the team's lead types and they do not belong on the tab somebody opens to
+    ask what is live. They get a tab of their own.
+    """
+    theirs = [held for held in found if held.category != DRIVE_ONLY]
+    rest = [held for held in found if held.category == DRIVE_ONLY]
+    return theirs, rest
 
 
 def missing(found: list[Masterlist]) -> list[Masterlist]:
