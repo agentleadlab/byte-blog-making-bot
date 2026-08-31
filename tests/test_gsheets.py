@@ -1010,3 +1010,18 @@ def test_a_sorted_out_row_says_so_and_is_highlighted():
 def test_the_header_never_counts_as_a_sorted_out_row():
     rows = leadsheets.deploy_rows([])
     assert leadsheets.done_rows(rows) == []
+
+
+def test_the_leads_tab_is_found_whatever_it_is_called():
+    """Available_Leads on one deploy sheet, Master_Leads on the next."""
+    assert leadsheets.leads_tab_in(
+        ["Dashboard", "Agent_Config", "Master_Leads", "Agent_Maria_Garcia"]
+    ) == "Master_Leads"
+
+
+def test_the_agent_config_tab_is_the_surest_tell():
+    """A deploy sheet kept outside the folder, named nothing in particular,
+    still has to configure its agents somewhere."""
+    tabs = ["Dashboard", "Agent_Config", "Master_Leads", "Agent_Luis_Orbezua"]
+    assert leadsheets.config_tab_in(tabs) == "Agent_Config"
+    assert leadsheets.config_tab_in(["Sheet1", "Notes"]) == ""

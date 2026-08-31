@@ -146,13 +146,26 @@ NEW_SHEET_HEADER = ["Name", "Email", "Phone", "State", "Date Added"]
 # The tab on an auto-deploy sheet where the leads themselves are. Its header is
 # the right header for that lead type's masterlist - it is the shape the team's
 # own leads already come in, which beats anything RYTE could invent.
-LEADS_TAB = re.compile(r"available[\s_-]*leads", re.IGNORECASE)
+LEADS_TAB = re.compile(r"(?:available|master)[\s_-]*leads", re.IGNORECASE)
+
+# The tab every deploy sheet has and no masterlist does. This is the surest
+# tell of the three: a deploy sheet kept outside the folder, named nothing in
+# particular, still has to configure its agents somewhere.
+CONFIG_TAB = re.compile(r"agents?[\s_-]*config", re.IGNORECASE)
 
 
 def leads_tab_in(tabs: list[str]) -> str:
-    """The "Available_Leads" tab of a deploy sheet, whatever it is spelled."""
+    """The leads tab of a deploy sheet - Available_Leads, or Master_Leads."""
     for title in tabs or []:
         if LEADS_TAB.search(title):
+            return title
+    return ""
+
+
+def config_tab_in(tabs: list[str]) -> str:
+    """The Agent_Config tab, when the sheet has one."""
+    for title in tabs or []:
+        if CONFIG_TAB.search(title):
             return title
     return ""
 
