@@ -2114,3 +2114,46 @@ def test_a_two_order_agent_still_gets_both_lines():
     ]
     spreads, _ = agents.plan_spread(setup, order)
     assert len(spreads) == 2
+
+
+# --------------------------------- a note about the agent is not an order
+
+
+@pytest.mark.parametrize(
+    "said,wanted",
+    [
+        ("Uprise Agent", False),
+        ("uprise agents", False),
+        ("Ascend Agency", False),
+        ("Imperial Financial", False),
+        ("5 OTP VETS", True),
+        ("OTP VET Plus", True),
+        # Names leads, so it is an order however it is written.
+        ("Uprise 5 OTP VETS", True),
+    ],
+)
+def test_what_counts_as_something_bought(said, wanted):
+    assert agents.an_order(said) is wanted
+
+
+def test_an_agency_note_beside_a_real_order_is_dropped():
+    """Jack Duval's card says "5 OTP VETS" and "Uprise Agent". The second is
+    who he is under, and filing it put an unplaceable line on the board."""
+    assert agents.order_parts("5 OTP VETS + Uprise Agent") == ["5 OTP VETS"]
+
+
+def test_a_line_that_is_only_a_note_is_still_reported():
+    """Dropping it silently would lose an agent nobody could then place."""
+    assert agents.order_parts("Uprise Agent") == ["Uprise Agent"]
+
+
+def test_the_agent_gets_one_line_not_two():
+    setup = [_person("Nicole", [
+        ("https://trello.com/c/jack", "5 OTP VETS + Uprise Agent"),
+    ])]
+    order = [{"id": "1", "name": "OTP VETS", "checkItems": []}]
+
+    spreads, problems = agents.plan_spread(setup, order)
+
+    assert [spread.checklist for spread in spreads] == ["OTP VETS"]
+    assert problems == []

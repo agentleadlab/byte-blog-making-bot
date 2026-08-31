@@ -384,6 +384,31 @@ def stated_orders(text: str) -> str:
     return stated_lead_type(text)
 
 
+# A note about who the agent is, not about what they bought. "Uprise Agent"
+# sits on Jack Duval's card beside "5 OTP VETS" and names the agency he is
+# under; read as an order it becomes a line nobody can file, and filing it
+# somewhere would put five VET leads under Phoenix Plus.
+_WHO_NOT_WHAT = re.compile(
+    r"^\s*[\w'&.-]*\s*(?:agents?|agency|team|group|partners?|financial)\s*$",
+    re.IGNORECASE,
+)
+
+
+def an_order(part: str) -> bool:
+    """Whether a line names something bought, rather than who bought it.
+
+    A phrase naming no kind of leads and ending in "agent" is somebody's
+    agency. A phrase naming leads is an order however it is written.
+    """
+    said = " ".join((part or "").split())
+    if not said:
+        return False
+    # The note is checked first on purpose. "Uprise" is one of the words that
+    # names a lead family, so "Uprise Agent" reads as an order until you look
+    # at the shape of it: one word and then "Agent", nothing bought.
+    return not _WHO_NOT_WHAT.match(said)
+
+
 def order_parts(label: str) -> list[str]:
     """A checklist line back into the orders it names.
 
@@ -396,6 +421,10 @@ def order_parts(label: str) -> list[str]:
     by hand is left exactly as it was typed.
     """
     parts = [part.strip() for part in (label or "").split(ORDER_JOIN) if part.strip()]
+    # An agency note alongside a real order is dropped; on its own it is left
+    # alone, so a line RYTE can't read still gets reported rather than vanish.
+    ordered = [part for part in parts if an_order(part)]
+    parts = ordered or parts
     return parts or ([label.strip()] if (label or "").strip() else [])
 
 
