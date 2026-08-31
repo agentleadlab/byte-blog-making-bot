@@ -2042,3 +2042,75 @@ def test_a_sentence_about_speed_that_is_not_a_launch_date_is_left_alone():
         "Please mark as priority and deliver all 40 leads within 5-6 days max",
         today=WEDNESDAY,
     ) is None
+
+
+# --------------------------------- one line per agent, whatever the copies say
+
+
+def test_the_same_card_written_two_ways_is_one_agent():
+    """Trello writes the link both with the slug and without, so comparing
+    whole links reads one agent as two and files them twice."""
+    assert agents.card_key("https://trello.com/c/tIA7tp2B") == (
+        agents.card_key("https://trello.com/c/tIA7tp2B/431-new-agent-jorge-flores")
+    )
+
+
+def test_three_copies_of_a_list_still_add_one_line_each():
+    """The point of reading all three checklists is not to miss anybody - not
+    to file everybody three times."""
+    order = [
+        {"id": "1", "name": "PHNX PLUS", "checkItems": []},
+        {"id": "2", "name": "PHNX STANDARD", "checkItems": []},
+        {"id": "3", "name": "OTP VET Plus", "checkItems": []},
+    ]
+    spreads, _ = agents.plan_spread(FRIDAY, order)
+
+    urls = [agents.card_key(spread.url) for spread in spreads]
+    assert len(urls) == len(set(urls)) == 3
+
+
+def test_an_agent_already_on_the_card_with_a_slugged_link_is_not_added_again():
+    """The line RYTE wrote yesterday and the one on the setup card are the same
+    card written differently. Before this, a second spread doubled every line."""
+    order = [{
+        "id": "1", "name": "PHNX PLUS",
+        "checkItems": [_item(
+            "https://trello.com/c/aaa/12-new-agent-someone", "UPRISE PHX PLUS"
+        )],
+    }]
+    spreads, _ = agents.plan_spread(FRIDAY[:1], order)
+
+    assert agents.card_key("https://trello.com/c/aaa") not in [
+        agents.card_key(spread.url) for spread in spreads
+    ]
+
+
+def test_running_the_spread_twice_adds_nothing_the_second_time():
+    order = [
+        {"id": "1", "name": "PHNX PLUS", "checkItems": []},
+        {"id": "2", "name": "PHNX STANDARD", "checkItems": []},
+        {"id": "3", "name": "OTP VET Plus", "checkItems": []},
+    ]
+    first, _ = agents.plan_spread(FRIDAY, order)
+
+    # ...as the card would read afterwards.
+    for spread in first:
+        for checklist in order:
+            if checklist["name"].casefold() == spread.checklist.casefold():
+                checklist["checkItems"].append(_item(spread.url, spread.label))
+
+    again, _ = agents.plan_spread(FRIDAY, order)
+    assert again == []
+
+
+def test_a_two_order_agent_still_gets_both_lines():
+    """Filed under one of them is not filed."""
+    setup = [_person("Nicole", [
+        ("https://trello.com/c/ddd", "25 OTP VETS + 15 OTP FEX"),
+    ])]
+    order = [
+        {"id": "1", "name": "OTP VETS", "checkItems": []},
+        {"id": "2", "name": "OTP FEX", "checkItems": []},
+    ]
+    spreads, _ = agents.plan_spread(setup, order)
+    assert len(spreads) == 2

@@ -1011,6 +1011,19 @@ def setup_worked_on(title: str, near: date) -> date | None:
 _LINKED_ITEM = re.compile(r"(https?://(?:www\.)?trello\.com/c/\S+)\s*(.*)", re.IGNORECASE | re.DOTALL)
 
 
+# The bit of a Trello card link that identifies the card. Trello writes the
+# same card two ways - "trello.com/c/tIA7tp2B" and
+# "trello.com/c/tIA7tp2B/431-new-agent-jorge-flores" - so comparing whole
+# links reads one agent as two and files them twice.
+_CARD_TOKEN = re.compile(r"/c/([A-Za-z0-9]+)", re.IGNORECASE)
+
+
+def card_key(url: str) -> str:
+    """One agent card, however its link happens to be written."""
+    found = _CARD_TOKEN.search(url or "")
+    return found.group(1).casefold() if found else " ".join((url or "").split()).casefold()
+
+
 def split_item(name: str) -> tuple[str, str]:
     """(the agent card the line links to, what the rest of the line says)."""
     found = _LINKED_ITEM.search(name or "")
@@ -1043,19 +1056,24 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
     of them threw the other order away.
     """
     order: list[str] = []
+    links: dict[str, str] = {}
     labels: dict[str, list[str]] = {}
     for checklist in checklists or []:
         for item in checklist.get("checkItems") or []:
             url, label = split_item(str(item.get("name") or ""))
             if not url:
                 continue
-            if url not in labels:
-                labels[url] = []
-                order.append(url)
+            # By card, not by link text. The same agent is written both
+            # "trello.com/c/tIA7tp2B" and with the slug on the end.
+            key = card_key(url)
+            if key not in labels:
+                labels[key] = []
+                links[key] = url
+                order.append(key)
             for part in order_parts(label):
-                if part not in labels[url]:
-                    labels[url].append(part)
-    return [(url, ORDER_JOIN.join(labels[url])) for url in order]
+                if part not in labels[key]:
+                    labels[key].append(part)
+    return [(links[key], ORDER_JOIN.join(labels[key])) for key in order]
 
 
 def plan_spread(
@@ -1072,15 +1090,16 @@ def plan_spread(
     already on the Lead Order card is skipped rather than doubled: the same-day
     path may have put them there hours earlier.
     """
-    anywhere: set[str] = set()
+    anywhere: dict[str, int] = {}
     on_checklist: set[tuple[str, str]] = set()
     for checklist in order_held or []:
         where = " ".join(str(checklist.get("name") or "").split()).casefold()
         for item in checklist.get("checkItems") or []:
             url = split_item(str(item.get("name") or ""))[0]
             if url:
-                anywhere.add(url)
-                on_checklist.add((url, where))
+                key = card_key(url)
+                anywhere[key] = anywhere.get(key, 0) + 1
+                on_checklist.add((key, where))
 
     names = {
         " ".join(str(c.get("name") or "").split()).casefold()
@@ -1097,11 +1116,13 @@ def plan_spread(
             continue
 
         # Two orders are two lines, so an agent already filed under one of them
-        # still needs the other. With a single order, being anywhere on the card
-        # is enough - somebody may have filed them by hand under a name that
-        # matches nothing here, and a second line is worse than none.
+        # still needs the other. Otherwise, being on the card as many times as
+        # they have orders is enough - somebody may have filed them by hand
+        # under a name that matches nothing here, and a second line is worse
+        # than none.
         parts = order_parts(label)
-        if len(parts) == 1 and url in anywhere:
+        key = card_key(url)
+        if anywhere.get(key, 0) >= len(parts):
             continue
 
         for part in parts:
@@ -1110,9 +1131,9 @@ def plan_spread(
             )
             checklist = landed or part
             where = " ".join(checklist.split()).casefold()
-            if (url, where) in on_checklist:
+            if (key, where) in on_checklist:
                 continue
-            on_checklist.add((url, where))
+            on_checklist.add((key, where))
             spreads.append(Spread(
                 url=url,
                 label=part,
