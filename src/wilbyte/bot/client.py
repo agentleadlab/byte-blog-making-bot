@@ -1848,7 +1848,7 @@ async def _send_lead_summary(
     await _count_leads(found)
 
     if folder and _MAKE_THEM.search(said or ""):
-        await _make_missing_sheets(responder, found, folder)
+        await _make_missing_sheets(responder, found, folder, said=said or "")
 
     lists, deploys = leadsheets.by_kind(found)
     theirs, others = leadsheets.apart(lists)
@@ -1950,7 +1950,34 @@ async def _count_leads(found: list) -> None:
     found.extend(caught)
 
 
-async def _make_missing_sheets(responder: Responder, found: list, folder: str) -> None:
+# "create one" - build a single masterlist and look at it before letting RYTE
+# loose on thirty. "create otp fex" - that one, by name.
+_JUST_ONE = re.compile(r"\b(?:one|first|a\s+test|test\s+one|single)\b", re.IGNORECASE)
+_CREATE_WORDS = re.compile(
+    r"\b(?:masterlists?|create|make|add|new|the|for|please|sheets?)\b", re.IGNORECASE
+)
+
+
+def _who_to_make(said: str, blank: list) -> list:
+    """Which of the sheetless lead types this instruction is asking for.
+
+    All of them by default. "create one" is the first, for looking at before
+    thirty more follow it; "create otp fex" is that one by name.
+    """
+    from .. import leadstate
+
+    named = leadstate.key(_CREATE_WORDS.sub(" ", said or ""))
+    if named:
+        wanted = [held for held in blank if leadstate.key(held.name) == named]
+        if wanted:
+            return wanted
+
+    return blank[:1] if _JUST_ONE.search(said or "") else blank
+
+
+async def _make_missing_sheets(
+    responder: Responder, found: list, folder: str, *, said: str = ""
+) -> None:
     """Make a masterlist for each lead type that hasn't got one anywhere.
 
     Only reached when somebody typed `create`. Named "<Lead type> Masterlist
@@ -1966,9 +1993,15 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
     from .. import gsheets, leadsheets
 
     lists, deploys = leadsheets.by_kind(found)
-    blank = leadsheets.missing(lists)
+    # Live lead types only. An inactive one has no leads coming in, and a
+    # folder full of empty sheets for lead types nobody runs is clutter.
+    live, _ = leadsheets.split_by_state(lists)
+    blank = _who_to_make(said, leadsheets.missing(live))
     if not blank:
-        await responder.send("Every lead type already has a sheet — nothing to make.")
+        await responder.send(
+            "Nothing to make — every live lead type has a sheet. "
+            "(Inactive ones are skipped on purpose.)"
+        )
         return
 
     # Which flagged deploy sheet belongs to each lead type, so its columns can
@@ -1978,6 +2011,7 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
     await responder.send(
         f"Making {len(blank)} masterlist(s) in the folder: "
         + ", ".join(held.name for held in blank[:12])
+        + ("" if len(blank) > 1 else " — have a look at it before I make the rest.")
     )
     for held in blank:
         header = list(leadsheets.NEW_SHEET_HEADER)

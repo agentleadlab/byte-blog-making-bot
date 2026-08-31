@@ -1146,3 +1146,38 @@ def test_a_channel_linking_a_deploy_sheet_is_caught_during_counting(monkeypatch)
     assert len(flagged) == 1
     assert flagged[0].category == "Spanish FEX"
     assert flagged[0].channel == "https://discord.com/channels/1/2"
+
+
+# --------------------------------- how many to make, and which
+
+
+def _blank(*names):
+    return [Masterlist(category="IUL Masterlist", name=name) for name in names]
+
+
+def test_create_on_its_own_makes_them_all():
+    from wilbyte.bot import client
+    blank = _blank("Mortgage Protection", "OTP FEX", "Spanish FEX")
+    assert client._who_to_make("create", blank) == blank
+
+
+def test_create_one_makes_a_single_sheet_to_look_at():
+    """Thirty sheets in somebody's Drive is not the thing to get wrong."""
+    from wilbyte.bot import client
+    blank = _blank("Mortgage Protection", "OTP FEX")
+    made = client._who_to_make("create one", blank)
+    assert [held.name for held in made] == ["Mortgage Protection"]
+
+
+def test_a_named_lead_type_is_the_one_that_gets_made():
+    from wilbyte.bot import client
+    blank = _blank("Mortgage Protection", "OTP FEX", "Spanish FEX")
+    made = client._who_to_make("create otp fex", blank)
+    assert [held.name for held in made] == ["OTP FEX"]
+
+
+def test_a_name_nobody_recognises_does_not_silently_make_everything():
+    """It falls back to all only when no name was given at all."""
+    from wilbyte.bot import client
+    blank = _blank("Mortgage Protection")
+    assert client._who_to_make("create one nonsense name", blank) == blank[:1]
