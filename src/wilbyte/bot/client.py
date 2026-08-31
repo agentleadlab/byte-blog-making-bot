@@ -1178,11 +1178,21 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"📋 {dailyops.said_at(step)} — put {len(added) - 1} setup-card "
                 f"agent(s) on the Lead Order card.\n" + "\n".join(added)
             ) if added else ""
-        elif step == "rollover":
-            moved, problems, flagged = await asyncio.to_thread(jobs.run_rollover, bot.config)
+        elif step in ("rollover", dailyops.LATE_ROLLOVER):
+            late = step == dailyops.LATE_ROLLOVER
+            # Two o'clock is already the next calendar day, so the cards to
+            # read are yesterday's - the ones the team worked last night.
+            when = (
+                dailyops.day_before(jobs.board_day(bot.config)) if late else None
+            )
+            kinds = dailyops.LATE_KINDS if late else dailyops.EVENING_KINDS
+            moved, problems, flagged = await asyncio.to_thread(
+                partial(jobs.run_rollover, bot.config, day=when, only=kinds)
+            )
             note = (
                 f"📋 {dailyops.said_at(step)} — carried {moved} "
-                "unfinished item(s) onto tomorrow's cards."
+                f"unfinished {'Ads and Lead Order ' if late else ''}item(s) "
+                "onto the next day's cards."
             )
             if flagged:
                 note += "\n" + "\n".join(

@@ -608,7 +608,11 @@ def at_hour(hour, minute=0):
     return _dt(2026, 8, 24, hour, minute)
 
 
-MORNING = ["make_setup"]
+# Two in the morning, before anything else: yesterday's Ads and Lead Order
+# cards get carried over then, because both are still worked after the board
+# has been put to bed.
+SMALL_HOURS = [dailyops.LATE_ROLLOVER]
+MORNING = SMALL_HOURS + ["make_setup"]
 WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
 CHASE_1 = MIDDAY + [dailyops.UNMARKED[0]]
@@ -623,7 +627,9 @@ LATE_NIGHT = NIGHT + ["archive_aged"]
 @pytest.mark.parametrize(
     "hour,minute,expected",
     [
-        (5, 0, []),
+        (1, 59, []),
+        (2, 0, SMALL_HOURS),
+        (5, 0, SMALL_HOURS),
         (6, 0, MORNING),
         (8, 0, MORNING),
         (9, 0, WORKING),
@@ -3613,3 +3619,39 @@ def test_two_dates_a_month_apart_are_a_typo_not_a_range():
 def test_a_title_with_no_date_covers_nothing():
     assert dailyops.card_days("Lead Order") == []
     assert dailyops.cards_covering([{"name": "Lead Order"}], date(2026, 8, 31)) == {}
+
+
+# --------------------------------------------- two rollovers, two times
+
+
+def test_every_card_is_carried_by_exactly_one_rollover():
+    """Split between them, or a card is carried twice or not at all."""
+    both = list(dailyops.EVENING_KINDS) + list(dailyops.LATE_KINDS)
+    assert sorted(both) == sorted(dailyops.CARD_KINDS)
+    assert len(both) == len(set(both))
+
+
+def test_ads_and_lead_order_are_the_late_pair():
+    assert set(dailyops.LATE_KINDS) == {"ads", "lead_order"}
+    assert set(dailyops.EVENING_KINDS) == {"general", "ops"}
+
+
+def test_the_late_rollover_runs_at_two_in_the_morning():
+    assert dailyops.time_of(dailyops.LATE_ROLLOVER) == (2, 0)
+    assert dailyops.time_of("rollover") == (20, 30)
+
+
+def test_two_in_the_morning_works_on_yesterdays_cards():
+    """The calendar day has already turned over; the cards the team worked
+    last night are yesterday's."""
+    assert dailyops.day_before(date(2026, 9, 1)) == date(2026, 8, 31)
+
+
+def test_the_late_rollover_is_the_first_thing_in_the_day():
+    every = [step for _h, _m, step in dailyops.STEPS]
+    assert every[0] == dailyops.LATE_ROLLOVER
+
+
+def test_the_evening_carry_still_happens_before_the_cards_go_to_done():
+    due = dailyops.steps_due(at_hour(20, 30), set())
+    assert due.index("rollover") < due.index("to_done")

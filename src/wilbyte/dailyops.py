@@ -59,6 +59,12 @@ AGED_DONE = "Aged Leads Order Done"
 # segment stamps in its description.
 MARKETING = "Marketing Department"
 
+# The two rollovers, and which cards each one carries. Every kind belongs to
+# exactly one of them, or a card is carried twice or not at all.
+LATE_ROLLOVER = "late_rollover"
+EVENING_KINDS = ("general", "ops")
+LATE_KINDS = ("ads", "lead_order")
+
 # (hour, minute, what happens). Local time on the board's own clock - the
 # team's, not the server's.
 #
@@ -71,6 +77,12 @@ MARKETING = "Marketing Department"
 # carry has to read the cards while they are still the day's, so it goes
 # first.
 STEPS = (
+    # Ads and Lead Order are carried at two in the morning, not with the other
+    # two at half eight: both are still being worked long after the board has
+    # been put to bed, and carrying them at half eight moves lines somebody is
+    # about to tick. Two o'clock is the following calendar day, so this step
+    # reads *yesterday's* cards - see LATE_KINDS.
+    (2, 0, LATE_ROLLOVER),
     (6, 0, "make_setup"),
     (9, 0, "to_today"),
     # Half eleven, because "the in que cards comes in by 11am" - and the setup
@@ -98,7 +110,8 @@ STEP_NAMES = {
     "link_setup": "put the setup card on tomorrow's Ads and Ops checklists",
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
-    "rollover": "carry the unfinished items to tomorrow",
+    "rollover": "carry the unfinished General and Ops items to tomorrow",
+    LATE_ROLLOVER: "carry yesterday's unfinished Ads and Lead Order items over",
     "to_lead_order": "put today's setup-card agents on today's Lead Order card",
     **{
         step: f"the New Agent cards in {DONE} nobody has ticked"
@@ -633,6 +646,11 @@ def plan_rollover(
 def item_key(kind: str, person: str, name: str) -> str:
     """A stable identity for an item across days, for counting rollovers."""
     return f"{kind}|{' '.join(person.split()).casefold()}|{' '.join((name or '').split())}"
+
+
+def day_before(day: date) -> date:
+    """The day a two-in-the-morning step is actually working on."""
+    return day - timedelta(days=1)
 
 
 def next_day(day: date) -> date:
