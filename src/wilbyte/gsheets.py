@@ -172,6 +172,20 @@ def explain(response: httpx.Response, where: str) -> str:
             "The Google login RYTE has doesn't cover Sheets. Mint the refresh "
             f"token again with {SCOPES[0]} among the scopes."
         )
+    lowered = body.lower()
+    # Google answers 403 for a project that never switched the API on, and it
+    # reads exactly like a permission problem. It is not one, and telling
+    # somebody to share a sheet they already own wastes their afternoon.
+    if response.status_code == 403 and (
+        "has not been used in project" in lowered
+        or "service_disabled" in lowered
+        or "accessnotconfigured" in lowered
+    ):
+        return (
+            "The **Google Sheets API is not enabled** in that Cloud project — "
+            "this isn't a sharing problem. Cloud Console → APIs & Services → "
+            "Library → search 'Google Sheets API' → Enable, then try again."
+        )
     if response.status_code == 403:
         who = whoami()
         named = f" — that's **{who}**" if who else ""
@@ -179,7 +193,7 @@ def explain(response: httpx.Response, where: str) -> str:
             "Google refused: the account behind LEADS_GOOGLE_REFRESH_TOKEN "
             f"can't open that sheet{named}. Either share the sheet with that "
             "account as an Editor, or mint the refresh token again signed in "
-            "as whoever owns it."
+            f"as whoever owns it.\n-# Google said: {body[:160]}"
         )
     if response.status_code == 404:
         return f"No sheet with that id ({where.split('/')[0][:20]}…). Check the link."

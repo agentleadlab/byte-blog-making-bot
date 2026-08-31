@@ -73,6 +73,25 @@ def test_the_403_names_the_account_when_it_can(monkeypatch):
     )
 
 
+def test_an_api_that_was_never_switched_on_is_not_a_sharing_problem():
+    """Google answers 403 for both, and telling somebody to share a sheet they
+    already own wastes their afternoon."""
+    body = (
+        '{"error":{"code":403,"message":"Google Sheets API has not been used in '
+        'project 12345 before or it is disabled.","status":"PERMISSION_DENIED"}}'
+    )
+    said = explain(_response(403, body), SHEET)
+    assert "not enabled" in said
+    assert "sharing" in said.lower()
+
+
+def test_an_unrecognised_403_shows_what_google_actually_said(monkeypatch):
+    """Two wrong guesses in a row is what made this worth printing."""
+    monkeypatch.setattr(gsheets, "whoami", lambda: "")
+    said = explain(_response(403, "some new refusal nobody has seen"), SHEET)
+    assert "some new refusal" in said
+
+
 def test_asking_who_it_is_never_raises(monkeypatch):
     """It runs inside an error path; a second failure there helps nobody."""
     monkeypatch.setattr(gsheets, "access_token", lambda **k: (_ for _ in ()).throw(
