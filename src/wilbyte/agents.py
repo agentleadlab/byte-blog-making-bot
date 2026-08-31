@@ -336,6 +336,13 @@ def ordered_lead_types(text: str) -> list[str]:
 
     The same family twice is still one order, corrected: Aliana Arevalo's card
     says Spanish IUL twice, and the lower one is the current wording.
+
+    Two phrases belong to one order when the families they name *overlap* at
+    all, not when a single family picked off each of them happens to differ.
+    Tyler Menge's card says "veteran-widows" where Spark wrote it and "OTP
+    Widows" where the team did, and that is one purchase of ten leads written
+    twice - it was read as two because "veteran-widows" names vet and widows
+    both, and picking one of the two made it disagree with the other line.
     """
     loose = "\n".join(
         line for line in (text or "").splitlines()
@@ -345,13 +352,22 @@ def ordered_lead_types(text: str) -> list[str]:
     if len(said) < 2:
         return []
 
-    latest: dict[str, str] = {}
+    # (the families this order names, the latest phrase for it). Merging on
+    # overlap, so a phrase naming two families joins both rather than starting
+    # a third order of its own.
+    orders: list[tuple[set[str], str]] = []
     for phrase in said:
-        latest[family_of(phrase) or phrase.casefold()] = phrase
-    if len(latest) < 2:
+        named = set(families_in(phrase)) or {phrase.casefold()}
+        joined = [held for held in orders if held[0] & named]
+        for held in joined:
+            named |= held[0]
+            orders.remove(held)
+        orders.append((named, phrase))
+
+    if len(orders) < 2:
         return []
 
-    kept = set(latest.values())
+    kept = {phrase for _families, phrase in orders}
     return [with_line(phrase, text) for phrase in said if phrase in kept]
 
 

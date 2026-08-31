@@ -1922,3 +1922,63 @@ def test_an_unplaceable_agent_is_reported_rather_than_given_a_new_checklist():
                                                      "checkItems": []}])
     # The plan still names where it *would* go; the writer is what refuses.
     assert spreads[0].make_checklist is True
+
+
+# --------------------------------- one order written twice, two ways
+
+
+TYLER = """veteran-widows — 10 leads · one-time pack
+A buyer just purchased on Spark. Fulfill this order from your Spark vendor dashboard.
+
+Buyer
+Tyler Menge
+
+Lead type
+veteran-widows
+
+Order
+10 leads · one-time pack
+
+Price / lead
+$22
+
+States
+AZ, CA, IN, KY, MD, ME, MI, NV, SC, TX, VA, WA, WI
+
+Buyer email
+tydmenge@gmail.com
+
+Routing token
+lw_3e3db8ccb366c570e7639fd8bb41625ccd033345405de949
+
+OTP Widows
+Live Tuesday, September 1
+"""
+
+
+def test_the_same_order_in_two_wordings_is_one_order():
+    """Spark writes "veteran-widows"; the team writes "OTP Widows". Ten leads,
+    once. It read as two because "veteran-widows" names vet and widows both,
+    and one of the two was picked to compare against the other line."""
+    assert agents.ordered_lead_types(TYLER) == []
+    assert agents.stated_orders(TYLER) == "OTP Widows"
+
+
+def test_families_overlapping_at_all_is_one_order():
+    assert agents.families_in("veteran-widows") == {"vet", "widows"}
+    assert agents.families_in("OTP Widows") == {"widows"}
+
+
+def test_two_genuinely_different_orders_still_stack():
+    """Catherine bought vets and FEX - no family in common, so two."""
+    assert agents.ordered_lead_types(CATHERINE) == ["15 OTP VETS", "15 OTP FEX"]
+
+
+def test_the_whole_description_is_read_not_just_the_bottom():
+    """The Spark block at the top and the team's line at the bottom are both
+    about the same purchase, and the answer has to account for both."""
+    agent = agents.read_agent(
+        card("New Agent - Tyler Menge"), text=TYLER, today=date(2026, 8, 31)
+    )
+    assert agent.stated == "OTP Widows"
+    assert agent.launch == date(2026, 9, 1)
