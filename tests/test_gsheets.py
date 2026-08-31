@@ -633,3 +633,21 @@ def test_one_sheet_refusing_does_not_stop_the_others(monkeypatch):
 
     assert live[0].count == 3
     assert live[1].count is None and "not shared" in live[1].problem
+
+
+def test_the_masterfile_is_not_one_of_the_masterlists(monkeypatch):
+    """It is filed in the same folder as the sheets it summarises, which is
+    tidy and nearly cost it the ability to write to itself."""
+    import inspect
+    from wilbyte.bot import client
+
+    source = inspect.getsource(client._send_lead_summary)
+    assert 'sheet_id(into)' in source and "file for file in files" in source
+
+
+def test_every_other_file_in_the_folder_is_still_refused():
+    from wilbyte.bot import client
+
+    files = [{"id": SHEET, "name": "Blue Collar Masterlist", "url": "u"}]
+    with pytest.raises(SheetsError, match="one of the masterlists"):
+        client._write_lead_summary(SHEET, [], [], files=files)

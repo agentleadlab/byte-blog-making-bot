@@ -1793,6 +1793,13 @@ async def _send_lead_summary(
         except gsheets.SheetsError as exc:
             await responder.send(embed=embeds.error(f"Couldn't read the folder. {exc}"))
             return
+        # The masterfile is filed in the same folder as the masterlists it
+        # summarises. It is not one of them: it gets no row, no count, and it
+        # is the one file in there RYTE is allowed to write to.
+        files = [
+            file for file in files
+            if str(file.get("id") or "") != gsheets.sheet_id(into)
+        ]
     found = leadsheets.combine(found, files)
 
     if folder and _MAKE_THEM.search(said or ""):
