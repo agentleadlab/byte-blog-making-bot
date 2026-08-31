@@ -1982,3 +1982,63 @@ def test_the_whole_description_is_read_not_just_the_bottom():
     )
     assert agent.stated == "OTP Widows"
     assert agent.launch == date(2026, 9, 1)
+
+
+# --------------------------------- a date somebody declined to pick
+
+
+MARIA = """-- New Client Onboarded --
+
+First Name: Maria Fernanda
+Last Name: Gomez
+Phone: +14244404580
+Email: mafegomezmacias@hotmail.com
+Package Selected: Text Verified
+Lead Type: Index Universal Life
+Target Areas for Marketing:Maria Fernanda Gomez
+40 OTP Spanish IUL
+States: All Major except PR, AK, HI
+Internal: She's on suscription
+Launch Date: As soon as is possibe for the team.
+Please mark as priority and deliver all 40 leads within 5-6 days max
+"""
+
+
+def test_as_soon_as_possible_is_today():
+    """A date somebody declined to pick means the first day anybody can do it.
+    Read as no date at all it parks the agent waiting for a day nobody is ever
+    going to write."""
+    agent = agents.read_agent(
+        card("New Agent - Maria Fernanda Gomez"), text=MARIA, today=WEDNESDAY
+    )
+    assert agent.launch == WEDNESDAY
+    assert agent.stated == "40 OTP Spanish IUL"
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Launch Date: As soon as is possible for the team",
+        "Launch Date: as soon as is possibe for the team.",
+        "Launch Date: ASAP",
+        "launch date: as soon as you can",
+        "launch date: as soon as we can",
+        "launch right away",
+    ],
+)
+def test_every_way_of_declining_to_pick_a_day(said):
+    assert agents.find_launch(said, today=WEDNESDAY) == WEDNESDAY
+
+
+def test_a_real_date_still_wins_over_asap():
+    """"ASAP, and definitely by Thursday" names a day, and the day is the answer."""
+    said = "Launch Date: ASAP\nLaunch date is Thursday, August 27"
+    assert agents.find_launch(said, today=WEDNESDAY) == date(2026, 8, 27)
+
+
+def test_a_sentence_about_speed_that_is_not_a_launch_date_is_left_alone():
+    """"deliver all 40 leads within 5-6 days max" is not a launch date."""
+    assert agents.find_launch(
+        "Please mark as priority and deliver all 40 leads within 5-6 days max",
+        today=WEDNESDAY,
+    ) is None

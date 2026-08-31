@@ -676,6 +676,18 @@ _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 # "live fri, aug 28" is how it is actually written about half the time.
 _SHORT_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
+# "Launch Date: As soon as is possible for the team." A date somebody declined
+# to pick, which means the first day anybody can do it - today. Reading it as
+# no date at all parks the agent in Franklin's list waiting for a day that is
+# never going to be written.
+ASAP = re.compile(
+    r"\basap\b"
+    r"|\bas\s+soon\s+as\s+(?:is\s+)?possib\w*"
+    r"|\bas\s+soon\s+as\s+(?:you|we|they|the\s+team)\s+can\b"
+    r"|\bright\s+away\b|\bat\s+once\b",
+    re.IGNORECASE,
+)
+
 # An existing agent buying more of what they already have. "Add to his active
 # order - Wednesday, August 26" is not a launch, so none of the words below
 # appear on the card - and it is the usual same-day job, onto that day's Lead
@@ -718,15 +730,38 @@ _NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
 def find_launch(text: str, *, today: date) -> date | None:
     """When the agent goes live, read out of the sentence that says so.
 
-    A written-out date wins over "today". They agree when the card is read the
-    day it was written and disagree when it isn't, and the calendar date is
-    the one that stays true.
+    A written-out date wins over "today", over "ASAP" and over a weekday. They
+    agree when the card is read the day it was written and disagree when it
+    isn't, and the calendar date is the one that stays true - so every sentence
+    is looked at for a real date before any of them is read for a relative one.
     """
-    for pattern in _WHEN_SAID:
-        for sentence in pattern.findall(text or ""):
-            found = _date_in(sentence, today=today)
-            if found:
-                return found
+    said = [
+        sentence
+        for pattern in _WHEN_SAID
+        for sentence in pattern.findall(text or "")
+    ]
+    for sentence in said:
+        found = _written_date_in(sentence, today=today)
+        if found:
+            return found
+    for sentence in said:
+        found = _date_in(sentence, today=today)
+        if found:
+            return found
+    return None
+
+
+def _written_date_in(sentence: str, *, today: date) -> date | None:
+    """The calendar date in a sentence, ignoring "today" and the weekdays."""
+    numeric = _NUMERIC.search(sentence)
+    if numeric:
+        month, day, year = numeric.groups()
+        return _made(int(month), int(day), year, today=today)
+
+    written = _MONTH_DAY.search(sentence)
+    if written:
+        month = _MONTHS[written.group(1)[:3].lower()]
+        return _made(month, int(written.group(2)), None, today=today)
     return None
 
 
@@ -779,7 +814,7 @@ def _date_in(sentence: str, *, today: date) -> date | None:
         return _made(month, int(written.group(2)), None, today=today)
 
     said = sentence.lower()
-    if re.search(r"\btoday\b|\bimmediate(?:ly)?\b", said):
+    if re.search(r"\btoday\b|\bimmediate(?:ly)?\b", said) or ASAP.search(said):
         return today
     # "Add to his active order" with no date on it. Adding to an order that
     # already exists is the same-day job, so today is what it means rather
