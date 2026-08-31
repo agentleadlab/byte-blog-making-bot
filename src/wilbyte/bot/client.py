@@ -1813,7 +1813,7 @@ async def _send_lead_summary(
     live, idle = leadsheets.split_by_state(found)
     try:
         url = await asyncio.to_thread(
-            _write_lead_summary, into, live, idle
+            partial(_write_lead_summary, into, live, idle, files=files)
         )
     except gsheets.SheetsError as exc:
         await responder.send(embed=embeds.error(f"Couldn't write the sheet. {exc}"))
@@ -1856,18 +1856,38 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
         held.problem = ""
 
 
-def _write_lead_summary(into: str, live, idle) -> str:
-    """Both tabs, live first. Runs off the event loop - it is all network."""
+def _write_lead_summary(into: str, live, idle, *, files: list[dict] | None = None) -> str:
+    """Both tabs, live first. Runs off the event loop - it is all network.
+
+    The only sheet RYTE ever writes to is this one. Every masterlist in the
+    folder is read and nothing else, and the check below is what enforces it:
+    a summary id that turns out to be one of the masterlists is refused before
+    anything is cleared.
+    """
     from .. import gsheets, leadsheets
 
+    target = gsheets.sheet_id(into)
+    for file in files or []:
+        if str(file.get("id") or "") == target:
+            raise gsheets.SheetsError(
+                f"LEADS_SUMMARY_SHEET_ID points at **{file.get('name')}**, which "
+                "is one of the masterlists in the folder. I won't write over a "
+                "lead sheet — point it at the masterfile instead."
+            )
+
+    header = list(leadsheets.HEADER)
     gsheets.ensure_tab(into, leadsheets.ACTIVE_TAB)
     rows = leadsheets.summary_rows(live)
-    url = gsheets.write_rows(into, rows, tab=leadsheets.ACTIVE_TAB)
+    url = gsheets.write_rows(
+        into, rows, tab=leadsheets.ACTIVE_TAB, expect_header=header
+    )
     gsheets.prettify(into, leadsheets.ACTIVE_TAB, rows=len(rows))
 
     gsheets.ensure_tab(into, leadsheets.INACTIVE_TAB)
     idle_rows = leadsheets.summary_rows(idle)
-    gsheets.write_rows(into, idle_rows, tab=leadsheets.INACTIVE_TAB)
+    gsheets.write_rows(
+        into, idle_rows, tab=leadsheets.INACTIVE_TAB, expect_header=header
+    )
     gsheets.prettify(into, leadsheets.INACTIVE_TAB, rows=len(idle_rows))
     return url
 

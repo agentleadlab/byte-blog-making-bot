@@ -487,17 +487,49 @@ def create_sheet(title: str, *, folder: str, header: list[str] | None = None) ->
     return new
 
 
-def write_rows(spreadsheet: str, rows: list[list], *, tab: str = "") -> str:
+def first_row(spreadsheet: str, tab: str) -> list[str]:
+    """Row 1 of a tab, or [] when the tab is empty."""
+    where = f"'{tab}'!1:1" if tab else "1:1"
+    payload = _get(f"{sheet_id(spreadsheet)}/values/{where}")
+    values = payload.get("values") or []
+    return [str(cell) for cell in (values[0] if values else [])]
+
+
+def write_rows(
+    spreadsheet: str,
+    rows: list[list],
+    *,
+    tab: str = "",
+    expect_header: list[str] | None = None,
+) -> str:
     """Replace a tab's contents with `rows`. Returns the sheet's URL.
 
     Cleared first, then written. Without the clear, a summary that got shorter
     leaves the tail of the previous one underneath it, and a stale row on a
     file people read as current is worse than an empty one.
+
+    `expect_header` is the safety catch on that clear. Given one, the tab is
+    only replaced if it is empty or already carries that exact header - so a
+    wrong id in the .env refuses to write instead of wiping somebody's leads.
+    Every masterlist in the folder is read and never written, and this is what
+    makes that true rather than merely intended.
     """
     wanted = sheet_id(spreadsheet)
     where = f"'{tab}'" if tab else (tab_names(wanted) or ["Sheet1"])[0]
     if not tab:
         where = f"'{where}'"
+
+    if expect_header is not None:
+        found = first_row(wanted, tab)
+        if found and [cell.strip() for cell in found] != [
+            str(cell).strip() for cell in expect_header
+        ]:
+            raise SheetsError(
+                "I won't write there. That tab already has something in it that "
+                f"isn't the summary — its first row reads {found[:4]}. Check "
+                "LEADS_SUMMARY_SHEET_ID points at the masterfile and not at a "
+                "lead sheet."
+            )
 
     headers = {"Authorization": f"Bearer {access_token()}"}
     try:

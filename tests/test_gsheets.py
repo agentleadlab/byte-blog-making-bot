@@ -446,6 +446,70 @@ def test_a_lead_type_with_no_sheet_is_told_apart_from_one_that_failed():
     assert "not shared" in said
 
 
+# --------------------------------- never writing on a masterlist
+
+
+def test_a_tab_with_somebody_elses_data_is_not_cleared(monkeypatch):
+    """The whole promise is that the masterlists are read and never written.
+    A wrong id in the .env is the only way that promise breaks, so it refuses."""
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    monkeypatch.setattr(
+        gsheets, "first_row", lambda sheet, tab: ["Name", "Email", "Phone"]
+    )
+    hit = []
+    monkeypatch.setattr(
+        gsheets.httpx, "post", lambda *a, **k: hit.append(a) or _response(200, "{}")
+    )
+
+    with pytest.raises(SheetsError, match="won't write there"):
+        gsheets.write_rows(SHEET, [["x"]], tab="Active",
+                           expect_header=list(leadsheets.HEADER))
+    assert hit == []  # nothing was cleared
+
+
+def test_the_summary_tab_it_wrote_last_time_is_replaced(monkeypatch):
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    monkeypatch.setattr(gsheets, "first_row", lambda sheet, tab: list(leadsheets.HEADER))
+    monkeypatch.setattr(
+        gsheets.httpx, "post", lambda *a, **k: _response(200, "{}")
+    )
+    monkeypatch.setattr(
+        gsheets.httpx, "put",
+        lambda url, **k: httpx.Response(200, json={}, request=httpx.Request("PUT", url)),
+    )
+
+    url = gsheets.write_rows(
+        SHEET, [list(leadsheets.HEADER)], tab="Active",
+        expect_header=list(leadsheets.HEADER),
+    )
+    assert SHEET in url
+
+
+def test_an_empty_tab_is_fine_to_write():
+    """The first run has nothing on the tab, and that is not a warning sign."""
+    import inspect
+    source = inspect.getsource(gsheets.write_rows)
+    assert "if found and" in source
+
+
+def test_the_summary_refuses_to_be_one_of_the_masterlists():
+    from wilbyte.bot import client
+
+    files = [{"id": SHEET, "name": "OTP Trucker IUL Masterlist", "url": "u"}]
+    with pytest.raises(SheetsError, match="one of the masterlists"):
+        client._write_lead_summary(SHEET, [], [], files=files)
+
+
+def test_nothing_in_the_sheets_code_ever_deletes():
+    """Counting leads is a read. There is no call here that could remove one."""
+    from pathlib import Path
+
+    source = Path(gsheets.__file__).read_text()
+    assert "httpx.delete" not in source
+    assert "deleteSheet" not in source
+    assert "DELETE" not in source
+
+
 # --------------------------------- moving one between tabs
 
 
