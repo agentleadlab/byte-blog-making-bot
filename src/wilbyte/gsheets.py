@@ -606,6 +606,22 @@ def _must_be_writable(wanted: str) -> None:
     )
 
 
+def ours(found: list[str], expected: list[str]) -> bool:
+    """Whether a tab's first row is a summary tab RYTE may replace.
+
+    Not an exact match. Somebody deleting a column by hand - which is what
+    happened the first time this ran - leaves a tab that is still plainly the
+    summary, and refusing to update it helps nobody. Two of the expected
+    headings is the test: a lead sheet's Name/Email/Phone/State shares none of
+    them, and neither does an agent deploy config.
+    """
+    if not [cell for cell in found if str(cell).strip()]:
+        return True
+    here = {str(cell).strip().lower() for cell in found}
+    shared = sum(1 for cell in expected if str(cell).strip().lower() in here)
+    return shared >= min(2, len(expected))
+
+
 def first_row(spreadsheet: str, tab: str) -> list[str]:
     """Row 1 of a tab, or [] when the tab is empty."""
     where = f"'{tab}'!1:1" if tab else "1:1"
@@ -641,12 +657,10 @@ def write_rows(
 
     if expect_header is not None:
         found = first_row(wanted, tab)
-        if found and [cell.strip() for cell in found] != [
-            str(cell).strip() for cell in expect_header
-        ]:
+        if not ours(found, expect_header):
             raise SheetsError(
-                "I won't write there. That tab already has something in it that "
-                f"isn't the summary — its first row reads {found[:4]}. Check "
+                "I won't write there. That tab holds something that isn't the "
+                f"summary — its first row reads {found[:4]}. Check "
                 "LEADS_SUMMARY_SHEET_ID points at the masterfile and not at a "
                 "lead sheet."
             )

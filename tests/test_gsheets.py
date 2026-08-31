@@ -454,7 +454,7 @@ def test_a_tab_with_somebody_elses_data_is_not_cleared(monkeypatch):
     A wrong id in the .env is the only way that promise breaks, so it refuses."""
     monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
     monkeypatch.setattr(
-        gsheets, "first_row", lambda sheet, tab: ["Name", "Email", "Phone"]
+        gsheets, "first_row", lambda sheet, tab: ["Name", "Email", "Phone", "State"]
     )
     hit = []
     monkeypatch.setattr(
@@ -487,9 +487,24 @@ def test_the_summary_tab_it_wrote_last_time_is_replaced(monkeypatch):
 
 def test_an_empty_tab_is_fine_to_write():
     """The first run has nothing on the tab, and that is not a warning sign."""
-    import inspect
-    source = inspect.getsource(gsheets.write_rows)
-    assert "if found and" in source
+    assert gsheets.ours([], list(leadsheets.HEADER)) is True
+    assert gsheets.ours(["", ""], list(leadsheets.HEADER)) is True
+
+
+def test_a_column_deleted_by_hand_does_not_block_the_update():
+    """Somebody tidied the sheet, which is not a reason to stop updating it."""
+    assert gsheets.ours(
+        ["Type of leads", "Sheet", "Total leads", ""], list(leadsheets.HEADER)
+    ) is True
+
+
+def test_a_lead_sheet_is_still_refused():
+    assert gsheets.ours(
+        ["Name", "Email", "Phone", "State"], list(leadsheets.HEADER)
+    ) is False
+    assert gsheets.ours(
+        ["Agent_Name", "Agent_Spend", "States", "Lead Cap"], list(leadsheets.HEADER)
+    ) is False
 
 
 def test_the_summary_refuses_to_be_one_of_the_masterlists():
