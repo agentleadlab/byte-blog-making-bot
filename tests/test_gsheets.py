@@ -603,11 +603,11 @@ def test_the_counts_run_a_few_at_a_time(monkeypatch):
         running += 1
         most = max(most, running)
         try:
-            return 7
+            return 7, ["Name", "Email"]
         finally:
             running -= 1
 
-    monkeypatch.setattr(gsheets, "row_count", count)
+    monkeypatch.setattr(gsheets, "count_and_header", count)
     aio.run(client._count_leads(live))
 
     assert [held.count for held in live] == [7] * 20
@@ -626,9 +626,9 @@ def test_one_sheet_refusing_does_not_stop_the_others(monkeypatch):
     def count(sheet, **kwargs):
         if sheet == "v":
             raise SheetsError("not shared")
-        return 3
+        return 3, ["Name", "Email"]
 
-    monkeypatch.setattr(gsheets, "row_count", count)
+    monkeypatch.setattr(gsheets, "count_and_header", count)
     aio.run(client._count_leads(live))
 
     assert live[0].count == 3
@@ -797,3 +797,77 @@ def test_the_third_tab_is_only_written_when_there_is_something_for_it(monkeypatc
     made.clear()
     client._write_lead_summary("into", [], [], [Masterlist(category="x", name="y")])
     assert leadsheets.OTHER_TAB in made
+
+
+# --------------------------------- auto-deploy sheets are not lead sheets
+
+
+def test_a_deploy_sheet_is_known_by_its_name():
+    assert leadsheets.kind_of("Mortgage Protection [New] - Auto Deploy") == leadsheets.DEPLOY
+    assert leadsheets.kind_of("Annuity Leads Masterlist") == leadsheets.LEADS
+
+
+def test_a_deploy_sheet_is_known_by_its_columns_too():
+    """Nobody is obliged to put "Auto Deploy" in the file name."""
+    header = ["Agent_Name", "Agent_Spend", "States", "Active", "Lead Cap"]
+    assert leadsheets.kind_of("Mortgage Protection V3", header) == leadsheets.DEPLOY
+
+
+def test_a_real_masterlist_is_not_moved_on_one_loose_match():
+    """"Daily Cap" alone could turn up on somebody's lead sheet, and moving a
+    masterlist onto the wrong tab is worse than leaving a deploy sheet among
+    them."""
+    header = ["Name", "Email", "Phone", "State", "Daily Cap"]
+    assert leadsheets.kind_of("Annuity Leads Masterlist", header) == leadsheets.LEADS
+
+
+def test_a_deploy_sheet_is_never_adopted_as_a_channels_masterlist():
+    """It reads as the Mortgage Protection channel's sheet on name alone, and
+    adopting it would put an agent count in a lead column."""
+    found = [Masterlist(category="MTG Masterlist", name="Mortgage Protection")]
+    files = [{"id": "d", "name": "Mortgage Protection [New] - Auto Deploy", "url": "u"}]
+
+    combined = leadsheets.combine(found, files)
+    lists, deploys = leadsheets.by_kind(combined)
+
+    assert lists[0].sheet == ""          # the channel still has no masterlist
+    assert len(deploys) == 1
+    assert deploys[0].sheet == "u"
+
+
+def test_the_deploy_tab_says_which_lead_type_it_belongs_to():
+    found = [Masterlist(category="MTG Masterlist", name="Mortgage Protection")]
+    files = [{"id": "d", "name": "Mortgage Protection [New] - Auto Deploy", "url": "u"}]
+
+    _, deploys = leadsheets.by_kind(leadsheets.combine(found, files))
+    rows = leadsheets.deploy_rows(deploys)
+
+    assert rows[0] == list(leadsheets.DEPLOY_HEADER)
+    assert rows[1][0] == "Mortgage Protection"
+    assert rows[1][3] == "—"
+
+
+def test_a_deploy_sheet_with_no_channel_still_gets_a_row():
+    _, deploys = leadsheets.by_kind(
+        leadsheets.combine([], [{"id": "d", "name": "Rise Legacy Auto Deploy", "url": "u"}])
+    )
+    assert leadsheets.deploy_rows(deploys)[1][0] == leadsheets.NO_CHANNEL
+
+
+def test_the_count_and_the_header_come_back_in_one_request(monkeypatch):
+    """Asking twice would double a run that already paces for a per-minute
+    limit."""
+    asked = []
+
+    def get(path, **params):
+        asked.append(params)
+        return {"valueRanges": [
+            {"values": [["Name"], ["a"], ["b"]]},
+            {"values": [["Name", "Email", "Phone"]]},
+        ]}
+
+    monkeypatch.setattr(gsheets, "_get", get)
+    count, header = gsheets.count_and_header(SHEET)
+
+    assert (count, header) == (2, ["Name", "Email", "Phone"])
+    assert len(asked) == 1

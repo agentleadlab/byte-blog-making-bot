@@ -294,6 +294,30 @@ def row_count(spreadsheet: str, *, column: str = COUNT_COLUMN, header: bool = Tr
     return max(filled - (1 if header and filled else 0), 0)
 
 
+def count_and_header(
+    spreadsheet: str, *, column: str = COUNT_COLUMN, header: bool = True
+) -> tuple[int, list[str]]:
+    """How many rows a sheet holds, and what its first row says.
+
+    Both in one request. The header is what tells a lead masterlist apart from
+    an agent auto-deploy sheet, and asking separately would double the number
+    of requests a run makes against a per-minute limit it already paces for.
+    """
+    wanted = sheet_id(spreadsheet)
+    payload = _get(
+        f"{wanted}/values:batchGet", ranges=[f"{column}:{column}", "1:1"]
+    )
+    ranges = payload.get("valueRanges") or []
+
+    down = (ranges[0].get("values") if len(ranges) > 0 else []) or []
+    filled = sum(1 for row in down if row and str(row[0]).strip())
+    count = max(filled - (1 if header and filled else 0), 0)
+
+    across = (ranges[1].get("values") if len(ranges) > 1 else []) or []
+    titles = [str(cell) for cell in (across[0] if across else [])]
+    return count, titles
+
+
 def tab_names(spreadsheet: str) -> list[str]:
     """The tabs on a sheet, in order. The first is the default to write to."""
     payload = _get(sheet_id(spreadsheet), fields="sheets.properties.title")

@@ -1818,11 +1818,14 @@ async def _send_lead_summary(
     )
     await _count_leads(found)
 
-    theirs, others = leadsheets.apart(found)
+    lists, deploys = leadsheets.by_kind(found)
+    theirs, others = leadsheets.apart(lists)
     live, idle = leadsheets.split_by_state(theirs)
     try:
         url = await asyncio.to_thread(
-            partial(_write_lead_summary, into, live, idle, others, files=files)
+            partial(
+                _write_lead_summary, into, live, idle, others, deploys, files=files
+            )
         )
     except gsheets.SheetsError as exc:
         await responder.send(embed=embeds.error(f"Couldn't write the sheet. {exc}"))
@@ -1833,6 +1836,13 @@ async def _send_lead_summary(
         said_back += (
             f"\n**{len(others)}** more sheet(s) in the folder with no channel, "
             f"on the *{leadsheets.OTHER_TAB}* tab."
+        )
+    if deploys:
+        named = [held for held in deploys if held.category != leadsheets.NO_CHANNEL]
+        said_back += (
+            f"\n**{len(deploys)}** auto-deploy sheet(s) — agents, not leads — "
+            f"on the *{leadsheets.DEPLOY_TAB}* tab"
+            + (f", {len(named)} matched to a lead type." if named else ".")
         )
     await responder.send(f"{said_back}\n<{url}>", quiet=True)
 
@@ -1846,8 +1856,13 @@ AT_ONCE = 5
 
 
 async def _count_leads(found: list) -> None:
-    """Fill in every masterlist's count, a few sheets at a time."""
-    from .. import gsheets
+    """Fill in every masterlist's count, a few sheets at a time.
+
+    The first row comes back with the count, in the same request, so a sheet
+    that turns out to be an agent deploy config is spotted by its columns even
+    when nobody put "Auto Deploy" in its name.
+    """
+    from .. import gsheets, leadsheets
 
     gate = asyncio.Semaphore(AT_ONCE)
 
@@ -1856,9 +1871,15 @@ async def _count_leads(found: list) -> None:
             return
         async with gate:
             try:
-                held.count = await asyncio.to_thread(gsheets.row_count, held.sheet)
+                held.count, header = await asyncio.to_thread(
+                    gsheets.count_and_header, held.sheet
+                )
             except gsheets.SheetsError as exc:
                 held.problem = str(exc)
+                return
+        if held.kind != leadsheets.DEPLOY and leadsheets.deploy_header(header):
+            held.kind = leadsheets.DEPLOY
+            held.category, held.name = held.name, held.name
 
     await asyncio.gather(*(count(held) for held in found))
 
@@ -1898,7 +1919,7 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
 
 
 def _write_lead_summary(
-    into: str, live, idle, others=(), *, files: list[dict] | None = None
+    into: str, live, idle, others=(), deploys=(), *, files: list[dict] | None = None
 ) -> str:
     """Both tabs, live first. Runs off the event loop - it is all network.
 
@@ -1943,6 +1964,17 @@ def _write_lead_summary(
             into, other_rows, tab=leadsheets.OTHER_TAB, expect_header=header
         )
         gsheets.prettify(into, leadsheets.OTHER_TAB, rows=len(other_rows))
+
+    # The agent deploy configs: which lead type, which sheet, how many agents.
+    # A different question from "how many leads", so a different tab.
+    if deploys:
+        gsheets.ensure_tab(into, leadsheets.DEPLOY_TAB)
+        deploy_rows = leadsheets.deploy_rows(list(deploys))
+        gsheets.write_rows(
+            into, deploy_rows, tab=leadsheets.DEPLOY_TAB,
+            expect_header=list(leadsheets.DEPLOY_HEADER),
+        )
+        gsheets.prettify(into, leadsheets.DEPLOY_TAB, rows=len(deploy_rows))
     return url
 
 

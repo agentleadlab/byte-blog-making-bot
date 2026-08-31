@@ -74,6 +74,8 @@ class Masterlist:
     problem: str = ""
     # Made by RYTE on this run, because the lead type had no sheet anywhere.
     created: bool = False
+    # What the sheet actually is: a list of leads, or an agent deploy config.
+    kind: str = "leads"
 
     @property
     def inactive(self) -> bool:
@@ -87,7 +89,8 @@ DRIVE_ONLY = "Not in Discord"
 # Words that belong to the filing and not to the lead type. "Materlist" is in
 # there because it is on the team's own reference file, spelled that way.
 _FILING = re.compile(
-    r"\b(?:master\s*lists?|master\s*files?|materlists?|leads?|sheets?|the|v\d+|copy(?:\s+of)?)\b",
+    r"\b(?:master\s*lists?|master\s*files?|materlists?|leads?|sheets?|the|v\d+"
+    r"|copy(?:\s+of)?|auto|deploy|new)\b",
     re.IGNORECASE,
 )
 
@@ -194,6 +197,71 @@ def tidy_name(raw: str) -> str:
 
 NO_SHEET_ANYWHERE = "no sheet in the folder and no link in the channel"
 
+# --------------------------------------------------- auto-deploy sheets
+#
+# Not every file in the folder is a list of leads. Some are the agent deploy
+# configs - Agent_Name, Agent_Spend, Lead Cap, Launch_Date, one row per agent -
+# and counting their rows gives a number of agents wearing a lead's clothes.
+# They belong to a lead type all the same, so they are kept and labelled
+# rather than thrown away.
+
+LEADS = "leads"
+DEPLOY = "deploy"
+DEPLOY_TAB = "Auto Deploy"
+
+AUTO_DEPLOY = re.compile(r"auto[\s_-]*deploy", re.IGNORECASE)
+
+# Column names no masterlist has and every deploy sheet does.
+DEPLOY_FIELDS = (
+    "agent_name", "agent name", "agent_spend", "lead cap", "daily cap",
+    "launch_date", "lead_received", "last_reset_time", "leads today",
+)
+
+# Which lead type an auto-deploy sheet has no channel for.
+NO_CHANNEL = "—"
+
+
+def deploy_header(header: list[str] | None) -> bool:
+    """Whether a first row is an agent deploy config rather than leads.
+
+    Two matches, not one: "Daily Cap" alone could plausibly turn up on
+    somebody's lead sheet, and moving a real masterlist onto the wrong tab is
+    worse than leaving a deploy sheet among them.
+    """
+    said = {" ".join(str(cell).lower().split()) for cell in header or []}
+    return sum(1 for field in DEPLOY_FIELDS if field in said) >= 2
+
+
+def kind_of(name: str, header: list[str] | None = None) -> str:
+    """"leads" or "deploy", from what the file is called or what is in it."""
+    if AUTO_DEPLOY.search(name or ""):
+        return DEPLOY
+    return DEPLOY if deploy_header(header) else LEADS
+
+
+def by_kind(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
+    """(the lead masterlists, the auto-deploy sheets)."""
+    return (
+        [held for held in found if held.kind != DEPLOY],
+        [held for held in found if held.kind == DEPLOY],
+    )
+
+
+DEPLOY_HEADER = ("Lead type", "Auto deploy sheet", "Sheet", "Agents")
+
+
+def deploy_rows(found: list[Masterlist]) -> list[list]:
+    """The auto-deploy tab: which lead type, which sheet, how many agents."""
+    rows: list[list] = [list(DEPLOY_HEADER)]
+    for held in found:
+        rows.append([
+            held.category or NO_CHANNEL,
+            held.name,
+            f'=HYPERLINK("{held.sheet}","Open sheet")' if held.sheet else "—",
+            "—" if held.count is None else held.count,
+        ])
+    return rows
+
 
 def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
     """The Discord lead types and the Drive folder, as one list.
@@ -204,6 +272,13 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
     with no link, and whatever the channels never claimed goes on the end,
     because the folder is the masterlist of masterlists.
     """
+    # Pulled out before any matching happens. "Mortgage Protection [New] -
+    # Auto Deploy" reads as the Mortgage Protection channel's masterlist on
+    # name alone, and adopting it would put an agent count in a lead column.
+    deploys = [file for file in files if AUTO_DEPLOY.search(str(file.get("name") or ""))]
+    deployed = {str(file.get("id") or "") for file in deploys}
+    files = [file for file in files if str(file.get("id") or "") not in deployed]
+
     claimed: set[str] = set()
     for held in found:
         file = find_sheet(held.name, files)
@@ -224,7 +299,20 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
         for file in files
         if str(file.get("id") or "") not in claimed
     ]
-    return list(found) + extra
+
+    # Which lead type each deploy sheet belongs to, so the tab answers "whose
+    # is this" rather than listing forty files called Auto Deploy.
+    owners = {match_key(held.name): held.name for held in found}
+    filed = [
+        Masterlist(
+            category=owners.get(match_key(str(file.get("name") or "")), NO_CHANNEL),
+            name=tidy_name(str(file.get("name") or "")),
+            sheet=str(file.get("url") or ""),
+            kind=DEPLOY,
+        )
+        for file in deploys
+    ]
+    return list(found) + extra + filed
 
 
 def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
