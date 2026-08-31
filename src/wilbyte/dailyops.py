@@ -383,8 +383,67 @@ def daily_cards(cards: list[dict]) -> dict[tuple[str, date], dict]:
 
 
 def cards_for(cards: list[dict], day: date) -> dict[str, dict]:
-    """The four cards for one day, keyed by kind. Missing kinds are absent."""
+    """The four cards for one day, keyed by kind. Missing kinds are absent.
+
+    By the *first* date in the title, which is the day a card belongs to for
+    walking the board and for carrying items onto tomorrow's. To find the card
+    an agent's leads go on, see `cards_covering`.
+    """
     return {kind: card for (kind, when), card in daily_cards(cards).items() if when == day}
+
+
+# A card titled "Lead Order 08/29/26-8/31/26" covers three days. Further apart
+# than this and the two dates are not a range, they are a typo - and spreading
+# one card across a fortnight is worse than not finding it.
+MOST_DAYS_SPANNED = 7
+
+
+def card_days(title: str) -> list[date]:
+    """Every day a card's title covers, in order.
+
+    One date is one day. Two are the ends of a range and every day between them
+    belongs to that card: "Lead Order 08/29/26-8/31/26" is the Lead Order card
+    on the Saturday, the Sunday and the Monday.
+    """
+    days: list[date] = []
+    for month, day, year in _DATE.findall(title or ""):
+        month, day, year = int(month), int(day), int(year)
+        try:
+            days.append(date(year + 2000 if year < 100 else year, month, day))
+        except ValueError:
+            continue
+    if len(days) < 2:
+        return days[:1]
+
+    first, last = min(days), max(days)
+    span = (last - first).days
+    if not 0 < span <= MOST_DAYS_SPANNED:
+        return [first]
+    return [first + timedelta(days=step) for step in range(span + 1)]
+
+
+def cards_covering(cards: list[dict], day: date) -> dict[str, dict]:
+    """The four cards covering a day, ranges included.
+
+    What an agent going live today needs. All four cards existed for the 31st
+    and RYTE reported the Lead Order one missing, because that card is titled
+    "Lead Order 08/29/26-8/31/26" and only its first date was indexed - so
+    Johan Castro, Brandon Nguyen, Connor Swartz and Luis Vergara sat in In Que
+    on the morning they were meant to go live.
+    """
+    found: dict[str, dict] = {}
+    for card in cards or []:
+        title = str(card.get("name", ""))
+        key = parse_card_title(title)
+        if not key:
+            continue
+        kind, first = key
+        if day != first and day not in card_days(title):
+            continue
+        # A card whose own day this is beats a range that merely includes it.
+        if kind not in found or day == first:
+            found[kind] = card
+    return found
 
 
 def why_missing(cards: list[dict], kind: str, wanted: date) -> str:

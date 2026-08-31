@@ -3531,3 +3531,62 @@ def test_a_sunday_falls_back_to_the_weekend_cards_own_lead_order():
     assert dailyops.cards_for(ORDER_CARDS, starts)["lead_order"]["name"] == (
         "Lead Order 08/29/26-8/30/26"
     )
+
+
+# --------------------------------- a card whose title spans several days
+
+
+SPANNING = [
+    {"id": "1", "name": "💎 General 08/31/26"},
+    {"id": "2", "name": "💻 Ops 08/31/26"},
+    {"id": "3", "name": "📊 Ads 08/31/26"},
+    {"id": "4", "name": "Lead Order 08/29/26-8/31/26"},
+    {"id": "5", "name": "Lead Order 08/28/26"},
+]
+
+
+def test_a_lead_order_card_titled_as_a_range_covers_every_day_in_it():
+    """Johan Castro, Brandon Nguyen, Connor Swartz and Luis Vergara all sat in
+    In Que on the 31st, told there was no Lead Order card. It was right there,
+    titled 08/29/26-8/31/26, and only its first date was indexed."""
+    for day in (date(2026, 8, 29), date(2026, 8, 30), date(2026, 8, 31)):
+        found = dailyops.cards_covering(SPANNING, day)
+        assert found["lead_order"]["name"] == "Lead Order 08/29/26-8/31/26"
+
+
+def test_the_other_three_still_come_back_for_their_own_day():
+    found = dailyops.cards_covering(SPANNING, date(2026, 8, 31))
+    assert found["general"]["name"] == "💎 General 08/31/26"
+    assert found["ops"]["name"] == "💻 Ops 08/31/26"
+    assert found["ads"]["name"] == "📊 Ads 08/31/26"
+
+
+def test_a_days_own_card_beats_a_range_that_happens_to_include_it():
+    found = dailyops.cards_covering(SPANNING, date(2026, 8, 28))
+    assert found["lead_order"]["name"] == "Lead Order 08/28/26"
+
+
+def test_the_carry_still_goes_by_the_first_date_only():
+    """Otherwise a spanning card is both today's and tomorrow's, and the
+    rollover carries items from a card onto itself."""
+    assert dailyops.cards_for(SPANNING, date(2026, 8, 30)) == {}
+    assert dailyops.cards_for(SPANNING, date(2026, 8, 29))["lead_order"]["name"] == (
+        "Lead Order 08/29/26-8/31/26"
+    )
+
+
+def test_the_days_a_title_names():
+    assert dailyops.card_days("Lead Order 08/28/26") == [date(2026, 8, 28)]
+    assert dailyops.card_days("Lead Order 08/29/26-8/31/26") == [
+        date(2026, 8, 29), date(2026, 8, 30), date(2026, 8, 31),
+    ]
+
+
+def test_two_dates_a_month_apart_are_a_typo_not_a_range():
+    """A card spread across a fortnight is worse than one that isn't found."""
+    assert dailyops.card_days("Lead Order 08/01/26-9/30/26") == [date(2026, 8, 1)]
+
+
+def test_a_title_with_no_date_covers_nothing():
+    assert dailyops.card_days("Lead Order") == []
+    assert dailyops.cards_covering([{"name": "Lead Order"}], date(2026, 8, 31)) == {}

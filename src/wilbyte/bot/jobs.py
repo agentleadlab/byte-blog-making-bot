@@ -2344,7 +2344,7 @@ def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[
         if not short:
             return [], []
 
-        dated = dailyops.cards_for(every, day)
+        dated = dailyops.cards_covering(every, day)
         for kind, people in (("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE)):
             card = dated.get(kind)
             if card is None:
@@ -2652,7 +2652,7 @@ def comment_on_daily(
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
-        card = dailyops.cards_for(every, day).get(kind)
+        card = dailyops.cards_covering(every, day).get(kind)
         if card is None:
             named = dailyops.CARD_KINDS.get(kind, kind)
             return "", "", [f"No {named} card dated {day:%m/%d/%y} anywhere on the board."]
@@ -2702,10 +2702,10 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
         # A weekend setup card runs Saturday to Monday and its Lead Order card
         # is titled with the Saturday, so a Sunday falls back to the day the
         # setup card starts rather than reporting a card that isn't missing.
-        order = dailyops.cards_for(every, day).get("lead_order")
+        order = dailyops.cards_covering(every, day).get("lead_order")
         starts = rules.setup_starts(str(setup.get("name") or ""), day)
         if order is None and starts is not None and starts != day:
-            order = dailyops.cards_for(every, starts).get("lead_order")
+            order = dailyops.cards_covering(every, starts).get("lead_order")
         if order is None:
             return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
 
@@ -2797,7 +2797,7 @@ def unspread_lead_order(
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
 
-        order = dailyops.cards_for(every, day).get("lead_order")
+        order = dailyops.cards_covering(every, day).get("lead_order")
         if order is None:
             return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
 
@@ -2875,7 +2875,7 @@ def note_setup_on_lead_order(client, lists, setup_card: dict, day: date) -> str 
         return None
 
     every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
-    target = dailyops.cards_for(every, starts).get("lead_order")
+    target = dailyops.cards_covering(every, starts).get("lead_order")
     if target is None:
         return f"{title} — no Lead Order card dated {starts:%m/%d/%y} to link it on"
 
@@ -3054,7 +3054,9 @@ def read_agents(config: Config, *, day=None):
         every_card = [
             card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
         ]
-        dated = dailyops.cards_for(every_card, day)
+        # Covering, not "dated": a Lead Order card titled 08/29-08/31 is the
+        # Lead Order card on all three of those days.
+        dated = dailyops.cards_covering(every_card, day)
 
         # Sifted out of the board read rather than fetched again. The watched
         # lists are already in `every_card`, and three more round trips is
