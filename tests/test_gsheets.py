@@ -60,8 +60,25 @@ def test_a_missing_scope_is_named_as_such():
     assert "doesn't cover Sheets" in said
 
 
-def test_a_plain_403_reads_as_the_sheet_not_being_shared():
-    assert "Share it" in explain(_response(403, "caller lacks permission"), SHEET)
+def test_a_plain_403_reads_as_the_sheet_not_being_shared(monkeypatch):
+    monkeypatch.setattr(gsheets, "whoami", lambda: "")
+    assert "share the sheet" in explain(_response(403, "caller lacks permission"), SHEET)
+
+
+def test_the_403_names_the_account_when_it_can(monkeypatch):
+    """The whole of a sharing problem is which account to share with."""
+    monkeypatch.setattr(gsheets, "whoami", lambda: "franklin@agentleadlab.com")
+    assert "franklin@agentleadlab.com" in explain(
+        _response(403, "caller lacks permission"), SHEET
+    )
+
+
+def test_asking_who_it_is_never_raises(monkeypatch):
+    """It runs inside an error path; a second failure there helps nobody."""
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: (_ for _ in ()).throw(
+        SheetsError("no credentials")
+    ))
+    assert gsheets.whoami() == ""
 
 
 def test_a_dead_refresh_token_says_how_to_mint_another():

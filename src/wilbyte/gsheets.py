@@ -143,6 +143,27 @@ def _get(path: str, **params) -> dict:
     return response.json()
 
 
+def whoami() -> str:
+    """Which Google account the refresh token belongs to, or "" if it won't say.
+
+    The whole of a sharing problem is *which account to share with*, and the
+    token itself is the only thing that knows. Asking costs one request and
+    turns "share it with that account" into an address somebody can paste.
+    """
+    try:
+        response = httpx.get(
+            "https://www.googleapis.com/drive/v3/about",
+            params={"fields": "user(emailAddress)"},
+            headers={"Authorization": f"Bearer {access_token()}"},
+            timeout=30,
+        )
+    except (httpx.HTTPError, SheetsError):
+        return ""
+    if response.status_code >= 400:
+        return ""
+    return str(((response.json() or {}).get("user") or {}).get("emailAddress") or "")
+
+
 def explain(response: httpx.Response, where: str) -> str:
     """Google's refusal in terms of what to do about it."""
     body = response.text[:300]
@@ -152,9 +173,13 @@ def explain(response: httpx.Response, where: str) -> str:
             f"token again with {SCOPES[0]} among the scopes."
         )
     if response.status_code == 403:
+        who = whoami()
+        named = f" — that's **{who}**" if who else ""
         return (
             "Google refused: the account behind LEADS_GOOGLE_REFRESH_TOKEN "
-            "can't open that sheet. Share it with that account and try again."
+            f"can't open that sheet{named}. Either share the sheet with that "
+            "account as an Editor, or mint the refresh token again signed in "
+            "as whoever owns it."
         )
     if response.status_code == 404:
         return f"No sheet with that id ({where.split('/')[0][:20]}…). Check the link."
