@@ -1181,3 +1181,52 @@ def test_a_name_nobody_recognises_does_not_silently_make_everything():
     from wilbyte.bot import client
     blank = _blank("Mortgage Protection")
     assert client._who_to_make("create one nonsense name", blank) == blank[:1]
+
+
+# --------------------------------- naming it what it actually is
+
+
+@pytest.mark.parametrize(
+    "lead_type,deploy,wanted",
+    [
+        # The channel says one thing, the deploy sheet says which one it is.
+        ("Mortgage Protection", "Text Verified MTG Auto Deploy New Setup",
+         "Text-Verified Mortgage Protection"),
+        ("OTP FEX", "Text Verified FEX Auto Deploy Cap Launch Date",
+         "Text-Verified OTP FEX"),
+        ("LP IUL", "Text Verified IUL Auto Deploy New Setup",
+         "Text-Verified LP IUL"),
+        # Already says Standard; saying it twice helps nobody.
+        ("OTP Standard IUL", "Text Verified Standard IUL",
+         "Text-Verified OTP Standard IUL"),
+        ("Standard Mortgage Protection", "Mortgage Protection New Auto Deploy",
+         "Standard Mortgage Protection"),
+        # "No OTP" beats "OTP" - they are opposites.
+        ("LP VET", "Landing Page VET No OTP Auto Deploy Row Weighted",
+         "No OTP LP VET"),
+        ("No OTP Standard VET", "VET Standard Auto Deploy", "No OTP Standard VET"),
+        ("Spanish MTG", "Spanish MTG Auto Deploy New Setup", "Spanish MTG"),
+        ("OTP Spanish IUL", "Text Verified Spanish Facebook IUL Auto Deploy New",
+         "Text-Verified Facebook OTP Spanish IUL"),
+    ],
+)
+def test_the_qualifier_comes_off_the_deploy_sheet(lead_type, deploy, wanted):
+    assert leadsheets.qualified_name(lead_type, deploy) == wanted
+
+
+def test_the_full_title_carries_the_qualifier_and_the_year():
+    assert leadsheets.new_sheet_title(
+        leadsheets.qualified_name("Mortgage Protection", "Text Verified MTG Auto Deploy"),
+        year=2026,
+    ) == "Text-Verified Mortgage Protection Masterlist 2026"
+
+
+def test_a_lead_type_with_no_deploy_sheet_keeps_its_own_name():
+    assert leadsheets.qualified_name("Nova", "") == "Nova"
+
+
+def test_the_qualified_name_still_matches_its_channel_next_run():
+    """It has to be seen as that channel's masterlist, not a new file."""
+    files = [{"id": "x", "name": "Text-Verified Mortgage Protection Masterlist 2026",
+              "url": "u"}]
+    assert leadsheets.find_sheet("Mortgage Protection", files) == files[0]

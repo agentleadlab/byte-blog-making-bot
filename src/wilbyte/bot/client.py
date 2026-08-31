@@ -2026,7 +2026,11 @@ async def _make_missing_sheets(
         try:
             made = await asyncio.to_thread(
                 gsheets.create_sheet,
-                leadsheets.new_sheet_title(held.name),
+                # Named for what the lead type actually is: the channel says
+                # "Mortgage Protection" and its deploy sheet says which one.
+                leadsheets.new_sheet_title(
+                    leadsheets.qualified_name(held.name, deploy.name if deploy else "")
+                ),
                 folder=folder,
                 header=header,
             )

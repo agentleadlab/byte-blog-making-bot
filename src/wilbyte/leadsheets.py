@@ -170,6 +170,51 @@ def config_tab_in(tabs: list[str]) -> str:
     return ""
 
 
+# What a lead type is qualified by, in the order the team writes them. The
+# channel is called "Mortgage Protection" and its deploy sheet is called "Text
+# Verified MTG Auto Deploy New Setup" - the qualifier only exists on the deploy
+# sheet, and a masterlist called plain "Mortgage Protection" would sit next to
+# three others nobody can tell apart.
+QUALIFIERS = (
+    ("Text-Verified", r"text[\s_-]*verified"),
+    ("No OTP", r"\bno[\s_-]*otp\b"),
+    ("OTP", r"\botp\b"),
+    ("Spanish", r"\bspanish\b"),
+    ("Facebook", r"\bfacebook\b|\bfb\b"),
+    ("Blue Collar", r"blue[\s_-]*collar"),
+    ("Abandoned", r"\babandoned\b"),
+    ("Instant", r"\binstant\b"),
+    ("Momentum", r"\bmomentum\b"),
+    ("Ascend", r"\bascend\b"),
+    ("Tax Free", r"tax[\s_-]*free"),
+    ("Standard", r"\bstandard\b"),
+)
+
+
+def qualified_name(lead_type: str, deploy_name: str = "") -> str:
+    """The lead type, with whatever its deploy sheet says it is.
+
+    Only what is missing: "OTP Standard IUL" already says Standard, so its
+    deploy sheet saying so again adds nothing. "No OTP" wins over "OTP" -
+    they are opposites and the longer one is the one that was meant.
+    """
+    said = " ".join((lead_type or "").split())
+    if not deploy_name:
+        return said
+
+    found = []
+    for word, pattern in QUALIFIERS:
+        if not re.search(pattern, deploy_name, re.IGNORECASE):
+            continue
+        if re.search(pattern, said, re.IGNORECASE):
+            continue
+        if word == "OTP" and ("No OTP" in found or re.search(r"\botp\b", said, re.I)):
+            continue
+        found.append(word)
+
+    return " ".join(found + [said]) if found else said
+
+
 def new_sheet_title(name: str, *, year: int | None = None) -> str:
     """What to call a masterlist RYTE makes: "Mortgage Protection Masterlist 2026".
 
