@@ -89,6 +89,72 @@ def state_of(name: str, *, held: dict[str, str] | None = None) -> str | None:
     return (held if held is not None else load()).get(key(name))
 
 
+# --------------------------------------------------- the sheet to count
+#
+# Nearly every masterlist channel posts an auto-deploy sheet rather than its
+# masterlist, so the link in the channel is usually the wrong one. Where
+# somebody has said which sheet a lead type really keeps its leads in, that is
+# kept here and it beats anything found in Discord or in the folder.
+
+SHEETS_PATH = _state_dir() / "masterlist-sheets.json"
+
+
+def sheets(path: Path | None = None) -> dict[str, str]:
+    """Every pinned sheet, by name key -> its URL."""
+    held = _read(path or SHEETS_PATH)
+    return {str(name): str(url) for name, url in held.items() if str(url).strip()}
+
+
+def set_sheet(name: str, url: str, path: Path | None = None) -> str:
+    """Remember which sheet a lead type's leads are actually in."""
+    where = path or SHEETS_PATH
+    held = sheets(where)
+    wanted = key(name)
+    held[wanted] = url.strip()
+    where.parent.mkdir(parents=True, exist_ok=True)
+    where.write_text(json.dumps(held, indent=2, sort_keys=True), encoding="utf-8")
+    return wanted
+
+
+def sheet_of(name: str, *, held: dict[str, str] | None = None) -> str:
+    """The pinned sheet for a lead type, or "" when nobody has said."""
+    return (held if held is not None else sheets()).get(key(name), "")
+
+
+# "OTP Trucker IUL https://docs.google.com/spreadsheets/d/…" - a name and a
+# link, in either order, is somebody telling RYTE where the leads really are.
+_A_SHEET = re.compile(r"https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]{20,}\S*")
+_FILLER = re.compile(
+    r"^\s*(?:masterlists?|sheet|for|is|use|set|link|the|to|:|-|–|—)\b\W*", re.IGNORECASE
+)
+# The same words turn up after the name as easily as before it: "masterlist
+# OTP FEX <link>" and "OTP VET 2 sheet is <link>" are the same instruction.
+_TRAILING = re.compile(
+    r"\W*\b(?:masterlists?|sheet|for|is|are|use|set|link|the|to)\s*$", re.IGNORECASE
+)
+
+
+def sheet_asked(text: str) -> tuple[str, str] | None:
+    """(the lead type named, the sheet URL), or None when it isn't that.
+
+    Both halves are required. A link with no name says nothing about which
+    lead type it belongs to, and a name with no link is not this command.
+    """
+    said = " ".join((text or "").split())
+    found = _A_SHEET.search(said)
+    if not found:
+        return None
+
+    named = (said[: found.start()] + " " + said[found.end():]).strip()
+    while True:
+        shorter = _TRAILING.sub("", _FILLER.sub("", named)).strip(" -–—:,")
+        if shorter == named:
+            break
+        named = shorter
+    named = key(named)
+    return (named, found.group(0)) if named else None
+
+
 # "move the otp trucker masterlist to inactive", "move otp trucker to active".
 _MOVE = re.compile(
     r"\b(?:to|as|is)\s+(?P<state>in\s*active|active)\b",

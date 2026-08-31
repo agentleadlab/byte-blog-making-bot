@@ -634,6 +634,7 @@ def test_the_counts_run_a_few_at_a_time(monkeypatch):
             running -= 1
 
     monkeypatch.setattr(gsheets, "count_and_header", count)
+    monkeypatch.setattr(gsheets, "facts", lambda sheet: ("LP IUL Masterlist", []))
     aio.run(client._count_leads(live))
 
     assert [held.count for held in live] == [7] * 20
@@ -655,6 +656,7 @@ def test_one_sheet_refusing_does_not_stop_the_others(monkeypatch):
         return 3, ["Name", "Email"]
 
     monkeypatch.setattr(gsheets, "count_and_header", count)
+    monkeypatch.setattr(gsheets, "facts", lambda sheet: ("LP IUL Masterlist", []))
     aio.run(client._count_leads(live))
 
     assert live[0].count == 3
@@ -1025,3 +1027,123 @@ def test_the_agent_config_tab_is_the_surest_tell():
     tabs = ["Dashboard", "Agent_Config", "Master_Leads", "Agent_Luis_Orbezua"]
     assert leadsheets.config_tab_in(tabs) == "Agent_Config"
     assert leadsheets.config_tab_in(["Sheet1", "Notes"]) == ""
+
+
+# --------------------------------- the sheet somebody named
+
+
+from wilbyte import leadstate as _leadstate
+
+
+def test_the_six_sheets_franklin_named_are_known():
+    """Nearly every channel links a deploy sheet; these are the exceptions."""
+    assert "1wkwoLkzMfhlmkNSLdSEo5YJKTP0Ax06foBYr8z_8Fqo" in (
+        leadsheets.known_sheet("OTP Trucker IUL")
+    )
+    assert "1_14LZh3zTNXBLGgDs3JOwWExpEHWSEigoBUfGOlDRmQ" in (
+        leadsheets.known_sheet("OTP VET 2")
+    )
+    assert leadsheets.known_sheet("otp-trucker-iul-masterlist") == (
+        leadsheets.known_sheet("OTP IUL Truckers")
+    )
+    assert leadsheets.known_sheet("Spanish FEX") == ""
+
+
+def test_a_named_sheet_beats_what_the_channel_links():
+    found = [Masterlist(category="IUL Masterlist", name="OTP Trucker IUL",
+                        sheet="https://docs.google.com/spreadsheets/d/" + SHEET + "/edit")]
+    combined = leadsheets.combine(found, [])
+
+    assert "1wkwoLkzMfhlmkNSLdSEo5YJKTP0Ax06foBYr8z_8Fqo" in combined[0].sheet
+    assert combined[0].status == leadsheets.PINNED
+
+
+@pytest.mark.parametrize(
+    "said,wanted",
+    [
+        ("masterlist OTP FEX https://docs.google.com/spreadsheets/d/" + SHEET,
+         "otp fex"),
+        ("https://docs.google.com/spreadsheets/d/" + SHEET + " for Spanish FEX",
+         "spanish fex"),
+        ("OTP VET 2 sheet is https://docs.google.com/spreadsheets/d/" + SHEET,
+         "otp vet 2"),
+    ],
+)
+def test_which_lead_type_and_which_sheet(said, wanted):
+    found = _leadstate.sheet_asked(said)
+    assert found is not None and found[0] == wanted
+    assert SHEET in found[1]
+
+
+def test_a_link_with_no_lead_type_is_not_an_instruction():
+    """It says nothing about which lead type it belongs to."""
+    assert _leadstate.sheet_asked(
+        "https://docs.google.com/spreadsheets/d/" + SHEET
+    ) is None
+    assert _leadstate.sheet_asked("masterlists") is None
+
+
+def test_a_pinned_sheet_survives_being_written_and_read(tmp_path):
+    path = tmp_path / "masterlist-sheets.json"
+    _leadstate.set_sheet("OTP FEX", "https://x", path)
+
+    assert _leadstate.sheets(path) == {"otp fex": "https://x"}
+    assert _leadstate.sheet_of("otp-fex-masterlist", held=_leadstate.sheets(path)) == (
+        "https://x"
+    )
+
+
+def test_what_was_typed_beats_the_list_in_the_source(tmp_path):
+    said = {"otp trucker iul": "https://typed"}
+    assert leadsheets.pinned_sheet("OTP Trucker IUL", said=said) == "https://typed"
+
+
+# --------------------------------- counting the right tab
+
+
+def test_a_deploy_sheet_is_caught_by_its_tabs_even_outside_the_folder():
+    """Spanish FEX's is called "Text-Verified Spanish FEX - Auto Deploy (No
+    Reset Day)" and lives elsewhere; its Dashboard tab of state names was
+    counted as fifty-six leads."""
+    tabs = ["Dashboard", "Agent_Config", "Master_Leads", "Agent_Maria_Garcia"]
+    assert leadsheets.kind_of("Some sheet nobody named well", tabs=tabs) == (
+        leadsheets.DEPLOY
+    )
+
+
+def test_the_count_comes_off_the_named_tab(monkeypatch):
+    asked = {}
+
+    def get(path, **params):
+        asked.update(params)
+        return {"valueRanges": [{"values": [["Name"], ["a"]]}, {"values": [["Name"]]}]}
+
+    monkeypatch.setattr(gsheets, "_get", get)
+    gsheets.count_and_header(SHEET, tab="Master_Leads")
+
+    assert asked["ranges"] == ["'Master_Leads'!A:A", "'Master_Leads'!1:1"]
+
+
+def test_a_channel_linking_a_deploy_sheet_is_caught_during_counting(monkeypatch):
+    """The one that mattered: Spanish FEX counted its Dashboard tab of state
+    names and reported fifty-six leads."""
+    import asyncio as aio
+    from wilbyte.bot import client
+
+    live = [Masterlist(category="FEX Masterlist", name="Spanish FEX", sheet="u",
+                       channel="https://discord.com/channels/1/2")]
+
+    monkeypatch.setattr(gsheets, "facts", lambda sheet: (
+        "Text-Verified Spanish FEX - Auto Deploy (No Reset Day)",
+        ["Dashboard", "Agent_Config", "Master_Leads", "Agent_Maria_Garcia"],
+    ))
+    monkeypatch.setattr(gsheets, "count_and_header", lambda sheet, **k: (6, ["Agent_Name"]))
+    aio.run(client._count_leads(live))
+
+    # The lead type is left with no masterlist, which is the truth...
+    assert live[0].sheet == "" and live[0].count is None
+    # ...and the deploy sheet is on the flagged list under that lead type.
+    flagged = [held for held in live if held.kind == leadsheets.DEPLOY]
+    assert len(flagged) == 1
+    assert flagged[0].category == "Spanish FEX"
+    assert flagged[0].channel == "https://discord.com/channels/1/2"

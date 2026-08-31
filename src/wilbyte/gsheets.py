@@ -294,8 +294,27 @@ def row_count(spreadsheet: str, *, column: str = COUNT_COLUMN, header: bool = Tr
     return max(filled - (1 if header and filled else 0), 0)
 
 
+def facts(spreadsheet: str) -> tuple[str, list[str]]:
+    """A sheet's title and its tab titles, in one request.
+
+    Both are needed before a single row is counted. A deploy sheet kept
+    outside the folder is only recognisable by these two things, and counting
+    column A of whatever tab happens to be first is how a list of states
+    became "56 Spanish FEX leads".
+    """
+    payload = _get(
+        sheet_id(spreadsheet), fields="properties.title,sheets.properties.title"
+    )
+    title = str((payload.get("properties") or {}).get("title") or "")
+    tabs = [
+        str((sheet.get("properties") or {}).get("title") or "")
+        for sheet in payload.get("sheets") or []
+    ]
+    return title, tabs
+
+
 def count_and_header(
-    spreadsheet: str, *, column: str = COUNT_COLUMN, header: bool = True
+    spreadsheet: str, *, tab: str = "", column: str = COUNT_COLUMN, header: bool = True
 ) -> tuple[int, list[str]]:
     """How many rows a sheet holds, and what its first row says.
 
@@ -304,8 +323,10 @@ def count_and_header(
     of requests a run makes against a per-minute limit it already paces for.
     """
     wanted = sheet_id(spreadsheet)
+    where = f"'{tab}'!" if tab else ""
     payload = _get(
-        f"{wanted}/values:batchGet", ranges=[f"{column}:{column}", "1:1"]
+        f"{wanted}/values:batchGet",
+        ranges=[f"{where}{column}:{column}", f"{where}1:1"],
     )
     ranges = payload.get("valueRanges") or []
 

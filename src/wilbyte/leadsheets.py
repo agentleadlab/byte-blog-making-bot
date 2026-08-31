@@ -244,6 +244,49 @@ def tidy_name(raw: str) -> str:
 
 NO_SHEET_ANYWHERE = "no sheet in the folder and no link in the channel"
 
+# The lead types that really do keep a masterlist, and where it is. Nearly
+# every channel posts an auto-deploy sheet instead, so these are the exceptions
+# somebody had to name by hand. Aliases because the same masterlist is written
+# three ways: the channel's name, the file's name, and what people call it.
+# `@RYTE masterlist <lead type> <link>` adds to this and beats it.
+KNOWN_SHEETS = {
+    ("otp trucker iul", "otp iul truckers", "trucker iul", "otp trucker"):
+        "https://docs.google.com/spreadsheets/d/1wkwoLkzMfhlmkNSLdSEo5YJKTP0Ax06foBYr8z_8Fqo/edit",
+    ("uprise agents lp", "uprise agents", "uprise agent lp", "uprise"):
+        "https://docs.google.com/spreadsheets/d/1qANSohg-t-DSZfM_VoXgvpL68lDdbdKLa6YFKkphIR4/edit",
+    ("otp vet 2", "otp vet2"):
+        "https://docs.google.com/spreadsheets/d/1_14LZh3zTNXBLGgDs3JOwWExpEHWSEigoBUfGOlDRmQ/edit",
+    ("vet widows", "vet widows otp", "otp vet widows"):
+        "https://docs.google.com/spreadsheets/d/1on4xQOO1PMquE2UlwxHkBmYFqP9i3JLtjMDdkgljpos/edit",
+    ("abandoned iul",):
+        "https://docs.google.com/spreadsheets/d/1lK4FN2RSUfPAubLSCVOCN2ll2HIWMVXaRpk47__TjXw/edit",
+    ("trucker lp", "trucker lp tax free", "trucker lp tax", "trucker lp le"):
+        "https://docs.google.com/spreadsheets/d/16D3izKnOFrF7f3igJt7jEuJNpkKvnfLPY2zUFMsxSYU/edit",
+}
+
+
+def known_sheet(name: str) -> str:
+    """The masterlist somebody named for this lead type, or ""."""
+    from . import leadstate
+
+    wanted = leadstate.key(name)
+    for aliases, url in KNOWN_SHEETS.items():
+        if wanted in aliases:
+            return url
+    return ""
+
+
+def pinned_sheet(name: str, *, said: dict[str, str] | None = None) -> str:
+    """The sheet to count for a lead type, whoever said so. "" if nobody did.
+
+    What was typed at RYTE beats the list in the source, which beats whatever
+    the channel happens to link - because what the channel links is usually an
+    auto-deploy sheet.
+    """
+    from . import leadstate
+
+    return leadstate.sheet_of(name, held=said) or known_sheet(name)
+
 # --------------------------------------------------- auto-deploy sheets
 #
 # Not every file in the folder is a list of leads. Some are the agent deploy
@@ -289,9 +332,18 @@ def deploy_header(header: list[str] | None) -> bool:
     return sum(1 for field in DEPLOY_FIELDS if field in said) >= 2
 
 
-def kind_of(name: str, header: list[str] | None = None) -> str:
-    """"leads" or "deploy", from what the file is called or what is in it."""
+def kind_of(
+    name: str, header: list[str] | None = None, tabs: list[str] | None = None
+) -> str:
+    """"leads" or "deploy", from the name, the tabs, or the columns.
+
+    Three tells because one was not enough. Most deploy sheets say so in the
+    name; the ones that don't have an Agent_Config tab; and a sheet with
+    neither is judged on its columns.
+    """
     if AUTO_DEPLOY.search(name or ""):
+        return DEPLOY
+    if tabs and config_tab_in(tabs):
         return DEPLOY
     return DEPLOY if deploy_header(header) else LEADS
 
@@ -309,6 +361,9 @@ DEPLOY_HEADER = ("Lead type", "Channel", "Auto deploy sheet", "Sheet", "Agents",
 # What a row on the flagged tab says once RYTE has built the masterlist for it.
 SORTED_OUT = "Masterlist made"
 
+# ...and when somebody named the real masterlist instead of RYTE making one.
+PINNED = "Masterlist linked"
+
 
 def done_rows(rows: list[list]) -> list[int]:
     """Which rows of the flagged tab are sorted out, for highlighting.
@@ -317,7 +372,7 @@ def done_rows(rows: list[list]) -> list[int]:
     """
     return [
         number for number, row in enumerate(rows)
-        if number and str(row[-1] or "").startswith(SORTED_OUT)
+        if number and str(row[-1] or "").startswith((SORTED_OUT, PINNED))
     ]
 
 
@@ -363,6 +418,17 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
     # for as long as the old posts sit there.
     wrongly: dict[str, Masterlist] = {}
     for held in found:
+        # Somebody naming the sheet outranks everything: the channel's link is
+        # usually the deploy sheet, and the folder holds several files with
+        # nearly the same name.
+        pinned = pinned_sheet(held.name)
+        if pinned:
+            if id_of(held.sheet) in deployed:
+                wrongly[id_of(held.sheet)] = held
+            held.sheet = pinned
+            held.status = PINNED
+            continue
+
         linked = id_of(held.sheet)
         if linked and linked in deployed:
             wrongly[linked] = held
@@ -403,6 +469,8 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
             sheet=str(file.get("url") or ""),
             channel=owner.channel if owner else "",
             kind=DEPLOY,
+            # The channel still links this, but the masterfile no longer does.
+            status=f"{PINNED} — {owner.name}" if owner and owner.status == PINNED else "",
         ))
     return list(found) + extra + filed
 

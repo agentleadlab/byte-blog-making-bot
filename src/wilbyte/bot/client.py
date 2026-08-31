@@ -1791,6 +1791,8 @@ async def _send_lead_summary(
     """Count every masterlist and write the summary into the leads sheet."""
     from .. import gsheets, leadsheets
 
+    from .. import leadstate
+
     into = (os.getenv("LEADS_SUMMARY_SHEET_ID") or "").strip()
     if not into:
         await responder.send(
@@ -1798,6 +1800,17 @@ async def _send_lead_summary(
             "I should write the summary into."
         )
         return
+
+    # "@RYTE masterlist OTP Trucker IUL https://docs.google.com/..." - the
+    # channel links the deploy sheet, this is where the leads really are.
+    named = leadstate.sheet_asked(said or "")
+    if named:
+        lead_type, url = named
+        await asyncio.to_thread(leadstate.set_sheet, lead_type, url)
+        await responder.send(
+            f"Noted — **{lead_type}** counts from that sheet from now on, "
+            "whatever its channel links. Rewriting…"
+        )
 
     try:
         found = await _lead_masterlists(bot)
@@ -1825,14 +1838,17 @@ async def _send_lead_summary(
         ]
     found = leadsheets.combine(found, files)
 
-    if folder and _MAKE_THEM.search(said or ""):
-        await _make_missing_sheets(responder, found, folder)
-
     await responder.send(
         f"Counting {len(found)} masterlist(s)"
         + (f" — {len(files)} in the folder…" if folder else "…")
     )
+    # Counting first, always. Which channels have a deploy sheet attached is
+    # only known once every sheet has been looked at, and that is exactly the
+    # list `create` works from.
     await _count_leads(found)
+
+    if folder and _MAKE_THEM.search(said or ""):
+        await _make_missing_sheets(responder, found, folder)
 
     lists, deploys = leadsheets.by_kind(found)
     theirs, others = leadsheets.apart(lists)
@@ -1881,23 +1897,57 @@ async def _count_leads(found: list) -> None:
     from .. import gsheets, leadsheets
 
     gate = asyncio.Semaphore(AT_ONCE)
+    caught: list = []
+
+    def look(held):
+        """Everything about one sheet, off the event loop."""
+        title, tabs = "", []
+        if held.kind != leadsheets.DEPLOY:
+            title, tabs = gsheets.facts(held.sheet)
+
+        if leadsheets.kind_of(title, tabs=tabs) == leadsheets.DEPLOY:
+            # An agent count, off the tab the agents are configured on.
+            where = leadsheets.config_tab_in(tabs)
+            agents, _ = gsheets.count_and_header(held.sheet, tab=where)
+            return "deploy", title, agents
+
+        # A masterlist with a leads tab keeps its leads there; one without has
+        # them on the tab it opens on.
+        where = leadsheets.leads_tab_in(tabs)
+        count, header = gsheets.count_and_header(held.sheet, tab=where)
+        if leadsheets.deploy_header(header):
+            return "deploy", title, count
+        return "leads", title, count
 
     async def count(held) -> None:
         if not held.sheet:
             return
         async with gate:
             try:
-                held.count, header = await asyncio.to_thread(
-                    gsheets.count_and_header, held.sheet
-                )
+                what, title, number = await asyncio.to_thread(look, held)
             except gsheets.SheetsError as exc:
                 held.problem = str(exc)
                 return
-        if held.kind != leadsheets.DEPLOY and leadsheets.deploy_header(header):
-            held.kind = leadsheets.DEPLOY
-            held.category, held.name = held.name, held.name
+
+        if what != "deploy" or held.kind == leadsheets.DEPLOY:
+            held.count = number
+            return
+
+        # The channel links a deploy sheet. The lead type has no masterlist,
+        # and the deploy sheet becomes a row on the flagged tab under its name.
+        caught.append(leadsheets.Masterlist(
+            category=held.name,
+            name=leadsheets.tidy_name(title) or held.name,
+            sheet=held.sheet,
+            channel=held.channel,
+            count=number,
+            kind=leadsheets.DEPLOY,
+        ))
+        held.sheet = ""
+        held.count = None
 
     await asyncio.gather(*(count(held) for held in found))
+    found.extend(caught)
 
 
 async def _make_missing_sheets(responder: Responder, found: list, folder: str) -> None:
@@ -1952,6 +2002,7 @@ async def _make_missing_sheets(responder: Responder, found: list, folder: str) -
 
         held.sheet = made["url"]
         held.created = True
+        held.count = 0  # Made empty on purpose; nought is the true number.
         held.problem = ""
         if deploy:
             deploy.status = f"{leadsheets.SORTED_OUT} — {made['name']}"
