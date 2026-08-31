@@ -194,9 +194,10 @@ QUALIFIERS = (
 def qualified_name(lead_type: str, deploy_name: str = "") -> str:
     """The lead type, with whatever its deploy sheet says it is.
 
-    Only what is missing: "OTP Standard IUL" already says Standard, so its
-    deploy sheet saying so again adds nothing. "No OTP" wins over "OTP" -
-    they are opposites and the longer one is the one that was meant.
+    One qualifier, not a stack of them: "Text-Verified Facebook OTP Spanish
+    IUL" is a file name nobody wants to read. Text-Verified comes first
+    wherever it applies, and only what the lead type doesn't already say -
+    "OTP Standard IUL" saying Standard twice helps nobody.
     """
     said = " ".join((lead_type or "").split())
     if not deploy_name:
@@ -208,9 +209,10 @@ def qualified_name(lead_type: str, deploy_name: str = "") -> str:
             continue
         if re.search(pattern, said, re.IGNORECASE):
             continue
-        if word == "OTP" and ("No OTP" in found or re.search(r"\botp\b", said, re.I)):
+        if word == "OTP" and re.search(r"\botp\b", said, re.IGNORECASE):
             continue
         found.append(word)
+        break  # The first is the one that counts; QUALIFIERS is the priority.
 
     return " ".join(found + [said]) if found else said
 

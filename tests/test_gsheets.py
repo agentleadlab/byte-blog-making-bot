@@ -1206,8 +1206,11 @@ def test_a_name_nobody_recognises_does_not_silently_make_everything():
          "No OTP LP VET"),
         ("No OTP Standard VET", "VET Standard Auto Deploy", "No OTP Standard VET"),
         ("Spanish MTG", "Spanish MTG Auto Deploy New Setup", "Spanish MTG"),
+        # One qualifier, not a stack: Text-Verified wins over Facebook here.
         ("OTP Spanish IUL", "Text Verified Spanish Facebook IUL Auto Deploy New",
-         "Text-Verified Facebook OTP Spanish IUL"),
+         "Text-Verified OTP Spanish IUL"),
+        ("Abandoned MTG", "Abandoned MTG Auto Deploy", "Abandoned MTG"),
+        ("Instant IUL", "Instant IUL Auto Deploy New Setup", "Instant IUL"),
     ],
 )
 def test_the_qualifier_comes_off_the_deploy_sheet(lead_type, deploy, wanted):
@@ -1230,3 +1233,12 @@ def test_the_qualified_name_still_matches_its_channel_next_run():
     files = [{"id": "x", "name": "Text-Verified Mortgage Protection Masterlist 2026",
               "url": "u"}]
     assert leadsheets.find_sheet("Mortgage Protection", files) == files[0]
+
+
+def test_only_one_qualifier_ever_lands_on_a_name():
+    """"Text-Verified Facebook OTP Spanish IUL Masterlist 2026" is a file name
+    nobody wants to read."""
+    said = leadsheets.qualified_name(
+        "Spanish IUL", "Text Verified Spanish Facebook Blue Collar Standard Auto Deploy"
+    )
+    assert said == "Text-Verified Spanish IUL"
