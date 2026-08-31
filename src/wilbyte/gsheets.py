@@ -189,6 +189,98 @@ def tab_names(spreadsheet: str) -> list[str]:
     ]
 
 
+def tab_ids(spreadsheet: str) -> dict[str, int]:
+    """Tab title -> its numeric id. Formatting is addressed by the number."""
+    payload = _get(sheet_id(spreadsheet), fields="sheets.properties(title,sheetId)")
+    found = {}
+    for sheet in payload.get("sheets") or []:
+        properties = sheet.get("properties") or {}
+        found[str(properties.get("title") or "")] = int(properties.get("sheetId") or 0)
+    return found
+
+
+def _colour(red: float, green: float, blue: float) -> dict:
+    return {"red": red, "green": green, "blue": blue}
+
+
+# Agent Lead Lab's green, near enough, and a grey light enough to read on.
+HEADER_BACKGROUND = _colour(0.16, 0.44, 0.31)
+BANDING = _colour(0.94, 0.96, 0.95)
+
+
+def prettify(spreadsheet: str, tab: str, *, rows: int, columns: int = 4) -> None:
+    """Make a written tab readable: a header that stays put, and room to read.
+
+    Cosmetic, and it earns its place: this file is opened to answer "how many
+    have we got", and a wall of unformatted text with the header scrolled off
+    the top answers it slower than the Discord message did.
+
+    Best effort. A summary that is correct but plain is worth having, so a
+    formatting failure is not allowed to lose the write that already happened.
+    """
+    wanted = sheet_id(spreadsheet)
+    found = tab_ids(wanted).get(tab)
+    if found is None:
+        return
+
+    requests = [
+        # The header stays visible when somebody scrolls a long list.
+        {"updateSheetProperties": {
+            "properties": {"sheetId": found, "gridProperties": {"frozenRowCount": 1}},
+            "fields": "gridProperties.frozenRowCount",
+        }},
+        {"repeatCell": {
+            "range": {"sheetId": found, "startRowIndex": 0, "endRowIndex": 1},
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": HEADER_BACKGROUND,
+                "textFormat": {"bold": True, "foregroundColor": _colour(1, 1, 1)},
+                "verticalAlignment": "MIDDLE",
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)",
+        }},
+        # Counts read as numbers, with the thousands separator: 15,401 is the
+        # number on the aged file and 15401 is harder to take in at a glance.
+        {"repeatCell": {
+            "range": {
+                "sheetId": found, "startRowIndex": 1,
+                "startColumnIndex": columns - 1, "endColumnIndex": columns,
+            },
+            "cell": {"userEnteredFormat": {
+                "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                "horizontalAlignment": "RIGHT",
+            }},
+            "fields": "userEnteredFormat(numberFormat,horizontalAlignment)",
+        }},
+        {"autoResizeDimensions": {"dimensions": {
+            "sheetId": found, "dimension": "COLUMNS",
+            "startIndex": 0, "endIndex": columns,
+        }}},
+    ]
+    if rows > 1:
+        requests.append({"addBanding": {"bandedRange": {
+            "range": {
+                "sheetId": found, "startRowIndex": 1, "endRowIndex": rows,
+                "startColumnIndex": 0, "endColumnIndex": columns,
+            },
+            "rowProperties": {
+                "firstBandColor": _colour(1, 1, 1), "secondBandColor": BANDING,
+            },
+        }}})
+
+    headers = {"Authorization": f"Bearer {access_token()}"}
+    try:
+        httpx.post(
+            f"{API_ROOT}/{wanted}:batchUpdate",
+            headers=headers,
+            json={"requests": requests},
+            timeout=60,
+        )
+    except httpx.HTTPError:
+        # Deliberately swallowed. The numbers are already written and correct;
+        # losing them to a failed cosmetic call would be the worse outcome.
+        return
+
+
 def ensure_tab(spreadsheet: str, title: str) -> None:
     """Make a tab if the sheet hasn't got one by that name.
 

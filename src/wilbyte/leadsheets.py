@@ -124,18 +124,31 @@ def summary_rows(found: list[Masterlist]) -> list[list]:
         rows.append([
             tidy_name(held.category),
             held.name,
-            held.sheet,
+            f'=HYPERLINK("{held.sheet}","Open sheet")' if held.sheet else "—",
             "—" if held.count is None else held.count,
         ])
     return rows
 
 
-def split_by_state(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
-    """(live, inactive). Inactive goes on its own tab, by its category."""
-    return (
-        [held for held in found if not held.inactive],
-        [held for held in found if held.inactive],
-    )
+def split_by_state(
+    found: list[Masterlist], *, said: dict[str, str] | None = None
+) -> tuple[list[Masterlist], list[Masterlist]]:
+    """(live, inactive). The Discord category decides unless somebody said.
+
+    "@RYTE move the trucker masterlist to inactive" is an override kept by
+    RYTE, because it only has read permission in that server - a bot that can
+    restructure somebody else's Discord is a bot that can restructure the
+    wrong part of it.
+    """
+    from . import leadstate
+
+    held_states = said if said is not None else leadstate.load()
+    live, idle = [], []
+    for held in found:
+        state = leadstate.state_of(held.name, held=held_states)
+        away = held.inactive if state is None else state == leadstate.INACTIVE
+        (idle if away else live).append(held)
+    return live, idle
 
 
 def total(found: list[Masterlist]) -> int:

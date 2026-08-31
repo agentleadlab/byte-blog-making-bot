@@ -690,6 +690,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_wrong_setups(responder, config)
                 return
 
+            if request.action == "leadmove":
+                await _move_masterlist(bot, responder, request.brief or "")
+                return
+
             if request.action == "leadsheet":
                 await _send_lead_summary(bot, responder)
                 return
@@ -1730,6 +1734,27 @@ async def _lead_masterlists(bot: "WilByteBot"):
     return found
 
 
+async def _move_masterlist(bot: "WilByteBot", responder: Responder, said: str) -> None:
+    """Remember that a masterlist is live, or isn't, and rewrite the sheet."""
+    from .. import leadstate
+
+    asked = leadstate.move_asked(said)
+    if asked is None:
+        await responder.send(
+            "Say which way — `@RYTE move the otp trucker masterlist to inactive`, "
+            "or `to active` to put one back."
+        )
+        return
+
+    named, state = asked
+    await asyncio.to_thread(leadstate.set_state, named, state)
+    await responder.send(
+        f"Noted — **{named}** goes on the **{state}** tab from now on. "
+        "Rewriting the sheet…"
+    )
+    await _send_lead_summary(bot, responder)
+
+
 async def _send_lead_summary(bot: "WilByteBot", responder: Responder) -> None:
     """Count every masterlist and write the summary into the leads sheet."""
     from .. import gsheets, leadsheets
@@ -1777,14 +1802,14 @@ def _write_lead_summary(into: str, live, idle) -> str:
     from .. import gsheets, leadsheets
 
     gsheets.ensure_tab(into, leadsheets.ACTIVE_TAB)
-    url = gsheets.write_rows(
-        into, leadsheets.summary_rows(live), tab=leadsheets.ACTIVE_TAB
-    )
-    if idle:
-        gsheets.ensure_tab(into, leadsheets.INACTIVE_TAB)
-        gsheets.write_rows(
-            into, leadsheets.summary_rows(idle), tab=leadsheets.INACTIVE_TAB
-        )
+    rows = leadsheets.summary_rows(live)
+    url = gsheets.write_rows(into, rows, tab=leadsheets.ACTIVE_TAB)
+    gsheets.prettify(into, leadsheets.ACTIVE_TAB, rows=len(rows))
+
+    gsheets.ensure_tab(into, leadsheets.INACTIVE_TAB)
+    idle_rows = leadsheets.summary_rows(idle)
+    gsheets.write_rows(into, idle_rows, tab=leadsheets.INACTIVE_TAB)
+    gsheets.prettify(into, leadsheets.INACTIVE_TAB, rows=len(idle_rows))
     return url
 
 

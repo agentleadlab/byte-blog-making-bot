@@ -144,7 +144,7 @@ def test_the_summary_has_four_columns_and_a_header():
         Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u", count=1284),
     ])
     assert rows[0] == list(leadsheets.HEADER)
-    assert rows[1] == ["IUL", "LP IUL", "u", 1284]
+    assert rows[1] == ["IUL", "LP IUL", '=HYPERLINK("u","Open sheet")', 1284]
 
 
 def test_a_count_that_could_not_be_read_is_a_dash_not_a_nought():
@@ -166,3 +166,77 @@ def test_what_failed_is_named_in_the_report():
     live = [Masterlist(category="IUL", name="LP IUL", problem="no sheet link")]
     said = leadsheets.describe(live, [])
     assert "LP IUL" in said and "no sheet link" in said
+
+
+# --------------------------------- moving one between tabs
+
+
+from wilbyte import leadstate
+
+
+@pytest.mark.parametrize(
+    "said,wanted",
+    [
+        ("move the otp trucker iul masterlist to inactive", ("otp trucker iul", "inactive")),
+        ("move otp widow vet to active", ("otp widow vet", "active")),
+        ("move spanish fex masterlist to in active", ("spanish fex", "inactive")),
+        ("mark lp iul masterlist as inactive", ("lp iul", "inactive")),
+    ],
+)
+def test_which_masterlist_and_which_way(said, wanted):
+    assert leadstate.move_asked(said) == wanted
+
+
+def test_a_move_that_does_not_say_which_way_is_refused():
+    """Guessing is how a live lead type disappears off the list."""
+    assert leadstate.move_asked("move the trucker masterlist") is None
+
+
+def test_every_way_of_writing_the_name_lands_on_one_entry():
+    keys = {
+        leadstate.key(name) for name in (
+            "otp-trucker-iul-masterlist",
+            "🚚 otp-trucker-iul-masterlist",
+            "OTP Trucker IUL",
+            "the otp trucker iul masterlist",
+        )
+    }
+    assert len(keys) == 1
+
+
+def test_what_was_said_beats_the_discord_category(tmp_path):
+    """RYTE only has read permission in that server, so an override is kept
+    here rather than the channel being moved."""
+    live_by_category = Masterlist(category="IUL Masterlist", name="OTP Trucker IUL")
+    idle_by_category = Masterlist(category="INACTIVE Masterlist", name="Instant IUL")
+
+    said = {leadstate.key("OTP Trucker IUL"): "inactive",
+            leadstate.key("Instant IUL"): "active"}
+    live, idle = leadsheets.split_by_state([live_by_category, idle_by_category], said=said)
+
+    assert [held.name for held in live] == ["Instant IUL"]
+    assert [held.name for held in idle] == ["OTP Trucker IUL"]
+
+
+def test_the_category_still_decides_when_nobody_has_said():
+    found = [Masterlist(category="INACTIVE Masterlist", name="Instant IUL")]
+    live, idle = leadsheets.split_by_state(found, said={})
+    assert [held.name for held in idle] == ["Instant IUL"]
+
+
+def test_an_override_survives_being_written_and_read(tmp_path):
+    path = tmp_path / "masterlist-state.json"
+    leadstate.set_state("OTP Trucker IUL", "inactive", path)
+
+    assert leadstate.load(path) == {"otp trucker iul": "inactive"}
+    assert leadstate.state_of("otp-trucker-iul-masterlist", held=leadstate.load(path)) == "inactive"
+
+    leadstate.clear("otp trucker iul", path)
+    assert leadstate.load(path) == {}
+
+
+def test_the_sheet_column_is_a_link_not_a_url():
+    rows = leadsheets.summary_rows([
+        Masterlist(category="IUL", name="LP IUL", sheet="https://x", count=3)
+    ])
+    assert rows[1][2] == '=HYPERLINK("https://x","Open sheet")'
