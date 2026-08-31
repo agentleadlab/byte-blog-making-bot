@@ -651,3 +651,56 @@ def test_every_other_file_in_the_folder_is_still_refused():
     files = [{"id": SHEET, "name": "Blue Collar Masterlist", "url": "u"}]
     with pytest.raises(SheetsError, match="one of the masterlists"):
         client._write_lead_summary(SHEET, [], [], files=files)
+
+
+# --------------------------------- the masterfile is the only writable sheet
+
+
+def test_a_masterlist_cannot_be_written_to_at_all(monkeypatch):
+    """Not "shouldn't" - can't. Every lead sheet is read-only to RYTE."""
+    monkeypatch.setenv("LEADS_SUMMARY_SHEET_ID", SHEET)
+    gsheets._just_made.clear()
+    other = "1kwsuiPD_8p4B_jGG8_-1RL9bren5KLC_mRHTz1SrN2k"
+
+    for call in (
+        lambda: gsheets.write_rows(other, [["x"]], tab="Sheet1"),
+        lambda: gsheets.ensure_tab(other, "Active"),
+        lambda: gsheets.prettify(other, "Active", rows=2),
+    ):
+        with pytest.raises(SheetsError, match="not allowed to change"):
+            call()
+
+
+def test_the_masterfile_named_in_the_env_is_writable(monkeypatch):
+    monkeypatch.setenv("LEADS_SUMMARY_SHEET_ID", SHEET)
+    assert gsheets.writable(SHEET) is True
+    assert gsheets.writable(f"https://docs.google.com/spreadsheets/d/{SHEET}/edit")
+
+
+def test_nothing_is_writable_when_the_env_names_nothing(monkeypatch):
+    """A blank .env must not read as "anything goes"."""
+    monkeypatch.delenv("LEADS_SUMMARY_SHEET_ID", raising=False)
+    gsheets._just_made.clear()
+    assert gsheets.writable(SHEET) is False
+
+
+def test_a_sheet_ryte_just_made_may_have_its_header_written(monkeypatch):
+    monkeypatch.delenv("LEADS_SUMMARY_SHEET_ID", raising=False)
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    gsheets._just_made.clear()
+    wrote = {}
+
+    monkeypatch.setattr(
+        gsheets.httpx, "post",
+        lambda url, **k: httpx.Response(
+            200, json={"id": SHEET, "name": "Nova Masterlist"},
+            request=httpx.Request("POST", url),
+        ),
+    )
+    monkeypatch.setattr(
+        gsheets, "write_rows", lambda sheet, rows, **k: wrote.update(sheet=sheet) or "u"
+    )
+
+    gsheets.create_sheet("Nova Masterlist", folder=FOLDER, header=["Name"])
+    assert SHEET in gsheets._just_made
+    assert wrote["sheet"] == SHEET

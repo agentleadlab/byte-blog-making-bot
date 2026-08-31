@@ -288,6 +288,7 @@ def prettify(spreadsheet: str, tab: str, *, rows: int, columns: int = 4) -> None
     formatting failure is not allowed to lose the write that already happened.
     """
     wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
     found = tab_ids(wanted).get(tab)
     if found is None:
         return
@@ -358,6 +359,7 @@ def ensure_tab(spreadsheet: str, title: str) -> None:
     live ones, which is the thing the separate tab is for.
     """
     wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
     if title in tab_names(wanted):
         return
 
@@ -483,11 +485,55 @@ def create_sheet(title: str, *, folder: str, header: list[str] | None = None) ->
         "name": str(payload.get("name") or title),
         "url": f"https://docs.google.com/spreadsheets/d/{payload.get('id')}/edit",
     }
-    if header:
+    if header and new["id"]:
         # A brand new sheet counts as nought leads, and nought is right. The
         # header is there so the first person to open it knows what goes where.
+        # This is the only way a sheet other than the masterfile becomes
+        # writable, and it is one RYTE made seconds ago with nothing in it.
+        _just_made.add(new["id"])
         write_rows(new["id"], [header])
     return new
+
+
+# ------------------------------------------------- the one writable sheet
+#
+# Everything else Google-shaped that RYTE touches is a lead masterlist, and a
+# masterlist is read and never written. The rule is enforced here rather than
+# remembered: the only sheets that can be written are the masterfile named in
+# the .env, and a sheet RYTE created itself moments ago (to put a header on
+# it). A write anywhere else raises before it can clear anything.
+
+SUMMARY_VAR = "LEADS_SUMMARY_SHEET_ID"
+
+# Filled by create_sheet, and only by create_sheet.
+_just_made: set[str] = set()
+
+
+def the_masterfile() -> str:
+    """The id of the one sheet RYTE may write to, from the .env."""
+    named = (os.getenv(SUMMARY_VAR) or "").strip()
+    if not named:
+        return ""
+    try:
+        return sheet_id(named)
+    except SheetsError:
+        return ""
+
+
+def writable(spreadsheet: str) -> bool:
+    """Whether RYTE is allowed to change this sheet at all."""
+    wanted = sheet_id(spreadsheet)
+    return wanted == the_masterfile() or wanted in _just_made
+
+
+def _must_be_writable(wanted: str) -> None:
+    if writable(wanted):
+        return
+    raise SheetsError(
+        "I'm not allowed to change that sheet. The only one I can add to, "
+        f"link in or edit is the masterfile named in {SUMMARY_VAR}. Every "
+        "lead masterlist is read-only to me."
+    )
 
 
 def first_row(spreadsheet: str, tab: str) -> list[str]:
@@ -518,6 +564,7 @@ def write_rows(
     makes that true rather than merely intended.
     """
     wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
     where = f"'{tab}'" if tab else (tab_names(wanted) or ["Sheet1"])[0]
     if not tab:
         where = f"'{where}'"
