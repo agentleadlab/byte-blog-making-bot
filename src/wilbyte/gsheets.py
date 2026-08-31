@@ -21,12 +21,13 @@ import httpx
 API_ROOT = "https://sheets.googleapis.com/v4/spreadsheets"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# What the refresh token was minted with. `spreadsheets` covers reading the
-# lead masterlists and writing the summary; `drive.file` is there for making a
-# new sheet later, and is not needed to write into one that already exists.
+# What the refresh token has to be minted with. `spreadsheets` covers reading
+# the lead masterlists and writing the summary. `drive` is the wide one and it
+# is needed: the masterfile is built from a Drive *folder* RYTE did not create,
+# and `drive.file` only ever sees files the app made itself.
 SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",
 )
 
 OAUTH_VARS = (
@@ -369,6 +370,121 @@ def ensure_tab(spreadsheet: str, title: str) -> None:
         raise SheetsError(f"Couldn't add the '{title}' tab: {exc}") from exc
     if made.status_code >= 400:
         raise SheetsError(explain(made, wanted))
+
+
+# --------------------------------------------------------------- the folder
+#
+# The masterlists are not only Discord channels any more: they are files in one
+# Drive folder, and that folder is the list of what exists. A lead type with a
+# channel and no file is the thing to make; a file with no channel is still a
+# masterlist and still belongs on the masterfile.
+
+DRIVE_ROOT = "https://www.googleapis.com/drive/v3/files"
+SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+
+# drive.google.com/drive/folders/<id>, or the bare id.
+_FOLDER_ID = re.compile(r"/folders/([A-Za-z0-9_-]{10,})")
+
+
+def folder_id(url_or_id: str) -> str:
+    """The folder id, from a pasted Drive link or from the id itself."""
+    text = (url_or_id or "").strip()
+    found = _FOLDER_ID.search(text)
+    if found:
+        return found.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{10,}", text):
+        return text
+    raise SheetsError(f"That doesn't look like a Drive folder link: {text[:120]}")
+
+
+def _drive(params: dict) -> dict:
+    last = ""
+    for attempt in range(len(RETRY_PAUSES) + 1):
+        headers = {"Authorization": f"Bearer {access_token()}"}
+        try:
+            response = httpx.get(DRIVE_ROOT, params=params, headers=headers, timeout=60)
+        except httpx.HTTPError as exc:
+            last = f"Drive request failed: {exc}"
+        else:
+            if response.status_code < 400:
+                return response.json()
+            if response.status_code not in _WORTH_RETRYING:
+                raise SheetsError(explain(response, "the folder"))
+            last = explain(response, "the folder")
+        if attempt < len(RETRY_PAUSES):
+            time.sleep(RETRY_PAUSES[attempt])
+    raise SheetsError(last)
+
+
+def sheets_in_folder(folder: str) -> list[dict]:
+    """Every spreadsheet in a Drive folder: [{id, name, url}, …].
+
+    Sub-folders are not walked. The masterlists sit together at one level, and
+    a walk that went deeper would sweep up whatever else is filed underneath.
+    """
+    wanted = folder_id(folder)
+    found: list[dict] = []
+    page = ""
+    while True:
+        params = {
+            "q": f"'{wanted}' in parents and mimeType='{SHEET_MIME}' and trashed=false",
+            "fields": "nextPageToken,files(id,name)",
+            "pageSize": 200,
+            "orderBy": "name",
+            # Shared drives look like ordinary folders and answer empty without
+            # these two, which reads as "the folder is empty" rather than as a
+            # setting nobody turned on.
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        }
+        if page:
+            params["pageToken"] = page
+        payload = _drive(params)
+        for file in payload.get("files") or []:
+            found.append({
+                "id": str(file.get("id") or ""),
+                "name": str(file.get("name") or ""),
+                "url": f"https://docs.google.com/spreadsheets/d/{file.get('id')}/edit",
+            })
+        page = str(payload.get("nextPageToken") or "")
+        if not page:
+            break
+    return found
+
+
+def create_sheet(title: str, *, folder: str, header: list[str] | None = None) -> dict:
+    """Make a new spreadsheet in the folder. Returns {id, name, url}.
+
+    Only ever called for a lead type that has a channel and no file, and only
+    after somebody has asked for it by name. Creating one is cheap; creating
+    eight nobody wanted is a mess in somebody else's Drive.
+    """
+    into = folder_id(folder)
+    headers = {"Authorization": f"Bearer {access_token()}"}
+    try:
+        made = httpx.post(
+            DRIVE_ROOT,
+            headers=headers,
+            params={"fields": "id,name", "supportsAllDrives": "true"},
+            json={"name": title, "mimeType": SHEET_MIME, "parents": [into]},
+            timeout=60,
+        )
+    except httpx.HTTPError as exc:
+        raise SheetsError(f"Couldn't create '{title}': {exc}") from exc
+    if made.status_code >= 400:
+        raise SheetsError(explain(made, "the folder"))
+
+    payload = made.json()
+    new = {
+        "id": str(payload.get("id") or ""),
+        "name": str(payload.get("name") or title),
+        "url": f"https://docs.google.com/spreadsheets/d/{payload.get('id')}/edit",
+    }
+    if header:
+        # A brand new sheet counts as nought leads, and nought is right. The
+        # header is there so the first person to open it knows what goes where.
+        write_rows(new["id"], [header])
+    return new
 
 
 def write_rows(spreadsheet: str, rows: list[list], *, tab: str = "") -> str:

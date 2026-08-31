@@ -695,7 +695,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "leadsheet":
-                await _send_lead_summary(bot, responder)
+                await _send_lead_summary(bot, responder, said=request.brief or "")
                 return
 
             if request.action == "comment":
@@ -1728,8 +1728,9 @@ async def _lead_masterlists(bot: "WilByteBot"):
             held.problem = "I can't read that channel"
         except discord.HTTPException as exc:
             held.problem = f"Discord refused: {exc}"
-        if not held.sheet and not held.problem:
-            held.problem = f"no sheet link in the last {LEAD_LOOKBACK} messages"
+        # No note when there's simply no link: the Drive folder is asked next,
+        # and "no sheet link in that channel" is not a problem if the folder
+        # has the sheet.
         found.append(held)
     return found
 
@@ -1755,7 +1756,15 @@ async def _move_masterlist(bot: "WilByteBot", responder: Responder, said: str) -
     await _send_lead_summary(bot, responder)
 
 
-async def _send_lead_summary(bot: "WilByteBot", responder: Responder) -> None:
+# "@RYTE masterlists create" - make a sheet for every lead type that hasn't
+# got one. Asked for by name on purpose: the alternative is a bot that files
+# eight spreadsheets in somebody's Drive because eight channels were quiet.
+_MAKE_THEM = re.compile(r"\b(?:create|make|add|new)\b", re.IGNORECASE)
+
+
+async def _send_lead_summary(
+    bot: "WilByteBot", responder: Responder, *, said: str = ""
+) -> None:
     """Count every masterlist and write the summary into the leads sheet."""
     from .. import gsheets, leadsheets
 
@@ -1776,7 +1785,23 @@ async def _send_lead_summary(bot: "WilByteBot", responder: Responder) -> None:
         await responder.send("No channels in that server that I can read.")
         return
 
-    await responder.send(f"Counting {len(found)} masterlist(s)…")
+    folder = (os.getenv("LEADS_MASTERLIST_FOLDER_ID") or "").strip()
+    files: list[dict] = []
+    if folder:
+        try:
+            files = await asyncio.to_thread(gsheets.sheets_in_folder, folder)
+        except gsheets.SheetsError as exc:
+            await responder.send(embed=embeds.error(f"Couldn't read the folder. {exc}"))
+            return
+    found = leadsheets.combine(found, files)
+
+    if folder and _MAKE_THEM.search(said or ""):
+        await _make_missing_sheets(responder, found, folder)
+
+    await responder.send(
+        f"Counting {len(found)} masterlist(s)"
+        + (f" — {len(files)} in the folder…" if folder else "…")
+    )
     for held in found:
         if not held.sheet:
             continue
@@ -1795,6 +1820,40 @@ async def _send_lead_summary(bot: "WilByteBot", responder: Responder) -> None:
         return
 
     await responder.send(f"{leadsheets.describe(live, idle)}\n<{url}>", quiet=True)
+
+
+async def _make_missing_sheets(responder: Responder, found: list, folder: str) -> None:
+    """Make a masterlist for each lead type that hasn't got one anywhere.
+
+    Only reached when somebody typed `create`. Each one is named after the
+    lead type and left with a header row and nothing else, which is what a
+    masterlist with no leads in it should look like.
+    """
+    from .. import gsheets, leadsheets
+
+    blank = leadsheets.missing(found)
+    if not blank:
+        await responder.send("Every lead type already has a sheet — nothing to make.")
+        return
+
+    await responder.send(
+        f"Making {len(blank)} sheet(s) in the folder: "
+        + ", ".join(held.name for held in blank[:12])
+    )
+    for held in blank:
+        try:
+            made = await asyncio.to_thread(
+                gsheets.create_sheet,
+                leadsheets.new_sheet_title(held.name),
+                folder=folder,
+                header=leadsheets.NEW_SHEET_HEADER,
+            )
+        except gsheets.SheetsError as exc:
+            held.problem = f"couldn't make the sheet — {exc}"
+            continue
+        held.sheet = made["url"]
+        held.created = True
+        held.problem = ""
 
 
 def _write_lead_summary(into: str, live, idle) -> str:

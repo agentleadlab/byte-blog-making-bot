@@ -460,7 +460,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="leadmove", brief=text)
 
     if _opens_with(text, LEADSHEET_WORDS) or lowered.strip() in ("leads", "leads sheet"):
-        return MentionRequest(action="leadsheet")
+        # The rest of the line is kept: "masterlists create" is the one that
+        # makes a sheet for a lead type that hasn't got one, and making files
+        # in somebody's Drive is not something to do because nobody said not to.
+        return MentionRequest(action="leadsheet", brief=_strip_word(text, LEADSHEET_WORDS))
 
     asked = TRELLO_ASK.match(text)
     if asked:
@@ -724,8 +727,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry over then Done, 10pm archive
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
-> @RYTE **masterlists** — count every fresh-lead masterlist and write the
-> summary sheet: category, lead type, its sheet, how many leads it holds
+> @RYTE **masterlists** — compile the Drive folder and the lead channels into
+> the masterfile: category, lead type, its sheet, how many leads it holds
+> @RYTE **masterlists create** — and make a sheet for any lead type without one
 > @RYTE **move the otp trucker masterlist to inactive** — and **to active** to
 > put one back. Two tabs, and I remember which is which
 > @RYTE **host** — attach an image, get a permanent public link back

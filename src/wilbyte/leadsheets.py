@@ -28,7 +28,9 @@ SHEET_LINK = re.compile(
 )
 
 # Words that are part of a channel's name and not part of a lead type's.
-_NOT_A_TYPE = re.compile(r"\bmaster\s*lists?\b|\bmasterfiles?\b|\bleads?\b", re.IGNORECASE)
+_NOT_A_TYPE = re.compile(
+    r"\bmaster\s*lists?\b|\bmaster\s*files?\b|\bmaterlists?\b|\bleads?\b", re.IGNORECASE
+)
 
 # Spelled the way the team spells them, not title-cased into "Otp Iul".
 ACRONYMS = {
@@ -55,10 +57,75 @@ class Masterlist:
     count: int | None = None
     # Why there is no count, when there isn't one. Silence reads as nought.
     problem: str = ""
+    # Made by RYTE on this run, because the lead type had no sheet anywhere.
+    created: bool = False
 
     @property
     def inactive(self) -> bool:
         return bool(INACTIVE.search(self.category))
+
+
+# The category a Drive file gets when no Discord channel matches it. It is
+# still a masterlist and it still belongs on the masterfile.
+DRIVE_ONLY = "Not in Discord"
+
+# Words that belong to the filing and not to the lead type. "Materlist" is in
+# there because it is on the team's own reference file, spelled that way.
+_FILING = re.compile(
+    r"\b(?:master\s*lists?|master\s*files?|materlists?|leads?|sheets?|the|v\d+|copy(?:\s+of)?)\b",
+    re.IGNORECASE,
+)
+
+
+def match_key(raw: str) -> tuple[str, ...]:
+    """The words of a name that say which lead type it is, sorted.
+
+    "🚚 otp-trucker-iul-masterlist", "OTP Trucker IUL" and "TRUCKER IUL Leads
+    Masterlist" are the same masterlist written three ways, and the summary is
+    only right if all three land on one row.
+    """
+    text = re.sub(r"[^A-Za-z0-9]+", " ", raw or "")
+    text = _FILING.sub(" ", text)
+    return tuple(sorted({word.lower() for word in text.split() if word}))
+
+
+def find_sheet(name: str, files: list[dict]) -> dict | None:
+    """The Drive file that is this lead type's masterlist, if one is.
+
+    Exact first. A near match only counts when it is the *only* near match and
+    has two words to go on: "Vet Leads Masterlist" is inside "OTP VET 2" as a
+    word, and pairing those two would put one masterlist's count on another
+    masterlist's row.
+    """
+    wanted = match_key(name)
+    if not wanted:
+        return None
+
+    keyed = [(match_key(str(file.get("name") or "")), file) for file in files]
+    for key, file in keyed:
+        if key == wanted:
+            return file
+
+    near = [
+        file for key, file in keyed
+        if key and (set(key) <= set(wanted) or set(wanted) <= set(key))
+        and min(len(key), len(wanted)) >= 2
+    ]
+    return near[0] if len(near) == 1 else None
+
+
+# What a brand new masterlist gets as its first row. Nobody's leads are in it
+# yet, so the header is only there so the first person to open it knows the
+# shape. Change the columns in the sheet and RYTE will not put them back.
+NEW_SHEET_HEADER = ["Name", "Email", "Phone", "State", "Date Added"]
+
+
+def new_sheet_title(name: str) -> str:
+    """What to call a masterlist RYTE has to make: "OTP Trucker IUL Masterlist"."""
+    said = " ".join((name or "").split())
+    if re.search(r"master\s*list", said, re.IGNORECASE):
+        return said
+    return f"{said} Masterlist"
 
 
 def sheet_in(text: str) -> str:
@@ -108,6 +175,46 @@ def tidy_name(raw: str) -> str:
     if not words:
         return " ".join((raw or "").split()) or "(unnamed)"
     return " ".join(ACRONYMS.get(word.lower(), word.capitalize()) for word in words)
+
+
+NO_SHEET_ANYWHERE = "no sheet in the folder and no link in the channel"
+
+
+def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
+    """The Discord lead types and the Drive folder, as one list.
+
+    A lead type whose channel posts a sheet link keeps that link - it is the
+    one the lead system writes into, and a folder file with a similar name is
+    not a promise that they are the same sheet. The folder fills in the ones
+    with no link, and whatever the channels never claimed goes on the end,
+    because the folder is the masterlist of masterlists.
+    """
+    claimed: set[str] = set()
+    for held in found:
+        file = find_sheet(held.name, files)
+        if file:
+            claimed.add(str(file.get("id") or ""))
+            if not held.sheet:
+                held.sheet = str(file.get("url") or "")
+                held.problem = ""
+        if not held.sheet and not held.problem:
+            held.problem = NO_SHEET_ANYWHERE
+
+    extra = [
+        Masterlist(
+            category=DRIVE_ONLY,
+            name=tidy_name(str(file.get("name") or "")),
+            sheet=str(file.get("url") or ""),
+        )
+        for file in files
+        if str(file.get("id") or "") not in claimed
+    ]
+    return list(found) + extra
+
+
+def missing(found: list[Masterlist]) -> list[Masterlist]:
+    """The lead types with no sheet at all - the ones RYTE would have to make."""
+    return [held for held in found if not held.sheet]
 
 
 HEADER = ("Category", "Type of leads", "Sheet", "Total leads")
@@ -195,7 +302,29 @@ def describe(live: list[Masterlist], idle: list[Masterlist]) -> str:
     if idle:
         lines.append(f"**{len(idle)}** inactive, **{total(idle):,}** leads, on their own tab.")
 
-    for problem, names in trouble(live + idle):
+    made = [held.name for held in (live + idle) if held.created]
+    if made:
+        lines.append(f"🆕 Made in the folder: {', '.join(made)}")
+
+    # Told apart from the counting failures below: nothing went wrong here,
+    # there is simply no sheet yet, and the answer is to make one.
+    sheetless = [
+        held for held in (live + idle)
+        if not held.sheet and held.problem in ("", NO_SHEET_ANYWHERE)
+    ]
+    blank = [held.name for held in sheetless]
+    if blank:
+        lines.append("")
+        lines.append(
+            f"**{len(blank)}** lead type(s) have no sheet anywhere: "
+            f"{', '.join(blank[:MOST_NAMES_LISTED])}"
+            + (f", +{len(blank) - MOST_NAMES_LISTED} more" if len(blank) > MOST_NAMES_LISTED else "")
+        )
+        lines.append("-# `@RYTE masterlists create` makes one for each, in the folder.")
+
+    already = {id(held) for held in sheetless}
+    stuck = [held for held in (live + idle) if id(held) not in already]
+    for problem, names in trouble(stuck):
         shown = ", ".join(names[:MOST_NAMES_LISTED])
         if len(names) > MOST_NAMES_LISTED:
             shown += f", +{len(names) - MOST_NAMES_LISTED} more"

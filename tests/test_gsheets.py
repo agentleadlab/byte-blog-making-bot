@@ -300,6 +300,152 @@ def test_giving_up_still_says_what_google_said(monkeypatch):
         gsheets.row_count(SHEET)
 
 
+# --------------------------------- the Drive folder of masterlists
+
+
+FOLDER = "1AbCdEfGhIjKlMnOpQrStUv"
+
+
+def test_the_folder_id_comes_out_of_a_pasted_link():
+    assert gsheets.folder_id(
+        f"https://drive.google.com/drive/folders/{FOLDER}?usp=sharing"
+    ) == FOLDER
+
+
+def test_a_sheet_link_is_not_a_folder_link():
+    with pytest.raises(SheetsError, match="Drive folder"):
+        gsheets.folder_id(f"https://docs.google.com/spreadsheets/d/{SHEET}/edit")
+
+
+def test_reading_the_folder_needs_the_wide_drive_scope():
+    """`drive.file` only ever sees files the app made itself, and the folder is
+    full of files it didn't."""
+    assert "https://www.googleapis.com/auth/drive" in gsheets.SCOPES
+
+
+@pytest.mark.parametrize(
+    "channel,file_name",
+    [
+        ("OTP Trucker IUL", "TRUCKER IUL Leads Masterlist"),
+        ("Blue Collar", "Blue Collar Masterlist"),
+        ("Spanish IUL LP", "Spanish IUL LP - Masterlist"),
+        # The team's own reference file spells it this way.
+        ("Trucker Leads", "TRUCKER LEADS Materlist"),
+    ],
+)
+def test_a_channel_finds_its_file_however_it_is_spelled(channel, file_name):
+    files = [{"id": "x", "name": file_name, "url": "u"}]
+    assert leadsheets.find_sheet(channel, files) == files[0]
+
+
+def test_a_near_miss_is_not_paired():
+    """"Vet Leads Masterlist" is inside "OTP VET 2" as a word, and pairing them
+    would put one masterlist's count on another masterlist's row."""
+    files = [{"id": "x", "name": "Vet Leads Masterlist", "url": "u"}]
+    assert leadsheets.find_sheet("OTP VET 2", files) is None
+
+
+def test_two_equally_close_files_leave_it_alone():
+    files = [
+        {"id": "a", "name": "OTP IUL Masterlist", "url": "u"},
+        {"id": "b", "name": "OTP IUL Spanish Masterlist", "url": "v"},
+    ]
+    assert leadsheets.find_sheet("OTP IUL Spanish Blue Collar", files) is None
+
+
+def test_the_channel_link_wins_over_a_similar_file():
+    """The lead system writes into the link it posts; a similarly named file is
+    not a promise that they are the same sheet."""
+    found = [Masterlist(category="IUL", name="LP IUL", sheet="https://posted")]
+    files = [{"id": "x", "name": "LP IUL Masterlist", "url": "https://folder"}]
+
+    combined = leadsheets.combine(found, files)
+    assert combined[0].sheet == "https://posted"
+    # ...and the file is still counted as claimed, not listed a second time.
+    assert len(combined) == 1
+
+
+def test_the_folder_fills_in_a_channel_with_no_link():
+    found = [Masterlist(category="IUL", name="LP IUL")]
+    files = [{"id": "x", "name": "LP IUL Masterlist", "url": "https://folder"}]
+
+    combined = leadsheets.combine(found, files)
+    assert combined[0].sheet == "https://folder"
+    assert combined[0].problem == ""
+
+
+def test_a_file_no_channel_claimed_is_still_on_the_masterfile():
+    combined = leadsheets.combine(
+        [], [{"id": "x", "name": "Annuity Leads Masterlist", "url": "u"}]
+    )
+    assert [held.name for held in combined] == ["Annuity"]
+    assert combined[0].category == leadsheets.DRIVE_ONLY
+
+
+def test_a_lead_type_with_no_sheet_anywhere_is_what_gets_made():
+    found = [
+        Masterlist(category="IUL", name="LP IUL", sheet="u"),
+        Masterlist(category="IUL", name="Nova"),
+    ]
+    combined = leadsheets.combine(found, [])
+    assert [held.name for held in leadsheets.missing(combined)] == ["Nova"]
+
+
+def test_nothing_is_created_without_being_asked():
+    """Eight quiet channels must not become eight spreadsheets in a Drive."""
+    from wilbyte.bot import client
+
+    assert client._MAKE_THEM.search("masterlists") is None
+    assert client._MAKE_THEM.search("create the missing ones")
+
+
+def test_a_new_sheet_is_named_after_the_lead_type():
+    assert leadsheets.new_sheet_title("OTP Trucker IUL") == "OTP Trucker IUL Masterlist"
+    assert leadsheets.new_sheet_title("Nova Masterlist") == "Nova Masterlist"
+
+
+def test_making_one_files_it_in_the_folder_and_writes_a_header(monkeypatch):
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    sent = {}
+    written = {}
+
+    def post(url, **kwargs):
+        sent["url"] = url
+        sent["json"] = kwargs.get("json")
+        return httpx.Response(
+            200, json={"id": SHEET, "name": "Nova Masterlist"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(gsheets.httpx, "post", post)
+    monkeypatch.setattr(
+        gsheets, "write_rows", lambda sheet, rows, **k: written.update(rows=rows) or "u"
+    )
+
+    made = gsheets.create_sheet("Nova Masterlist", folder=FOLDER, header=["Name"])
+
+    assert sent["json"]["parents"] == [FOLDER]
+    assert sent["json"]["mimeType"] == gsheets.SHEET_MIME
+    assert made["url"].endswith(f"{SHEET}/edit")
+    assert written["rows"] == [["Name"]]
+
+
+def test_the_new_sheet_shows_up_as_made_on_the_report():
+    live = [Masterlist(category="IUL", name="Nova", sheet="u", count=0, created=True)]
+    assert "Made in the folder: Nova" in leadsheets.describe(live, [])
+
+
+def test_a_lead_type_with_no_sheet_is_told_apart_from_one_that_failed():
+    found = [
+        Masterlist(category="IUL", name="Nova"),
+        Masterlist(category="IUL", name="LP IUL", sheet="u", problem="not shared"),
+    ]
+    said = leadsheets.describe(found, [])
+    assert "no sheet anywhere: Nova" in said
+    assert "masterlists create" in said
+    assert "not shared" in said
+
+
 # --------------------------------- moving one between tabs
 
 
