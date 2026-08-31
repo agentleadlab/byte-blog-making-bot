@@ -182,21 +182,32 @@ def test_the_summary_has_a_row_per_lead_type_and_a_header():
     ])
     assert rows[0] == list(leadsheets.HEADER)
     assert rows[1] == [
-        "IUL", "LP IUL",
+        "LP IUL",
         '=HYPERLINK("https://discord.com/channels/1/2","Open channel")',
         '=HYPERLINK("u","Open sheet")', 1284,
     ]
 
 
+def test_the_category_is_not_a_column():
+    """It repeated the lead type's own name - "IUL" beside "OTP Blue Collar
+    IUL" - and the tab already says whether it is live."""
+    assert "Category" not in leadsheets.HEADER
+    rows = leadsheets.summary_rows([
+        Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u", count=3)
+    ])
+    assert rows[1][0] == "LP IUL"
+
+
 def test_a_lead_type_with_no_channel_shows_a_dash_not_a_broken_link():
     rows = leadsheets.summary_rows([Masterlist(category="IUL", name="LP IUL", sheet="u")])
-    assert rows[1][2] == "—"
+    assert rows[1][1] == "—"
 
 
 def test_a_count_that_could_not_be_read_is_a_dash_not_a_nought():
     """Nought is a number somebody will act on."""
     rows = leadsheets.summary_rows([Masterlist(category="IUL", name="LP IUL")])
-    assert rows[1][3] == "—"
+    assert rows[1][3] == "—"   # the count
+    assert rows[1][2] == "—"   # and the sheet
 
 
 def test_the_total_ignores_the_ones_that_failed():
@@ -606,7 +617,7 @@ def test_the_sheet_column_is_a_link_not_a_url():
     rows = leadsheets.summary_rows([
         Masterlist(category="IUL", name="LP IUL", sheet="https://x", count=3)
     ])
-    assert rows[1][3] == '=HYPERLINK("https://x","Open sheet")'
+    assert rows[1][2] == '=HYPERLINK("https://x","Open sheet")'
 
 
 # --------------------------------- counting eighty-odd sheets

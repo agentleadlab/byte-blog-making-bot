@@ -564,7 +564,11 @@ def missing(found: list[Masterlist]) -> list[Masterlist]:
     return [held for held in found if not held.sheet]
 
 
-HEADER = ("Category", "Type of leads", "Channel", "Sheet", "Total leads")
+# No Category column. It repeated what the lead type's own name already says -
+# "IUL" beside "OTP Blue Collar IUL" - and the tab it is on already answers
+# live or not. Discord's categories still decide which tab a lead type lands
+# on; they just aren't worth a column of their own.
+HEADER = ("Type of leads", "Channel", "Sheet", "Total leads")
 
 
 def _link(url: str, said: str) -> str:
@@ -580,7 +584,6 @@ def summary_rows(found: list[Masterlist]) -> list[list]:
     rows: list[list] = [list(HEADER)]
     for held in found:
         rows.append([
-            tidy_name(held.category),
             held.name,
             _link(held.channel, "Open channel"),
             _link(held.sheet, "Open sheet"),
