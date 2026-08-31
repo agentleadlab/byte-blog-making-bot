@@ -534,6 +534,31 @@ def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
     return theirs, rest
 
 
+def refill(found: list[Masterlist], files: list[dict]) -> int:
+    """Match the folder again, for lead types left without a sheet.
+
+    `combine` runs before a single sheet has been opened, so a channel that
+    links an auto-deploy sheet still looks like it has a masterlist and its
+    real one in the folder is passed over. The deploy sheet is only recognised
+    once it has been read - by which point that match has to happen again, or
+    RYTE builds a second masterlist next to the one already there.
+    """
+    real = [
+        file for file in files
+        if not AUTO_DEPLOY.search(str(file.get("name") or ""))
+    ]
+    filled = 0
+    for held in found:
+        if held.sheet or held.kind == DEPLOY:
+            continue
+        file = find_sheet(held.name, real)
+        if file:
+            held.sheet = str(file.get("url") or "")
+            held.problem = ""
+            filled += 1
+    return filled
+
+
 def missing(found: list[Masterlist]) -> list[Masterlist]:
     """The lead types with no sheet at all - the ones RYTE would have to make."""
     return [held for held in found if not held.sheet]

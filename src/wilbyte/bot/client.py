@@ -1846,9 +1846,16 @@ async def _send_lead_summary(
     # only known once every sheet has been looked at, and that is exactly the
     # list `create` works from.
     await _count_leads(found)
+    # Match the folder once more. A channel that links a deploy sheet only
+    # looks sheetless after it has been read, and its real masterlist may have
+    # been in the folder the whole time.
+    if leadsheets.refill(found, files):
+        await _count_leads(found)
 
     if folder and _MAKE_THEM.search(said or ""):
-        await _make_missing_sheets(responder, found, folder, said=said or "")
+        await _make_missing_sheets(
+            responder, found, folder, said=said or "", files=files
+        )
 
     lists, deploys = leadsheets.by_kind(found)
     theirs, others = leadsheets.apart(lists)
@@ -1976,7 +1983,8 @@ def _who_to_make(said: str, blank: list) -> list:
 
 
 async def _make_missing_sheets(
-    responder: Responder, found: list, folder: str, *, said: str = ""
+    responder: Responder, found: list, folder: str, *, said: str = "",
+    files: list[dict] | None = None,
 ) -> None:
     """Make a masterlist for each lead type that hasn't got one anywhere.
 
@@ -1997,6 +2005,24 @@ async def _make_missing_sheets(
     # folder full of empty sheets for lead types nobody runs is clutter.
     live, _ = leadsheets.split_by_state(lists)
     blank = _who_to_make(said, leadsheets.missing(live))
+
+    # Last check before making a file: is one already sitting in the folder
+    # under a name that means this lead type? Building a second masterlist
+    # beside the first is the one mistake this must not make.
+    already = [
+        held for held in blank
+        if leadsheets.find_sheet(held.name, [
+            file for file in files or []
+            if not leadsheets.AUTO_DEPLOY.search(str(file.get("name") or ""))
+        ])
+    ]
+    if already:
+        blank = [held for held in blank if held not in already]
+        await responder.send(
+            "Already in the folder, so I left them alone: "
+            + ", ".join(held.name for held in already[:12])
+        )
+
     if not blank:
         await responder.send(
             "Nothing to make — every live lead type has a sheet. "

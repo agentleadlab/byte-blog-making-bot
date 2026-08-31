@@ -1242,3 +1242,44 @@ def test_only_one_qualifier_ever_lands_on_a_name():
         "Spanish IUL", "Text Verified Spanish Facebook Blue Collar Standard Auto Deploy"
     )
     assert said == "Text-Verified Spanish IUL"
+
+
+# --------------------------------- never a second masterlist beside the first
+
+
+def test_the_folder_is_matched_again_once_the_deploy_link_is_known():
+    """`combine` runs before a sheet has been opened, so a channel linking a
+    deploy sheet looks like it has a masterlist and its real one is passed
+    over. That is how a second Mortgage Protection Masterlist got made."""
+    held = Masterlist(category="MTG Masterlist", name="Mortgage Protection")
+    files = [{"id": "m", "name": "Mortgage Protection Masterlist 2026", "url": "made"}]
+
+    assert leadsheets.refill([held], files) == 1
+    assert held.sheet == "made"
+    assert leadsheets.missing([held]) == []
+
+
+def test_refill_never_hands_a_lead_type_a_deploy_sheet():
+    held = Masterlist(category="MTG Masterlist", name="Mortgage Protection")
+    files = [{"id": "d", "name": "Mortgage Protection New Auto Deploy", "url": "u"}]
+
+    assert leadsheets.refill([held], files) == 0
+    assert held.sheet == ""
+
+
+def test_a_qualified_name_already_in_the_folder_counts_as_the_same_lead_type():
+    """"Text-Verified Mortgage Protection Masterlist 2026" is that channel's."""
+    held = Masterlist(category="MTG Masterlist", name="Mortgage Protection")
+    files = [{"id": "m", "name": "Text-Verified Mortgage Protection Masterlist 2026",
+              "url": "made"}]
+
+    assert leadsheets.refill([held], files) == 1
+    assert held.sheet == "made"
+
+
+def test_refill_leaves_alone_what_already_has_a_sheet():
+    held = Masterlist(category="MTG", name="Mortgage Protection", sheet="pinned")
+    files = [{"id": "m", "name": "Mortgage Protection Masterlist 2026", "url": "other"}]
+
+    assert leadsheets.refill([held], files) == 0
+    assert held.sheet == "pinned"
