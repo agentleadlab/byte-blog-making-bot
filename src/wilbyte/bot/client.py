@@ -1903,35 +1903,58 @@ async def _count_leads(found: list) -> None:
 async def _make_missing_sheets(responder: Responder, found: list, folder: str) -> None:
     """Make a masterlist for each lead type that hasn't got one anywhere.
 
-    Only reached when somebody typed `create`. Each one is named after the
-    lead type and left with a header row and nothing else, which is what a
-    masterlist with no leads in it should look like.
+    Only reached when somebody typed `create`. Named "<Lead type> Masterlist
+    <year>" so anything RYTE made is obvious among the team's own files, and
+    left with a header row and nothing else - which is what a masterlist with
+    no leads in it should look like.
+
+    A lead type whose channel has an auto-deploy sheet attached counts as
+    having no masterlist, and its columns are taken from that deploy sheet's
+    Available_Leads tab: the shape the team's leads already come in beats
+    anything RYTE could invent.
     """
     from .. import gsheets, leadsheets
 
-    blank = leadsheets.missing(found)
+    lists, deploys = leadsheets.by_kind(found)
+    blank = leadsheets.missing(lists)
     if not blank:
         await responder.send("Every lead type already has a sheet — nothing to make.")
         return
 
+    # Which flagged deploy sheet belongs to each lead type, so its columns can
+    # be copied onto the masterlist being made for it.
+    flagged = {held.category: held for held in deploys if held.sheet}
+
     await responder.send(
-        f"Making {len(blank)} sheet(s) in the folder: "
+        f"Making {len(blank)} masterlist(s) in the folder: "
         + ", ".join(held.name for held in blank[:12])
     )
     for held in blank:
+        header = list(leadsheets.NEW_SHEET_HEADER)
+        deploy = flagged.get(held.name)
+        if deploy:
+            try:
+                taken = await asyncio.to_thread(gsheets.leads_header, deploy.sheet)
+                header = taken or header
+            except gsheets.SheetsError:
+                pass  # The plain header is a fine second best.
+
         try:
             made = await asyncio.to_thread(
                 gsheets.create_sheet,
                 leadsheets.new_sheet_title(held.name),
                 folder=folder,
-                header=leadsheets.NEW_SHEET_HEADER,
+                header=header,
             )
         except gsheets.SheetsError as exc:
             held.problem = f"couldn't make the sheet — {exc}"
             continue
+
         held.sheet = made["url"]
         held.created = True
         held.problem = ""
+        if deploy:
+            deploy.status = f"{leadsheets.SORTED_OUT} — {made['name']}"
 
 
 def _write_lead_summary(
@@ -1993,6 +2016,11 @@ def _write_lead_summary(
         gsheets.prettify(
             into, leadsheets.DEPLOY_TAB, rows=len(deploy_rows),
             columns=len(leadsheets.DEPLOY_HEADER),
+        )
+        # The ones RYTE has built a masterlist for, in green, so the half of
+        # the list still to fix is visible without reading every row.
+        gsheets.highlight_rows(
+            into, leadsheets.DEPLOY_TAB, leadsheets.done_rows(deploy_rows)
         )
     return url
 

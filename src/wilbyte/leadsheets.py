@@ -78,6 +78,8 @@ class Masterlist:
     channel: str = ""
     # Made by RYTE on this run, because the lead type had no sheet anywhere.
     created: bool = False
+    # What happened to this row on this run, for the flagged tab to say so.
+    status: str = ""
     # What the sheet actually is: a list of leads, or an agent deploy config.
     kind: str = "leads"
 
@@ -94,7 +96,7 @@ DRIVE_ONLY = "Not in Discord"
 # there because it is on the team's own reference file, spelled that way.
 _FILING = re.compile(
     r"\b(?:master\s*lists?|master\s*files?|materlists?|leads?|sheets?|the|v\d+"
-    r"|copy(?:\s+of)?|auto|deploy|new)\b",
+    r"|copy(?:\s+of)?|auto|deploy|new|20\d\d)\b",
     re.IGNORECASE,
 )
 
@@ -141,13 +143,41 @@ def find_sheet(name: str, files: list[dict]) -> dict | None:
 # shape. Change the columns in the sheet and RYTE will not put them back.
 NEW_SHEET_HEADER = ["Name", "Email", "Phone", "State", "Date Added"]
 
+# The tab on an auto-deploy sheet where the leads themselves are. Its header is
+# the right header for that lead type's masterlist - it is the shape the team's
+# own leads already come in, which beats anything RYTE could invent.
+LEADS_TAB = re.compile(r"available[\s_-]*leads", re.IGNORECASE)
 
-def new_sheet_title(name: str) -> str:
-    """What to call a masterlist RYTE has to make: "OTP Trucker IUL Masterlist"."""
-    said = " ".join((name or "").split())
-    if re.search(r"master\s*list", said, re.IGNORECASE):
-        return said
-    return f"{said} Masterlist"
+
+def leads_tab_in(tabs: list[str]) -> str:
+    """The "Available_Leads" tab of a deploy sheet, whatever it is spelled."""
+    for title in tabs or []:
+        if LEADS_TAB.search(title):
+            return title
+    return ""
+
+
+def new_sheet_title(name: str, *, year: int | None = None) -> str:
+    """What to call a masterlist RYTE makes: "Mortgage Protection Masterlist 2026".
+
+    The year is deliberate. There are masterlists in that folder going back
+    years and a fair few near-duplicates, so anything RYTE made should be
+    obvious at a glance and never mistaken for the one the team keeps.
+    """
+    from datetime import date
+
+    said = re.sub(r"\s*master\s*list\s*", " ", " ".join((name or "").split()),
+                  flags=re.IGNORECASE).strip()
+    return f"{said} Masterlist {year or date.today().year}"
+
+
+_SHEET_ID = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})")
+
+
+def id_of(url: str) -> str:
+    """The spreadsheet id inside a link, or "" if there isn't one."""
+    found = _SHEET_ID.search(url or "")
+    return found.group(1) if found else ""
 
 
 def sheet_in(text: str) -> str:
@@ -261,7 +291,21 @@ def by_kind(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]
     )
 
 
-DEPLOY_HEADER = ("Lead type", "Channel", "Auto deploy sheet", "Sheet", "Agents")
+DEPLOY_HEADER = ("Lead type", "Channel", "Auto deploy sheet", "Sheet", "Agents", "Status")
+
+# What a row on the flagged tab says once RYTE has built the masterlist for it.
+SORTED_OUT = "Masterlist made"
+
+
+def done_rows(rows: list[list]) -> list[int]:
+    """Which rows of the flagged tab are sorted out, for highlighting.
+
+    Row 1 is the header, so a row's number here is its position in the sheet.
+    """
+    return [
+        number for number, row in enumerate(rows)
+        if number and str(row[-1] or "").startswith(SORTED_OUT)
+    ]
 
 
 def deploy_rows(found: list[Masterlist]) -> list[list]:
@@ -279,6 +323,7 @@ def deploy_rows(found: list[Masterlist]) -> list[list]:
             held.name,
             _link(held.sheet, "Open sheet"),
             "—" if held.count is None else held.count,
+            held.status or "Needs a masterlist",
         ])
     return rows
 
@@ -296,8 +341,19 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
     # Auto Deploy" reads as the Mortgage Protection channel's masterlist on
     # name alone, and adopting it would put an agent count in a lead column.
     deploys = [file for file in files if AUTO_DEPLOY.search(str(file.get("name") or ""))]
-    deployed = {str(file.get("id") or "") for file in deploys}
+    deployed = {str(file.get("id") or ""): file for file in deploys}
     files = [file for file in files if str(file.get("id") or "") not in deployed]
+
+    # A channel whose posted link *is* a deploy sheet has no masterlist, and
+    # saying so is what lets the real one - made or fixed later - take its
+    # place. Without this the channel keeps reporting an agent count as leads
+    # for as long as the old posts sit there.
+    wrongly: dict[str, Masterlist] = {}
+    for held in found:
+        linked = id_of(held.sheet)
+        if linked and linked in deployed:
+            wrongly[linked] = held
+            held.sheet = ""
 
     claimed: set[str] = set()
     for held in found:
@@ -325,7 +381,9 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
     owners = {match_key(held.name): held for held in found}
     filed = []
     for file in deploys:
-        owner = owners.get(match_key(str(file.get("name") or "")))
+        # Whose channel actually links it beats whose name it looks like.
+        owner = wrongly.get(str(file.get("id") or ""))
+        owner = owner or owners.get(match_key(str(file.get("name") or "")))
         filed.append(Masterlist(
             category=owner.name if owner else NO_CHANNEL,
             name=tidy_name(str(file.get("name") or "")),

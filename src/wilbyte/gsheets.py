@@ -420,6 +420,60 @@ def prettify(spreadsheet: str, tab: str, *, rows: int, columns: int = 4) -> None
         return
 
 
+DONE_BACKGROUND = _colour(0.85, 0.92, 0.83)
+
+
+def highlight_rows(spreadsheet: str, tab: str, rows: list[int]) -> None:
+    """Paint the given rows green: these ones are sorted out.
+
+    Best effort, like prettify. The status column already says so in words;
+    this is so somebody can see at a glance which half of the list is done.
+    """
+    if not rows:
+        return
+    wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
+    found = tab_ids(wanted).get(tab)
+    if found is None:
+        return
+
+    requests = [
+        {"repeatCell": {
+            "range": {
+                "sheetId": found, "startRowIndex": number, "endRowIndex": number + 1,
+            },
+            "cell": {"userEnteredFormat": {"backgroundColor": DONE_BACKGROUND}},
+            "fields": "userEnteredFormat.backgroundColor",
+        }}
+        for number in rows
+    ]
+    try:
+        httpx.post(
+            f"{API_ROOT}/{wanted}:batchUpdate",
+            headers={"Authorization": f"Bearer {access_token()}"},
+            json={"requests": requests},
+            timeout=60,
+        )
+    except httpx.HTTPError:
+        return
+
+
+def leads_header(spreadsheet: str) -> list[str]:
+    """The columns an auto-deploy sheet keeps its leads under.
+
+    The deploy sheet has a tab of agents and a tab of leads; the leads tab is
+    the one whose header belongs on that lead type's masterlist. Empty when
+    the sheet hasn't got one, and the caller falls back to the plain header.
+    """
+    from . import leadsheets
+
+    wanted = sheet_id(spreadsheet)
+    tab = leadsheets.leads_tab_in(tab_names(wanted))
+    if not tab:
+        return []
+    return [cell for cell in first_row(wanted, tab) if str(cell).strip()]
+
+
 def ensure_tab(spreadsheet: str, title: str) -> None:
     """Make a tab if the sheet hasn't got one by that name.
 

@@ -410,8 +410,9 @@ def test_nothing_is_created_without_being_asked():
 
 
 def test_a_new_sheet_is_named_after_the_lead_type():
-    assert leadsheets.new_sheet_title("OTP Trucker IUL") == "OTP Trucker IUL Masterlist"
-    assert leadsheets.new_sheet_title("Nova Masterlist") == "Nova Masterlist"
+    assert leadsheets.new_sheet_title("OTP Trucker IUL", year=2026) == (
+        "OTP Trucker IUL Masterlist 2026"
+    )
 
 
 def test_making_one_files_it_in_the_folder_and_writes_a_header(monkeypatch):
@@ -930,3 +931,82 @@ def test_a_pinned_sheet_link_is_what_the_channel_means_now(monkeypatch):
     source = inspect.getsource(client._lead_masterlists)
     assert "channel.pins()" in source
     assert source.index("channel.pins()") < source.index("channel.history(")
+
+
+# --------------------------------- building the masterlist itself
+
+
+def test_a_new_masterlist_is_named_so_nobody_mistakes_it():
+    """There are near-duplicate masterlists in that folder going back years."""
+    assert leadsheets.new_sheet_title("Mortgage Protection", year=2026) == (
+        "Mortgage Protection Masterlist 2026"
+    )
+    assert leadsheets.new_sheet_title("Nova Masterlist", year=2026) == (
+        "Nova Masterlist 2026"
+    )
+
+
+def test_the_year_in_the_name_does_not_break_the_matching():
+    """Next run has to see it as that lead type's masterlist, not a new file."""
+    files = [{"id": "x", "name": "Mortgage Protection Masterlist 2026", "url": "u"}]
+    assert leadsheets.find_sheet("Mortgage Protection", files) == files[0]
+
+
+def test_the_leads_tab_of_a_deploy_sheet_is_found():
+    assert leadsheets.leads_tab_in(
+        ["Agent_Config", "Available_Leads", "Assigned_Leads", "Agent_Jack_Duval"]
+    ) == "Available_Leads"
+    assert leadsheets.leads_tab_in(["Agent_Config", "Sheet1"]) == ""
+
+
+def test_a_channel_linking_a_deploy_sheet_counts_as_having_no_masterlist():
+    """Otherwise it keeps reporting an agent count as leads for as long as the
+    old posts sit in the channel."""
+    found = [Masterlist(
+        category="MTG Masterlist", name="Mortgage Protection",
+        sheet="https://docs.google.com/spreadsheets/d/" + SHEET + "/edit",
+    )]
+    files = [{"id": SHEET, "name": "Text-Verified MTG - Auto Deploy (New Setup)",
+              "url": "u"}]
+
+    lists, deploys = leadsheets.by_kind(leadsheets.combine(found, files))
+
+    assert lists[0].sheet == ""
+    assert leadsheets.missing(lists) == lists
+    # ...and the deploy sheet is filed under the channel that linked it, not
+    # under whatever its name happens to resemble.
+    assert deploys[0].category == "Mortgage Protection"
+
+
+def test_the_new_masterlist_takes_the_place_of_the_deploy_link():
+    found = [Masterlist(
+        category="MTG Masterlist", name="Mortgage Protection",
+        sheet="https://docs.google.com/spreadsheets/d/" + SHEET + "/edit",
+    )]
+    files = [
+        {"id": SHEET, "name": "MTG - Auto Deploy", "url": "u"},
+        {"id": "new", "name": "Mortgage Protection Masterlist 2026", "url": "made"},
+    ]
+    lists, _ = leadsheets.by_kind(leadsheets.combine(found, files))
+    assert lists[0].sheet == "made"
+
+
+def test_a_sorted_out_row_says_so_and_is_highlighted():
+    deploys = [
+        Masterlist(category="Mortgage Protection", name="MTG Auto Deploy", sheet="u",
+                   kind=leadsheets.DEPLOY,
+                   status=f"{leadsheets.SORTED_OUT} — Mortgage Protection Masterlist 2026"),
+        Masterlist(category="OTP FEX", name="FEX Auto Deploy", sheet="v",
+                   kind=leadsheets.DEPLOY),
+    ]
+    rows = leadsheets.deploy_rows(deploys)
+
+    assert rows[0][-1] == "Status"
+    assert rows[1][-1].startswith(leadsheets.SORTED_OUT)
+    assert rows[2][-1] == "Needs a masterlist"
+    assert leadsheets.done_rows(rows) == [1]
+
+
+def test_the_header_never_counts_as_a_sorted_out_row():
+    rows = leadsheets.deploy_rows([])
+    assert leadsheets.done_rows(rows) == []
