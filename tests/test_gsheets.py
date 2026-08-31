@@ -582,3 +582,54 @@ def test_the_sheet_column_is_a_link_not_a_url():
         Masterlist(category="IUL", name="LP IUL", sheet="https://x", count=3)
     ])
     assert rows[1][2] == '=HYPERLINK("https://x","Open sheet")'
+
+
+# --------------------------------- counting eighty-odd sheets
+
+
+def test_the_counts_run_a_few_at_a_time(monkeypatch):
+    """One after another is four minutes of "is typing…"; all at once trips
+    Google's per-minute read limit and comes back full of dashes."""
+    import asyncio as aio
+    from wilbyte.bot import client
+
+    assert 1 < client.AT_ONCE <= 10
+
+    live = [Masterlist(category="c", name=f"n{i}", sheet="u") for i in range(20)]
+    running, most = 0, 0
+
+    def count(sheet, **kwargs):
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        try:
+            return 7
+        finally:
+            running -= 1
+
+    monkeypatch.setattr(gsheets, "row_count", count)
+    aio.run(client._count_leads(live))
+
+    assert [held.count for held in live] == [7] * 20
+    assert most <= client.AT_ONCE
+
+
+def test_one_sheet_refusing_does_not_stop_the_others(monkeypatch):
+    import asyncio as aio
+    from wilbyte.bot import client
+
+    live = [
+        Masterlist(category="c", name="good", sheet="u"),
+        Masterlist(category="c", name="bad", sheet="v"),
+    ]
+
+    def count(sheet, **kwargs):
+        if sheet == "v":
+            raise SheetsError("not shared")
+        return 3
+
+    monkeypatch.setattr(gsheets, "row_count", count)
+    aio.run(client._count_leads(live))
+
+    assert live[0].count == 3
+    assert live[1].count is None and "not shared" in live[1].problem

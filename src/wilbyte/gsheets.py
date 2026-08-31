@@ -136,7 +136,10 @@ def _explain_refresh(response: httpx.Response) -> str:
 # Google answers 503 now and again on a run that reads forty sheets in a row,
 # and it means nothing except "ask again". Without this a masterlist that was
 # fine ends up on the summary as a dash, which reads as a real problem.
-RETRY_PAUSES = (1.0, 3.0)
+# The last one is long on purpose: a run of eighty-odd sheets can meet Google's
+# per-minute read limit, and waiting ten seconds is how that ends in a count
+# rather than a dash.
+RETRY_PAUSES = (1.0, 3.0, 10.0)
 _WORTH_RETRYING = (429, 500, 502, 503, 504)
 
 

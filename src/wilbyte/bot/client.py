@@ -1802,13 +1802,7 @@ async def _send_lead_summary(
         f"Counting {len(found)} masterlist(s)"
         + (f" — {len(files)} in the folder…" if folder else "…")
     )
-    for held in found:
-        if not held.sheet:
-            continue
-        try:
-            held.count = await asyncio.to_thread(gsheets.row_count, held.sheet)
-        except gsheets.SheetsError as exc:
-            held.problem = str(exc)
+    await _count_leads(found)
 
     live, idle = leadsheets.split_by_state(found)
     try:
@@ -1820,6 +1814,32 @@ async def _send_lead_summary(
         return
 
     await responder.send(f"{leadsheets.describe(live, idle)}\n<{url}>", quiet=True)
+
+
+# How many masterlists to count at once. Eighty-six sheets one after another
+# is four minutes of somebody watching "is typing…". Google's own limit is 60
+# reads a minute for one user, so this is deliberately modest: fast enough to
+# be worth doing, slow enough that the whole run doesn't trip a rate limit and
+# come back full of dashes.
+AT_ONCE = 5
+
+
+async def _count_leads(found: list) -> None:
+    """Fill in every masterlist's count, a few sheets at a time."""
+    from .. import gsheets
+
+    gate = asyncio.Semaphore(AT_ONCE)
+
+    async def count(held) -> None:
+        if not held.sheet:
+            return
+        async with gate:
+            try:
+                held.count = await asyncio.to_thread(gsheets.row_count, held.sheet)
+            except gsheets.SheetsError as exc:
+                held.problem = str(exc)
+
+    await asyncio.gather(*(count(held) for held in found))
 
 
 async def _make_missing_sheets(responder: Responder, found: list, folder: str) -> None:
