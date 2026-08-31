@@ -704,3 +704,47 @@ def test_a_sheet_ryte_just_made_may_have_its_header_written(monkeypatch):
     gsheets.create_sheet("Nova Masterlist", folder=FOLDER, header=["Name"])
     assert SHEET in gsheets._just_made
     assert wrote["sheet"] == SHEET
+
+
+# --------------------------------- staying under Google's minute
+
+
+def test_the_reads_pace_themselves_under_the_limit(monkeypatch):
+    """Eighty-five sheets against a 60-a-minute limit is how twenty of them
+    came back as dashes."""
+    monkeypatch.setattr(gsheets, "READS_A_MINUTE", 3)
+    gsheets._recent.clear()
+    waited = []
+    monkeypatch.setattr(gsheets.time, "sleep", lambda seconds: waited.append(seconds))
+
+    for _ in range(3):
+        gsheets._pace()
+    assert waited == []
+
+    # The fourth has to wait for the first to fall out of the minute.
+    monkeypatch.setattr(gsheets.time, "sleep", lambda seconds: gsheets._recent.clear())
+    gsheets._pace()
+    assert len(gsheets._recent) == 1
+
+
+def test_a_quota_refusal_waits_far_longer_than_a_wobble():
+    """The limit is per minute; three seconds of politeness just spends another
+    request on the same refusal."""
+    quota = gsheets._pauses_for(_response(429, "Quota exceeded"))
+    wobble = gsheets._pauses_for(_response(503, "unavailable"))
+
+    assert sum(quota) >= 60
+    assert sum(quota) > sum(wobble)
+
+
+def test_the_quota_message_is_not_four_lines_of_json():
+    said = explain(
+        _response(429, '{"error":{"code":429,"message":"Quota exceeded for quota '
+                       "metric 'Read requests' and limit 'Read requests per minute "
+                       "per user' of service 'sheets.googleapis.com' for consumer "
+                       "'project_number:965472774442'.\"}}"),
+        SHEET,
+    )
+    assert "per-minute read limit" in said
+    assert "quota metric" not in said
+    assert len(said) < 300

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
+from collections import deque
 
 import httpx
 
@@ -136,17 +138,50 @@ def _explain_refresh(response: httpx.Response) -> str:
 # Google answers 503 now and again on a run that reads forty sheets in a row,
 # and it means nothing except "ask again". Without this a masterlist that was
 # fine ends up on the summary as a dash, which reads as a real problem.
-# The last one is long on purpose: a run of eighty-odd sheets can meet Google's
-# per-minute read limit, and waiting ten seconds is how that ends in a count
-# rather than a dash.
 RETRY_PAUSES = (1.0, 3.0, 10.0)
+
+# A quota refusal is a different animal from a 503: the limit is per minute,
+# so the only thing that clears it is waiting most of a minute. Three seconds
+# of politeness just spends another request on the same refusal.
+QUOTA_PAUSES = (20.0, 45.0, 60.0)
 _WORTH_RETRYING = (429, 500, 502, 503, 504)
+
+# Google allows 60 read requests a minute per user. Counting eighty-five
+# masterlists is eighty-five reads, so the run has to pace itself or twenty of
+# them come back as dashes - which is what happened the first time it ran
+# against the real folder. Slightly under the limit, because the minute Google
+# measures and the minute measured here are not the same minute.
+READS_A_MINUTE = 50
+_recent: deque[float] = deque()
+_pace_lock = threading.Lock()
+
+
+def _pace() -> None:
+    """Block until another read would sit inside the per-minute allowance."""
+    while True:
+        with _pace_lock:
+            now = time.monotonic()
+            while _recent and now - _recent[0] > 60:
+                _recent.popleft()
+            if len(_recent) < READS_A_MINUTE:
+                _recent.append(now)
+                return
+            wait = 60 - (now - _recent[0]) + 0.1
+        time.sleep(max(wait, 0.1))
+
+
+def _pauses_for(response: httpx.Response | None) -> tuple[float, ...]:
+    if response is not None and response.status_code == 429:
+        return QUOTA_PAUSES
+    return RETRY_PAUSES
 
 
 def _get(path: str, **params) -> dict:
     last: str = ""
     for attempt in range(len(RETRY_PAUSES) + 1):
         headers = {"Authorization": f"Bearer {access_token()}"}
+        pauses = RETRY_PAUSES
+        _pace()
         try:
             response = httpx.get(
                 f"{API_ROOT}/{path}", params=params, headers=headers, timeout=60
@@ -159,9 +194,10 @@ def _get(path: str, **params) -> dict:
             if response.status_code not in _WORTH_RETRYING:
                 raise SheetsError(explain(response, path))
             last = explain(response, path)
+            pauses = _pauses_for(response)
 
-        if attempt < len(RETRY_PAUSES):
-            time.sleep(RETRY_PAUSES[attempt])
+        if attempt < len(pauses):
+            time.sleep(pauses[attempt])
     raise SheetsError(last)
 
 
@@ -224,6 +260,15 @@ def explain(response: httpx.Response, where: str) -> str:
             f"can't open that sheet{named}. Either share the sheet with that "
             "account as an Editor, or mint the refresh token again signed in "
             f"as whoever owns it.\n-# Google said: {body[:160]}"
+        )
+    if response.status_code == 429:
+        # The raw body is four lines of quota metric names and a project
+        # number, and none of it is anything anybody can act on.
+        return (
+            "Google's per-minute read limit (60 a minute for one account). "
+            "I pace myself under it and wait when I hit it, so this only shows "
+            "up if something else was reading the same account at the time — "
+            "run it again."
         )
     if response.status_code == 404:
         return f"No sheet with that id ({where.split('/')[0][:20]}…). Check the link."
@@ -406,6 +451,7 @@ def _drive(params: dict) -> dict:
     last = ""
     for attempt in range(len(RETRY_PAUSES) + 1):
         headers = {"Authorization": f"Bearer {access_token()}"}
+        _pace()
         try:
             response = httpx.get(DRIVE_ROOT, params=params, headers=headers, timeout=60)
         except httpx.HTTPError as exc:
