@@ -221,14 +221,24 @@ DEPLOY_FIELDS = (
 NO_CHANNEL = "—"
 
 
+# What every list of leads has and no deploy config does. A masterlist that
+# also records which agent got the lead still has these; that is what told
+# twenty-two real masterlists apart from the deploy sheets they were mistaken
+# for the first time this ran.
+LEAD_FIELDS = ("email", "email address", "phone", "phone number", "e-mail")
+
+
 def deploy_header(header: list[str] | None) -> bool:
     """Whether a first row is an agent deploy config rather than leads.
 
-    Two matches, not one: "Daily Cap" alone could plausibly turn up on
-    somebody's lead sheet, and moving a real masterlist onto the wrong tab is
-    worse than leaving a deploy sheet among them.
+    A deploy sheet is one that looks like a deploy config *and* holds no
+    leads. Agent columns alone are not enough - plenty of masterlists record
+    which agent a lead went to - and moving a real masterlist onto the wrong
+    tab loses its count off the live total, which is the worse mistake.
     """
     said = {" ".join(str(cell).lower().split()) for cell in header or []}
+    if any(field in said for field in LEAD_FIELDS):
+        return False
     return sum(1 for field in DEPLOY_FIELDS if field in said) >= 2
 
 

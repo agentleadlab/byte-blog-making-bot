@@ -886,3 +886,23 @@ def test_the_count_and_the_header_come_back_in_one_request(monkeypatch):
 
     assert (count, header) == (2, ["Name", "Email", "Phone"])
     assert len(asked) == 1
+
+
+def test_a_masterlist_that_records_the_agent_is_still_a_masterlist():
+    """Twenty-two real lead types were moved onto the deploy tab because their
+    sheets note which agent got the lead. Leads are what settles it."""
+    header = ["Name", "Email", "Phone", "State", "Agent_Name", "Lead Received"]
+    assert leadsheets.kind_of("OTP Trucker IUL Masterlist", header) == leadsheets.LEADS
+
+
+def test_a_real_deploy_sheet_has_no_leads_on_it():
+    header = ["Agent_Name", "Agent_Spend", "States", "Active", "Lead Cap",
+              "Daily Cap", "Launch_Date"]
+    assert leadsheets.kind_of("Mortgage Protection V3", header) == leadsheets.DEPLOY
+
+
+def test_the_name_still_settles_it_whatever_the_columns_say():
+    """A file called Auto Deploy is one, even if somebody put an email column
+    on it."""
+    header = ["Agent_Name", "Email", "Lead Cap"]
+    assert leadsheets.kind_of("MTG [New] - Auto Deploy", header) == leadsheets.DEPLOY
