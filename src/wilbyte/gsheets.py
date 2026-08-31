@@ -132,15 +132,33 @@ def _explain_refresh(response: httpx.Response) -> str:
     return f"Google refused the refresh: HTTP {response.status_code} {body}"
 
 
+# Google answers 503 now and again on a run that reads forty sheets in a row,
+# and it means nothing except "ask again". Without this a masterlist that was
+# fine ends up on the summary as a dash, which reads as a real problem.
+RETRY_PAUSES = (1.0, 3.0)
+_WORTH_RETRYING = (429, 500, 502, 503, 504)
+
+
 def _get(path: str, **params) -> dict:
-    headers = {"Authorization": f"Bearer {access_token()}"}
-    try:
-        response = httpx.get(f"{API_ROOT}/{path}", params=params, headers=headers, timeout=60)
-    except httpx.HTTPError as exc:
-        raise SheetsError(f"Sheets request failed: {exc}") from exc
-    if response.status_code >= 400:
-        raise SheetsError(explain(response, path))
-    return response.json()
+    last: str = ""
+    for attempt in range(len(RETRY_PAUSES) + 1):
+        headers = {"Authorization": f"Bearer {access_token()}"}
+        try:
+            response = httpx.get(
+                f"{API_ROOT}/{path}", params=params, headers=headers, timeout=60
+            )
+        except httpx.HTTPError as exc:
+            last = f"Sheets request failed: {exc}"
+        else:
+            if response.status_code < 400:
+                return response.json()
+            if response.status_code not in _WORTH_RETRYING:
+                raise SheetsError(explain(response, path))
+            last = explain(response, path)
+
+        if attempt < len(RETRY_PAUSES):
+            time.sleep(RETRY_PAUSES[attempt])
+    raise SheetsError(last)
 
 
 def whoami() -> str:
@@ -149,7 +167,12 @@ def whoami() -> str:
     The whole of a sharing problem is *which account to share with*, and the
     token itself is the only thing that knows. Asking costs one request and
     turns "share it with that account" into an address somebody can paste.
+
+    Answered once per run: a walk over forty masterlists can refuse twenty
+    times, and the account behind the token is the same on all twenty.
     """
+    if _token_cache.get("email"):
+        return str(_token_cache["email"])
     try:
         response = httpx.get(
             "https://www.googleapis.com/drive/v3/about",
@@ -161,7 +184,10 @@ def whoami() -> str:
         return ""
     if response.status_code >= 400:
         return ""
-    return str(((response.json() or {}).get("user") or {}).get("emailAddress") or "")
+    email = str(((response.json() or {}).get("user") or {}).get("emailAddress") or "")
+    if email:
+        _token_cache["email"] = email
+    return email
 
 
 def explain(response: httpx.Response, where: str) -> str:

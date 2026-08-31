@@ -156,6 +156,37 @@ def total(found: list[Masterlist]) -> int:
     return sum(held.count for held in found if isinstance(held.count, int))
 
 
+NO_PROBLEM_GIVEN = "no sheet link in that channel"
+
+# The same refusal, said forty times, is forty times harder to read than the
+# forty names under it. One paragraph per cause, one list of who it hit.
+MOST_NAMES_LISTED = 12
+
+
+def trouble(found: list[Masterlist]) -> list[tuple[str, list[str]]]:
+    """The masterlists with no count, grouped by what went wrong.
+
+    Twenty sheets that aren't shared are one problem with twenty names on it,
+    not twenty problems. Grouped on the refusal itself, so two different
+    failures never get merged into one misleading line.
+    """
+    grouped: dict[str, list[str]] = {}
+    for held in found:
+        if held.count is not None:
+            continue
+        grouped.setdefault(held.problem or NO_PROBLEM_GIVEN, []).append(held.name)
+    return list(grouped.items())
+
+
+def _one_line(problem: str) -> str:
+    """A refusal short enough to sit above the names it applies to."""
+    said = " ".join(problem.split())
+    # `explain` appends Google's own words after a small-text marker; the
+    # heading above it is the part somebody acts on.
+    said = said.split("-# Google said:")[0].strip()
+    return said if len(said) <= 240 else said[:237] + "…"
+
+
 def describe(live: list[Masterlist], idle: list[Masterlist]) -> str:
     """What was written, as something to read before opening the sheet."""
     lines = [
@@ -164,8 +195,11 @@ def describe(live: list[Masterlist], idle: list[Masterlist]) -> str:
     if idle:
         lines.append(f"**{len(idle)}** inactive, **{total(idle):,}** leads, on their own tab.")
 
-    stuck = [held for held in (live + idle) if held.count is None]
-    if stuck:
+    for problem, names in trouble(live + idle):
+        shown = ", ".join(names[:MOST_NAMES_LISTED])
+        if len(names) > MOST_NAMES_LISTED:
+            shown += f", +{len(names) - MOST_NAMES_LISTED} more"
         lines.append("")
-        lines += [f"⚠ {held.name} — {held.problem or 'no sheet link in that channel'}" for held in stuck]
+        lines.append(f"⚠ **{len(names)}** not counted — {_one_line(problem)}")
+        lines.append(f"-# {shown}")
     return "\n".join(lines)

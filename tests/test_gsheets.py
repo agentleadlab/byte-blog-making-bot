@@ -204,6 +204,102 @@ def test_what_failed_is_named_in_the_report():
     assert "LP IUL" in said and "no sheet link" in said
 
 
+def test_one_refusal_is_said_once_however_many_sheets_it_hit():
+    """Twenty sheets that aren't shared is one problem with twenty names."""
+    refused = "Google refused: the account can't open that sheet"
+    live = [
+        Masterlist(category="IUL", name=f"Type {number}", problem=refused)
+        for number in range(20)
+    ]
+    said = leadsheets.describe(live, [])
+
+    assert said.count("Google refused") == 1
+    assert "**20** not counted" in said
+    assert "Type 0" in said
+
+
+def test_two_different_failures_stay_two_lines():
+    """Merging them would tell somebody to share a sheet that was only slow."""
+    found = [
+        Masterlist(category="IUL", name="LP IUL", problem="not shared"),
+        Masterlist(category="IUL", name="Annuity", problem="HTTP 503"),
+    ]
+    said = leadsheets.describe(found, [])
+    assert "not shared" in said and "HTTP 503" in said
+
+
+def test_a_long_list_of_names_is_cut_short():
+    live = [
+        Masterlist(category="IUL", name=f"Type {number}", problem="not shared")
+        for number in range(40)
+    ]
+    said = leadsheets.describe(live, [])
+    assert "more" in said
+    assert len(said) < 1200
+
+
+def test_googles_own_words_do_not_repeat_under_every_group():
+    """`explain` appends them; the heading is the part somebody acts on."""
+    problem = "Share it with franklin@agentleadlab.com.\n-# Google said: {\"code\":403}"
+    said = leadsheets.describe(
+        [Masterlist(category="IUL", name="LP IUL", problem=problem)], []
+    )
+    assert "franklin@agentleadlab.com" in said
+    assert "Google said" not in said
+
+
+# --------------------------------- Google having a moment
+
+
+def test_a_503_is_asked_again_rather_than_becoming_a_dash(monkeypatch):
+    """It means "ask again", and a dash on the summary reads as a real problem."""
+    monkeypatch.setattr(gsheets, "RETRY_PAUSES", (0, 0))
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    tries = []
+
+    def flaky(url, **kwargs):
+        tries.append(url)
+        if len(tries) < 3:
+            return _response(503, "The service is currently unavailable.")
+        return httpx.Response(
+            200,
+            json={"values": [["Name", "a", "b"]]},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(gsheets.httpx, "get", flaky)
+    assert gsheets.row_count(SHEET) == 2
+    assert len(tries) == 3
+
+
+def test_a_403_is_not_retried(monkeypatch):
+    """Permission does not improve by asking a second time."""
+    monkeypatch.setattr(gsheets, "RETRY_PAUSES", (0, 0))
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    monkeypatch.setattr(gsheets, "whoami", lambda: "")
+    tries = []
+
+    def refused(url, **kwargs):
+        tries.append(url)
+        return _response(403, "caller lacks permission")
+
+    monkeypatch.setattr(gsheets.httpx, "get", refused)
+    with pytest.raises(SheetsError):
+        gsheets.row_count(SHEET)
+    assert len(tries) == 1
+
+
+def test_giving_up_still_says_what_google_said(monkeypatch):
+    monkeypatch.setattr(gsheets, "RETRY_PAUSES", (0,))
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+    monkeypatch.setattr(
+        gsheets.httpx, "get",
+        lambda url, **kwargs: _response(503, "The service is currently unavailable."),
+    )
+    with pytest.raises(SheetsError, match="503"):
+        gsheets.row_count(SHEET)
+
+
 # --------------------------------- moving one between tabs
 
 
