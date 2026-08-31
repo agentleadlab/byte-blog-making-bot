@@ -690,6 +690,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_wrong_setups(responder, config)
                 return
 
+            if request.action == "leadsheet":
+                await _send_lead_summary(bot, responder)
+                return
+
             if request.action == "comment":
                 await _comment_on_card(responder, config, request.brief or "")
                 return
@@ -1672,6 +1676,116 @@ async def _attached_cues(message) -> list | None:
         if cues:
             return cues
     return None
+
+
+# How far back to look in a masterlist channel for the sheet link. Every lead
+# post carries one, so the newest message almost always has it - this is the
+# allowance for a channel where somebody has been chatting.
+LEAD_LOOKBACK = 30
+
+
+async def _lead_masterlists(bot: "WilByteBot"):
+    """Every masterlist channel in the leads server, with its sheet link.
+
+    Read-only, and it never touches an individual lead: the sheet holds those,
+    and the only question here is which sheet and how many rows.
+    """
+    from .. import leadsheets
+
+    guild_id = (os.getenv("LEADS_GUILD_ID") or "").strip()
+    if not guild_id:
+        raise ConfigError(
+            "LEADS_GUILD_ID isn't set — I need the id of the leads server to "
+            "read the masterlist channels."
+        )
+    guild = bot.get_guild(int(guild_id))
+    if guild is None:
+        raise ConfigError(
+            f"I'm not in the server {guild_id}, or I can't see it. Invite me "
+            "with View Channels and Read Message History."
+        )
+
+    found: list[leadsheets.Masterlist] = []
+    for channel in guild.text_channels:
+        category = getattr(channel.category, "name", "") or "(no category)"
+        held = leadsheets.Masterlist(
+            category=category, name=leadsheets.tidy_name(channel.name)
+        )
+        try:
+            async for message in channel.history(limit=LEAD_LOOKBACK):
+                link = leadsheets.sheet_in_message(
+                    message.content or "",
+                    [embed.to_dict() for embed in message.embeds or []],
+                )
+                if link:
+                    held.sheet = link
+                    break
+        except discord.Forbidden:
+            held.problem = "I can't read that channel"
+        except discord.HTTPException as exc:
+            held.problem = f"Discord refused: {exc}"
+        if not held.sheet and not held.problem:
+            held.problem = f"no sheet link in the last {LEAD_LOOKBACK} messages"
+        found.append(held)
+    return found
+
+
+async def _send_lead_summary(bot: "WilByteBot", responder: Responder) -> None:
+    """Count every masterlist and write the summary into the leads sheet."""
+    from .. import gsheets, leadsheets
+
+    into = (os.getenv("LEADS_SUMMARY_SHEET_ID") or "").strip()
+    if not into:
+        await responder.send(
+            "Set `LEADS_SUMMARY_SHEET_ID` in the .env to the id of the sheet "
+            "I should write the summary into."
+        )
+        return
+
+    try:
+        found = await _lead_masterlists(bot)
+    except (ConfigError, discord.HTTPException) as exc:
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+    if not found:
+        await responder.send("No channels in that server that I can read.")
+        return
+
+    await responder.send(f"Counting {len(found)} masterlist(s)…")
+    for held in found:
+        if not held.sheet:
+            continue
+        try:
+            held.count = await asyncio.to_thread(gsheets.row_count, held.sheet)
+        except gsheets.SheetsError as exc:
+            held.problem = str(exc)
+
+    live, idle = leadsheets.split_by_state(found)
+    try:
+        url = await asyncio.to_thread(
+            _write_lead_summary, into, live, idle
+        )
+    except gsheets.SheetsError as exc:
+        await responder.send(embed=embeds.error(f"Couldn't write the sheet. {exc}"))
+        return
+
+    await responder.send(f"{leadsheets.describe(live, idle)}\n<{url}>", quiet=True)
+
+
+def _write_lead_summary(into: str, live, idle) -> str:
+    """Both tabs, live first. Runs off the event loop - it is all network."""
+    from .. import gsheets, leadsheets
+
+    gsheets.ensure_tab(into, leadsheets.ACTIVE_TAB)
+    url = gsheets.write_rows(
+        into, leadsheets.summary_rows(live), tab=leadsheets.ACTIVE_TAB
+    )
+    if idle:
+        gsheets.ensure_tab(into, leadsheets.INACTIVE_TAB)
+        gsheets.write_rows(
+            into, leadsheets.summary_rows(idle), tab=leadsheets.INACTIVE_TAB
+        )
+    return url
 
 
 async def _send_segments(

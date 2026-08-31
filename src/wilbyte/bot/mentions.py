@@ -194,6 +194,11 @@ SEGMENT_WORDS = ("segment", "segments", "clips", "chapters", "cut")
 # deliberately not here - it is what the blog pipeline does.
 COMMENT_WORDS = ("comment", "note")
 
+# Count the lead masterlists and write the summary sheet. Command-position
+# only, and narrowly worded: "leads" is in half the copy briefs this bot is
+# asked for - "an ad for agents stuck at 20 leads a week" is not this.
+LEADSHEET_WORDS = ("masterlist", "masterlists", "leadsheet", "leadsheets", "leadcount")
+
 # The same thing said the other way round: "add on trello", "remind on trello".
 # Naming the board is what makes these safe to read as a command - "add the
 # price" and "remind them about the webinar" are ordinary copy briefs, and
@@ -444,6 +449,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if _opens_with(text, RECORDING_WORDS):
         return MentionRequest(action="recording", brief=_strip_word(text, RECORDING_WORDS))
+
+    if _opens_with(text, LEADSHEET_WORDS) or lowered.strip() in ("leads", "leads sheet"):
+        return MentionRequest(action="leadsheet")
 
     asked = TRELLO_ASK.match(text)
     if asked:
@@ -707,6 +715,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry over then Done, 10pm archive
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
+> @RYTE **masterlists** — count every fresh-lead masterlist and write the
+> summary sheet: category, lead type, its sheet, how many leads it holds
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 

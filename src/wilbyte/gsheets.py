@@ -189,6 +189,31 @@ def tab_names(spreadsheet: str) -> list[str]:
     ]
 
 
+def ensure_tab(spreadsheet: str, title: str) -> None:
+    """Make a tab if the sheet hasn't got one by that name.
+
+    The inactive masterlists go on their own tab and that tab does not exist
+    the first time. Making it is better than writing them in underneath the
+    live ones, which is the thing the separate tab is for.
+    """
+    wanted = sheet_id(spreadsheet)
+    if title in tab_names(wanted):
+        return
+
+    headers = {"Authorization": f"Bearer {access_token()}"}
+    try:
+        made = httpx.post(
+            f"{API_ROOT}/{wanted}:batchUpdate",
+            headers=headers,
+            json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+            timeout=60,
+        )
+    except httpx.HTTPError as exc:
+        raise SheetsError(f"Couldn't add the '{title}' tab: {exc}") from exc
+    if made.status_code >= 400:
+        raise SheetsError(explain(made, wanted))
+
+
 def write_rows(spreadsheet: str, rows: list[list], *, tab: str = "") -> str:
     """Replace a tab's contents with `rows`. Returns the sheet's URL.
 

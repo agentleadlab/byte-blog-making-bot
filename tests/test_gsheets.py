@@ -80,3 +80,89 @@ def test_nothing_happens_without_credentials(monkeypatch):
     gsheets._token_cache.clear()
     with pytest.raises(SheetsError, match="isn't set up"):
         gsheets.access_token()
+
+
+# --------------------------------- the masterlist summary
+
+
+from wilbyte import leadsheets
+from wilbyte.leadsheets import Masterlist
+
+
+def test_the_sheet_link_is_found_in_an_embed():
+    """LeadLab posts each lead as an embed, so the link isn't in the text."""
+    embed = {
+        "title": "New Trucker TESTING Lead",
+        "description": "Name: Salim Thomas\nState: PA\n[Access Sheet Here]"
+        f"(https://docs.google.com/spreadsheets/d/{SHEET}/edit?usp=sharing)",
+    }
+    assert leadsheets.sheet_in_message("", [embed]).startswith(
+        f"https://docs.google.com/spreadsheets/d/{SHEET}"
+    )
+
+
+def test_the_link_is_found_in_a_field_too():
+    embed = {"fields": [{"name": "Sheet", "value":
+             f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"}]}
+    assert SHEET in leadsheets.sheet_in_message("", [embed])
+
+
+def test_a_channel_with_no_link_comes_back_empty():
+    assert leadsheets.sheet_in_message("just chatting", [{"description": "no link"}]) == ""
+
+
+@pytest.mark.parametrize(
+    "channel,wanted",
+    [
+        ("🚚 otp-trucker-iul-masterlist", "OTP Trucker IUL"),
+        ("otp-widow-vet-masterlist", "OTP Widow VET"),
+        ("lp-iul-masterlist", "LP IUL"),
+        ("annuity-masterlist", "Annuity"),
+        ("ai-vets", "AI VETS"),
+        ("spanish-fex-masterlist", "Spanish FEX"),
+        ("lp-tfr-masterlist", "LP TFR"),
+    ],
+)
+def test_a_channel_name_reads_as_the_lead_type(channel, wanted):
+    """Not "Otp Iul" - the acronyms are the team's and they keep their case."""
+    assert leadsheets.tidy_name(channel) == wanted
+
+
+def test_the_inactive_category_goes_on_its_own_tab():
+    found = [
+        Masterlist(category="IUL Masterlist", name="LP IUL", count=12),
+        Masterlist(category="INACTIVE Masterlist", name="Instant IUL", count=3),
+    ]
+    live, idle = leadsheets.split_by_state(found)
+
+    assert [held.name for held in live] == ["LP IUL"]
+    assert [held.name for held in idle] == ["Instant IUL"]
+
+
+def test_the_summary_has_four_columns_and_a_header():
+    rows = leadsheets.summary_rows([
+        Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u", count=1284),
+    ])
+    assert rows[0] == list(leadsheets.HEADER)
+    assert rows[1] == ["IUL", "LP IUL", "u", 1284]
+
+
+def test_a_count_that_could_not_be_read_is_a_dash_not_a_nought():
+    """Nought is a number somebody will act on."""
+    rows = leadsheets.summary_rows([Masterlist(category="IUL", name="LP IUL")])
+    assert rows[1][3] == "—"
+
+
+def test_the_total_ignores_the_ones_that_failed():
+    found = [
+        Masterlist(category="c", name="a", count=10),
+        Masterlist(category="c", name="b"),
+        Masterlist(category="c", name="c", count=5),
+    ]
+    assert leadsheets.total(found) == 15
+
+
+def test_what_failed_is_named_in_the_report():
+    live = [Masterlist(category="IUL", name="LP IUL", problem="no sheet link")]
+    said = leadsheets.describe(live, [])
+    assert "LP IUL" in said and "no sheet link" in said
