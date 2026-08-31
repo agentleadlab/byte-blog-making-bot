@@ -62,6 +62,7 @@ MARKETING = "Marketing Department"
 # The two rollovers, and which cards each one carries. Every kind belongs to
 # exactly one of them, or a card is carried twice or not at all.
 LATE_ROLLOVER = "late_rollover"
+LATE_DONE = "late_done"
 EVENING_KINDS = ("general", "ops")
 LATE_KINDS = ("ads", "lead_order")
 
@@ -83,6 +84,9 @@ STEPS = (
     # about to tick. Two o'clock is the following calendar day, so this step
     # reads *yesterday's* cards - see LATE_KINDS.
     (2, 0, LATE_ROLLOVER),
+    # ...and then those two cards are finished, in that order: the carry has to
+    # read them while they are still the day's.
+    (2, 0, LATE_DONE),
     (6, 0, "make_setup"),
     (9, 0, "to_today"),
     # Half eleven, because "the in que cards comes in by 11am" - and the setup
@@ -110,6 +114,7 @@ STEP_NAMES = {
     "link_setup": "put the setup card on tomorrow's Ads and Ops checklists",
     "to_quality_check": f"{TODAY} → {QUALITY_CHECK}",
     "to_done": f"{QUALITY_CHECK} → {DONE}",
+    LATE_DONE: f"{QUALITY_CHECK} → {DONE} for Ads and Lead Order",
     "rollover": "carry the unfinished General and Ops items to tomorrow",
     LATE_ROLLOVER: "carry yesterday's unfinished Ads and Lead Order items over",
     "to_lead_order": "put today's setup-card agents on today's Lead Order card",
@@ -126,7 +131,12 @@ STEP_LISTS = {
     "to_today": (IN_QUE, TODAY),
     "to_quality_check": (TODAY, QUALITY_CHECK),
     "to_done": (QUALITY_CHECK, DONE),
+    LATE_DONE: (QUALITY_CHECK, DONE),
 }
+
+# The two steps that finish a card off. Which cards each one takes is in
+# `walks_today`; they share a destination and differ only in what they carry.
+DONE_STEPS = ("to_done", LATE_DONE)
 
 # What somebody types to ask for a move, by where they want the cards to end
 # up. Named for the destination because that is how anybody says it: "move

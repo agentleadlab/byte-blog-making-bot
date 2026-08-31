@@ -2218,13 +2218,16 @@ def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
     Check silts up - "as long as the cards are on quality check ... you move
     them to done".
 
-    Lead Order is the exception to that exception: it walks the board like the
-    others but it is not RYTE's to finish, so it stays in Quality Check until
-    somebody puts it in Done themselves.
+    Ads and Lead Order are finished at two in the morning rather than at half
+    eight, because that is when their work actually stops - so the half eight
+    move leaves them where they are and the two o'clock one takes only those
+    two. A card nobody dated goes with the half eight sweep; at two in the
+    morning only the two named cards move, because anything else in Quality
+    Check at that hour is something somebody left there on purpose.
 
-    So is a card somebody held back from tonight's carry. Holding its items
-    back is saying the work is not finished, and filing the card away in the
-    same hour would put it out of sight with the work still on it.
+    A card somebody held back from the carry stays too. Holding its items back
+    is saying the work is not finished, and filing the card away in the same
+    hour would put it out of sight with the work still on it.
     """
     from .. import agents, dailyops
 
@@ -2232,11 +2235,15 @@ def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
     if agents.is_agent_card(title):
         return False
     named = dailyops.parse_card_title(title)
+    if step not in dailyops.DONE_STEPS:
+        return True if named is None else named[1] == day
+
+    late = step == dailyops.LATE_DONE
     if named is None:
-        return True
-    if step != "to_done":
-        return named[1] == day
-    if named[0] == "lead_order" or named[0] in set(held):
+        return not late
+    if named[0] in set(held):
+        return False
+    if (named[0] in dailyops.LATE_KINDS) != late:
         return False
     return named[1] <= day
 

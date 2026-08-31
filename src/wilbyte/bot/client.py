@@ -1201,6 +1201,18 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                        else f"carried {item.times_rolled} days, left for you")
                     for item in flagged
                 )
+        elif step == dailyops.LATE_DONE:
+            # Same hour as the late carry, and the same yesterday.
+            moved, problems = await asyncio.to_thread(
+                partial(
+                    jobs.walk_board, bot.config, step,
+                    day=dailyops.day_before(jobs.board_day(bot.config)),
+                )
+            )
+            note = (
+                f"📋 {dailyops.said_at(step)} — moved {moved} card(s) "
+                f"{dailyops.STEP_NAMES[step]}."
+            ) if moved else ""
         else:
             moved, problems = await asyncio.to_thread(jobs.walk_board, bot.config, step)
             # Nothing to move is not news either. Somebody already did it by

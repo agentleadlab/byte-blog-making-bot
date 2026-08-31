@@ -611,7 +611,7 @@ def at_hour(hour, minute=0):
 # Two in the morning, before anything else: yesterday's Ads and Lead Order
 # cards get carried over then, because both are still worked after the board
 # has been put to bed.
-SMALL_HOURS = [dailyops.LATE_ROLLOVER]
+SMALL_HOURS = [dailyops.LATE_ROLLOVER, dailyops.LATE_DONE]
 MORNING = SMALL_HOURS + ["make_setup"]
 WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
@@ -1610,7 +1610,7 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
 
     board = FakeBoard({
         "Quality Check": [
-            {"id": "c1", "name": "📊 Ads 08/25/26"},
+            {"id": "c1", "name": "💎 General 08/25/26"},
             {"id": "c2", "name": "💻 Ops 08/24/26"},
         ],
         "Done": [],
@@ -1619,30 +1619,75 @@ def test_what_would_move_is_shown_before_anything_does(monkeypatch, config):
 
     cards, problems = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
 
-    assert cards == ["📊 Ads 08/25/26", "💻 Ops 08/24/26"]
+    assert cards == ["💎 General 08/25/26", "💻 Ops 08/24/26"]
     assert problems == []
     assert board.moves == [], "reading only"
 
 
-def test_lead_order_is_never_moved_into_done(monkeypatch, config):
-    """It walks the board like the others but it isn't RYTE's to finish - it
-    waits in Quality Check for somebody to put it in Done themselves."""
-    from wilbyte.bot import jobs
-
-    board = FakeBoard({
+def _quality_check_board():
+    return FakeBoard({
         "Quality Check": [
             {"id": "c1", "name": "Lead Order 08/25/26"},
-            {"id": "c2", "name": "Lead Order 08/24/26"},
-            {"id": "c3", "name": "📊 Ads 08/25/26"},
+            {"id": "c2", "name": "📊 Ads 08/25/26"},
+            {"id": "c3", "name": "💻 Ops 08/25/26"},
         ],
         "Done": [],
     })
+
+
+def test_half_eight_leaves_ads_and_lead_order_where_they_are(monkeypatch, config):
+    """Both are still being worked after the board is put to bed; they are
+    finished at two in the morning instead."""
+    from wilbyte.bot import jobs
+
+    board = _quality_check_board()
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
     moved, problems = jobs.walk_board(config, "to_done", day=date(2026, 8, 25))
 
     assert (moved, problems) == (1, [])
     assert board.moves == [("c3", "id-Done", "top")]
+
+
+def test_two_in_the_morning_finishes_ads_and_lead_order(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = _quality_check_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    moved, problems = jobs.walk_board(
+        config, dailyops.LATE_DONE, day=date(2026, 8, 25)
+    )
+
+    assert (moved, problems) == (2, [])
+    assert sorted(who for who, _where, _at in board.moves) == ["c1", "c2"]
+
+
+def test_the_two_done_steps_never_take_the_same_card(monkeypatch, config):
+    """Between them they finish the board once, not twice and not never."""
+    from wilbyte.bot import jobs
+
+    day = date(2026, 8, 25)
+    every = _quality_check_board().lists["Quality Check"]
+    took = {
+        step: [
+            card["id"] for card in every
+            if jobs.walks_today(card, day, step=step)
+        ]
+        for step in dailyops.DONE_STEPS
+    }
+    assert sorted(took["to_done"] + took[dailyops.LATE_DONE]) == ["c1", "c2", "c3"]
+    assert not set(took["to_done"]) & set(took[dailyops.LATE_DONE])
+
+
+def test_an_undated_card_goes_with_the_half_eight_sweep(monkeypatch, config):
+    """At two in the morning anything else in Quality Check is something
+    somebody left there on purpose."""
+    from wilbyte.bot import jobs
+
+    card = {"id": "x", "name": "Something somebody made"}
+    assert jobs.walks_today(card, date(2026, 8, 25), step="to_done") is True
+    assert jobs.walks_today(card, date(2026, 8, 25), step=dailyops.LATE_DONE) is False
 
 
 def test_lead_order_still_walks_the_rest_of_the_day(monkeypatch, config):
@@ -1666,8 +1711,8 @@ def test_a_card_dated_ahead_still_waits_its_turn_for_done(monkeypatch, config):
 
     board = FakeBoard({
         "Quality Check": [
-            {"id": "c1", "name": "📊 Ads 08/25/26"},
-            {"id": "c2", "name": "📊 Ads 08/26/26"},
+            {"id": "c1", "name": "💻 Ops 08/25/26"},
+            {"id": "c2", "name": "💻 Ops 08/26/26"},
         ],
         "Done": [],
     })
@@ -1675,7 +1720,7 @@ def test_a_card_dated_ahead_still_waits_its_turn_for_done(monkeypatch, config):
 
     cards, _ = jobs.moves_waiting(config, "to_done", day=date(2026, 8, 25))
 
-    assert cards == ["📊 Ads 08/25/26"]
+    assert cards == ["💻 Ops 08/25/26"]
 
 
 def test_an_agent_card_never_gets_swept_into_done(monkeypatch, config):
