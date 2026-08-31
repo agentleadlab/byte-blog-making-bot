@@ -3436,7 +3436,9 @@ def _pair(day):
     if setup is None:
         return None, None
     live = agents.setup_starts(setup["name"], day)
-    return setup["name"], (dailyops.cards_for(ORDER_CARDS, live) or {}).get(
+    # `cards_covering`, as the spread itself uses: an agent goes live on any
+    # day the range covers, not only the one it ends on.
+    return setup["name"], (dailyops.cards_covering(ORDER_CARDS, live) or {}).get(
         "lead_order", {}
     ).get("name")
 
@@ -3525,10 +3527,9 @@ def test_a_sunday_falls_back_to_the_weekend_cards_own_lead_order():
 
     sunday = date(2026, 8, 30)
     setup = agents.find_setup_card(SETUP_CARDS, sunday)
-    assert dailyops.cards_for(ORDER_CARDS, sunday).get("lead_order") is None
 
     starts = agents.setup_starts(setup["name"], sunday)
-    assert dailyops.cards_for(ORDER_CARDS, starts)["lead_order"]["name"] == (
+    assert dailyops.cards_covering(ORDER_CARDS, starts)["lead_order"]["name"] == (
         "Lead Order 08/29/26-8/30/26"
     )
 
@@ -3566,13 +3567,35 @@ def test_a_days_own_card_beats_a_range_that_happens_to_include_it():
     assert found["lead_order"]["name"] == "Lead Order 08/28/26"
 
 
-def test_the_carry_still_goes_by_the_first_date_only():
-    """Otherwise a spanning card is both today's and tomorrow's, and the
-    rollover carries items from a card onto itself."""
-    assert dailyops.cards_for(SPANNING, date(2026, 8, 30)) == {}
-    assert dailyops.cards_for(SPANNING, date(2026, 8, 29))["lead_order"]["name"] == (
+def test_a_spanning_card_carries_over_on_the_last_night_it_covers():
+    """It is worked Saturday through Monday, so Monday night is when its
+    unticked items move on. Rolling it over on the Saturday would carry work
+    nobody had started; rolling it over nightly would carry it three times."""
+    assert dailyops.cards_for(SPANNING, date(2026, 8, 29)).get("lead_order") is None
+    assert dailyops.cards_for(SPANNING, date(2026, 8, 30)).get("lead_order") is None
+    assert dailyops.cards_for(SPANNING, date(2026, 8, 31))["lead_order"]["name"] == (
         "Lead Order 08/29/26-8/31/26"
     )
+
+
+def test_a_spanning_card_is_never_both_the_source_and_the_target():
+    """One night only, or the rollover carries items from a card onto itself."""
+    nights = [
+        day for day in (date(2026, 8, 29), date(2026, 8, 30), date(2026, 8, 31))
+        if dailyops.cards_for(SPANNING, day).get("lead_order")
+    ]
+    assert len(nights) == 1
+
+
+def test_a_days_own_card_still_beats_a_range_ending_on_it():
+    found = dailyops.cards_for(SPANNING, date(2026, 8, 31))
+    assert found["general"]["name"] == "💎 General 08/31/26"
+
+
+def test_the_weekend_card_is_not_reported_missing_mid_range():
+    """It is on the board, titled with the Saturday, all the way to Monday."""
+    for day in (date(2026, 8, 29), date(2026, 8, 30), date(2026, 8, 31)):
+        assert "lead_order" not in dailyops.missing_kinds(SPANNING, day)
 
 
 def test_the_days_a_title_names():

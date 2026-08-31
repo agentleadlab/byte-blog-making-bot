@@ -385,11 +385,25 @@ def daily_cards(cards: list[dict]) -> dict[tuple[str, date], dict]:
 def cards_for(cards: list[dict], day: date) -> dict[str, dict]:
     """The four cards for one day, keyed by kind. Missing kinds are absent.
 
-    By the *first* date in the title, which is the day a card belongs to for
-    walking the board and for carrying items onto tomorrow's. To find the card
-    an agent's leads go on, see `cards_covering`.
+    A card with one date belongs to that day. A card spanning several - "Lead
+    Order 08/29/26-8/31/26" - belongs to the *last* of them, because that is
+    the night its unticked items have to move on: rolling it over on the
+    Saturday would carry work nobody had started yet, and rolling it over
+    every night would carry the same lines three times.
+
+    To find the card an agent going live today belongs on, which is any day the
+    range covers, see `cards_covering`.
     """
-    return {kind: card for (kind, when), card in daily_cards(cards).items() if when == day}
+    found: dict[str, dict] = {}
+    for (kind, first), card in daily_cards(cards).items():
+        spans = card_days(str(card.get("name", "")))
+        ends = spans[-1] if spans else first
+        if ends != day:
+            continue
+        # A card whose own single day this is beats a range that ends on it.
+        if kind not in found or first == day:
+            found[kind] = card
+    return found
 
 
 # A card titled "Lead Order 08/29/26-8/31/26" covers three days. Further apart
@@ -471,8 +485,13 @@ def why_missing(cards: list[dict], kind: str, wanted: date) -> str:
 
 
 def missing_kinds(cards: list[dict], day: date) -> list[str]:
-    """Which of the four didn't get generated - Lead Order has gone missing before."""
-    present = cards_for(cards, day)
+    """Which of the four didn't get generated - Lead Order has gone missing before.
+
+    A card covering the day counts as present. The weekend Lead Order card is
+    titled with the Saturday and worked through Monday; calling it missing on
+    the Sunday sends somebody looking for a card that is already on the board.
+    """
+    present = cards_covering(cards, day)
     return [kind for kind in CARD_KINDS if kind not in present]
 
 
