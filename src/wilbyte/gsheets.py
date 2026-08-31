@@ -201,6 +201,30 @@ def _get(path: str, **params) -> dict:
     raise SheetsError(last)
 
 
+def _send(method: str, url: str, **kwargs) -> httpx.Response:
+    """A write, paced and retried like a read.
+
+    Writes have their own per-minute allowance and building thirty masterlists
+    is sixty of them. Without this the run half-finishes and the second half
+    comes back as quota refusals.
+    """
+    last: httpx.Response | None = None
+    for attempt in range(len(RETRY_PAUSES) + 1):
+        _pace()
+        headers = {"Authorization": f"Bearer {access_token()}"}
+        response = httpx.request(
+            method, url, headers=headers, timeout=60, **kwargs
+        )
+        if response.status_code < 400 or response.status_code not in _WORTH_RETRYING:
+            return response
+
+        last = response
+        pauses = _pauses_for(response)
+        if attempt < len(pauses):
+            time.sleep(pauses[attempt])
+    return last if last is not None else response
+
+
 def whoami() -> str:
     """Which Google account the refresh token belongs to, or "" if it won't say.
 
@@ -427,14 +451,8 @@ def prettify(spreadsheet: str, tab: str, *, rows: int, columns: int = 4) -> None
             },
         }}})
 
-    headers = {"Authorization": f"Bearer {access_token()}"}
     try:
-        httpx.post(
-            f"{API_ROOT}/{wanted}:batchUpdate",
-            headers=headers,
-            json={"requests": requests},
-            timeout=60,
-        )
+        _send("POST", f"{API_ROOT}/{wanted}:batchUpdate", json={"requests": requests})
     except httpx.HTTPError:
         # Deliberately swallowed. The numbers are already written and correct;
         # losing them to a failed cosmetic call would be the worse outcome.
@@ -469,12 +487,7 @@ def highlight_rows(spreadsheet: str, tab: str, rows: list[int]) -> None:
         for number in rows
     ]
     try:
-        httpx.post(
-            f"{API_ROOT}/{wanted}:batchUpdate",
-            headers={"Authorization": f"Bearer {access_token()}"},
-            json={"requests": requests},
-            timeout=60,
-        )
+        _send("POST", f"{API_ROOT}/{wanted}:batchUpdate", json={"requests": requests})
     except httpx.HTTPError:
         return
 
@@ -507,13 +520,11 @@ def ensure_tab(spreadsheet: str, title: str) -> None:
     if title in tab_names(wanted):
         return
 
-    headers = {"Authorization": f"Bearer {access_token()}"}
     try:
-        made = httpx.post(
+        made = _send(
+            "POST",
             f"{API_ROOT}/{wanted}:batchUpdate",
-            headers=headers,
             json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
-            timeout=60,
         )
     except httpx.HTTPError as exc:
         raise SheetsError(f"Couldn't add the '{title}' tab: {exc}") from exc
@@ -610,14 +621,12 @@ def create_sheet(title: str, *, folder: str, header: list[str] | None = None) ->
     eight nobody wanted is a mess in somebody else's Drive.
     """
     into = folder_id(folder)
-    headers = {"Authorization": f"Bearer {access_token()}"}
     try:
-        made = httpx.post(
+        made = _send(
+            "POST",
             DRIVE_ROOT,
-            headers=headers,
             params={"fields": "id,name", "supportsAllDrives": "true"},
             json={"name": title, "mimeType": SHEET_MIME, "parents": [into]},
-            timeout=60,
         )
     except httpx.HTTPError as exc:
         raise SheetsError(f"Couldn't create '{title}': {exc}") from exc
@@ -740,20 +749,16 @@ def write_rows(
                 "lead sheet."
             )
 
-    headers = {"Authorization": f"Bearer {access_token()}"}
     try:
-        cleared = httpx.post(
-            f"{API_ROOT}/{wanted}/values/{where}:clear", headers=headers, timeout=60
-        )
+        cleared = _send("POST", f"{API_ROOT}/{wanted}/values/{where}:clear")
         if cleared.status_code >= 400:
             raise SheetsError(explain(cleared, wanted))
 
-        written = httpx.put(
+        written = _send(
+            "PUT",
             f"{API_ROOT}/{wanted}/values/{where}!A1",
-            headers=headers,
             params={"valueInputOption": "USER_ENTERED"},
             json={"values": rows},
-            timeout=60,
         )
     except httpx.HTTPError as exc:
         raise SheetsError(f"Couldn't write to the sheet: {exc}") from exc

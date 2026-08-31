@@ -420,15 +420,15 @@ def test_making_one_files_it_in_the_folder_and_writes_a_header(monkeypatch):
     sent = {}
     written = {}
 
-    def post(url, **kwargs):
+    def sent_write(method, url, **kwargs):
         sent["url"] = url
         sent["json"] = kwargs.get("json")
         return httpx.Response(
             200, json={"id": SHEET, "name": "Nova Masterlist"},
-            request=httpx.Request("POST", url),
+            request=httpx.Request(method, url),
         )
 
-    monkeypatch.setattr(gsheets.httpx, "post", post)
+    monkeypatch.setattr(gsheets.httpx, "request", sent_write)
     monkeypatch.setattr(
         gsheets, "write_rows", lambda sheet, rows, **k: written.update(rows=rows) or "u"
     )
@@ -469,7 +469,7 @@ def test_a_tab_with_somebody_elses_data_is_not_cleared(monkeypatch):
     )
     hit = []
     monkeypatch.setattr(
-        gsheets.httpx, "post", lambda *a, **k: hit.append(a) or _response(200, "{}")
+        gsheets.httpx, "request", lambda *a, **k: hit.append(a) or _response(200, "{}")
     )
 
     with pytest.raises(SheetsError, match="won't write there"):
@@ -482,11 +482,10 @@ def test_the_summary_tab_it_wrote_last_time_is_replaced(monkeypatch):
     monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
     monkeypatch.setattr(gsheets, "first_row", lambda sheet, tab: list(leadsheets.HEADER))
     monkeypatch.setattr(
-        gsheets.httpx, "post", lambda *a, **k: _response(200, "{}")
-    )
-    monkeypatch.setattr(
-        gsheets.httpx, "put",
-        lambda url, **k: httpx.Response(200, json={}, request=httpx.Request("PUT", url)),
+        gsheets.httpx, "request",
+        lambda method, url, **k: httpx.Response(
+            200, json={}, request=httpx.Request(method, url)
+        ),
     )
 
     url = gsheets.write_rows(
@@ -719,10 +718,10 @@ def test_a_sheet_ryte_just_made_may_have_its_header_written(monkeypatch):
     wrote = {}
 
     monkeypatch.setattr(
-        gsheets.httpx, "post",
-        lambda url, **k: httpx.Response(
+        gsheets.httpx, "request",
+        lambda method, url, **k: httpx.Response(
             200, json={"id": SHEET, "name": "Nova Masterlist"},
-            request=httpx.Request("POST", url),
+            request=httpx.Request(method, url),
         ),
     )
     monkeypatch.setattr(
