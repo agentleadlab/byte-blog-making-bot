@@ -175,12 +175,22 @@ def test_the_inactive_category_goes_on_its_own_tab():
     assert [held.name for held in idle] == ["Instant IUL"]
 
 
-def test_the_summary_has_four_columns_and_a_header():
+def test_the_summary_has_a_row_per_lead_type_and_a_header():
     rows = leadsheets.summary_rows([
-        Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u", count=1284),
+        Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u",
+                   channel="https://discord.com/channels/1/2", count=1284),
     ])
     assert rows[0] == list(leadsheets.HEADER)
-    assert rows[1] == ["IUL", "LP IUL", '=HYPERLINK("u","Open sheet")', 1284]
+    assert rows[1] == [
+        "IUL", "LP IUL",
+        '=HYPERLINK("https://discord.com/channels/1/2","Open channel")',
+        '=HYPERLINK("u","Open sheet")', 1284,
+    ]
+
+
+def test_a_lead_type_with_no_channel_shows_a_dash_not_a_broken_link():
+    rows = leadsheets.summary_rows([Masterlist(category="IUL", name="LP IUL", sheet="u")])
+    assert rows[1][2] == "—"
 
 
 def test_a_count_that_could_not_be_read_is_a_dash_not_a_nought():
@@ -596,7 +606,7 @@ def test_the_sheet_column_is_a_link_not_a_url():
     rows = leadsheets.summary_rows([
         Masterlist(category="IUL", name="LP IUL", sheet="https://x", count=3)
     ])
-    assert rows[1][2] == '=HYPERLINK("https://x","Open sheet")'
+    assert rows[1][3] == '=HYPERLINK("https://x","Open sheet")'
 
 
 # --------------------------------- counting eighty-odd sheets
@@ -851,7 +861,8 @@ def test_a_deploy_sheet_is_never_adopted_as_a_channels_masterlist():
 
 
 def test_the_deploy_tab_says_which_lead_type_it_belongs_to():
-    found = [Masterlist(category="MTG Masterlist", name="Mortgage Protection")]
+    found = [Masterlist(category="MTG Masterlist", name="Mortgage Protection",
+                        channel="https://discord.com/channels/1/2")]
     files = [{"id": "d", "name": "Mortgage Protection [New] - Auto Deploy", "url": "u"}]
 
     _, deploys = leadsheets.by_kind(leadsheets.combine(found, files))
@@ -859,7 +870,9 @@ def test_the_deploy_tab_says_which_lead_type_it_belongs_to():
 
     assert rows[0] == list(leadsheets.DEPLOY_HEADER)
     assert rows[1][0] == "Mortgage Protection"
-    assert rows[1][3] == "—"
+    # The fix happens in Discord, so the row goes straight there.
+    assert rows[1][1] == '=HYPERLINK("https://discord.com/channels/1/2","Open channel")'
+    assert rows[1][4] == "—"
 
 
 def test_a_deploy_sheet_with_no_channel_still_gets_a_row():
@@ -906,3 +919,14 @@ def test_the_name_still_settles_it_whatever_the_columns_say():
     on it."""
     header = ["Agent_Name", "Email", "Lead Cap"]
     assert leadsheets.kind_of("MTG [New] - Auto Deploy", header) == leadsheets.DEPLOY
+
+
+def test_a_pinned_sheet_link_is_what_the_channel_means_now(monkeypatch):
+    """Fixing a channel's sheet means pinning the right one; the lead posts
+    underneath still carry the old link for as long as they sit there."""
+    import inspect
+    from wilbyte.bot import client
+
+    source = inspect.getsource(client._lead_masterlists)
+    assert "channel.pins()" in source
+    assert source.index("channel.pins()") < source.index("channel.history(")

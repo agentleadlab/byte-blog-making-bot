@@ -1720,10 +1720,26 @@ async def _lead_masterlists(bot: "WilByteBot"):
         if not leadsheets.worth_listing(category):
             continue
         held = leadsheets.Masterlist(
-            category=category, name=leadsheets.tidy_name(channel.name)
+            category=category,
+            name=leadsheets.tidy_name(channel.name),
+            channel=f"https://discord.com/channels/{guild.id}/{channel.id}",
         )
         try:
+            # Pinned first. When a channel has the wrong sheet attached, the
+            # fix is to pin the right one - and the lead posts underneath it
+            # still carry the old link for as long as they sit there.
+            for message in await channel.pins():
+                link = leadsheets.sheet_in_message(
+                    message.content or "",
+                    [embed.to_dict() for embed in message.embeds or []],
+                )
+                if link:
+                    held.sheet = link
+                    break
+
             async for message in channel.history(limit=LEAD_LOOKBACK):
+                if held.sheet:
+                    break
                 link = leadsheets.sheet_in_message(
                     message.content or "",
                     [embed.to_dict() for embed in message.embeds or []],
@@ -1945,14 +1961,14 @@ def _write_lead_summary(
     url = gsheets.write_rows(
         into, rows, tab=leadsheets.ACTIVE_TAB, expect_header=header
     )
-    gsheets.prettify(into, leadsheets.ACTIVE_TAB, rows=len(rows))
+    gsheets.prettify(into, leadsheets.ACTIVE_TAB, rows=len(rows), columns=len(header))
 
     gsheets.ensure_tab(into, leadsheets.INACTIVE_TAB)
     idle_rows = leadsheets.summary_rows(idle)
     gsheets.write_rows(
         into, idle_rows, tab=leadsheets.INACTIVE_TAB, expect_header=header
     )
-    gsheets.prettify(into, leadsheets.INACTIVE_TAB, rows=len(idle_rows))
+    gsheets.prettify(into, leadsheets.INACTIVE_TAB, rows=len(idle_rows), columns=len(header))
 
     # Sheets in the folder that no channel claimed. Kept, because they are real
     # and somebody will want to find them - but off the two tabs that answer
@@ -1963,7 +1979,7 @@ def _write_lead_summary(
         gsheets.write_rows(
             into, other_rows, tab=leadsheets.OTHER_TAB, expect_header=header
         )
-        gsheets.prettify(into, leadsheets.OTHER_TAB, rows=len(other_rows))
+        gsheets.prettify(into, leadsheets.OTHER_TAB, rows=len(other_rows), columns=len(header))
 
     # The agent deploy configs: which lead type, which sheet, how many agents.
     # A different question from "how many leads", so a different tab.
@@ -1974,7 +1990,10 @@ def _write_lead_summary(
             into, deploy_rows, tab=leadsheets.DEPLOY_TAB,
             expect_header=list(leadsheets.DEPLOY_HEADER),
         )
-        gsheets.prettify(into, leadsheets.DEPLOY_TAB, rows=len(deploy_rows))
+        gsheets.prettify(
+            into, leadsheets.DEPLOY_TAB, rows=len(deploy_rows),
+            columns=len(leadsheets.DEPLOY_HEADER),
+        )
     return url
 
 

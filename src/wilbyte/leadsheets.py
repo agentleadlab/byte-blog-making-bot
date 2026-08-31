@@ -72,6 +72,10 @@ class Masterlist:
     count: int | None = None
     # Why there is no count, when there isn't one. Silence reads as nought.
     problem: str = ""
+    # A link straight to the Discord channel. The auto-deploy tab is a list of
+    # channels with the wrong sheet attached, and the first thing anybody wants
+    # from a row like that is to go and fix it.
+    channel: str = ""
     # Made by RYTE on this run, because the lead type had no sheet anywhere.
     created: bool = False
     # What the sheet actually is: a list of leads, or an agent deploy config.
@@ -257,17 +261,23 @@ def by_kind(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]
     )
 
 
-DEPLOY_HEADER = ("Lead type", "Auto deploy sheet", "Sheet", "Agents")
+DEPLOY_HEADER = ("Lead type", "Channel", "Auto deploy sheet", "Sheet", "Agents")
 
 
 def deploy_rows(found: list[Masterlist]) -> list[list]:
-    """The auto-deploy tab: which lead type, which sheet, how many agents."""
+    """The auto-deploy tab: whose it is, where to fix it, and what it holds.
+
+    This tab is a job list. Each row is a lead type whose channel has a deploy
+    sheet attached where a masterlist should be - so the channel link matters
+    more than the sheet does, because the fix happens in Discord.
+    """
     rows: list[list] = [list(DEPLOY_HEADER)]
     for held in found:
         rows.append([
             held.category or NO_CHANNEL,
+            _link(held.channel, "Open channel"),
             held.name,
-            f'=HYPERLINK("{held.sheet}","Open sheet")' if held.sheet else "—",
+            _link(held.sheet, "Open sheet"),
             "—" if held.count is None else held.count,
         ])
     return rows
@@ -312,16 +322,17 @@ def combine(found: list[Masterlist], files: list[dict]) -> list[Masterlist]:
 
     # Which lead type each deploy sheet belongs to, so the tab answers "whose
     # is this" rather than listing forty files called Auto Deploy.
-    owners = {match_key(held.name): held.name for held in found}
-    filed = [
-        Masterlist(
-            category=owners.get(match_key(str(file.get("name") or "")), NO_CHANNEL),
+    owners = {match_key(held.name): held for held in found}
+    filed = []
+    for file in deploys:
+        owner = owners.get(match_key(str(file.get("name") or "")))
+        filed.append(Masterlist(
+            category=owner.name if owner else NO_CHANNEL,
             name=tidy_name(str(file.get("name") or "")),
             sheet=str(file.get("url") or ""),
+            channel=owner.channel if owner else "",
             kind=DEPLOY,
-        )
-        for file in deploys
-    ]
+        ))
     return list(found) + extra + filed
 
 
@@ -342,11 +353,15 @@ def missing(found: list[Masterlist]) -> list[Masterlist]:
     return [held for held in found if not held.sheet]
 
 
-HEADER = ("Category", "Type of leads", "Sheet", "Total leads")
+HEADER = ("Category", "Type of leads", "Channel", "Sheet", "Total leads")
+
+
+def _link(url: str, said: str) -> str:
+    return f'=HYPERLINK("{url}","{said}")' if url else "—"
 
 
 def summary_rows(found: list[Masterlist]) -> list[list]:
-    """The four columns, header included, ready to write.
+    """The five columns, header included, ready to write.
 
     A count that couldn't be read is written as a dash and not a nought.
     Nought is a number somebody will act on.
@@ -356,7 +371,8 @@ def summary_rows(found: list[Masterlist]) -> list[list]:
         rows.append([
             tidy_name(held.category),
             held.name,
-            f'=HYPERLINK("{held.sheet}","Open sheet")' if held.sheet else "—",
+            _link(held.channel, "Open channel"),
+            _link(held.sheet, "Open sheet"),
             "—" if held.count is None else held.count,
         ])
     return rows
