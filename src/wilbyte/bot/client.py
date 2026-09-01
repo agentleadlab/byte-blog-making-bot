@@ -628,6 +628,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _host_images(responder, config, message)
                 return
 
+            if request.action == "payment":
+                await _payment_link(responder, config, request.brief or "")
+                return
+
             if request.action == "recording":
                 await _file_recording(responder, config, message)
                 return
@@ -1694,6 +1698,113 @@ async def _attached_cues(message) -> list | None:
         if cues:
             return cues
     return None
+
+
+async def _payment_link(responder: Responder, config: Config, said: str) -> None:
+    """Make a Stripe payment link for what somebody asked for, once they say so.
+
+    Nothing is created before the confirm: the amount comes from a message
+    typed in a hurry, and a wrong one reaches a client as a quote. What the
+    button confirms is the exact line the client will read.
+    """
+    from .. import products, stripepay
+
+    if not stripepay.configured():
+        await responder.send(
+            "Stripe isn't set up — `STRIPE_API_KEY` is blank in .env. It wants "
+            "a restricted key with payment links, products and prices."
+        )
+        return
+
+    amount = products.amount_asked(said)
+    if amount is None:
+        await responder.send(
+            "How much? Say it with the amount — "
+            "`@RYTE payment link $621 for 40 basic spanish leads`."
+        )
+        return
+    if amount <= 0:
+        await responder.send("That amount isn't something I can charge for.")
+        return
+
+    product = products.find(said)
+    if product is None:
+        near = products.matches(said)
+        if near:
+            await responder.send(
+                "Which one? " + ", ".join(item.name for item in near[:5])
+            )
+        else:
+            await responder.send(
+                "I don't know which package that is. The ones I have: "
+                + ", ".join(item.name for item in products.CATALOGUE[:6])
+                + ", and nine more — say one of those."
+            )
+        return
+
+    cents = stripepay.as_cents(amount)
+    line = products.titled(products.line_for(said, product))
+
+    # Looked up before the confirm, so the button can say whether this makes a
+    # link or hands back one that already exists.
+    try:
+        existing = await asyncio.to_thread(_existing_link, product, cents)
+    except stripepay.StripeError as exc:
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+
+    where = "" if stripepay.live() else "\n-# Test mode — this link takes no money."
+    if existing:
+        await responder.send(
+            f"**{stripepay.dollars(cents)}** — {line}\n"
+            f"There's already a link for this: {existing.get('url')}{where}"
+        )
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Make the link",
+        emoji="💳",
+    )
+    await responder.send(
+        f"**{stripepay.dollars(cents)}** — {line}{where}", view=view
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        made = await asyncio.to_thread(
+            partial(_make_payment_link, product, cents, line)
+        )
+    except stripepay.StripeError as exc:
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+
+    await responder.send(f"{line} — {stripepay.dollars(cents)}\n{made.get('url')}")
+
+
+def _existing_link(product, cents: int):
+    """The link already selling this package at this price, if there is one."""
+    from .. import stripepay
+
+    found = stripepay.find_product(product.name)
+    if not found:
+        return None
+    price = stripepay.find_price(str(found.get("id") or ""), cents)
+    if not price:
+        return None
+    return stripepay.find_link(str(price.get("id") or ""))
+
+
+def _make_payment_link(product, cents: int, line: str):
+    """Product, price, link - each one found before it is made."""
+    from .. import stripepay
+
+    made = stripepay.ensure_product(product.name, product.description)
+    price = stripepay.ensure_price(str(made.get("id") or ""), cents)
+    return stripepay.make_link(str(price.get("id") or ""), note=line)
 
 
 async def _send_segments(

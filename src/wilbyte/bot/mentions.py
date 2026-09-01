@@ -188,6 +188,14 @@ HOST_WORDS = ("host", "upload", "imageurl")
 # command would answer a copy brief with a transcript.
 SEGMENT_WORDS = ("segment", "segments", "clips", "chapters", "cut")
 
+# Make a Stripe payment link. Command-position only, and it has to say what it
+# is: "payment", "invoice" and "checkout" all turn up in copy briefs, and the
+# one thing that must never happen by accident is a price quote reaching a
+# client. Klarna is in here because that is what the team calls these.
+PAYMENT_WORDS = (
+    "payment", "paymentlink", "paylink", "checkout", "klarna", "stripe", "invoice",
+)
+
 # Say something on one of the day's cards. Command-position only, and for the
 # obvious reason: "comment" and "note" are ordinary words in a copy brief, and
 # "write an ad and note the price" must not post on the board. "post" is
@@ -455,6 +463,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if _opens_with(text, HOST_WORDS):
         return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))
 
+    if _opens_with(text, PAYMENT_WORDS):
+        # The whole line is kept: the amount and the package are both in it.
+        return MentionRequest(action="payment", brief=text)
+
     # Before the format check: a YouTube link already means "write a blog post"
     # and a Zoom link already means "file this call", so the verb is what says
     # to cut one up instead.
@@ -707,6 +719,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry General and Ops over then Done, 10pm archive, 2am carry Ads and Lead Order over then Done
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
+> @RYTE **payment link $621 for 40 basic spanish leads** — a Stripe link,
+> shown for confirmation first. Reuses one that already exists
 > @RYTE **host** — attach an image, get a permanent public link back
 > @RYTE **missed** — posts I wrote but never got an answer on
 
