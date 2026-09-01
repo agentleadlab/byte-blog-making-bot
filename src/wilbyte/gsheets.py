@@ -363,6 +363,47 @@ def count_and_header(
     return count, titles
 
 
+def tab_rows(spreadsheet: str, tab: str) -> list[list[str]]:
+    """Everything on a tab, formulas as formulas.
+
+    A linked cell reads "Open sheet" and holds =HYPERLINK("…"), and the link
+    is the part that says which sheet a row is already about. Asking for the
+    formatted value would hand back the label and lose it.
+    """
+    where = f"'{tab}'" if tab else "A:Z"
+    payload = _get(
+        f"{sheet_id(spreadsheet)}/values/{where}", valueRenderOption="FORMULA"
+    )
+    return [[str(cell) for cell in row] for row in payload.get("values") or []]
+
+
+def append_rows(spreadsheet: str, rows: list[list], *, tab: str) -> str:
+    """Add rows to the end of a tab, leaving everything above them alone.
+
+    Appending rather than replacing, because these tabs are somebody's now:
+    the rows already there were sorted, edited and linked by hand, and a run
+    that rewrote them would undo an afternoon's work every time.
+    """
+    if not rows:
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id(spreadsheet)}/edit"
+
+    wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
+    where = f"'{tab}'" if tab else "A1"
+    written = _send(
+        "POST",
+        f"{API_ROOT}/{wanted}/values/{where}:append",
+        params={
+            "valueInputOption": "USER_ENTERED",
+            "insertDataOption": "INSERT_ROWS",
+        },
+        json={"values": rows},
+    )
+    if written.status_code >= 400:
+        raise SheetsError(explain(written, wanted))
+    return f"https://docs.google.com/spreadsheets/d/{wanted}/edit"
+
+
 def tab_names(spreadsheet: str) -> list[str]:
     """The tabs on a sheet, in order. The first is the default to write to."""
     payload = _get(sheet_id(spreadsheet), fields="sheets.properties.title")

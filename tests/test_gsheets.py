@@ -1344,3 +1344,92 @@ def test_an_email_is_not_a_persons_name():
 
     source = inspect.getsource(jobs._fathom_cues)
     assert '"@" not in who' in source
+
+
+# --------------------------------- Active and Inactive belong to the team
+
+
+def test_a_sheet_already_linked_on_a_tab_is_accounted_for():
+    """Rows link the sheet as a raw URL where somebody pasted it and inside
+    =HYPERLINK where RYTE wrote it. Both say which sheet the row is about."""
+    rows = [
+        ["Type of leads", "Sheet"],
+        ["Abandoned MTG", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit?usp=drive_link"],
+        ["LP IUL", '=HYPERLINK("https://docs.google.com/spreadsheets/d/OTHERSHEETID12345678/edit","Open sheet")'],
+    ]
+    found = leadsheets.ids_in(rows)
+    assert SHEET in found
+    assert "OTHERSHEETID12345678" in found
+
+
+@pytest.mark.parametrize(
+    "heading,kind",
+    [
+        ("Type of leads", "name"),
+        ("Sheet", "sheet"),
+        ("Channel", "channel"),
+        ("Total leads", "count"),
+        ("Notes", ""),
+    ],
+)
+def test_a_column_is_filled_by_what_its_heading_asks_for(heading, kind):
+    assert leadsheets.column_kind(heading) == kind
+
+
+def test_a_new_row_matches_the_columns_that_tab_already_has():
+    """The tab is the team's: somebody renamed and reordered these, and a row
+    built to RYTE's own shape would land in the wrong columns."""
+    held = Masterlist(category="x", name="IUL Exra", sheet="https://x", count=12)
+
+    assert leadsheets.row_for(["Type of leads", "Sheet"], held) == [
+        "IUL Exra", '=HYPERLINK("https://x","Open sheet")',
+    ]
+    assert leadsheets.row_for(["Sheet", "Total leads", "Type of leads"], held) == [
+        '=HYPERLINK("https://x","Open sheet")', 12, "IUL Exra",
+    ]
+
+
+def test_only_the_other_tab_is_ever_written(monkeypatch):
+    """Active and Inactive are read; a run that rewrote them would undo an
+    afternoon of somebody's sorting."""
+    from wilbyte.bot import client
+
+    written: list[str] = []
+    monkeypatch.setattr(gsheets, "sheet_id", lambda x: x)
+    monkeypatch.setattr(gsheets, "ensure_tab", lambda into, tab: None)
+    monkeypatch.setattr(
+        gsheets, "tab_rows",
+        lambda into, tab: [["Type of leads", "Sheet"]] if tab == leadsheets.OTHER_TAB
+        else [["Type of leads", "Sheet"],
+              ["LP IUL", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"]],
+    )
+    monkeypatch.setattr(
+        gsheets, "append_rows",
+        lambda into, rows, tab: written.append(tab) or "u",
+    )
+
+    url, added = client._top_up_other_sheets("into", [], files=[
+        {"id": SHEET, "name": "LP IUL Masterlist", "url": "a"},
+        {"id": "brandnewsheetid1234567", "name": "IUL Exra", "url": "b"},
+    ])
+
+    assert written == [leadsheets.OTHER_TAB]
+    assert added == ["IUL Exra"]          # the one not already on a tab
+    assert leadsheets.ACTIVE_TAB not in written
+
+
+def test_nothing_is_appended_when_the_folder_holds_nothing_new(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(gsheets, "sheet_id", lambda x: x)
+    monkeypatch.setattr(
+        gsheets, "tab_rows",
+        lambda into, tab: [["Type of leads", "Sheet"],
+                           ["LP IUL", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"]],
+    )
+    monkeypatch.setattr(gsheets, "append_rows", lambda *a, **k: pytest.fail("wrote"))
+
+    _url, added = client._top_up_other_sheets(
+        "into", [], files=[{"id": SHEET, "name": "LP IUL Masterlist", "url": "a"}]
+    )
+    assert added == []

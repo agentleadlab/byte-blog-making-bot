@@ -1880,24 +1880,25 @@ async def _send_lead_summary(
         )
 
     lists, deploys = leadsheets.by_kind(found)
-    theirs, others = leadsheets.apart(lists)
+    theirs, _ = leadsheets.apart(lists)
     live, idle = leadsheets.split_by_state(theirs)
     try:
-        url = await asyncio.to_thread(
-            partial(
-                _write_lead_summary, into, live, idle, others, deploys, files=files
-            )
+        url, added = await asyncio.to_thread(
+            partial(_top_up_other_sheets, into, found, files=files)
         )
     except gsheets.SheetsError as exc:
         await responder.send(embed=embeds.error(f"Couldn't write the sheet. {exc}"))
         return
 
     said_back = leadsheets.describe(live, idle)
-    if others:
-        said_back += (
-            f"\n**{len(others)}** more sheet(s) in the folder with no channel, "
-            f"on the *{leadsheets.OTHER_TAB}* tab."
-        )
+    said_back += (
+        f"\n**{len(added)}** sheet(s) added to the *{leadsheets.OTHER_TAB}* tab"
+        + (f": {', '.join(added[:10])}" if added else " — nothing new in the folder.")
+    )
+    said_back += (
+        f"\n-# *{leadsheets.ACTIVE_TAB}* and *{leadsheets.INACTIVE_TAB}* are yours "
+        "— I don't write to them."
+    )
     if deploys:
         named = [held for held in deploys if held.category != leadsheets.NO_CHANNEL]
         said_back += (
@@ -2092,6 +2093,73 @@ async def _make_missing_sheets(
         held.problem = ""
         if deploy:
             deploy.status = f"{leadsheets.SORTED_OUT} — {made['name']}"
+
+
+def _top_up_other_sheets(
+    into: str, found: list, *, files: list[dict] | None = None
+) -> tuple[str, list[str]]:
+    """Add the folder's sheets that aren't on a tab yet. (url, what was added).
+
+    Active and Inactive belong to the team - somebody sorted, renamed and
+    linked those rows by hand, and a run that rewrote them would undo that
+    every time. So they are read, never written: a sheet already linked on
+    either one is accounted for and nothing more is said about it.
+
+    Everything else in the folder goes on the Other sheets tab, appended, in
+    whatever column order that tab already has.
+    """
+    from .. import gsheets, leadsheets
+
+    target = gsheets.sheet_id(into)
+    for file in files or []:
+        if str(file.get("id") or "") == target:
+            raise gsheets.SheetsError(
+                f"LEADS_SUMMARY_SHEET_ID points at **{file.get('name')}**, which "
+                "is one of the masterlists in the folder."
+            )
+
+    seen: set[str] = {target}
+    header: list[str] = []
+    for tab in (leadsheets.ACTIVE_TAB, leadsheets.INACTIVE_TAB, leadsheets.OTHER_TAB):
+        try:
+            rows = gsheets.tab_rows(into, tab)
+        except gsheets.SheetsError:
+            continue  # A tab that isn't there yet holds nothing.
+        seen |= leadsheets.ids_in(rows)
+        if tab == leadsheets.OTHER_TAB and rows:
+            header = rows[0]
+
+    # What RYTE learned about each sheet on this run, so an appended row can
+    # carry a channel and a count where the tab asks for them.
+    known = {leadsheets.id_of(held.sheet): held for held in found if held.sheet}
+
+    fresh: list[leadsheets.Masterlist] = []
+    for file in files or []:
+        wanted = str(file.get("id") or "")
+        if not wanted or wanted in seen:
+            continue
+        seen.add(wanted)
+        held = known.get(wanted) or leadsheets.Masterlist(
+            category=leadsheets.DRIVE_ONLY,
+            name=leadsheets.tidy_name(str(file.get("name") or "")),
+            sheet=str(file.get("url") or ""),
+        )
+        fresh.append(held)
+
+    if not fresh:
+        return f"https://docs.google.com/spreadsheets/d/{target}/edit", []
+
+    gsheets.ensure_tab(into, leadsheets.OTHER_TAB)
+    if not header:
+        header = list(leadsheets.OTHER_HEADER)
+        gsheets.append_rows(into, [header], tab=leadsheets.OTHER_TAB)
+
+    url = gsheets.append_rows(
+        into,
+        [leadsheets.row_for(header, held) for held in fresh],
+        tab=leadsheets.OTHER_TAB,
+    )
+    return url, [held.name for held in fresh]
 
 
 def _write_lead_summary(

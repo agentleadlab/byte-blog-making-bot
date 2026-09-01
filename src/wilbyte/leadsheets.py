@@ -47,6 +47,10 @@ ACTIVE_TAB = "Active"
 INACTIVE_TAB = "Inactive"
 OTHER_TAB = "Other sheets"
 
+# Only used when that tab is empty. Once it has a header, whatever headings
+# are on it decide what an appended row carries - see `row_for`.
+OTHER_HEADER = ("Type of leads", "Sheet")
+
 # Discord's categories are the list of what counts. A channel filed under no
 # category, or left in the default "Text Channels", is not a lead type - it is
 # a channel somebody made. The team keeps the categories tidy; that is the
@@ -532,6 +536,61 @@ def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
     theirs = [held for held in found if held.category != DRIVE_ONLY]
     rest = [held for held in found if held.category == DRIVE_ONLY]
     return theirs, rest
+
+
+def ids_in(rows: list[list[str]]) -> set[str]:
+    """Every sheet already linked somewhere in these rows.
+
+    A row links its sheet as a raw URL when somebody pasted it and inside
+    =HYPERLINK() when RYTE wrote it. Both carry the id, which is the only
+    thing that says two rows are about the same sheet.
+    """
+    found: set[str] = set()
+    for row in rows or []:
+        for cell in row or []:
+            for link in re.findall(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", str(cell)):
+                found.add(link)
+    return found
+
+
+# What a column means, by what its heading says. The tabs are the team's now -
+# somebody has already renamed and reordered these - so a new row is built to
+# fit whatever headings are there rather than to a shape RYTE decided.
+# Order matters: "Type of leads" is the name column and says "leads" in it,
+# so the name pattern has to be asked first.
+COLUMN_MEANINGS = (
+    ("name", re.compile(r"\btype\b|\bname\b|\bmaster\s*lists?\b", re.IGNORECASE)),
+    ("channel", re.compile(r"\bchannel\b", re.IGNORECASE)),
+    ("sheet", re.compile(r"\bsheet\b|\blink\b", re.IGNORECASE)),
+    ("count", re.compile(r"\btotal\b|\bcount\b|\bhow\s+many\b", re.IGNORECASE)),
+)
+
+
+def column_kind(heading: str) -> str:
+    """Which field a column heading is asking for. "" when it asks for none."""
+    said = " ".join((heading or "").split())
+    for kind, pattern in COLUMN_MEANINGS:
+        if pattern.search(said):
+            return kind
+    return ""
+
+
+def row_for(header: list[str], held: Masterlist) -> list:
+    """One masterlist, laid out to match the headings a tab already has."""
+    row: list = []
+    for heading in header or []:
+        kind = column_kind(heading)
+        if kind == "name":
+            row.append(held.name)
+        elif kind == "sheet":
+            row.append(_link(held.sheet, "Open sheet"))
+        elif kind == "channel":
+            row.append(_link(held.channel, "Open channel"))
+        elif kind == "count":
+            row.append("—" if held.count is None else held.count)
+        else:
+            row.append("")
+    return row or [held.name, _link(held.sheet, "Open sheet")]
 
 
 def refill(found: list[Masterlist], files: list[dict]) -> int:
