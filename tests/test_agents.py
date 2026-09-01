@@ -2199,3 +2199,33 @@ Lead Type: let's do 40 Text-Verified Veteran Leads
 Live Wednesday, September 2
 """
     assert agents.stated_lead_type(card) == "40 Text-Verified Veteran Leads"
+
+
+@pytest.mark.parametrize(
+    "typed,wanted",
+    [
+        # Whoever typed it introduced themselves first.
+        ("Tommy Vereau here paid for OTP vets", "OTP vets"),
+        ("Julio wants 25 OTP Spanish IUL", "25 OTP Spanish IUL"),
+        ("Dapper Life bought OTP Widows", "OTP Widows"),
+        ("ordered 40 OTP Vets", "40 OTP Vets"),
+        # Nothing to introduce, nothing taken off.
+        ("Text-Verified Veteran Leads", "Text-Verified Veteran Leads"),
+        ("25 OTP Vets", "25 OTP Vets"),
+    ],
+)
+def test_who_bought_it_comes_off_the_line(typed, wanted):
+    assert agents.tidy_lead_type(typed) == wanted
+
+
+def test_the_agent_is_still_filed_under_the_right_leads():
+    card = """-- New Client Onboarded --
+
+Name: Tommy Vereau
+Lead Type: Tommy Vereau here paid for OTP vets
+
+Live Thursday, September 3
+"""
+    said, landed, _ = agents.best_lead_type(card, ["OTP VETS", "OTP FEX"])
+    assert said == "OTP vets"
+    assert landed == "OTP VETS"

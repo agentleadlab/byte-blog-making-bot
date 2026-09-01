@@ -270,6 +270,15 @@ _LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
 # How somebody types an order into a card: "let's do 40 Text-Verified Veteran
 # Leads". The sentence is not the lead type, and it goes onto three people's
 # checklists exactly as written unless it comes off here.
+# "Tommy Vereau here paid for OTP vets" - whoever typed it introduced
+# themselves first. Everything up to the buying word is who, not what.
+_WHO_BOUGHT = re.compile(
+    r"^.*?\b(?:paid\s+for|paying\s+for|ordered|order(?:ing)?|bought|buying|"
+    r"purchased|wants?|needs?|signed\s+up\s+for|is\s+(?:getting|taking)|"
+    r"would\s+like)\s+(?:the\s+|some\s+|a\s+)?",
+    re.IGNORECASE,
+)
+
 _LEAD_IN = re.compile(
     r"^(?:(?:let'?s|lets|let\s+us|we(?:'ll|\s+will)?|i'?ll|please|can\s+we)\s+)?"
     r"(?:do|get|give|book|send|start|add|run)\s+(?:me\s+|us\s+|them\s+|him\s+|her\s+)?",
@@ -333,6 +342,7 @@ def tidy_lead_type(phrase: str) -> str:
     said = " ".join((phrase or "").split())
     said = _LABEL_PREFIX.sub("", said)
     said = _PRICE_PREFIX.sub("", said).strip(" -–—:")
+    said = _WHO_BOUGHT.sub("", said, count=1)
     said = _LEAD_IN.sub("", said, count=1)
     if not KEEP_ANYWAY.search(said):
         said = _drop_notes(said)
