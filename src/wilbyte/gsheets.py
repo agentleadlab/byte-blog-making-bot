@@ -533,22 +533,6 @@ def highlight_rows(spreadsheet: str, tab: str, rows: list[int]) -> None:
         return
 
 
-def leads_header(spreadsheet: str) -> list[str]:
-    """The columns an auto-deploy sheet keeps its leads under.
-
-    The deploy sheet has a tab of agents and a tab of leads; the leads tab is
-    the one whose header belongs on that lead type's masterlist. Empty when
-    the sheet hasn't got one, and the caller falls back to the plain header.
-    """
-    from . import leadsheets
-
-    wanted = sheet_id(spreadsheet)
-    tab = leadsheets.leads_tab_in(tab_names(wanted))
-    if not tab:
-        return []
-    return [cell for cell in first_row(wanted, tab) if str(cell).strip()]
-
-
 def ensure_tab(spreadsheet: str, title: str) -> None:
     """Make a tab if the sheet hasn't got one by that name.
 
@@ -654,54 +638,15 @@ def sheets_in_folder(folder: str) -> list[dict]:
     return found
 
 
-def create_sheet(title: str, *, folder: str, header: list[str] | None = None) -> dict:
-    """Make a new spreadsheet in the folder. Returns {id, name, url}.
-
-    Only ever called for a lead type that has a channel and no file, and only
-    after somebody has asked for it by name. Creating one is cheap; creating
-    eight nobody wanted is a mess in somebody else's Drive.
-    """
-    into = folder_id(folder)
-    try:
-        made = _send(
-            "POST",
-            DRIVE_ROOT,
-            params={"fields": "id,name", "supportsAllDrives": "true"},
-            json={"name": title, "mimeType": SHEET_MIME, "parents": [into]},
-        )
-    except httpx.HTTPError as exc:
-        raise SheetsError(f"Couldn't create '{title}': {exc}") from exc
-    if made.status_code >= 400:
-        raise SheetsError(explain(made, "the folder"))
-
-    payload = made.json()
-    new = {
-        "id": str(payload.get("id") or ""),
-        "name": str(payload.get("name") or title),
-        "url": f"https://docs.google.com/spreadsheets/d/{payload.get('id')}/edit",
-    }
-    if header and new["id"]:
-        # A brand new sheet counts as nought leads, and nought is right. The
-        # header is there so the first person to open it knows what goes where.
-        # This is the only way a sheet other than the masterfile becomes
-        # writable, and it is one RYTE made seconds ago with nothing in it.
-        _just_made.add(new["id"])
-        write_rows(new["id"], [header])
-    return new
-
-
 # ------------------------------------------------- the one writable sheet
 #
 # Everything else Google-shaped that RYTE touches is a lead masterlist, and a
 # masterlist is read and never written. The rule is enforced here rather than
-# remembered: the only sheets that can be written are the masterfile named in
-# the .env, and a sheet RYTE created itself moments ago (to put a header on
-# it). A write anywhere else raises before it can clear anything.
+# remembered: the only sheet that can be written is the masterfile named in
+# the .env. A write anywhere else raises before it can change anything, and
+# there is no code left that could create a file either.
 
 SUMMARY_VAR = "LEADS_SUMMARY_SHEET_ID"
-
-# Filled by create_sheet, and only by create_sheet.
-_just_made: set[str] = set()
 
 
 def the_masterfile() -> str:
@@ -717,8 +662,7 @@ def the_masterfile() -> str:
 
 def writable(spreadsheet: str) -> bool:
     """Whether RYTE is allowed to change this sheet at all."""
-    wanted = sheet_id(spreadsheet)
-    return wanted == the_masterfile() or wanted in _just_made
+    return sheet_id(spreadsheet) == the_masterfile()
 
 
 def _must_be_writable(wanted: str) -> None:

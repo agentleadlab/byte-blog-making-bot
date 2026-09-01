@@ -460,9 +460,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="leadmove", brief=text)
 
     if _opens_with(text, LEADSHEET_WORDS) or lowered.strip() in ("leads", "leads sheet"):
-        # The rest of the line is kept: "masterlists create" is the one that
-        # makes a sheet for a lead type that hasn't got one, and making files
-        # in somebody's Drive is not something to do because nobody said not to.
+        # The rest of the line is kept: it can name a lead type and a sheet -
+        # "masterlist OTP FEX <link>" pins where that type's leads really are.
         return MentionRequest(action="leadsheet", brief=_strip_word(text, LEADSHEET_WORDS))
 
     asked = TRELLO_ASK.match(text)
@@ -727,9 +726,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry General and Ops over then Done, 10pm archive, 2am carry Ads and Lead Order over then Done
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
-> @RYTE **masterlists** — compile the Drive folder and the lead channels into
-> the masterfile: category, lead type, its sheet, how many leads it holds
-> @RYTE **masterlists create** — and make a sheet for any lead type without one
+> @RYTE **masterlists** — add the folder's sheets that aren't on the masterfile
+> yet to its *Other sheets* tab. *Active* and *Inactive* are yours; I don't
+> write to them
 > @RYTE **move the otp trucker masterlist to inactive** — and **to active** to
 > put one back. Two tabs, and I remember which is which
 > @RYTE **host** — attach an image, get a permanent public link back

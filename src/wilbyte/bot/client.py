@@ -1801,12 +1801,6 @@ async def _move_masterlist(bot: "WilByteBot", responder: Responder, said: str) -
     await _send_lead_summary(bot, responder)
 
 
-# "@RYTE masterlists create" - make a sheet for every lead type that hasn't
-# got one. Asked for by name on purpose: the alternative is a bot that files
-# eight spreadsheets in somebody's Drive because eight channels were quiet.
-_MAKE_THEM = re.compile(r"\b(?:create|make|add|new)\b", re.IGNORECASE)
-
-
 async def _send_lead_summary(
     bot: "WilByteBot", responder: Responder, *, said: str = ""
 ) -> None:
@@ -1873,11 +1867,6 @@ async def _send_lead_summary(
     # been in the folder the whole time.
     if leadsheets.refill(found, files):
         await _count_leads(found)
-
-    if folder and _MAKE_THEM.search(said or ""):
-        await _make_missing_sheets(
-            responder, found, folder, said=said or "", files=files
-        )
 
     lists, deploys = leadsheets.by_kind(found)
     theirs, _ = leadsheets.apart(lists)
@@ -1978,121 +1967,6 @@ async def _count_leads(found: list) -> None:
 
     await asyncio.gather(*(count(held) for held in found))
     found.extend(caught)
-
-
-# "create one" - build a single masterlist and look at it before letting RYTE
-# loose on thirty. "create otp fex" - that one, by name.
-_JUST_ONE = re.compile(r"\b(?:one|first|a\s+test|test\s+one|single)\b", re.IGNORECASE)
-_CREATE_WORDS = re.compile(
-    r"\b(?:masterlists?|create|make|add|new|the|for|please|sheets?)\b", re.IGNORECASE
-)
-
-
-def _who_to_make(said: str, blank: list) -> list:
-    """Which of the sheetless lead types this instruction is asking for.
-
-    All of them by default. "create one" is the first, for looking at before
-    thirty more follow it; "create otp fex" is that one by name.
-    """
-    from .. import leadstate
-
-    named = leadstate.key(_CREATE_WORDS.sub(" ", said or ""))
-    if named:
-        wanted = [held for held in blank if leadstate.key(held.name) == named]
-        if wanted:
-            return wanted
-
-    return blank[:1] if _JUST_ONE.search(said or "") else blank
-
-
-async def _make_missing_sheets(
-    responder: Responder, found: list, folder: str, *, said: str = "",
-    files: list[dict] | None = None,
-) -> None:
-    """Make a masterlist for each lead type that hasn't got one anywhere.
-
-    Only reached when somebody typed `create`. Named "<Lead type> Masterlist
-    <year>" so anything RYTE made is obvious among the team's own files, and
-    left with a header row and nothing else - which is what a masterlist with
-    no leads in it should look like.
-
-    A lead type whose channel has an auto-deploy sheet attached counts as
-    having no masterlist, and its columns are taken from that deploy sheet's
-    Available_Leads tab: the shape the team's leads already come in beats
-    anything RYTE could invent.
-    """
-    from .. import gsheets, leadsheets
-
-    lists, deploys = leadsheets.by_kind(found)
-    # Live lead types only. An inactive one has no leads coming in, and a
-    # folder full of empty sheets for lead types nobody runs is clutter.
-    live, _ = leadsheets.split_by_state(lists)
-    blank = _who_to_make(said, leadsheets.missing(live))
-
-    # Last check before making a file: is one already sitting in the folder
-    # under a name that means this lead type? Building a second masterlist
-    # beside the first is the one mistake this must not make.
-    already = [
-        held for held in blank
-        if leadsheets.find_sheet(held.name, [
-            file for file in files or []
-            if not leadsheets.AUTO_DEPLOY.search(str(file.get("name") or ""))
-        ])
-    ]
-    if already:
-        blank = [held for held in blank if held not in already]
-        await responder.send(
-            "Already in the folder, so I left them alone: "
-            + ", ".join(held.name for held in already[:12])
-        )
-
-    if not blank:
-        await responder.send(
-            "Nothing to make — every live lead type has a sheet. "
-            "(Inactive ones are skipped on purpose.)"
-        )
-        return
-
-    # Which flagged deploy sheet belongs to each lead type, so its columns can
-    # be copied onto the masterlist being made for it.
-    flagged = {held.category: held for held in deploys if held.sheet}
-
-    await responder.send(
-        f"Making {len(blank)} masterlist(s) in the folder: "
-        + ", ".join(held.name for held in blank[:12])
-        + ("" if len(blank) > 1 else " — have a look at it before I make the rest.")
-    )
-    for held in blank:
-        header = list(leadsheets.NEW_SHEET_HEADER)
-        deploy = flagged.get(held.name)
-        if deploy:
-            try:
-                taken = await asyncio.to_thread(gsheets.leads_header, deploy.sheet)
-                header = taken or header
-            except gsheets.SheetsError:
-                pass  # The plain header is a fine second best.
-
-        try:
-            made = await asyncio.to_thread(
-                gsheets.create_sheet,
-                # Named for what the lead type actually is: the channel says
-                # "Mortgage Protection" and its deploy sheet says which one.
-                leadsheets.new_sheet_title(
-                    leadsheets.qualified_name(held.name, deploy.name if deploy else "")
-                ),
-                folder=folder,
-                header=header,
-            )
-        except gsheets.SheetsError as exc:
-            held.problem = f"couldn't make the sheet — {exc}"
-            continue
-
-        held.sheet = made["url"]
-        held.created = True
-        held.count = 0  # Made empty on purpose; nought is the true number.
-        held.problem = ""
-        if deploy:
-            deploy.status = f"{leadsheets.SORTED_OUT} — {made['name']}"
 
 
 def _top_up_other_sheets(

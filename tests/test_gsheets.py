@@ -403,107 +403,7 @@ def test_a_file_no_channel_claimed_is_still_on_the_masterfile():
     assert combined[0].category == leadsheets.DRIVE_ONLY
 
 
-def test_a_lead_type_with_no_sheet_anywhere_is_what_gets_made():
-    found = [
-        Masterlist(category="IUL", name="LP IUL", sheet="u"),
-        Masterlist(category="IUL", name="Nova"),
-    ]
-    combined = leadsheets.combine(found, [])
-    assert [held.name for held in leadsheets.missing(combined)] == ["Nova"]
-
-
-def test_nothing_is_created_without_being_asked():
-    """Eight quiet channels must not become eight spreadsheets in a Drive."""
-    from wilbyte.bot import client
-
-    assert client._MAKE_THEM.search("masterlists") is None
-    assert client._MAKE_THEM.search("create the missing ones")
-
-
-def test_a_new_sheet_is_named_after_the_lead_type():
-    assert leadsheets.new_sheet_title("OTP Trucker IUL", year=2026) == (
-        "OTP Trucker IUL Masterlist 2026"
-    )
-
-
-def test_making_one_files_it_in_the_folder_and_writes_a_header(monkeypatch):
-    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
-    sent = {}
-    written = {}
-
-    def sent_write(method, url, **kwargs):
-        sent["url"] = url
-        sent["json"] = kwargs.get("json")
-        return httpx.Response(
-            200, json={"id": SHEET, "name": "Nova Masterlist"},
-            request=httpx.Request(method, url),
-        )
-
-    monkeypatch.setattr(gsheets.httpx, "request", sent_write)
-    monkeypatch.setattr(
-        gsheets, "write_rows", lambda sheet, rows, **k: written.update(rows=rows) or "u"
-    )
-
-    made = gsheets.create_sheet("Nova Masterlist", folder=FOLDER, header=["Name"])
-
-    assert sent["json"]["parents"] == [FOLDER]
-    assert sent["json"]["mimeType"] == gsheets.SHEET_MIME
-    assert made["url"].endswith(f"{SHEET}/edit")
-    assert written["rows"] == [["Name"]]
-
-
-def test_the_new_sheet_shows_up_as_made_on_the_report():
-    live = [Masterlist(category="IUL", name="Nova", sheet="u", count=0, created=True)]
-    assert "Made in the folder: Nova" in leadsheets.describe(live, [])
-
-
-def test_a_lead_type_with_no_sheet_is_told_apart_from_one_that_failed():
-    found = [
-        Masterlist(category="IUL", name="Nova"),
-        Masterlist(category="IUL", name="LP IUL", sheet="u", problem="not shared"),
-    ]
-    said = leadsheets.describe(found, [])
-    assert "no sheet anywhere: Nova" in said
-    assert "masterlists create" in said
-    assert "not shared" in said
-
-
 # --------------------------------- never writing on a masterlist
-
-
-def test_a_tab_with_somebody_elses_data_is_not_cleared(monkeypatch):
-    """The whole promise is that the masterlists are read and never written.
-    A wrong id in the .env is the only way that promise breaks, so it refuses."""
-    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
-    monkeypatch.setattr(
-        gsheets, "first_row", lambda sheet, tab: ["Name", "Email", "Phone", "State"]
-    )
-    hit = []
-    monkeypatch.setattr(
-        gsheets.httpx, "request", lambda *a, **k: hit.append(a) or _response(200, "{}")
-    )
-
-    with pytest.raises(SheetsError, match="won't write there"):
-        gsheets.write_rows(SHEET, [["x"]], tab="Active",
-                           expect_header=list(leadsheets.HEADER))
-    assert hit == []  # nothing was cleared
-
-
-def test_the_summary_tab_it_wrote_last_time_is_replaced(monkeypatch):
-    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
-    monkeypatch.setattr(gsheets, "first_row", lambda sheet, tab: list(leadsheets.HEADER))
-    monkeypatch.setattr(
-        gsheets.httpx, "request",
-        lambda method, url, **k: httpx.Response(
-            200, json={}, request=httpx.Request(method, url)
-        ),
-    )
-
-    url = gsheets.write_rows(
-        SHEET, [list(leadsheets.HEADER)], tab="Active",
-        expect_header=list(leadsheets.HEADER),
-    )
-    assert SHEET in url
 
 
 def test_an_empty_tab_is_fine_to_write():
@@ -526,14 +426,6 @@ def test_a_lead_sheet_is_still_refused():
     assert gsheets.ours(
         ["Agent_Name", "Agent_Spend", "States", "Lead Cap"], list(leadsheets.HEADER)
     ) is False
-
-
-def test_the_summary_refuses_to_be_one_of_the_masterlists():
-    from wilbyte.bot import client
-
-    files = [{"id": SHEET, "name": "OTP Trucker IUL Masterlist", "url": "u"}]
-    with pytest.raises(SheetsError, match="one of the masterlists"):
-        client._write_lead_summary(SHEET, [], [], files=files)
 
 
 def test_nothing_in_the_sheets_code_ever_deletes():
@@ -673,40 +565,7 @@ def test_one_sheet_refusing_does_not_stop_the_others(monkeypatch):
     assert live[1].count is None and "not shared" in live[1].problem
 
 
-def test_the_masterfile_is_not_one_of_the_masterlists(monkeypatch):
-    """It is filed in the same folder as the sheets it summarises, which is
-    tidy and nearly cost it the ability to write to itself."""
-    import inspect
-    from wilbyte.bot import client
-
-    source = inspect.getsource(client._send_lead_summary)
-    assert 'sheet_id(into)' in source and "file for file in files" in source
-
-
-def test_every_other_file_in_the_folder_is_still_refused():
-    from wilbyte.bot import client
-
-    files = [{"id": SHEET, "name": "Blue Collar Masterlist", "url": "u"}]
-    with pytest.raises(SheetsError, match="one of the masterlists"):
-        client._write_lead_summary(SHEET, [], [], files=files)
-
-
 # --------------------------------- the masterfile is the only writable sheet
-
-
-def test_a_masterlist_cannot_be_written_to_at_all(monkeypatch):
-    """Not "shouldn't" - can't. Every lead sheet is read-only to RYTE."""
-    monkeypatch.setenv("LEADS_SUMMARY_SHEET_ID", SHEET)
-    gsheets._just_made.clear()
-    other = "1kwsuiPD_8p4B_jGG8_-1RL9bren5KLC_mRHTz1SrN2k"
-
-    for call in (
-        lambda: gsheets.write_rows(other, [["x"]], tab="Sheet1"),
-        lambda: gsheets.ensure_tab(other, "Active"),
-        lambda: gsheets.prettify(other, "Active", rows=2),
-    ):
-        with pytest.raises(SheetsError, match="not allowed to change"):
-            call()
 
 
 def test_the_masterfile_named_in_the_env_is_writable(monkeypatch):
@@ -718,30 +577,19 @@ def test_the_masterfile_named_in_the_env_is_writable(monkeypatch):
 def test_nothing_is_writable_when_the_env_names_nothing(monkeypatch):
     """A blank .env must not read as "anything goes"."""
     monkeypatch.delenv("LEADS_SUMMARY_SHEET_ID", raising=False)
-    gsheets._just_made.clear()
     assert gsheets.writable(SHEET) is False
 
 
-def test_a_sheet_ryte_just_made_may_have_its_header_written(monkeypatch):
-    monkeypatch.delenv("LEADS_SUMMARY_SHEET_ID", raising=False)
-    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
-    gsheets._just_made.clear()
-    wrote = {}
+def test_ryte_cannot_create_a_file_at_all():
+    """The masterlists exist; nothing needs making. The masterfile is the only
+    sheet RYTE can write to and there is no code that makes a new one."""
+    from pathlib import Path as _Path
 
-    monkeypatch.setattr(
-        gsheets.httpx, "request",
-        lambda method, url, **k: httpx.Response(
-            200, json={"id": SHEET, "name": "Nova Masterlist"},
-            request=httpx.Request(method, url),
-        ),
-    )
-    monkeypatch.setattr(
-        gsheets, "write_rows", lambda sheet, rows, **k: wrote.update(sheet=sheet) or "u"
-    )
-
-    gsheets.create_sheet("Nova Masterlist", folder=FOLDER, header=["Name"])
-    assert SHEET in gsheets._just_made
-    assert wrote["sheet"] == SHEET
+    source = _Path(gsheets.__file__).read_text()
+    assert "create_sheet" not in source
+    # The Drive folder is listed, never posted to: no file is ever made in it.
+    assert 'POST",\n        DRIVE_ROOT' not in source
+    assert "DRIVE_ROOT" in source
 
 
 # --------------------------------- staying under Google's minute
@@ -807,36 +655,6 @@ def test_only_a_real_category_counts_as_a_lead_type(category, wanted):
     assert leadsheets.worth_listing(category) is wanted
 
 
-def test_the_drive_only_sheets_go_on_their_own_tab():
-    """They are real sheets, but they are not the team's lead types and they
-    do not belong on the tab somebody opens to ask what is live."""
-    found = leadsheets.combine(
-        [Masterlist(category="IUL Masterlist", name="LP IUL", sheet="u")],
-        [{"id": "x", "name": "Jan 30 FEX", "url": "v"}],
-    )
-    theirs, others = leadsheets.apart(found)
-
-    assert [held.name for held in theirs] == ["LP IUL"]
-    assert [held.name for held in others] == ["Jan 30 FEX"]
-
-
-def test_the_third_tab_is_only_written_when_there_is_something_for_it(monkeypatch):
-    from wilbyte.bot import client
-
-    made = []
-    monkeypatch.setattr(gsheets, "ensure_tab", lambda into, tab: made.append(tab))
-    monkeypatch.setattr(gsheets, "write_rows", lambda *a, **k: "u")
-    monkeypatch.setattr(gsheets, "prettify", lambda *a, **k: None)
-    monkeypatch.setattr(gsheets, "sheet_id", lambda x: x)
-
-    client._write_lead_summary("into", [], [], [])
-    assert leadsheets.OTHER_TAB not in made
-
-    made.clear()
-    client._write_lead_summary("into", [], [], [Masterlist(category="x", name="y")])
-    assert leadsheets.OTHER_TAB in made
-
-
 # --------------------------------- auto-deploy sheets are not lead sheets
 
 
@@ -871,28 +689,6 @@ def test_a_deploy_sheet_is_never_adopted_as_a_channels_masterlist():
     assert lists[0].sheet == ""          # the channel still has no masterlist
     assert len(deploys) == 1
     assert deploys[0].sheet == "u"
-
-
-def test_the_deploy_tab_says_which_lead_type_it_belongs_to():
-    found = [Masterlist(category="MTG Masterlist", name="Mortgage Protection",
-                        channel="https://discord.com/channels/1/2")]
-    files = [{"id": "d", "name": "Mortgage Protection [New] - Auto Deploy", "url": "u"}]
-
-    _, deploys = leadsheets.by_kind(leadsheets.combine(found, files))
-    rows = leadsheets.deploy_rows(deploys)
-
-    assert rows[0] == list(leadsheets.DEPLOY_HEADER)
-    assert rows[1][0] == "Mortgage Protection"
-    # The fix happens in Discord, so the row goes straight there.
-    assert rows[1][1] == '=HYPERLINK("https://discord.com/channels/1/2","Open channel")'
-    assert rows[1][4] == "—"
-
-
-def test_a_deploy_sheet_with_no_channel_still_gets_a_row():
-    _, deploys = leadsheets.by_kind(
-        leadsheets.combine([], [{"id": "d", "name": "Rise Legacy Auto Deploy", "url": "u"}])
-    )
-    assert leadsheets.deploy_rows(deploys)[1][0] == leadsheets.NO_CHANNEL
 
 
 def test_the_count_and_the_header_come_back_in_one_request(monkeypatch):
@@ -948,29 +744,6 @@ def test_a_pinned_sheet_link_is_what_the_channel_means_now(monkeypatch):
 # --------------------------------- building the masterlist itself
 
 
-def test_a_new_masterlist_is_named_so_nobody_mistakes_it():
-    """There are near-duplicate masterlists in that folder going back years."""
-    assert leadsheets.new_sheet_title("Mortgage Protection", year=2026) == (
-        "Mortgage Protection Masterlist 2026"
-    )
-    assert leadsheets.new_sheet_title("Nova Masterlist", year=2026) == (
-        "Nova Masterlist 2026"
-    )
-
-
-def test_the_year_in_the_name_does_not_break_the_matching():
-    """Next run has to see it as that lead type's masterlist, not a new file."""
-    files = [{"id": "x", "name": "Mortgage Protection Masterlist 2026", "url": "u"}]
-    assert leadsheets.find_sheet("Mortgage Protection", files) == files[0]
-
-
-def test_the_leads_tab_of_a_deploy_sheet_is_found():
-    assert leadsheets.leads_tab_in(
-        ["Agent_Config", "Available_Leads", "Assigned_Leads", "Agent_Jack_Duval"]
-    ) == "Available_Leads"
-    assert leadsheets.leads_tab_in(["Agent_Config", "Sheet1"]) == ""
-
-
 def test_a_channel_linking_a_deploy_sheet_counts_as_having_no_masterlist():
     """Otherwise it keeps reporting an agent count as leads for as long as the
     old posts sit in the channel."""
@@ -988,40 +761,6 @@ def test_a_channel_linking_a_deploy_sheet_counts_as_having_no_masterlist():
     # ...and the deploy sheet is filed under the channel that linked it, not
     # under whatever its name happens to resemble.
     assert deploys[0].category == "Mortgage Protection"
-
-
-def test_the_new_masterlist_takes_the_place_of_the_deploy_link():
-    found = [Masterlist(
-        category="MTG Masterlist", name="Mortgage Protection",
-        sheet="https://docs.google.com/spreadsheets/d/" + SHEET + "/edit",
-    )]
-    files = [
-        {"id": SHEET, "name": "MTG - Auto Deploy", "url": "u"},
-        {"id": "new", "name": "Mortgage Protection Masterlist 2026", "url": "made"},
-    ]
-    lists, _ = leadsheets.by_kind(leadsheets.combine(found, files))
-    assert lists[0].sheet == "made"
-
-
-def test_a_sorted_out_row_says_so_and_is_highlighted():
-    deploys = [
-        Masterlist(category="Mortgage Protection", name="MTG Auto Deploy", sheet="u",
-                   kind=leadsheets.DEPLOY,
-                   status=f"{leadsheets.SORTED_OUT} — Mortgage Protection Masterlist 2026"),
-        Masterlist(category="OTP FEX", name="FEX Auto Deploy", sheet="v",
-                   kind=leadsheets.DEPLOY),
-    ]
-    rows = leadsheets.deploy_rows(deploys)
-
-    assert rows[0][-1] == "Status"
-    assert rows[1][-1].startswith(leadsheets.SORTED_OUT)
-    assert rows[2][-1] == "Needs a masterlist"
-    assert leadsheets.done_rows(rows) == [1]
-
-
-def test_the_header_never_counts_as_a_sorted_out_row():
-    rows = leadsheets.deploy_rows([])
-    assert leadsheets.done_rows(rows) == []
 
 
 def test_the_leads_tab_is_found_whatever_it_is_called():
@@ -1166,93 +905,7 @@ def _blank(*names):
     return [Masterlist(category="IUL Masterlist", name=name) for name in names]
 
 
-def test_create_on_its_own_makes_them_all():
-    from wilbyte.bot import client
-    blank = _blank("Mortgage Protection", "OTP FEX", "Spanish FEX")
-    assert client._who_to_make("create", blank) == blank
-
-
-def test_create_one_makes_a_single_sheet_to_look_at():
-    """Thirty sheets in somebody's Drive is not the thing to get wrong."""
-    from wilbyte.bot import client
-    blank = _blank("Mortgage Protection", "OTP FEX")
-    made = client._who_to_make("create one", blank)
-    assert [held.name for held in made] == ["Mortgage Protection"]
-
-
-def test_a_named_lead_type_is_the_one_that_gets_made():
-    from wilbyte.bot import client
-    blank = _blank("Mortgage Protection", "OTP FEX", "Spanish FEX")
-    made = client._who_to_make("create otp fex", blank)
-    assert [held.name for held in made] == ["OTP FEX"]
-
-
-def test_a_name_nobody_recognises_does_not_silently_make_everything():
-    """It falls back to all only when no name was given at all."""
-    from wilbyte.bot import client
-    blank = _blank("Mortgage Protection")
-    assert client._who_to_make("create one nonsense name", blank) == blank[:1]
-
-
 # --------------------------------- naming it what it actually is
-
-
-@pytest.mark.parametrize(
-    "lead_type,deploy,wanted",
-    [
-        # The channel says one thing, the deploy sheet says which one it is.
-        ("Mortgage Protection", "Text Verified MTG Auto Deploy New Setup",
-         "Text-Verified Mortgage Protection"),
-        ("OTP FEX", "Text Verified FEX Auto Deploy Cap Launch Date",
-         "Text-Verified OTP FEX"),
-        ("LP IUL", "Text Verified IUL Auto Deploy New Setup",
-         "Text-Verified LP IUL"),
-        # Already says Standard; saying it twice helps nobody.
-        ("OTP Standard IUL", "Text Verified Standard IUL",
-         "Text-Verified OTP Standard IUL"),
-        ("Standard Mortgage Protection", "Mortgage Protection New Auto Deploy",
-         "Standard Mortgage Protection"),
-        # "No OTP" beats "OTP" - they are opposites.
-        ("LP VET", "Landing Page VET No OTP Auto Deploy Row Weighted",
-         "No OTP LP VET"),
-        ("No OTP Standard VET", "VET Standard Auto Deploy", "No OTP Standard VET"),
-        ("Spanish MTG", "Spanish MTG Auto Deploy New Setup", "Spanish MTG"),
-        # One qualifier, not a stack: Text-Verified wins over Facebook here.
-        ("OTP Spanish IUL", "Text Verified Spanish Facebook IUL Auto Deploy New",
-         "Text-Verified OTP Spanish IUL"),
-        ("Abandoned MTG", "Abandoned MTG Auto Deploy", "Abandoned MTG"),
-        ("Instant IUL", "Instant IUL Auto Deploy New Setup", "Instant IUL"),
-    ],
-)
-def test_the_qualifier_comes_off_the_deploy_sheet(lead_type, deploy, wanted):
-    assert leadsheets.qualified_name(lead_type, deploy) == wanted
-
-
-def test_the_full_title_carries_the_qualifier_and_the_year():
-    assert leadsheets.new_sheet_title(
-        leadsheets.qualified_name("Mortgage Protection", "Text Verified MTG Auto Deploy"),
-        year=2026,
-    ) == "Text-Verified Mortgage Protection Masterlist 2026"
-
-
-def test_a_lead_type_with_no_deploy_sheet_keeps_its_own_name():
-    assert leadsheets.qualified_name("Nova", "") == "Nova"
-
-
-def test_the_qualified_name_still_matches_its_channel_next_run():
-    """It has to be seen as that channel's masterlist, not a new file."""
-    files = [{"id": "x", "name": "Text-Verified Mortgage Protection Masterlist 2026",
-              "url": "u"}]
-    assert leadsheets.find_sheet("Mortgage Protection", files) == files[0]
-
-
-def test_only_one_qualifier_ever_lands_on_a_name():
-    """"Text-Verified Facebook OTP Spanish IUL Masterlist 2026" is a file name
-    nobody wants to read."""
-    said = leadsheets.qualified_name(
-        "Spanish IUL", "Text Verified Spanish Facebook Blue Collar Standard Auto Deploy"
-    )
-    assert said == "Text-Verified Spanish IUL"
 
 
 # --------------------------------- never a second masterlist beside the first

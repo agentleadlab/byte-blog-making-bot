@@ -142,11 +142,6 @@ def find_sheet(name: str, files: list[dict]) -> dict | None:
     return near[0] if len(near) == 1 else None
 
 
-# What a brand new masterlist gets as its first row. Nobody's leads are in it
-# yet, so the header is only there so the first person to open it knows the
-# shape. Change the columns in the sheet and RYTE will not put them back.
-NEW_SHEET_HEADER = ["Name", "Email", "Phone", "State", "Date Added"]
-
 # The tab on an auto-deploy sheet where the leads themselves are. Its header is
 # the right header for that lead type's masterlist - it is the shape the team's
 # own leads already come in, which beats anything RYTE could invent.
@@ -172,67 +167,6 @@ def config_tab_in(tabs: list[str]) -> str:
         if CONFIG_TAB.search(title):
             return title
     return ""
-
-
-# What a lead type is qualified by, in the order the team writes them. The
-# channel is called "Mortgage Protection" and its deploy sheet is called "Text
-# Verified MTG Auto Deploy New Setup" - the qualifier only exists on the deploy
-# sheet, and a masterlist called plain "Mortgage Protection" would sit next to
-# three others nobody can tell apart.
-QUALIFIERS = (
-    ("Text-Verified", r"text[\s_-]*verified"),
-    ("No OTP", r"\bno[\s_-]*otp\b"),
-    ("OTP", r"\botp\b"),
-    ("Spanish", r"\bspanish\b"),
-    ("Facebook", r"\bfacebook\b|\bfb\b"),
-    ("Blue Collar", r"blue[\s_-]*collar"),
-    ("Abandoned", r"\babandoned\b"),
-    ("Instant", r"\binstant\b"),
-    ("Momentum", r"\bmomentum\b"),
-    ("Ascend", r"\bascend\b"),
-    ("Tax Free", r"tax[\s_-]*free"),
-    ("Standard", r"\bstandard\b"),
-)
-
-
-def qualified_name(lead_type: str, deploy_name: str = "") -> str:
-    """The lead type, with whatever its deploy sheet says it is.
-
-    One qualifier, not a stack of them: "Text-Verified Facebook OTP Spanish
-    IUL" is a file name nobody wants to read. Text-Verified comes first
-    wherever it applies, and only what the lead type doesn't already say -
-    "OTP Standard IUL" saying Standard twice helps nobody.
-    """
-    said = " ".join((lead_type or "").split())
-    if not deploy_name:
-        return said
-
-    found = []
-    for word, pattern in QUALIFIERS:
-        if not re.search(pattern, deploy_name, re.IGNORECASE):
-            continue
-        if re.search(pattern, said, re.IGNORECASE):
-            continue
-        if word == "OTP" and re.search(r"\botp\b", said, re.IGNORECASE):
-            continue
-        found.append(word)
-        break  # The first is the one that counts; QUALIFIERS is the priority.
-
-    return " ".join(found + [said]) if found else said
-
-
-def new_sheet_title(name: str, *, year: int | None = None) -> str:
-    """What to call a masterlist RYTE makes: "Mortgage Protection Masterlist 2026".
-
-    The year is deliberate. There are masterlists in that folder going back
-    years and a fair few near-duplicates, so anything RYTE made should be
-    obvious at a glance and never mistaken for the one the team keeps.
-    """
-    from datetime import date
-
-    said = re.sub(r"\s*master\s*list\s*", " ", " ".join((name or "").split()),
-                  flags=re.IGNORECASE).strip()
-    return f"{said} Masterlist {year or date.today().year}"
 
 
 _SHEET_ID = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})")
