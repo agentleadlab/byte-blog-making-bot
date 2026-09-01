@@ -2295,9 +2295,11 @@ async def _file_interview(
         return
 
     await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
-    if link and not passcode:
-        # Zoom only returns a typed passcode on some recordings, and a card
-        # with a link nobody can open is worth one line rather than silence.
+    # Zoom only returns a typed passcode on some recordings, and a card with a
+    # link nobody can open is worth one line rather than silence. Fathom links
+    # have no passcode at all, so saying so there is noise about a setting that
+    # doesn't exist.
+    if segmenting.wants_a_passcode(link, passcode):
         await responder.send(
             "-# Zoom didn't give me a passcode for that one — add it to the card "
             "if the link needs one."

@@ -521,6 +521,16 @@ def card_title(topic: str) -> str:
     return name if name.casefold().endswith("interview") else f"{name} Interview"
 
 
+def wants_a_passcode(link: str, passcode: str = "") -> bool:
+    """Whether a filed recording is missing a passcode somebody has to add.
+
+    Only Zoom has them, and only on some recordings. Saying it about a Fathom
+    link is a warning about a setting that does not exist, on a card that is
+    perfectly openable.
+    """
+    return bool(link) and not passcode and "zoom.us" in link.lower()
+
+
 def as_card(segments: list[Segment], *, link: str = "", passcode: str = "") -> str:
     """The card's description: the recording, then every stamp and title.
 

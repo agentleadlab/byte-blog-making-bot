@@ -1294,3 +1294,20 @@ def test_refill_leaves_alone_what_already_has_a_sheet():
 
     assert leadsheets.refill([held], files) == 0
     assert held.sheet == "pinned"
+
+
+def test_a_fathom_link_is_never_asked_for_a_zoom_passcode():
+    """Fathom recordings have no passcode, so the line is a warning about a
+    setting that doesn't exist, on a card that opens perfectly well."""
+    from wilbyte import segments
+
+    assert segments.wants_a_passcode(
+        "https://fathom.video/share/y-UCmt4u1sHn81HqfbgMKGPo5DLytQzC"
+    ) is False
+    assert segments.wants_a_passcode(
+        "https://agentleadlab.zoom.us/rec/share/abc"
+    ) is True
+    # ...and a Zoom recording that did give one needs no line either.
+    assert segments.wants_a_passcode(
+        "https://agentleadlab.zoom.us/rec/share/abc", "918273"
+    ) is False
