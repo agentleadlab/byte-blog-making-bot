@@ -1213,7 +1213,16 @@ def _fathom_cues(config: Config, rec) -> tuple[list, str, str, str]:
             else:
                 end = start + len(text.split()) / fathom.WORDS_A_SECOND
             cues.append(Cue(start=start, end=max(end, start + 1), text=text))
-        return cues, found.title, getattr(found, "url", "") or rec.url, ""
+        # The guest's name first, then what Fathom called the recording. Fathom
+        # titles are the subject, not the person - "OTP Trucker IUL Training" -
+        # and the card is filed under whoever was interviewed. Fathom already
+        # knows which invitee was external, which is exactly that person.
+        named = [
+            who for who in (found.guests or ())
+            if who and "@" not in who
+        ]
+        title = f"{named[0]} — {found.title}".strip(" —") if named else found.title
+        return cues, title, getattr(found, "url", "") or rec.url, ""
     finally:
         client.close()
 

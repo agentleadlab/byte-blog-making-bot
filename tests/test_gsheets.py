@@ -1311,3 +1311,36 @@ def test_a_fathom_link_is_never_asked_for_a_zoom_passcode():
     assert segments.wants_a_passcode(
         "https://agentleadlab.zoom.us/rec/share/abc", "918273"
     ) is False
+
+
+# --------------------------------- the card is filed under the person
+
+
+def test_the_card_is_named_for_whoever_was_interviewed():
+    """Fathom titles are the subject, not the person: "OTP Trucker IUL
+    Training" filed as "OTP Trucker IUL Training Interview" when the card
+    belongs to Collin Neumann."""
+    from wilbyte import segments
+
+    assert segments.card_title("Collin Neumann — OTP Trucker IUL Training") == (
+        "Collin Neumann Interview"
+    )
+
+
+def test_a_recording_with_no_guest_still_gets_a_card_name():
+    """Trimming is never allowed to leave nothing behind."""
+    from wilbyte import segments
+
+    assert segments.card_title("OTP Trucker IUL Training") == (
+        "OTP Trucker IUL Training Interview"
+    )
+
+
+def test_an_email_is_not_a_persons_name():
+    """Fathom falls back to the address when an invitee has no name on it, and
+    "collin@x.com Interview" is not a card title."""
+    import inspect
+    from wilbyte.bot import jobs
+
+    source = inspect.getsource(jobs._fathom_cues)
+    assert '"@" not in who' in source
