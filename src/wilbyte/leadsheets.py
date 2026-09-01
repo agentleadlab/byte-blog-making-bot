@@ -472,6 +472,30 @@ def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
     return theirs, rest
 
 
+# A cell that is nothing but a link. Pasted rows read as three lines of URL
+# where the rows RYTE wrote read "Open sheet", and the tab is easier to use
+# when they all look the same.
+_BARE_LINK = re.compile(
+    r"^\s*(https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_/-]+[^\s]*)\s*$"
+)
+
+
+def links_to_tidy(rows: list[list[str]]) -> list[tuple[int, int, str]]:
+    """(row, column, the formula to put there) for every pasted-in URL.
+
+    Row and column are zero-based from the top-left of the tab. Only a cell
+    holding a link and nothing else is touched: a cell with a note beside the
+    link is somebody writing something, and rewriting it would lose the note.
+    """
+    found: list[tuple[int, int, str]] = []
+    for down, row in enumerate(rows or []):
+        for across, cell in enumerate(row or []):
+            said = _BARE_LINK.match(str(cell))
+            if said:
+                found.append((down, across, _link(said.group(1), "Open sheet")))
+    return found
+
+
 def ids_in(rows: list[list[str]]) -> set[str]:
     """Every sheet already linked somewhere in these rows.
 

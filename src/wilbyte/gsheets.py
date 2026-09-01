@@ -377,6 +377,44 @@ def tab_rows(spreadsheet: str, tab: str) -> list[list[str]]:
     return [[str(cell) for cell in row] for row in payload.get("values") or []]
 
 
+def _cell_name(row: int, column: int) -> str:
+    """(0, 1) -> "B1". Zero-based in, A1 notation out."""
+    letters = ""
+    column += 1
+    while column:
+        column, rest = divmod(column - 1, 26)
+        letters = chr(65 + rest) + letters
+    return f"{letters}{row + 1}"
+
+
+def update_cells(spreadsheet: str, tab: str, cells: list[tuple[int, int, str]]) -> int:
+    """Write single cells, leaving every other cell alone. Returns how many.
+
+    Cell by cell rather than row by row: the rows around them are somebody's
+    work, and a whole-row write would blank a column nobody asked about.
+    """
+    if not cells:
+        return 0
+
+    wanted = sheet_id(spreadsheet)
+    _must_be_writable(wanted)
+    where = f"'{tab}'!" if tab else ""
+    written = _send(
+        "POST",
+        f"{API_ROOT}/{wanted}/values:batchUpdate",
+        json={
+            "valueInputOption": "USER_ENTERED",
+            "data": [
+                {"range": f"{where}{_cell_name(row, column)}", "values": [[value]]}
+                for row, column, value in cells
+            ],
+        },
+    )
+    if written.status_code >= 400:
+        raise SheetsError(explain(written, wanted))
+    return len(cells)
+
+
 def append_rows(spreadsheet: str, rows: list[list], *, tab: str) -> str:
     """Add rows to the end of a tab, leaving everything above them alone.
 

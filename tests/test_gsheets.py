@@ -1060,6 +1060,7 @@ def test_only_the_other_tab_is_ever_written(monkeypatch):
         gsheets, "append_rows",
         lambda into, rows, tab: written.append(tab) or "u",
     )
+    monkeypatch.setattr(gsheets, "update_cells", lambda *a, **k: 0)
 
     url, added = client._top_up_other_sheets("into", [], files=[
         {"id": SHEET, "name": "LP IUL Masterlist", "url": "a"},
@@ -1081,8 +1082,68 @@ def test_nothing_is_appended_when_the_folder_holds_nothing_new(monkeypatch):
                            ["LP IUL", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"]],
     )
     monkeypatch.setattr(gsheets, "append_rows", lambda *a, **k: pytest.fail("wrote"))
+    monkeypatch.setattr(gsheets, "update_cells", lambda *a, **k: 0)
 
     _url, added = client._top_up_other_sheets(
         "into", [], files=[{"id": SHEET, "name": "LP IUL Masterlist", "url": "a"}]
     )
     assert added == []
+
+
+# --------------------------------- a pasted URL becomes a tidy link
+
+
+def test_a_pasted_url_is_turned_into_an_open_sheet_link():
+    rows = [
+        ["Type of leads", "Sheet"],
+        ["All In One Insurance VET",
+         f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"],
+        ["FEX Tri State", '=HYPERLINK("https://x","Open sheet")'],
+    ]
+    found = leadsheets.links_to_tidy(rows)
+
+    assert found == [(
+        1, 1,
+        f'=HYPERLINK("https://docs.google.com/spreadsheets/d/{SHEET}/edit","Open sheet")',
+    )]
+
+
+def test_a_cell_with_a_note_beside_the_link_is_left_alone():
+    """Somebody wrote that. Rewriting the cell would lose it."""
+    rows = [["LP IUL", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit — old one"]]
+    assert leadsheets.links_to_tidy(rows) == []
+
+
+@pytest.mark.parametrize(
+    "row,column,wanted",
+    [(0, 0, "A1"), (18, 1, "B19"), (0, 26, "AA1"), (4, 27, "AB5")],
+)
+def test_a_cell_is_addressed_the_way_a_spreadsheet_addresses_it(row, column, wanted):
+    assert gsheets._cell_name(row, column) == wanted
+
+
+def test_only_the_named_cells_are_written(monkeypatch):
+    """The rows around them are somebody's work; a whole-row write would blank
+    a column nobody asked about."""
+    monkeypatch.setenv("LEADS_SUMMARY_SHEET_ID", SHEET)
+    sent = {}
+
+    def post(method, url, **kwargs):
+        sent["json"] = kwargs.get("json")
+        return httpx.Response(200, json={}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(gsheets.httpx, "request", post)
+    monkeypatch.setattr(gsheets, "access_token", lambda **k: "token")
+
+    count = gsheets.update_cells(SHEET, "Other sheets", [(1, 1, "=HYPERLINK(\"u\",\"x\")")])
+
+    assert count == 1
+    assert sent["json"]["data"] == [
+        {"range": "'Other sheets'!B2", "values": [['=HYPERLINK("u","x")']]}
+    ]
+
+
+def test_tidying_a_masterlist_is_still_refused(monkeypatch):
+    monkeypatch.setenv("LEADS_SUMMARY_SHEET_ID", "someotherfileid12345678")
+    with pytest.raises(SheetsError, match="not allowed to change"):
+        gsheets.update_cells(SHEET, "Other sheets", [(0, 0, "x")])
