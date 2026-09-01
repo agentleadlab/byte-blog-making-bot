@@ -267,11 +267,76 @@ _PRICE_PREFIX = re.compile(r"^\$\s*[\d,.]+\s*(?:/\s*\w+)?\s*[-–—:]*\s*")
 _LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
 
 
+# How somebody types an order into a card: "let's do 40 Text-Verified Veteran
+# Leads". The sentence is not the lead type, and it goes onto three people's
+# checklists exactly as written unless it comes off here.
+_LEAD_IN = re.compile(
+    r"^(?:(?:let'?s|lets|let\s+us|we(?:'ll|\s+will)?|i'?ll|please|can\s+we)\s+)?"
+    r"(?:do|get|give|book|send|start|add|run)\s+(?:me\s+|us\s+|them\s+|him\s+|her\s+)?",
+    re.IGNORECASE,
+)
+
+# A note about the sale rather than about the leads. Dropped, because the line
+# is read by whoever loads the leads and none of this changes what they load.
+# "Uprise" is the exception - it says which product the order is.
+_SALES_NOTE = re.compile(
+    r"\s*\b(?:record\s+)?(?:unsigned|signed|discount|discounted|record)\b\s*$",
+    re.IGNORECASE,
+)
+
+# "40 OTP Vets - RECORD discount". Everything after the dash is a note unless
+# it names leads of its own.
+_TRAILING = re.compile(r"^(?P<head>.+?)\s*[-–—,]\s*(?P<tail>[^-–—,]+)$")
+
+KEEP_ANYWAY = re.compile(r"\buprise\b", re.IGNORECASE)
+
+
+def _has_count(said: str) -> bool:
+    return bool(re.search(r"\d", said or ""))
+
+
+def _drop_notes(said: str) -> str:
+    """Take the sales talk off a line without taking the order with it."""
+    while True:
+        found = _TRAILING.match(said)
+        if not found:
+            break
+        head, tail = found.group("head").strip(), found.group("tail").strip()
+        if KEEP_ANYWAY.search(tail):
+            break
+        if families_in(tail):
+            # Both halves name leads. "OTP Vets - 25 OTP Vets" is one order
+            # written twice, and the half with the count is the useful one.
+            if families_in(head) and not _has_count(head) and _has_count(tail):
+                said = tail
+                continue
+            break
+        said = head
+
+    while True:
+        shorter = _SALES_NOTE.sub("", said).strip(" -–—:,")
+        if shorter == said or not shorter:
+            break
+        said = shorter
+    return said
+
+
 def tidy_lead_type(phrase: str) -> str:
-    """A lead type with the label, the money and the punctuation taken off."""
+    """A lead type with the label, the money, the sales talk and the
+    punctuation taken off.
+
+    What is left is what the person loading the leads needs: how many, and of
+    what. The count stays; "RECORD discount" and "unsigned" do not, because
+    neither changes what gets loaded. Anything saying Uprise stays, because
+    that does.
+    """
     said = " ".join((phrase or "").split())
     said = _LABEL_PREFIX.sub("", said)
-    return _PRICE_PREFIX.sub("", said).strip(" -–—:")
+    said = _PRICE_PREFIX.sub("", said).strip(" -–—:")
+    said = _LEAD_IN.sub("", said, count=1)
+    if not KEEP_ANYWAY.search(said):
+        said = _drop_notes(said)
+    return said.strip(" -–—:,")
 
 
 # A lead type is a phrase, not a sentence. Gustin Elrod's card says "Gustin
@@ -587,7 +652,10 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
         # Colton Ramon's card says "Text Verified Veteran Plus" up top and
         # "Lead type: OTP Widows" below. That is not a card to ask about -
         # somebody corrected it, and the labelled line is where they said so.
-        field = find_lead_type(text)
+        # Compared tidied: the labelled line reads "OTP Widows - 50 OTP
+        # Widows" on the card and "50 OTP Widows" once the sales talk is off,
+        # and those have to be recognised as the same line.
+        field = tidy_lead_type(find_lead_type(text))
         for _tiered, phrase, landed in picked:
             if field and phrase == field:
                 return phrase, landed, []

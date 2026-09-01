@@ -2157,3 +2157,45 @@ def test_the_agent_gets_one_line_not_two():
 
     assert [spread.checklist for spread in spreads] == ["OTP VETS"]
     assert problems == []
+
+
+# --------------------------------- the line reads like an order, not a sentence
+
+
+@pytest.mark.parametrize(
+    "typed,wanted",
+    [
+        # Real lines off this week's cards.
+        ("let's do 40 Text-Verified Veteran Leads", "40 Text-Verified Veteran Leads"),
+        ("40 OTP Vets - RECORD discount", "40 OTP Vets"),
+        ("OTP Vets - 25 OTP Vets", "25 OTP Vets"),
+        ("30 OTP Blue Collar IUL UNSIGNED", "30 OTP Blue Collar IUL"),
+        ("we'll do 20 Basic Spanish IUL", "20 Basic Spanish IUL"),
+        # The count stays: it is what whoever loads the leads needs.
+        ("15 OTP VETS", "15 OTP VETS"),
+        # Uprise says which product it is, so it survives everything.
+        ("Uprise 5 OTP VETS", "Uprise 5 OTP VETS"),
+        ("30 OTP VET PLUS - uprise", "30 OTP VET PLUS - uprise"),
+        # The form's own label still comes off, as before.
+        ("Lead Type: OTP VETS", "OTP VETS"),
+    ],
+)
+def test_the_sales_talk_comes_off_the_line(typed, wanted):
+    assert agents.tidy_lead_type(typed) == wanted
+
+
+def test_a_note_never_eats_the_whole_order():
+    """Stripping is only ever allowed to leave something behind."""
+    assert agents.tidy_lead_type("unsigned") == "unsigned"
+    assert agents.tidy_lead_type("RECORD discount") == "RECORD discount"
+
+
+def test_the_tidied_line_is_what_lands_on_the_checklist():
+    card = """-- New Client Onboarded --
+
+Name: Jonathan Carlos
+Lead Type: let's do 40 Text-Verified Veteran Leads
+
+Live Wednesday, September 2
+"""
+    assert agents.stated_lead_type(card) == "40 Text-Verified Veteran Leads"
