@@ -1035,10 +1035,10 @@ def test_a_new_row_matches_the_columns_that_tab_already_has():
     held = Masterlist(category="x", name="IUL Exra", sheet="https://x", count=12)
 
     assert leadsheets.row_for(["Type of leads", "Sheet"], held) == [
-        "IUL Exra", '=HYPERLINK("https://x","Open sheet")',
+        "IUL Exra", "https://x",
     ]
     assert leadsheets.row_for(["Sheet", "Total leads", "Type of leads"], held) == [
-        '=HYPERLINK("https://x","Open sheet")', 12, "IUL Exra",
+        "https://x", 12, "IUL Exra",
     ]
 
 
@@ -1093,25 +1093,31 @@ def test_nothing_is_appended_when_the_folder_holds_nothing_new(monkeypatch):
 # --------------------------------- a pasted URL becomes a tidy link
 
 
-def test_a_pasted_url_is_turned_into_an_open_sheet_link():
+def test_an_open_sheet_link_is_turned_back_into_the_address():
+    """The team copies these links out of the sheet, and "Open sheet" hides
+    the address behind a word."""
     rows = [
         ["Type of leads", "Sheet"],
+        ["FEX Tri State", '=HYPERLINK("https://docs.google.com/spreadsheets/d/x/edit","Open sheet")'],
         ["All In One Insurance VET",
          f"https://docs.google.com/spreadsheets/d/{SHEET}/edit"],
-        ["FEX Tri State", '=HYPERLINK("https://x","Open sheet")'],
     ]
-    found = leadsheets.links_to_tidy(rows)
+    found = leadsheets.links_to_plain(rows)
 
-    assert found == [(
-        1, 1,
-        f'=HYPERLINK("https://docs.google.com/spreadsheets/d/{SHEET}/edit","Open sheet")',
-    )]
+    assert found == [(1, 1, "https://docs.google.com/spreadsheets/d/x/edit")]
 
 
-def test_a_cell_with_a_note_beside_the_link_is_left_alone():
+def test_a_cell_that_is_more_than_the_formula_is_left_alone():
     """Somebody wrote that. Rewriting the cell would lose it."""
-    rows = [["LP IUL", f"https://docs.google.com/spreadsheets/d/{SHEET}/edit — old one"]]
-    assert leadsheets.links_to_tidy(rows) == []
+    rows = [["LP IUL", '=HYPERLINK("https://x","Open sheet") — old one']]
+    assert leadsheets.links_to_plain(rows) == []
+
+
+def test_a_new_row_carries_the_address_itself():
+    held = Masterlist(category="x", name="IUL Exra", sheet="https://docs.google.com/x")
+    assert leadsheets.row_for(["Type of leads", "Sheet"], held) == [
+        "IUL Exra", "https://docs.google.com/x",
+    ]
 
 
 @pytest.mark.parametrize(

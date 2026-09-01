@@ -472,27 +472,27 @@ def apart(found: list[Masterlist]) -> tuple[list[Masterlist], list[Masterlist]]:
     return theirs, rest
 
 
-# A cell that is nothing but a link. Pasted rows read as three lines of URL
-# where the rows RYTE wrote read "Open sheet", and the tab is easier to use
-# when they all look the same.
-_BARE_LINK = re.compile(
-    r"^\s*(https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_/-]+[^\s]*)\s*$"
+# A cell that is only a HYPERLINK formula. The team wants the address itself
+# on this tab, not a word covering it - a link you can read is a link you can
+# copy somewhere else without opening it first.
+_WRAPPED_LINK = re.compile(
+    r'^\s*=\s*HYPERLINK\(\s*"([^"]+)"\s*(?:,\s*"[^"]*"\s*)?\)\s*$', re.IGNORECASE
 )
 
 
-def links_to_tidy(rows: list[list[str]]) -> list[tuple[int, int, str]]:
-    """(row, column, the formula to put there) for every pasted-in URL.
+def links_to_plain(rows: list[list[str]]) -> list[tuple[int, int, str]]:
+    """(row, column, the address to put there) for every wrapped-up link.
 
     Row and column are zero-based from the top-left of the tab. Only a cell
-    holding a link and nothing else is touched: a cell with a note beside the
-    link is somebody writing something, and rewriting it would lose the note.
+    that is nothing but the formula is touched: one with anything else in it
+    is somebody writing something, and rewriting it would lose that.
     """
     found: list[tuple[int, int, str]] = []
     for down, row in enumerate(rows or []):
         for across, cell in enumerate(row or []):
-            said = _BARE_LINK.match(str(cell))
+            said = _WRAPPED_LINK.match(str(cell))
             if said:
-                found.append((down, across, _link(said.group(1), "Open sheet")))
+                found.append((down, across, said.group(1)))
     return found
 
 
@@ -534,21 +534,25 @@ def column_kind(heading: str) -> str:
 
 
 def row_for(header: list[str], held: Masterlist) -> list:
-    """One masterlist, laid out to match the headings a tab already has."""
+    """One masterlist, laid out to match the headings a tab already has.
+
+    The address itself goes in, not a HYPERLINK covering it: a link you can
+    read is one you can copy somewhere else without opening it first.
+    """
     row: list = []
     for heading in header or []:
         kind = column_kind(heading)
         if kind == "name":
             row.append(held.name)
         elif kind == "sheet":
-            row.append(_link(held.sheet, "Open sheet"))
+            row.append(held.sheet or "—")
         elif kind == "channel":
-            row.append(_link(held.channel, "Open channel"))
+            row.append(held.channel or "—")
         elif kind == "count":
             row.append("—" if held.count is None else held.count)
         else:
             row.append("")
-    return row or [held.name, _link(held.sheet, "Open sheet")]
+    return row or [held.name, held.sheet or "—"]
 
 
 def refill(found: list[Masterlist], files: list[dict]) -> int:

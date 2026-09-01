@@ -2002,9 +2002,9 @@ def _top_up_other_sheets(
         seen |= leadsheets.ids_in(rows)
         if tab == leadsheets.OTHER_TAB and rows:
             header = rows[0]
-            # Rows pasted in by hand show three lines of URL where the rows
-            # RYTE wrote read "Open sheet". Same link, tidier tab.
-            gsheets.update_cells(into, tab, leadsheets.links_to_tidy(rows))
+            # The address itself, not a word covering it: the team copies
+            # these links out of the sheet, and "Open sheet" hides them.
+            gsheets.update_cells(into, tab, leadsheets.links_to_plain(rows))
 
     # What RYTE learned about each sheet on this run, so an appended row can
     # carry a channel and a count where the tab asks for them.
