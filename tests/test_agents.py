@@ -2283,3 +2283,55 @@ def test_a_card_with_no_date_and_no_top_up_still_asks():
 def test_a_written_date_still_beats_the_top_up_wording():
     card = "50 OTP VETS\n\nadd to his current\n\nLive Friday, September 4\n"
     assert agents.find_launch(card, today=date(2026, 9, 1)) == date(2026, 9, 4)
+
+
+# --------------------------------- a trucker is its own product
+
+
+MARCEL = """-- New Client Onboarded --
+
+First Name: Marcel
+Last Name: Trifan
+Package Selected: Text Verified
+Lead Type: Indexed Universal Life
+Target Areas for Marketing:
+
+GA,MO,NC,AL,KS,KY,LA,MA,MD,MI,MS,NV,OK,PA,SC,TN,TX,UT,VA,WA,WI,OR
+30 LEADS
+TEXT VERIFIED TRUCKER IUL
+
+Marcel got the OTP Truckers with early access discount as well
+Get him started later today please - Launch date is later today, September 2
+"""
+
+TRUCKER_BOARD = ["OTP IUL Plus", "OTP IUL TRUCKER", "OTP Blue Collar IUL", "own setup"]
+
+
+def test_a_trucker_lands_on_the_trucker_checklist():
+    """"TEXT VERIFIED TRUCKER IUL" read as either IUL Plus or IUL TRUCKER and
+    had to be asked about. It is always the trucker one."""
+    _said, landed, _could = agents.best_lead_type(MARCEL, TRUCKER_BOARD)
+    assert landed == "OTP IUL TRUCKER"
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["TEXT VERIFIED TRUCKER IUL", "30 OTP Truckers", "trucker iul", "40 OTP TRUCKER IUL"],
+)
+def test_the_ways_a_trucker_order_is_written(said):
+    assert agents.match_checklist(
+        said, TRUCKER_BOARD, tier=agents.tier_of(said)
+    ) == "OTP IUL TRUCKER"
+
+
+def test_a_trucker_is_an_iul_even_when_the_card_never_says_iul():
+    """"OTP Truckers" names the family on its own, the way SIUL and BC do."""
+    assert "iul" in agents.families_in("30 OTP Truckers")
+
+
+def test_plain_iul_is_still_plain_iul():
+    """The point of the qualifier is that it separates two checklists, not
+    that it swallows one."""
+    assert agents.match_checklist(
+        "25 text verified iul", TRUCKER_BOARD, tier="plus"
+    ) == "OTP IUL Plus"

@@ -111,9 +111,11 @@ LEAD_TYPE_BLOCK = re.compile(
 
 # What kind of leads. The word that matters, whatever it is dressed in.
 FAMILIES = (
-    # SIUL is Spanish IUL and BC is Blue Collar IUL - both are IUL products on
-    # this board, and the checklist is called "OTP Blue Collar IUL" outright.
-    ("iul", re.compile(r"\biuls?\b|\bsiul\b|\bbc\b", re.IGNORECASE)),
+    # SIUL is Spanish IUL, BC is Blue Collar IUL, and a trucker is an IUL
+    # too - all three are IUL products on this board, and the checklists say
+    # so outright: "OTP Blue Collar IUL", "OTP IUL TRUCKER". So a card saying
+    # only "OTP Truckers" still names the family it belongs to.
+    ("iul", re.compile(r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b", re.IGNORECASE)),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
@@ -134,6 +136,10 @@ QUALIFIERS = (
     # own because neither abbreviation was known.
     ("blue collar", re.compile(r"\bblue\s*collar\b|\bbc\b", re.IGNORECASE)),
     ("spanish", re.compile(r"\bspanish\b|\bsiul\b", re.IGNORECASE)),
+    # Truckers are their own product, not IUL Plus with a note on it: Marcel
+    # Trifan's "TEXT VERIFIED TRUCKER IUL" read as either and had to be asked
+    # about, and the answer was always the trucker checklist.
+    ("trucker", re.compile(r"\btruckers?\b", re.IGNORECASE)),
 )
 
 # Franklin's rule: standard or basic means Standard; text-verified or OTP
