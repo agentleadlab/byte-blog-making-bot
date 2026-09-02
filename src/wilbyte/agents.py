@@ -917,6 +917,33 @@ _MONTH_DAY = re.compile(
 _NUMERIC = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
 
 
+# Short forms that cost a card its date. "LIVE TOM. SEPT 3" is read as the
+# sentence "LIVE TOM" - the full stop after the abbreviation ends it, and the
+# date sitting right there never gets looked at.
+_SHORTHAND = (
+    (re.compile(r"\btom\.(?=\s|$)|\btomm?\.?(?=\s|$)|\btmrw?\b|\btmr\b", re.IGNORECASE),
+     "tomorrow"),
+    (re.compile(r"\btod\.(?=\s|$)|\btdy\b", re.IGNORECASE), "today"),
+    # "Sept. 3" and "Aug. 28" - the stop belongs to the abbreviation, not to
+    # the end of what somebody was saying.
+    (re.compile(r"\b(jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.", re.IGNORECASE),
+     r"\1"),
+)
+
+
+def spelled_out(text: str) -> str:
+    """The same card with the shorthand written out.
+
+    Only forms that mean a day. Everything else is left exactly as typed - a
+    card is somebody's words and rewriting it further would be guessing at
+    them.
+    """
+    said = text or ""
+    for pattern, instead in _SHORTHAND:
+        said = pattern.sub(instead, said)
+    return said
+
+
 def find_launch(text: str, *, today: date) -> date | None:
     """When the agent goes live, read out of the sentence that says so.
 
@@ -925,6 +952,7 @@ def find_launch(text: str, *, today: date) -> date | None:
     isn't, and the calendar date is the one that stays true - so every sentence
     is looked at for a real date before any of them is read for a relative one.
     """
+    text = spelled_out(text)
     said = [
         sentence
         for pattern in _WHEN_SAID

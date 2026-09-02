@@ -2445,3 +2445,49 @@ def test_forgetting_a_card_makes_it_due_again(tmp_path):
     agentseen.forget(["card-1"], path)
 
     assert agentseen.due(["card-1"], path=path) == ["card-1"]
+
+
+# --------------------------------- shorthand for a day
+
+
+PARKER = """Name: Parker Marquis
+Phone: +(951)850-2790
+Email: Parkermarquis.ins@gmail.com
+Lead type: otp widows
+
+States: TN, NC, SC, VA
+
+25 OTP WIDOWS
+EVERLIFE LEADS
+
+LIVE TOM. SEPT 3
+"""
+
+
+def test_a_full_stop_in_an_abbreviation_does_not_end_the_sentence():
+    """"LIVE TOM. SEPT 3" was read as "LIVE TOM" - the date was sitting right
+    there and never got looked at."""
+    assert agents.find_launch(PARKER, today=date(2026, 9, 2)) == date(2026, 9, 3)
+
+
+@pytest.mark.parametrize(
+    "said,wanted",
+    [
+        ("Live tom.", date(2026, 9, 3)),
+        ("live tmrw", date(2026, 9, 3)),
+        ("Live tmr", date(2026, 9, 3)),
+        ("Launch date: Sept. 8", date(2026, 9, 8)),
+        ("Live Aug. 28", date(2026, 8, 28)),
+        ("Live today", date(2026, 9, 2)),
+    ],
+)
+def test_the_short_ways_of_writing_a_day(said, wanted):
+    assert agents.find_launch(said, today=date(2026, 9, 2)) == wanted
+
+
+def test_the_card_itself_is_not_rewritten():
+    """Only the forms that mean a day. A card is somebody's words."""
+    assert agents.spelled_out("25 OTP WIDOWS\nEVERLIFE LEADS") == (
+        "25 OTP WIDOWS\nEVERLIFE LEADS"
+    )
+    assert "Tomlinson" in agents.spelled_out("Agent: Tomlinson")
