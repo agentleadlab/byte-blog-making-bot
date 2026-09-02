@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from datetime import date, datetime
 from functools import partial
 from pathlib import Path
@@ -3667,6 +3668,29 @@ def preflight(config: Config) -> list[str]:
     return missing_required
 
 
+# How long to wait before starting again when Discord drops the connection in
+# a way discord.py cannot recover from. Their gateway answered 503 one evening,
+# the library tried to reconnect to a socket it never had, and RYTE was dead
+# until somebody noticed in the morning - a board that walks itself has to
+# survive the other side having a bad minute.
+RESTART_PAUSES = (5, 15, 30, 60, 120)
+
+
+def starts_again(exc: BaseException) -> bool:
+    """Whether this is worth starting again for, or worth stopping over.
+
+    Anything that looks like the network or Discord is worth another go. What
+    is not: a token Discord refused, an intent the portal has switched off, or
+    somebody pressing Ctrl-C. Those do not improve by being tried again, and
+    looping on them hides the message that says what to fix.
+    """
+    if isinstance(exc, (discord.LoginFailure, discord.PrivilegedIntentsRequired)):
+        return False
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return False
+    return True
+
+
 def run_bot(config: Config | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -3676,6 +3700,7 @@ def run_bot(config: Config | None = None) -> None:
         log.error("Could not load configuration: %s", exc)
         raise SystemExit(1)
 
+    lost = 0
     missing = preflight(config)
     if missing:
         log.error(
@@ -3685,19 +3710,33 @@ def run_bot(config: Config | None = None) -> None:
         )
         raise SystemExit(1)
 
-    try:
-        build_bot(config).run(config.secrets.discord_bot_token, log_handler=None)
-    except discord.LoginFailure:
-        log.error(
-            "Discord rejected the bot token. Copy a fresh one from the developer "
-            "portal (Bot -> Reset Token) into DISCORD_BOT_TOKEN - note it is the "
-            "bot token, not the application id, client secret, or public key."
-        )
-        raise SystemExit(1)
-    except discord.PrivilegedIntentsRequired:
-        log.error(
-            "Discord requires the intents this bot asked for to be enabled in the "
-            "developer portal. Either turn on Message Content there, or unset "
-            "DISCORD_MESSAGE_CONTENT - mentions work without it."
-        )
-        raise SystemExit(1)
+    while True:
+        try:
+            build_bot(config).run(config.secrets.discord_bot_token, log_handler=None)
+            return
+        except discord.LoginFailure:
+            log.error(
+                "Discord rejected the bot token. Copy a fresh one from the developer "
+                "portal (Bot -> Reset Token) into DISCORD_BOT_TOKEN - note it is the "
+                "bot token, not the application id, client secret, or public key."
+            )
+            raise SystemExit(1)
+        except discord.PrivilegedIntentsRequired:
+            log.error(
+                "Discord requires the intents this bot asked for to be enabled in the "
+                "developer portal. Either turn on Message Content there, or unset "
+                "DISCORD_MESSAGE_CONTENT - mentions work without it."
+            )
+            raise SystemExit(1)
+        except KeyboardInterrupt:
+            return
+        except Exception as exc:  # noqa: BLE001 - narrowed by `starts_again`
+            if not starts_again(exc):
+                raise
+            wait = RESTART_PAUSES[min(lost, len(RESTART_PAUSES) - 1)]
+            lost += 1
+            log.warning(
+                "Lost Discord — %s: %s. Starting again in %ss.",
+                type(exc).__name__, exc, wait,
+            )
+            time.sleep(wait)

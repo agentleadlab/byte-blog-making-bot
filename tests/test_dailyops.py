@@ -3766,3 +3766,41 @@ def test_the_write_step_can_be_told_to_carry_them_after_all(monkeypatch, config,
         config, [plan], targets, day=_date(2026, 9, 1), include_stuck=True
     )
     assert moved == 2, "and moves when somebody says to"
+
+
+# --------------------------------------------- surviving Discord's bad minute
+
+
+def test_a_gateway_wobble_is_worth_starting_again_for():
+    """Discord answered 503, discord.py tried to reconnect to a socket it
+    never had, and RYTE was dead until somebody noticed in the morning."""
+    import aiohttp
+    from wilbyte.bot import client
+
+    assert client.starts_again(
+        aiohttp.ClientError("503, Invalid response status")
+    ) is True
+    assert client.starts_again(
+        AttributeError("'NoneType' object has no attribute 'sequence'")
+    ) is True
+    assert client.starts_again(OSError("network is unreachable")) is True
+
+
+def test_a_wrong_token_is_not():
+    """It does not improve by being tried again, and looping on it hides the
+    message that says what to fix."""
+    import discord
+    from wilbyte.bot import client
+
+    assert client.starts_again(discord.LoginFailure("bad token")) is False
+    assert client.starts_again(discord.PrivilegedIntentsRequired(shard_id=None)) is False
+    assert client.starts_again(KeyboardInterrupt()) is False
+    assert client.starts_again(SystemExit(1)) is False
+
+
+def test_it_waits_longer_each_time_but_never_gives_up():
+    from wilbyte.bot import client
+
+    assert client.RESTART_PAUSES[0] <= 10, "a wobble should cost seconds"
+    assert client.RESTART_PAUSES == tuple(sorted(client.RESTART_PAUSES))
+    assert client.RESTART_PAUSES[-1] <= 300, "and it should keep trying"
