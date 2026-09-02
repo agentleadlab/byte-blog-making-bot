@@ -3039,6 +3039,28 @@ def run_rollover(config: Config, *, day=None, only=None) -> tuple[int, list[str]
     return moved, problems, flagged
 
 
+def carry_stuck(config: Config, *, day=None, only=None) -> tuple[int, list[str]]:
+    """Carry the items that were held back for having been carried too often.
+
+    Only ever reached by somebody pressing the button. An item on its fourth
+    night is usually one nobody is going to do, which is why it stops moving
+    on its own - but "it is still the plan, move it" is an answer too, and it
+    should not cost a trip to Trello to say so.
+
+    The board is read again rather than trusted from the message: the button
+    may have sat in the channel for an hour, and somebody may have ticked the
+    item in the meantime.
+    """
+    from .. import dailyops
+
+    day = day or board_day(config)
+    plans, _missing, targets = read_rollover(config, day=day, only=only)
+    stuck = [plan for plan in plans if any(item.stuck for item in plan.carried)]
+    if not stuck:
+        return 0, []
+    return apply_rollover(config, stuck, targets, day=day, include_stuck=True)
+
+
 # ------------------------------------------------- new agents going live
 
 
@@ -3394,7 +3416,9 @@ def read_rollover(config: Config, *, day=None, only=None, skip=None):
         client.close()
 
 
-def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, list[str]]:
+def apply_rollover(
+    config: Config, plans, targets, *, day=None, include_stuck: bool = False
+) -> tuple[int, list[str]]:
     """Write the carried items onto tomorrow's cards. Returns (moved, problems).
 
     Only what the plan called `carried` - an item whose linked card already
@@ -3453,7 +3477,7 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
                 for existing in c.get("checkItems") or []
             }
             for item in plan.carried:
-                if item.stuck:
+                if item.stuck and not include_stuck:
                     continue
                 key = " ".join(item.person.split()).casefold()
                 if (key, " ".join(item.name.split())) in already:

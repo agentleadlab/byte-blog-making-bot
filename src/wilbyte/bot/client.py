@@ -1141,6 +1141,10 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
 
     responder = _board_responder(bot)
     card = None
+    # Set by the rollover branch when something was held back for having been
+    # carried too often, so the message can offer to carry it anyway.
+    stuck: list = []
+    carry_again = None
     try:
         if step == "make_setup":
             title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
@@ -1197,6 +1201,8 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                        else f"carried {item.times_rolled} days, left for you")
                     for item in flagged
                 )
+            stuck = [item for item in flagged if item.stuck and not item.looks_done]
+            carry_again = (when, kinds) if stuck else None
         elif step == dailyops.LATE_DONE:
             # Same hour as the late carry, and the same yesterday.
             moved, problems = await asyncio.to_thread(
@@ -1233,6 +1239,32 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     # every morning reporting that nothing happened is a line nobody reads.
     if responder and (note or card):
         await responder.send(note or None, embed=card)
+
+    # An item on its fourth night stops moving on its own, because carrying it
+    # forever is how a card nobody is going to do follows the team around. But
+    # "it is still the plan" is an answer too, and it should not cost a trip to
+    # Trello to give it.
+    if responder and carry_again and stuck:
+        when, kinds = carry_again
+        view = views.ConfirmView(
+            requester_id=None,
+            timeout=bot.config.discord.approval_timeout_seconds,
+            label=f"Carry {len(stuck)} anyway",
+            emoji="↪",
+        )
+        await responder.send(
+            f"Keep carrying {'it' if len(stuck) == 1 else 'them'} to tomorrow?",
+            view=view,
+        )
+        await view.wait()
+        if view.confirmed:
+            moved, problems = await asyncio.to_thread(
+                partial(jobs.carry_stuck, bot.config, day=when, only=kinds)
+            )
+            said = f"↪ Carried {moved} item(s) onto tomorrow's cards."
+            if problems:
+                said += "\n⚠ " + "\n⚠ ".join(problems)
+            await responder.send(said)
 
 
 def _board_responder(bot: "WilByteBot"):

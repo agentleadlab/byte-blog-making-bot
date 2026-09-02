@@ -3723,3 +3723,46 @@ def test_it_still_catches_up_within_the_small_hours():
 def test_the_ordinary_steps_still_catch_up_all_day():
     late = dailyops.steps_due(at_hour(23, 0), set())
     assert "to_today" in late and "to_done" in late
+
+
+# --------------------------------------------- carrying a stuck item anyway
+
+
+def test_an_item_carried_three_nights_stops_moving_on_its_own():
+    """Carrying it forever is how work nobody is going to do follows the team
+    around. It gets raised instead."""
+    from wilbyte.dailyops import Leftover
+
+    assert Leftover(person="Nicole", name="OPUS CLIP", times_rolled=3).stuck is True
+    assert Leftover(person="Nicole", name="OPUS CLIP", times_rolled=2).stuck is False
+
+
+def test_the_write_step_can_be_told_to_carry_them_after_all(monkeypatch, config, tmp_path):
+    """"It is still the plan" is an answer, and it shouldn't cost a trip to
+    Trello to give it."""
+    from datetime import date as _date
+
+    from wilbyte import carried
+    from wilbyte.bot import jobs
+
+    plan = rollover_of(
+        ("Nicole", "OPUS CLIP", "incomplete"),
+        ("Kath", "Fresh one", "incomplete"),
+    )
+    for item in plan.leftovers:
+        item.times_rolled = 3 if item.person == "Nicole" else 0
+    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"},
+                                             {"id": "l2", "name": "Kath"}])}
+    monkeypatch.setattr(carried, "CARRIED_PATH", tmp_path / "c.json")
+
+    board = FakeTrello(holds={"card-tomorrow": list(targets["general"][1])})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    moved, _ = jobs.apply_rollover(config, [plan], targets, day=_date(2026, 9, 1))
+    assert moved == 1, "the stuck one stays put on its own"
+
+    board = FakeTrello(holds={"card-tomorrow": list(targets["general"][1])})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    moved, _ = jobs.apply_rollover(
+        config, [plan], targets, day=_date(2026, 9, 1), include_stuck=True
+    )
+    assert moved == 2, "and moves when somebody says to"
