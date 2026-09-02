@@ -2229,3 +2229,57 @@ Live Thursday, September 3
     said, landed, _ = agents.best_lead_type(card, ["OTP VETS", "OTP FEX"])
     assert said == "OTP vets"
     assert landed == "OTP VETS"
+
+
+# --------------------------------- a top-up has no launch date, and goes today
+
+
+SALAS = """-- New Client Onboarded --
+
+First Name: Sebastian
+Last Name: Salas
+Phone: +954-907-1479
+Package Selected: Text Verified
+Lead Type: Vets
+Target Areas for Marketing: TX, TN, OH, VA, CO, AZ, NM, FL, NC
+
+50 Text Verified Veteran leads
+
+add it to his current once fulfilled
+
+AEP SERVER
+"""
+
+
+def test_a_top_up_goes_on_todays_cards():
+    """"add it to his current once fulfilled" says when: as soon as it is set
+    up. Read as a missing date, it left fifty veteran leads waiting."""
+    assert agents.find_launch(SALAS, today=date(2026, 9, 1)) == date(2026, 9, 1)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "add it to his current once fulfilled",
+        "add these to his active order",
+        "add to her existing batch",
+        "once fulfilled add to his current",
+        "after his current is done",
+    ],
+)
+def test_the_ways_the_team_writes_a_top_up(said):
+    assert agents.find_launch(f"50 OTP VETS\n\n{said}\n", today=date(2026, 9, 1)) == (
+        date(2026, 9, 1)
+    )
+
+
+def test_a_card_with_no_date_and_no_top_up_still_asks():
+    """A date somebody forgot is not the same as one that doesn't exist. That
+    one is still a question."""
+    card = "50 OTP VETS\n\nTarget Areas: TX, FL\n"
+    assert agents.find_launch(card, today=date(2026, 9, 1)) is None
+
+
+def test_a_written_date_still_beats_the_top_up_wording():
+    card = "50 OTP VETS\n\nadd to his current\n\nLive Friday, September 4\n"
+    assert agents.find_launch(card, today=date(2026, 9, 1)) == date(2026, 9, 4)

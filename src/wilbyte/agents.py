@@ -796,11 +796,19 @@ ASAP = re.compile(
 )
 
 # An existing agent buying more of what they already have. "Add to his active
-# order - Wednesday, August 26" is not a launch, so none of the words below
+# order - Wednesday, August 26" is not a launch, so none of the launch words
 # appear on the card - and it is the usual same-day job, onto that day's Lead
 # Order, Ads and Ops cards.
+#
+# "order" is not always the word: Sebastian Salas's card says "add it to his
+# current once fulfilled", and reading that as a card somebody forgot to date
+# left fifty veteran leads waiting for an answer.
 ADD_TO_ORDER = re.compile(
-    r"\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+)?to\b[^.\n]*\border\b",
+    r"\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+|him\s+|her\s+)?"
+    r"to\b[^.\n]*\b(?:order|current|existing|active|batch|list)\b"
+    r"|\bonce\s+(?:it\s+is\s+|its\s+|it's\s+)?fulfill?ed\b"
+    r"|\bwhen\s+(?:it\s+is\s+|its\s+|it's\s+)?fulfill?ed\b"
+    r"|\bafter\s+(?:his|her|their)\s+current\b",
     re.IGNORECASE,
 )
 
@@ -855,6 +863,12 @@ def find_launch(text: str, *, today: date) -> date | None:
         found = _date_in(sentence, today=today)
         if found:
             return found
+
+    # A top-up has no launch date because it isn't a launch - it goes on as
+    # soon as it is set up. Looked for across the whole card rather than in a
+    # launch sentence, because a card like this has no launch sentence at all.
+    if ADD_TO_ORDER.search(text or ""):
+        return today
     return None
 
 
