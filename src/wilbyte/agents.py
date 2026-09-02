@@ -639,12 +639,20 @@ def candidates(
     """
     family, said, marks = shape_of(lead_type)
     tier = said or tier
-    if family is None:
+    if family is None and not marks:
         return []
+
     found = []
     for name in existing or []:
         theirs = shape_of(name)
-        if theirs[0] != family or theirs[2] != marks:
+        # A card can name the variant and leave the family unsaid: "25 OTP
+        # SPANISH" is Spanish IUL on a board whose only Spanish checklist is
+        # that one. Where the board has Spanish IUL *and* Spanish FEX, this
+        # comes back with both and somebody is asked, which is right.
+        if family is None:
+            if not marks or not marks <= theirs[2]:
+                continue
+        elif theirs[0] != family or theirs[2] != marks:
             continue
         if strict and tier and theirs[1] and tier != theirs[1]:
             continue

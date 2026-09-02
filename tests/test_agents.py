@@ -2491,3 +2491,34 @@ def test_the_card_itself_is_not_rewritten():
         "25 OTP WIDOWS\nEVERLIFE LEADS"
     )
     assert "Tomlinson" in agents.spelled_out("Agent: Tomlinson")
+
+
+# --------------------------------- the variant named, the family left unsaid
+
+
+SPANISH_BOARD = ["OTP Spanish IUL", "OTP VET Plus", "OTP FEX", "own setup"]
+
+
+def test_a_card_naming_only_the_variant_still_files():
+    """Jose Darinel Garcia's line reads "25 OTP SPANISH". The checklist was
+    sitting right there and the spread said nothing matched."""
+    assert agents.match_checklist(
+        "25 OTP SPANISH", SPANISH_BOARD, tier="plus"
+    ) == "OTP Spanish IUL"
+
+
+def test_two_of_that_variant_is_a_question_again():
+    """Spanish IUL and Spanish FEX are two products. Picking one is a guess."""
+    assert agents.match_checklist(
+        "25 OTP SPANISH", ["OTP Spanish IUL", "Spanish FEX"], tier="plus"
+    ) is None
+
+
+def test_naming_the_family_still_beats_naming_the_variant():
+    assert agents.match_checklist(
+        "25 OTP VETS", SPANISH_BOARD, tier="plus"
+    ) == "OTP VET Plus"
+
+
+def test_a_variant_with_no_checklist_for_it_is_still_nothing():
+    assert agents.match_checklist("30 blue collar", SPANISH_BOARD, tier="plus") is None
