@@ -249,6 +249,49 @@ def tier_of(text: str) -> str | None:
     return None
 
 
+# Every word the reading turns on. A card is typed in a hurry by somebody with
+# forty of them to get through, and "OTP TRCUKER IUL" is the same order as
+# "OTP Trucker IUL" - read as a different one, it goes on the board as an
+# agent set up on leads he never bought.
+_VOCABULARY = (
+    "trucker", "truckers", "spanish", "collar", "blue", "veteran", "veterans",
+    "widow", "widows", "mortgage", "expense", "final", "standard", "standards",
+    "basic", "basics", "plus", "instant", "facebook", "uprise", "phoenix",
+    "ascend", "verified", "text",
+)
+
+# Close enough to be the same word, far enough not to catch a different one.
+# "vet" and "fex" are three letters and one apart from plenty; short words are
+# left alone entirely for that reason.
+_CLOSE_ENOUGH = 0.82
+_SHORTEST_TO_FIX = 5
+
+
+def despell(text: str) -> str:
+    """The same words, with the obvious typos put right.
+
+    Only words nobody meant: a word already in the vocabulary is left alone,
+    and so is anything short, where one letter's difference is usually another
+    word rather than a slip.
+    """
+    from difflib import get_close_matches
+
+    known = set(_VOCABULARY)
+
+    def fixed(word: str) -> str:
+        low = word.lower()
+        if len(low) < _SHORTEST_TO_FIX or low in known:
+            return word
+        near = get_close_matches(low, _VOCABULARY, n=1, cutoff=_CLOSE_ENOUGH)
+        if not near or sorted(near[0]) != sorted(low):
+            # Same letters in a different order is a typo. Different letters
+            # is a different word, and correcting those invents orders.
+            return word
+        return near[0].upper() if word.isupper() else near[0]
+
+    return re.sub(r"[A-Za-z]+", lambda found: fixed(found.group(0)), text or "")
+
+
 def qualifiers_of(text: str) -> frozenset[str]:
     return frozenset(
         name for name, pattern in QUALIFIERS if pattern.search(text or "")
@@ -261,7 +304,8 @@ def shape_of(text: str) -> tuple:
     "Text Verified IUL Plus" and "OTP IUL Plus" are the same leads: OTP and
     text-verified are one thing said two ways, so both reduce to (iul, plus).
     """
-    return (family_of(text), tier_of(text), qualifiers_of(text))
+    said = despell(text)
+    return (family_of(said), tier_of(said), qualifiers_of(said))
 
 
 # "$1050/WEEK- UPRISE PHX PLUS" is a price and then a lead type. The price is

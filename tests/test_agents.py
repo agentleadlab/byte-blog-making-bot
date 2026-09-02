@@ -2335,3 +2335,40 @@ def test_plain_iul_is_still_plain_iul():
     assert agents.match_checklist(
         "25 text verified iul", TRUCKER_BOARD, tier="plus"
     ) == "OTP IUL Plus"
+
+
+# --------------------------------- a typo is not a different order
+
+
+@pytest.mark.parametrize(
+    "typed,meant",
+    [
+        ("OTP TRCUKER IUL", "OTP Trucker IUL"),
+        ("OTP Spansih IUL", "OTP Spanish IUL"),
+        ("Blue Colalr IUL", "Blue Collar IUL"),
+        ("Text Veriifed VET", "Text Verified VET"),
+    ],
+)
+def test_a_misspelling_is_the_same_order(typed, meant):
+    """Tommy Mortillaro was flagged as set up on the wrong leads. He wasn't -
+    somebody typed TRCUKER."""
+    assert agents.shape_of(typed) == agents.shape_of(meant)
+
+
+def test_a_different_word_is_still_a_different_order():
+    """Correcting letters that were never there is how a real mismatch gets
+    read as a typo and nobody hears about it."""
+    assert agents.shape_of("OTP VET Plus") != agents.shape_of("OTP FEX Plus")
+    assert agents.shape_of("OTP Spanish IUL") != agents.shape_of("OTP Trucker IUL")
+    assert agents.shape_of("OTP IUL Plus") != agents.shape_of("OTP IUL Standard")
+
+
+def test_short_words_are_left_alone():
+    """"vet" and "fex" are three letters and one apart from plenty of things."""
+    assert agents.despell("OTP VET FEX MTG") == "OTP VET FEX MTG"
+
+
+def test_only_the_same_letters_rearranged_count_as_a_typo():
+    """"Standards" is not a misspelling of "Standard" that needs fixing, and
+    "Spaniel" is not "Spanish"."""
+    assert agents.despell("Spaniel leads") == "Spaniel leads"
