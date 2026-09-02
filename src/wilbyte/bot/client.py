@@ -2874,11 +2874,17 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
 
 
 async def _report_stuck(responder: Responder, stuck) -> None:
-    """Name a card that needs a person, once, and not again every five minutes."""
+    """Name a card that needs a person - not every twenty seconds, but again
+    every few hours while it is still sitting there.
+
+    Said once, it lands while everyone is at lunch and the card waits all
+    afternoon. Said every pass, nobody reads the channel by Wednesday.
+    """
     from .. import agentseen
 
     seen = await asyncio.to_thread(agentseen.load)
-    fresh = [plan for plan in stuck if plan.agent.card_id not in seen]
+    wanted = set(agentseen.due([plan.agent.card_id for plan in stuck], held=seen))
+    fresh = [plan for plan in stuck if plan.agent.card_id in wanted]
     if not fresh:
         return
     lines = [

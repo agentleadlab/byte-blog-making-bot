@@ -2372,3 +2372,76 @@ def test_only_the_same_letters_rearranged_count_as_a_typo():
     """"Standards" is not a misspelling of "Standard" that needs fixing, and
     "Spaniel" is not "Spanish"."""
     assert agents.despell("Spaniel leads") == "Spaniel leads"
+
+
+# --------------------------------- two spellings of one checklist
+
+
+TRUCKER_TWICE = ["OTP IUL TRUCKER", "OTP TRUCKERS", "OTP IUL Plus"]
+
+
+def test_two_checklists_meaning_the_same_leads_are_not_a_question():
+    """Marcel Trifan's card offered "OTP IUL TRUCKER" or "OTP TRUCKERS". They
+    are the same product written twice, so asking which only asked somebody to
+    pick a spelling."""
+    landed = agents.match_checklist(
+        "TEXT VERIFIED TRUCKER IUL", TRUCKER_TWICE, tier="plus"
+    )
+    assert landed == "OTP IUL TRUCKER"
+
+
+def test_the_one_that_says_more_of_the_order_wins():
+    assert agents.match_checklist("30 OTP Truckers", TRUCKER_TWICE, tier="plus") == (
+        "OTP TRUCKERS"
+    )
+
+
+def test_a_real_choice_is_still_a_question():
+    """Standard and Plus are two products. Picking one is somebody's money."""
+    assert agents.match_checklist(
+        "Phoenix Campaign", ["PHNX PLUS", "PHNX STANDARD"], tier=None
+    ) is None
+
+
+# --------------------------------- saying it again a few hours later
+
+
+def test_a_waiting_card_is_raised_again_after_a_few_hours(tmp_path):
+    """Said once, it lands while everyone is at lunch and the card waits all
+    afternoon. Said every pass, nobody reads the channel by Wednesday."""
+    from wilbyte import agentseen
+
+    path = tmp_path / "said.json"
+    agentseen.remember(["card-1"], path, now=1000.0)
+
+    assert agentseen.due(["card-1"], path=path, now=1000.0) == []
+    assert agentseen.due(["card-1"], path=path, now=1000.0 + 3600) == []
+    assert agentseen.due(["card-1"], path=path, now=1000.0 + 3 * 3600) == ["card-1"]
+
+
+def test_a_card_never_mentioned_is_always_due(tmp_path):
+    from wilbyte import agentseen
+
+    assert agentseen.due(["new-card"], path=tmp_path / "said.json") == ["new-card"]
+
+
+def test_the_old_flat_list_does_not_announce_itself_on_upgrade(tmp_path):
+    """Every card ever quietened shouting at once is not an upgrade."""
+    import json
+
+    from wilbyte import agentseen
+
+    path = tmp_path / "said.json"
+    path.write_text(json.dumps(["card-1", "card-2"]), encoding="utf-8")
+
+    assert agentseen.due(["card-1"], path=path) == []
+
+
+def test_forgetting_a_card_makes_it_due_again(tmp_path):
+    from wilbyte import agentseen
+
+    path = tmp_path / "said.json"
+    agentseen.remember(["card-1"], path)
+    agentseen.forget(["card-1"], path)
+
+    assert agentseen.due(["card-1"], path=path) == ["card-1"]

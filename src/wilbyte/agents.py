@@ -669,9 +669,34 @@ def match_checklist(
     None when two could fit, as well as when none does. Picking one of two is
     guessing, and this is the guess that puts somebody's leads on the wrong
     order.
+
+    Two checklists that reduce to the *same* leads are not two options, they
+    are one product written twice: Marcel Trifan's card offered "OTP IUL
+    TRUCKER" or "OTP TRUCKERS", which are the same thing, and asking which
+    only asked somebody to pick a spelling. Those get the one whose name says
+    more of what was ordered.
     """
     found = candidates(lead_type, existing, tier=tier)
-    return found[0] if len(found) == 1 else None
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1 and len({shape_of(name) for name in found}) == 1:
+        return _closest(lead_type, found)
+    return None
+
+
+def _words_of(text: str) -> set[str]:
+    return {word for word in re.split(r"[^A-Za-z0-9]+", (text or "").lower()) if word}
+
+
+def _closest(lead_type: str, names: list[str]) -> str:
+    """The checklist whose name says most of what was ordered.
+
+    Only ever asked among checklists that mean the same leads, so this decides
+    a spelling and never a product. Ties keep the board's own order, which is
+    the one somebody looking at the card would land on first.
+    """
+    asked = _words_of(despell(lead_type))
+    return max(names, key=lambda name: len(_words_of(despell(name)) & asked))
 
 
 
