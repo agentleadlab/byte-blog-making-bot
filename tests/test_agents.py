@@ -2447,6 +2447,108 @@ def test_forgetting_a_card_makes_it_due_again(tmp_path):
     assert agentseen.due(["card-1"], path=path) == ["card-1"]
 
 
+# --------------------------------- how often a waiting card is raised
+
+
+class Said:
+    """A responder that keeps what it was told."""
+
+    def __init__(self):
+        self.messages = []
+
+    async def send(self, content=None, *, embed=None, file=None, view=None):
+        self.messages.append(content or "")
+
+
+def stuck_plan(when, *, problems=(), launch=None, name="Jorge Arce"):
+    agent = agents.Agent(
+        name=name,
+        card_id=f"card-{name.split()[0].lower()}",
+        url="https://trello.com/c/MsF6rf9O",
+        launch=launch,
+    )
+    return agents.AgentPlan(agent=agent, when=when, problems=list(problems))
+
+
+def report(plans, tmp_path, monkeypatch, *, said_hours_ago=None):
+    """Run one watcher pass and hand back what went to the channel."""
+    import asyncio
+    import time as clock
+
+    from wilbyte import agentseen
+    from wilbyte.bot import client
+
+    path = tmp_path / "said.json"
+    monkeypatch.setattr(agentseen, "SEEN_PATH", path)
+    if said_hours_ago is not None:
+        agentseen.remember(
+            [plan.agent.card_id for plan in plans],
+            path,
+            now=clock.time() - said_hours_ago * 3600,
+        )
+
+    heard = Said()
+    asyncio.run(client._report_stuck(heard, plans))
+    return heard.messages
+
+
+def test_a_launch_days_out_is_named_once_and_then_left_alone(tmp_path, monkeypatch):
+    """Nothing about next Thursday needs doing this afternoon."""
+    plans = [stuck_plan("later", launch=date(2026, 9, 10))]
+
+    assert report(plans, tmp_path, monkeypatch) != []
+    assert report(plans, tmp_path, monkeypatch, said_hours_ago=9) == []
+
+
+def test_a_launch_tomorrow_comes_back_after_a_few_hours(tmp_path, monkeypatch):
+    plans = [stuck_plan("tomorrow", problems=["No lead type"], launch=TUESDAY)]
+
+    assert report(plans, tmp_path, monkeypatch, said_hours_ago=1) == []
+    assert report(plans, tmp_path, monkeypatch, said_hours_ago=4) != []
+
+
+def test_a_card_with_no_launch_date_is_chased_like_an_urgent_one(tmp_path, monkeypatch):
+    """No date could mean today. That is not something to say once."""
+    plans = [stuck_plan("unknown", problems=["No launch date"])]
+
+    assert report(plans, tmp_path, monkeypatch, said_hours_ago=4) != []
+
+
+def test_an_ahead_card_starts_being_chased_once_its_launch_arrives(
+    tmp_path, monkeypatch
+):
+    """Said on Monday about a Thursday launch, and quiet since. On Wednesday
+    the same card is tomorrow's problem and joins the every-few-hours list."""
+    plans = [stuck_plan("tomorrow", problems=["No lead type"], launch=TUESDAY)]
+
+    assert report(plans, tmp_path, monkeypatch, said_hours_ago=48) != []
+
+
+def test_the_urgent_and_the_ahead_are_weighed_one_card_at_a_time(
+    tmp_path, monkeypatch
+):
+    """Two cards said at the same time, hours ago: only the near one repeats."""
+    plans = [
+        stuck_plan("today", problems=["No lead type"], name="Travis Loukusa"),
+        stuck_plan("later", launch=date(2026, 9, 10), name="Malcolm Edwards"),
+    ]
+
+    (message,) = report(plans, tmp_path, monkeypatch, said_hours_ago=9)
+
+    assert "Travis Loukusa" in message
+    assert "Malcolm Edwards" not in message
+
+
+def test_a_card_waiting_on_a_setup_card_says_so(tmp_path, monkeypatch):
+    """It had no problems, so the line was a name, a dash, and nothing."""
+    plans = [stuck_plan("later", launch=date(2026, 9, 10))]
+
+    (message,) = report(plans, tmp_path, monkeypatch)
+
+    assert "Jorge Arce** — nothing to put them on yet" in message
+    assert "Sep 10 setup card" in message
+
+
 # --------------------------------- shorthand for a day
 
 

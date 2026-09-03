@@ -10,6 +10,11 @@ everyone is at lunch, scrolls away, and the card sits there all afternoon. So
 what is remembered is the *time* it was said, and a card still waiting three
 hours later is worth mentioning again.
 
+How often depends on how soon the agent launches. Today, tomorrow, or no date
+at all, and it is raised every few hours until somebody deals with it. Days
+out, and it is named once and then left alone - there is nothing to be late
+for yet.
+
 Only the ones it couldn't act on are remembered. A card it filed leaves In
 Que, which is memory enough.
 """
@@ -27,6 +32,12 @@ SEEN_PATH = _state_dir() / "agents-said.json"
 # Long enough not to be nagging, short enough that a card left at eleven is
 # raised again after lunch.
 SAY_AGAIN_AFTER = 3 * 60 * 60
+
+# For a card that isn't urgent - a launch several days out. Naming it once
+# puts it on the record; nothing about it needs doing today. It starts being
+# raised on the shorter clock by itself once the launch comes within a day,
+# because by then it was last said long enough ago to be due again.
+ONLY_ONCE = float("inf")
 
 # Enough that a card sitting all week is remembered, not enough to grow
 # forever.

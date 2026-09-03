@@ -2868,22 +2868,55 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
         await _report_stuck(responder, stuck)
 
 
+# Launches worth being reminded about: today, tomorrow, or a card with no
+# date on it at all, which could be any of the three. A launch further out
+# than that is said once and left - chasing it today buys nothing.
+NAG_ABOUT = ("today", "tomorrow", "unknown")
+
+
+def _why_waiting(plan) -> str:
+    """What is holding this card up, in the one line that gets posted.
+
+    Not every card that stops short has something wrong with it. One waiting
+    in Franklin's list for a setup card that hasn't been made yet has no
+    problems at all, and a bare name after a dash reads like a complaint
+    nobody wrote down.
+    """
+    if plan.problems:
+        return "; ".join(plan.problems)
+    if plan.agent.launch is not None:
+        return f"nothing to put them on yet — no {plan.agent.launch:%a %b %d} setup card"
+    return "nothing to put them on yet"
+
+
 async def _report_stuck(responder: Responder, stuck) -> None:
     """Name a card that needs a person - not every twenty seconds, but again
     every few hours while it is still sitting there.
 
     Said once, it lands while everyone is at lunch and the card waits all
     afternoon. Said every pass, nobody reads the channel by Wednesday.
+
+    Only the ones with a launch on top of us are repeated. An agent going
+    live next week is named once; when the week turns and the launch is
+    tomorrow, it joins the every-few-hours list on its own.
     """
     from .. import agentseen
 
     seen = await asyncio.to_thread(agentseen.load)
-    wanted = set(agentseen.due([plan.agent.card_id for plan in stuck], held=seen))
+    now = time.time()
+    wanted: set[str] = set()
+    for plan in stuck:
+        every = (
+            agentseen.SAY_AGAIN_AFTER if plan.when in NAG_ABOUT else agentseen.ONLY_ONCE
+        )
+        wanted.update(
+            agentseen.due([plan.agent.card_id], held=seen, every=every, now=now)
+        )
     fresh = [plan for plan in stuck if plan.agent.card_id in wanted]
     if not fresh:
         return
     lines = [
-        f"• **{plan.agent.name}** — {'; '.join(plan.problems)}\n  {plan.agent.url}"
+        f"• **{plan.agent.name}** — {_why_waiting(plan)}\n  {plan.agent.url}"
         for plan in fresh
     ]
     await responder.send("🧾 Waiting on somebody:\n" + "\n".join(lines))
