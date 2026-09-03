@@ -295,3 +295,45 @@ def test_chatter_in_the_payment_channel_is_not_a_payment():
     assert levinson.read_payment(
         _all_text(FakeMessage(content="did that one go through?")), paid_at=WHEN
     ) is None
+
+
+# --------------------------------- several months, and the tab each lands on
+
+
+def test_two_months_asked_for_at_once_are_two_months():
+    """"levinson june and july" read June, wrote its rows onto August's tab,
+    and never looked at July."""
+    assert levinson.months_named("june and july", today=TODAY) == [(2026, 6), (2026, 7)]
+
+
+def test_the_months_come_back_oldest_first_however_they_were_typed():
+    assert levinson.months_named("july and june", today=TODAY) == [(2026, 6), (2026, 7)]
+
+
+def test_one_month_still_reads_as_one():
+    assert levinson.months_named("august", today=TODAY) == [(2026, 8)]
+
+
+def test_a_month_asked_for_twice_is_asked_for_once():
+    assert levinson.months_named("august and aug", today=TODAY) == [(2026, 8)]
+
+
+@pytest.mark.parametrize(
+    "titles,wanted",
+    [
+        (["September", "August", "July", "June"], "August"),
+        (["August 2026", "September 2026"], "August 2026"),
+        (["Aug 2026"], "Aug 2026"),
+        (["08/2026"], "08/2026"),
+        (["Sheet1", "Notes"], None),
+    ],
+)
+def test_the_month_decides_which_tab(titles, wanted):
+    assert levinson.pick_tab(titles, 2026, 8) == wanted
+
+
+def test_a_new_tab_is_named_like_the_ones_already_there():
+    """Somebody who named theirs "August" gets "October", not "October 2026"."""
+    assert levinson.new_tab_name(["September", "August"], 2026, 10) == "October"
+    assert levinson.new_tab_name(["August 2026"], 2026, 10) == "October 2026"
+    assert levinson.new_tab_name([], 2026, 10) == "October 2026"

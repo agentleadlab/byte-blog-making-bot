@@ -286,34 +286,89 @@ MONTHS = (
 )
 
 
-def month_named(said: str, *, today: date) -> tuple[int, int] | None:
-    """(year, month) out of "levinson august", "levinson 08/2026", "levinson".
+def months_named(said: str, *, today: date) -> list[tuple[int, int]]:
+    """Every month asked for, oldest first.
+
+    "levinson august" is one. "levinson june and july" is two, and reading
+    only the first of them - then writing June's rows onto August's tab - is
+    the failure this replaces.
 
     A month named without a year means the most recent one that has already
     happened: asked in January for December, the answer is last year's.
     """
     text = " ".join((said or "").split()).lower()
     if not text or "this month" in text:
-        return today.year, today.month
+        return [(today.year, today.month)]
     if "last month" in text:
-        return (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+        return [(today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)]
 
-    numbered = re.search(r"\b(\d{1,2})[/-](\d{4})\b", text)
-    if numbered and 1 <= int(numbered.group(1)) <= 12:
-        return int(numbered.group(2)), int(numbered.group(1))
+    said_year = re.search(r"\b(20\d{2})\b", text)
+    found: list[tuple[int, int]] = []
+
+    for month, year in re.findall(r"\b(\d{1,2})[/-](\d{4})\b", text):
+        if 1 <= int(month) <= 12:
+            found.append((int(year), int(month)))
 
     for number, name in enumerate(MONTHS, start=1):
         # "aug" and "august" both land; "augment" doesn't.
         typed = re.search(rf"\b({name[:3]}\w*)\b", text)
         if not typed or not name.startswith(typed.group(1)):
             continue
-        year = re.search(r"\b(20\d{2})\b", text)
-        if year:
-            return int(year.group(1)), number
-        return (today.year if number <= today.month else today.year - 1), number
-    return None
+        if said_year:
+            found.append((int(said_year.group(1)), number))
+        else:
+            found.append(
+                (today.year if number <= today.month else today.year - 1, number)
+            )
+
+    return sorted(dict.fromkeys(found))
+
+
+def month_named(said: str, *, today: date) -> tuple[int, int] | None:
+    """The one month asked for, or None when nothing in there names one."""
+    found = months_named(said, today=today)
+    return found[0] if found else None
 
 
 def tab_for(year: int, month: int) -> str:
     """"September 2026" - one tab per month, the way it gets sent on."""
     return f"{MONTHS[month - 1].title()} {year}"
+
+
+def tab_names(year: int, month: int) -> list[str]:
+    """What a tab for this month might be called, likeliest first."""
+    name = MONTHS[month - 1].title()
+    return [
+        f"{name} {year}", name, f"{name[:3]} {year}", name[:3],
+        f"{month:02d}/{year}", f"{year}-{month:02d}",
+    ]
+
+
+def pick_tab(titles: list[str], year: int, month: int) -> str | None:
+    """The tab this month's rows belong on, out of the ones that exist.
+
+    A month per tab is how this gets sent to Levinson, so the month decides
+    where a row goes. Writing every month onto whichever tab was configured
+    once put June's four rows under August, where nobody would have found
+    them until Levinson asked why August was wrong.
+    """
+    have = {" ".join((one or "").split()).casefold(): one for one in titles}
+    for guess in tab_names(year, month):
+        found = have.get(guess.casefold())
+        if found:
+            return found
+    return None
+
+
+def new_tab_name(titles: list[str], year: int, month: int) -> str:
+    """What to call a month's tab, in the style of the tabs already there.
+
+    Somebody who named theirs "August" gets "October", not "October 2026".
+    A sheet whose tabs carry the year keeps carrying it.
+    """
+    name = MONTHS[month - 1].title()
+    bare = {one.title().casefold() for one in MONTHS}
+    for title in titles:
+        if " ".join((title or "").split()).casefold() in bare:
+            return name
+    return f"{name} {year}"

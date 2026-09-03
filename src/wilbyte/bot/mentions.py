@@ -725,7 +725,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
 > @RYTE **levinson** — who Levinson sent us that paid this month, shown for
 > confirmation before it goes on the tracker. Also **levinson last month**,
-> **levinson august**
+> **levinson august**, **levinson june and july**. Each month lands on its
+> own tab
 > @RYTE **payment link $621 for 40 basic spanish leads** — a Stripe link,
 > shown for confirmation first. Reuses one that already exists
 > @RYTE **host** — attach an image, get a permanent public link back

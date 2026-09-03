@@ -208,10 +208,10 @@ class Secrets:
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_refresh_token: str | None = None
-    # The Levinson report. The sheet id is the long code in its URL; the tab
-    # is either its name or the gid number out of the same URL.
+    # The Levinson report. The sheet id is the long code in its URL. Which tab
+    # a row lands on is decided by the month it was paid in, not by config: a
+    # single configured tab put June's rows under August.
     levinson_sheet_id: str | None = None
-    levinson_tab: str | None = None
     # The opt-in list kept by hand. A second source for who is Levinson's, so
     # somebody the tag missed still counts.
     levinson_optin_sheet_id: str | None = None
@@ -312,7 +312,6 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 google_client_secret=_env("GOOGLE_CLIENT_SECRET"),
                 google_refresh_token=_env("GOOGLE_REFRESH_TOKEN"),
                 levinson_sheet_id=_env("LEVINSON_SHEET_ID"),
-                levinson_tab=_env("LEVINSON_TAB"),
                 levinson_optin_sheet_id=_env("LEVINSON_OPTIN_SHEET_ID"),
                 levinson_tag=_env("LEVINSON_TAG") or "levison leads",
                 discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),

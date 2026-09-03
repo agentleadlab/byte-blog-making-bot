@@ -3960,8 +3960,12 @@ def levinson_members(config: Config) -> tuple[list, list[str]]:
     return found, notes
 
 
-def write_levinson(config: Config, lines: list) -> tuple[int, list[str]]:
-    """Append the lines that aren't already there. (written, problems).
+def write_levinson(config: Config, batches) -> tuple[int, list[str]]:
+    """Append each month's rows to that month's tab. (written, problems).
+
+    `batches` is [((year, month), lines), ...]. One session for all of them,
+    and the month decides the tab: writing every month onto whichever tab was
+    configured once put June's rows under August.
 
     Appending only. The tab is somebody's, and the worst a bug here can do is
     put a row at the bottom that anybody can delete.
@@ -3972,57 +3976,96 @@ def write_levinson(config: Config, lines: list) -> tuple[int, list[str]]:
     if not sheet_id:
         return 0, ["LEVINSON_SHEET_ID isn't set in .env."]
 
+    written, problems = 0, []
     try:
         with open_sheets(config) as client:
-            title = tab_titled(client, sheet_id, config.secrets.levinson_tab or "")
-            headings = client.rows(sheet_id, f"{title}!1:1")
-            headings = headings[0] if headings else []
-            if not levinson.readable(headings):
-                return 0, [
-                    f"The tab `{title}` has no Name or Email column — its first "
-                    f"row reads {headings or 'nothing'}. Refusing to write to it."
-                ]
-
-            where = {levinson.known(head): at for at, head in enumerate(headings)}
-            date_at, email_at = where.get("date"), where.get("email")
-            existing = client.rows(sheet_id, f"{title}!A2:Z5000")
-            seen = set()
-            for row in existing:
-                email = (
-                    row[email_at].strip().lower()
-                    if email_at is not None and email_at < len(row) else ""
-                )
-                when = (
-                    row[date_at].strip()
-                    if date_at is not None and date_at < len(row) else ""
-                )
-                if email:
-                    seen.add((when, email))
-
-            rows = []
-            for line in lines:
-                mark = (
-                    f"{line.paid_on:%m/%d/%Y}" if date_at is not None else "",
-                    line.email.lower(),
-                )
-                if mark in seen:
+            titles = [str(one.get("title") or "") for one in client.tabs(sheet_id)]
+            for (year, month), lines in batches:
+                if not lines:
                     continue
-                seen.add(mark)
-                rows.append(levinson.row_for(line, headings))
+                title = levinson.pick_tab(titles, year, month)
+                if title is None:
+                    title = levinson.new_tab_name(titles, year, month)
+                    client.add_tab(sheet_id, title)
+                    titles.append(title)
+                    # A brand new tab has no headings, so it gets the ones the
+                    # rest of the sheet uses rather than a shape of its own.
+                    heads = _headings_anywhere(client, sheet_id, titles)
+                    if heads:
+                        client.append(sheet_id, title, [heads])
 
-            written = client.append(sheet_id, title, rows)
-            said = []
-            if date_at is None and written:
-                # Without a date on the row there is nothing to tell one
-                # payment from the next, so the second order from the same
-                # agent reads as a duplicate of the first and is skipped.
-                said.append(
-                    f"`{title}` has no Date column, so a second purchase by the "
-                    "same agent can't be told from the first and won't be added. "
-                    "Add a **Date** heading and RYTE starts filling it."
-                )
-            return written, said
+                count, said = _append_month(client, sheet_id, title, lines)
+                written += count
+                problems.extend(said)
     except gsheets.SheetsError as exc:
-        return 0, [str(exc)]
+        return written, problems + [str(exc)]
     except Exception as exc:
-        return 0, [f"Couldn't write the report — {_short(exc, 200)}"]
+        return written, problems + [f"Couldn't write the report — {_short(exc, 200)}"]
+    return written, problems
+
+
+def _headings_anywhere(client, sheet_id: str, titles: list[str]) -> list[str]:
+    """The heading row the sheet already uses, off whichever tab has one."""
+    from .. import levinson
+
+    for title in titles:
+        try:
+            rows = client.rows(sheet_id, f"{title}!1:1")
+        except Exception:
+            continue
+        heads = rows[0] if rows else []
+        if levinson.readable(heads):
+            return heads
+    return []
+
+
+def _append_month(client, sheet_id: str, title: str, lines: list):
+    """One month onto one tab, skipping what is already on it."""
+    from .. import levinson
+
+    rows = client.rows(sheet_id, f"{title}!1:1")
+    headings = rows[0] if rows else []
+    if not levinson.readable(headings):
+        return 0, [
+            f"The tab `{title}` has no Name or Email column — its first row "
+            f"reads {headings or 'nothing'}. Refusing to write to it."
+        ]
+
+    where = {levinson.known(head): at for at, head in enumerate(headings)}
+    date_at, email_at = where.get("date"), where.get("email")
+
+    seen = set()
+    for row in client.rows(sheet_id, f"{title}!A2:Z5000"):
+        email = (
+            row[email_at].strip().lower()
+            if email_at is not None and email_at < len(row) else ""
+        )
+        when = (
+            row[date_at].strip() if date_at is not None and date_at < len(row) else ""
+        )
+        if email:
+            seen.add((when, email))
+
+    fresh = []
+    for line in lines:
+        mark = (
+            f"{line.paid_on:%m/%d/%Y}" if date_at is not None else "",
+            line.email.lower(),
+        )
+        if mark in seen:
+            continue
+        seen.add(mark)
+        fresh.append(levinson.row_for(line, headings))
+
+    written = client.append(sheet_id, title, fresh)
+    said = []
+    if date_at is None and written:
+        # Without a date on the row there is nothing to tell one payment from
+        # the next, so the second order from the same agent reads as a
+        # duplicate of the first and is skipped.
+        said.append(
+            f"`{title}` has no Date column, so a second purchase by the same "
+            "agent can't be told from the first and won't be added. Add a "
+            "**Date** heading and RYTE starts filling it."
+        )
+    return written, said

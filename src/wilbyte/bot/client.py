@@ -3237,7 +3237,7 @@ def _all_text(message) -> str:
 async def _levinson_report(
     bot: "WilByteBot", responder: Responder, config: Config, said: str
 ) -> None:
-    """Who Levinson sent us and what they paid, for one month.
+    """Who Levinson sent us and what they paid, a month at a time.
 
     Read and shown before it is written. The sheet goes to an agency partner
     as a statement of what they are owed, so the numbers get looked at by a
@@ -3246,59 +3246,65 @@ async def _levinson_report(
     from .. import levinson
 
     today = await asyncio.to_thread(jobs.board_day, config)
-    asked = levinson.month_named(said, today=today)
-    if asked is None:
+    asked = levinson.months_named(said, today=today)
+    if not asked:
         await responder.send(
-            "Which month? `@RYTE levinson`, `levinson last month`, or "
-            "`levinson august`."
+            "Which month? `@RYTE levinson`, `levinson last month`, "
+            "`levinson august`, or `levinson june and july`."
         )
         return
-    year, month = asked
-    label = levinson.tab_for(year, month)
 
-    await responder.send(f"Reading {label} — nothing will be written yet.")
-
-    payments, problem = await _payments_in(bot, year, month)
-    if problem:
-        await responder.send(embed=embeds.error(problem))
-        return
+    named = ", ".join(levinson.tab_for(year, month) for year, month in asked)
+    await responder.send(f"Reading {named} — nothing will be written yet.")
 
     members, notes = await asyncio.to_thread(jobs.levinson_members, config)
-    lines = levinson.lines_for(payments, members)
 
-    head = (
-        f"**Levinson — {label}**\n"
-        f"{len(payments)} payment(s) in the channel, "
-        f"{len(lines)} from Levinson agents, {levinson.total(lines)} total."
-    )
+    batches, blocks, count, seen = [], [], 0, 0
+    for year, month in asked:
+        payments, problem = await _payments_in(bot, year, month)
+        if problem:
+            await responder.send(embed=embeds.error(problem))
+            return
+        lines = levinson.lines_for(payments, members)
+        batches.append(((year, month), lines))
+        count += len(lines)
+        seen += len(payments)
+
+        head = (
+            f"**{levinson.tab_for(year, month)}** — {len(payments)} payment(s) in "
+            f"the channel, {len(lines)} from Levinson agents, "
+            f"{levinson.total(lines)}."
+        )
+        listed = "\n".join(
+            f"• {line.paid_on:%b %d} — **{line.name}** — {line.amount}"
+            + (f" — {line.product}" if line.product else "")
+            for line in lines[:40]
+        )
+        if len(lines) > 40:
+            listed += f"\n-# and {len(lines) - 40} more"
+        blocks.append(head + ("\n" + listed if listed else ""))
+
+    report = "\n\n".join(blocks)
     if notes:
-        head += "\n" + "\n".join(f"⚠ {note}" for note in notes)
-    if not lines:
-        await responder.send(head)
+        report = "\n".join(f"⚠ {note}" for note in notes) + "\n" + report
+    if not count:
+        await responder.send(report)
         return
-
-    listed = "\n".join(
-        f"• {line.paid_on:%b %d} — **{line.name}** — {line.amount}"
-        + (f" — {line.product}" if line.product else "")
-        for line in lines[:40]
-    )
-    if len(lines) > 40:
-        listed += f"\n-# and {len(lines) - 40} more"
 
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Add {len(lines)} to the sheet",
+        label=f"Add {count} to the sheet",
         emoji="📗",
     )
-    await responder.send(f"{head}\n{listed}", view=view)
+    await responder.send(report, view=view)
     await view.wait()
     if not view.confirmed:
         return
 
-    written, problems = await asyncio.to_thread(jobs.write_levinson, config, lines)
+    written, problems = await asyncio.to_thread(jobs.write_levinson, config, batches)
     note = (
-        f"📗 Added {written} row(s) to the tracker."
+        f"📗 Added {written} row(s), each on its own month's tab."
         if written else
         "📗 Nothing new — every one of those is already on the sheet."
     )
