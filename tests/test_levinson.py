@@ -186,3 +186,112 @@ def test_only_that_months_payments_are_counted():
     ]
 
     assert [one.day.month for one in levinson.in_month(paid, 2026, 9)] == [9]
+
+
+# --------------------------------- the sheet's headings are the instruction
+
+
+def a_line():
+    (line,) = levinson.lines_for([levinson.read_payment(TONY, paid_at=WHEN)], members())
+    return line
+
+
+def test_a_row_is_shaped_to_the_headings_that_are_there():
+    """The tab was made by hand with three columns. RYTE fills those three and
+    doesn't append columns nobody asked for."""
+    row = levinson.row_for(a_line(), ["Full Name", "Phone", "Email"])
+
+    assert row == ["Tony Moderno", "8016371314", "tony.moderno@tryeverlife.com"]
+
+
+def test_adding_a_heading_is_how_you_ask_for_the_column():
+    """Nobody should have to come back to the code to change the shape of a
+    report they own."""
+    row = levinson.row_for(a_line(), ["Date", "Full Name", "Email", "Amount", "Product"])
+
+    assert row == [
+        "09/03/2026", "Tony Moderno", "tony.moderno@tryeverlife.com",
+        "$1,863.00", "Aged Leads (VET)",
+    ]
+
+
+def test_a_heading_ryte_has_nothing_for_is_left_empty():
+    """Not shuffled left, which would put an email under "Notes"."""
+    row = levinson.row_for(a_line(), ["Full Name", "Notes", "Email"])
+
+    assert row == ["Tony Moderno", "", "tony.moderno@tryeverlife.com"]
+
+
+@pytest.mark.parametrize(
+    "written,means",
+    [("Full Name", "full name"), ("name", "full name"), ("Agent Name", "full name"),
+     ("Phone Number", "phone"), ("EMAIL ADDRESS", "email"), ("Lead Type", "product"),
+     ("Purchase Date", "date"), ("Nothing like it", "")],
+)
+def test_a_heading_is_read_however_it_is_written(written, means):
+    assert levinson.known(written) == means
+
+
+def test_a_tab_with_no_person_column_is_not_this_report():
+    """Refusing to write beats writing into somebody else's tab."""
+    assert levinson.readable(["Full Name", "Phone"]) is True
+    assert levinson.readable(["Lead Type", "Number of Lead Requested"]) is False
+
+
+# --------------------------------- reading a real Discord embed
+
+
+class FakeField:
+    def __init__(self, name, value):
+        self.name, self.value = name, value
+
+
+class FakeEmbed:
+    def __init__(self, title=None, description=None, fields=()):
+        self.title, self.description = title, description
+        self.fields = [FakeField(*one) for one in fields]
+        self.footer = None
+
+
+class FakeMessage:
+    def __init__(self, content="", embeds=()):
+        self.content, self.embeds = content, list(embeds)
+
+
+def test_a_payment_written_as_embed_fields_is_read():
+    """Which part of an embed carries the values is up to whoever built the
+    automation. Reading all of it means a change of shape at their end doesn't
+    stop the report at ours."""
+    from wilbyte.bot.client import _all_text
+
+    message = FakeMessage(
+        content="@here",
+        embeds=[FakeEmbed(
+            title="New Payment | Payra 💰",
+            fields=[("NAME", "Tony Moderno"), ("EMAIL", "tony.moderno@tryeverlife.com"),
+                    ("PHONE", "+18016371314"), ("AMOUNT", "$1863"),
+                    ("PRODUCT", "Aged Leads (VET)")],
+        )],
+    )
+
+    paid = levinson.read_payment(_all_text(message), paid_at=WHEN)
+
+    assert paid.name == "Tony Moderno"
+    assert paid.cents == 186300
+    assert paid.product == "Aged Leads (VET)"
+
+
+def test_a_payment_written_as_one_description_is_read_the_same():
+    from wilbyte.bot.client import _all_text
+
+    message = FakeMessage(embeds=[FakeEmbed(title="New Payment | Payra", description=TONY)])
+
+    assert levinson.read_payment(_all_text(message), paid_at=WHEN).cents == 186300
+
+
+def test_chatter_in_the_payment_channel_is_not_a_payment():
+    from wilbyte.bot.client import _all_text
+
+    assert levinson.read_payment(
+        _all_text(FakeMessage(content="did that one go through?")), paid_at=WHEN
+    ) is None

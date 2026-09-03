@@ -189,6 +189,50 @@ class GHLClient:
                 continue
         return list(merged.values())
 
+    def contacts_tagged(self, tag: str, *, cap: int = 20000) -> list[dict]:
+        """Every contact carrying this tag, matched however it was typed.
+
+        Walked page by page and filtered here rather than asked for by the
+        API. The search endpoint would be one request instead of two hundred,
+        but its filter grammar differs between accounts, and a report to an
+        agency partner that quietly returns nobody because a filter was
+        rejected is worse than one that takes a minute.
+
+        `startAfterId` rather than an offset: this endpoint pages by cursor,
+        and an offset walks the same page forever.
+        """
+        wanted = " ".join((tag or "").split()).casefold()
+        if not wanted:
+            return []
+
+        found: list[dict] = []
+        after_id, after = None, None
+        while len(found) < cap:
+            params = {"locationId": self.location_id, "limit": MAX_PAGE}
+            if after_id:
+                params["startAfterId"] = after_id
+            if after:
+                params["startAfter"] = after
+            data = self._request("GET", "/contacts/", params=params)
+            batch = data.get("contacts") or data.get("data") or []
+            if not batch:
+                return found
+            for contact in batch:
+                tags = [
+                    " ".join(str(one).split()).casefold()
+                    for one in (contact.get("tags") or [])
+                ]
+                if wanted in tags:
+                    found.append(contact)
+            if len(batch) < MAX_PAGE:
+                return found
+            last = batch[-1]
+            after_id = str(last.get("id") or "")
+            after = last.get("dateAdded") or last.get("dateUpdated")
+            if not after_id:
+                return found
+        return found
+
     def list_authors(self) -> list[dict]:
         return self._paged("/blogs/authors", ("authors", "data"))
 

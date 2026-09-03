@@ -75,6 +75,10 @@ ACTION_WORDS = {
     "calls": "calls",
     "zoom": "calls",
     "visible": "calls",
+    # The monthly report for the Levinson agency: which of the agents they
+    # sent us actually paid, and for how much.
+    "levinson": "levinson",
+    "levison": "levinson",
     # Sweep Zoom and Fathom now rather than waiting for the next check.
     "sweep": "sweep",
     "catchup": "sweep",
@@ -510,7 +514,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
-        "unticked", "archive", "setups", "spread", "unspread",
+        "unticked", "archive", "setups", "spread", "unspread", "levinson",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -719,6 +723,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry General and Ops over then Done, 10pm carry Ads and Lead Order over then Done, 10pm archive
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30
+> @RYTE **levinson** — who Levinson sent us that paid this month, shown for
+> confirmation before it goes on the tracker. Also **levinson last month**,
+> **levinson august**
 > @RYTE **payment link $621 for 40 basic spanish leads** — a Stripe link,
 > shown for confirmation first. Reuses one that already exists
 > @RYTE **host** — attach an image, get a permanent public link back

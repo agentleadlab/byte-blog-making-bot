@@ -3857,3 +3857,172 @@ def log_warning(message: str) -> None:
     import logging
 
     logging.getLogger("wilbyte.bot").warning("%s", message)
+
+
+# ------------------------------------------------- the Levinson monthly report
+
+
+def open_sheets(config: Config):
+    """A Google Sheets session, or a clear refusal about what is missing."""
+    from .. import gsheets
+
+    return gsheets.SheetsClient(gsheets.credentials(config.secrets))
+
+
+def tab_titled(client, sheet_id: str, wanted: str) -> str:
+    """The tab's name, given either its name or the gid out of its URL.
+
+    The gid is the half of the URL somebody copies, and asking them to also
+    find the tab name at the bottom of the window is asking for a typo.
+    """
+    from .. import gsheets
+
+    said = " ".join((wanted or "").split())
+    tabs = client.tabs(sheet_id)
+    if said.isdigit():
+        for one in tabs:
+            if str(one.get("sheetId")) == said:
+                return str(one.get("title") or "")
+        raise gsheets.SheetsError(
+            f"That spreadsheet has no tab with gid {said}. It has: "
+            + ", ".join(str(one.get('title')) for one in tabs)
+        )
+    if said:
+        return said
+    # No tab named at all: the first one, which is what a one-tab sheet means.
+    return str(tabs[0].get("title") or "") if tabs else ""
+
+
+def levinson_members(config: Config) -> tuple[list, list[str]]:
+    """Everyone Levinson sent us. (members, notes about the reading).
+
+    Two sources on purpose. The GoHighLevel tag is applied automatically when
+    somebody comes through their page, so it is the one that cannot be
+    forgotten; the opt-in sheet is kept by hand, so it catches anybody the tag
+    missed. Either one working alone still produces a report, and the note
+    says which one didn't.
+    """
+    from .. import ghl, gsheets, levinson
+
+    found: list = []
+    notes: list[str] = []
+
+    tag = config.secrets.levinson_tag
+    if config.secrets.ghl_api_token and config.secrets.ghl_location_id:
+        try:
+            with ghl.GHLClient(
+                config.secrets.ghl_api_token, config.secrets.ghl_location_id
+            ) as client:
+                for contact in client.contacts_tagged(tag):
+                    found.append(
+                        levinson.Member(
+                            name=str(
+                                contact.get("contactName")
+                                or " ".join(
+                                    part for part in (
+                                        contact.get("firstName"), contact.get("lastName")
+                                    ) if part
+                                )
+                            ).strip(),
+                            email=str(contact.get("email") or ""),
+                            phone=str(contact.get("phone") or ""),
+                            source="ghl",
+                        )
+                    )
+        except Exception as exc:
+            notes.append(f"Couldn't read the `{tag}` contacts from GHL — {_short(exc, 160)}")
+
+    sheet_id = config.secrets.levinson_optin_sheet_id
+    if sheet_id:
+        try:
+            with open_sheets(config) as client:
+                rows = client.rows(sheet_id, "A1:C1000")
+        except Exception as exc:
+            notes.append(f"Couldn't read the opt-in sheet — {_short(exc, 160)}")
+        else:
+            for row in rows[1:]:
+                name, email, phone = (list(row) + ["", "", ""])[:3]
+                # "NEW LEADS ---" is a divider somebody typed, not an agent.
+                if not (email or "").strip() or "@" not in email:
+                    continue
+                found.append(
+                    levinson.Member(
+                        name=name.strip(), email=email.strip(), phone=phone.strip(),
+                        source="sheet",
+                    )
+                )
+
+    if not found and not notes:
+        notes.append(
+            "No Levinson members found. Set LEVINSON_OPTIN_SHEET_ID, or check "
+            f"that contacts carry the `{tag}` tag."
+        )
+    return found, notes
+
+
+def write_levinson(config: Config, lines: list) -> tuple[int, list[str]]:
+    """Append the lines that aren't already there. (written, problems).
+
+    Appending only. The tab is somebody's, and the worst a bug here can do is
+    put a row at the bottom that anybody can delete.
+    """
+    from .. import gsheets, levinson
+
+    sheet_id = config.secrets.levinson_sheet_id
+    if not sheet_id:
+        return 0, ["LEVINSON_SHEET_ID isn't set in .env."]
+
+    try:
+        with open_sheets(config) as client:
+            title = tab_titled(client, sheet_id, config.secrets.levinson_tab or "")
+            headings = client.rows(sheet_id, f"{title}!1:1")
+            headings = headings[0] if headings else []
+            if not levinson.readable(headings):
+                return 0, [
+                    f"The tab `{title}` has no Name or Email column — its first "
+                    f"row reads {headings or 'nothing'}. Refusing to write to it."
+                ]
+
+            where = {levinson.known(head): at for at, head in enumerate(headings)}
+            date_at, email_at = where.get("date"), where.get("email")
+            existing = client.rows(sheet_id, f"{title}!A2:Z5000")
+            seen = set()
+            for row in existing:
+                email = (
+                    row[email_at].strip().lower()
+                    if email_at is not None and email_at < len(row) else ""
+                )
+                when = (
+                    row[date_at].strip()
+                    if date_at is not None and date_at < len(row) else ""
+                )
+                if email:
+                    seen.add((when, email))
+
+            rows = []
+            for line in lines:
+                mark = (
+                    f"{line.paid_on:%m/%d/%Y}" if date_at is not None else "",
+                    line.email.lower(),
+                )
+                if mark in seen:
+                    continue
+                seen.add(mark)
+                rows.append(levinson.row_for(line, headings))
+
+            written = client.append(sheet_id, title, rows)
+            said = []
+            if date_at is None and written:
+                # Without a date on the row there is nothing to tell one
+                # payment from the next, so the second order from the same
+                # agent reads as a duplicate of the first and is skipped.
+                said.append(
+                    f"`{title}` has no Date column, so a second purchase by the "
+                    "same agent can't be told from the first and won't be added. "
+                    "Add a **Date** heading and RYTE starts filling it."
+                )
+            return written, said
+    except gsheets.SheetsError as exc:
+        return 0, [str(exc)]
+    except Exception as exc:
+        return 0, [f"Couldn't write the report — {_short(exc, 200)}"]

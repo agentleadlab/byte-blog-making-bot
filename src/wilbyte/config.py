@@ -202,6 +202,25 @@ class Secrets:
     zoom_client_secret: str | None = None
     # Fathom, for the closer it records instead of Zoom.
     fathom_api_key: str | None = None
+    # Google Sheets, for the one sheet RYTE keeps: the Levinson sales tracker.
+    # The refresh token comes from the consent step on agentleadlab@gmail.com
+    # and is the only long-lived one - everything else is minted per hour.
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_refresh_token: str | None = None
+    # The Levinson report. The sheet id is the long code in its URL; the tab
+    # is either its name or the gid number out of the same URL.
+    levinson_sheet_id: str | None = None
+    levinson_tab: str | None = None
+    # The opt-in list kept by hand. A second source for who is Levinson's, so
+    # somebody the tag missed still counts.
+    levinson_optin_sheet_id: str | None = None
+    # The tag GoHighLevel puts on a contact who came through their page.
+    # Spelled the way it is in GHL, which is not how Levinson spell it.
+    levinson_tag: str = "levison leads"
+    # Where Payra announces payments. Watched rather than polled, so a
+    # Levinson agent's purchase reaches the sheet the minute it happens.
+    discord_payment_channel_id: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -289,6 +308,14 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 zoom_client_id=_env("ZOOM_CLIENT_ID"),
                 zoom_client_secret=_env("ZOOM_CLIENT_SECRET"),
                 fathom_api_key=_env("FATHOM_API_KEY"),
+                google_client_id=_env("GOOGLE_CLIENT_ID"),
+                google_client_secret=_env("GOOGLE_CLIENT_SECRET"),
+                google_refresh_token=_env("GOOGLE_REFRESH_TOKEN"),
+                levinson_sheet_id=_env("LEVINSON_SHEET_ID"),
+                levinson_tab=_env("LEVINSON_TAB"),
+                levinson_optin_sheet_id=_env("LEVINSON_OPTIN_SHEET_ID"),
+                levinson_tag=_env("LEVINSON_TAG") or "levison leads",
+                discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),
             ),
             path=config_path,
         )

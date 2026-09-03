@@ -192,14 +192,57 @@ class Line:
     product: str
     matched_by: str
 
-    def as_row(self) -> list[str]:
-        return [
-            f"{self.paid_on:%m/%d/%Y}", self.name, self.email, self.phone,
-            self.amount, self.product, self.matched_by,
-        ]
+    def values(self) -> dict[str, str]:
+        """Everything this line knows, by the heading it belongs under."""
+        return {
+            "date": f"{self.paid_on:%m/%d/%Y}",
+            "full name": self.name,
+            "phone": self.phone,
+            "email": self.email,
+            "amount": self.amount,
+            "product": self.product,
+            "matched by": self.matched_by,
+        }
 
 
-HEADERS = ["Date", "Name", "Email", "Phone", "Amount", "Product", "Matched by"]
+# What a heading might be called, mapped to what this module calls it. The
+# sheet is somebody's, and "Full Name" and "Name" are the same column.
+HEADINGS = {
+    "date": "date", "paid": "date", "date paid": "date", "purchase date": "date",
+    "full name": "full name", "name": "full name", "agent": "full name",
+    "agent name": "full name",
+    "phone": "phone", "phone number": "phone", "number": "phone",
+    "email": "email", "email address": "email",
+    "amount": "amount", "paid amount": "amount", "total": "amount",
+    "product": "product", "lead type": "product", "package": "product",
+    "matched by": "matched by",
+}
+
+# The two that say a row is about a person. A tab with neither is not this
+# report, and writing into it would be writing into somebody else's work.
+MUST_HAVE = ("full name", "email")
+
+
+def known(heading: str) -> str:
+    return HEADINGS.get(" ".join((heading or "").split()).lower(), "")
+
+
+def row_for(line: Line, headings: list[str]) -> list[str]:
+    """One row shaped to the tab's own heading row.
+
+    The headings are the instruction. A column RYTE has nothing for is left
+    empty rather than shuffling everything left, and a column RYTE could fill
+    that the sheet doesn't have simply isn't written - add the heading and it
+    starts being filled, delete it and it stops. Nobody has to come back here
+    to change the shape of a report they own.
+    """
+    said = line.values()
+    return [said.get(known(heading), "") for heading in headings]
+
+
+def readable(headings: list[str]) -> bool:
+    """Whether this really is the tab the report goes on."""
+    return any(known(heading) in MUST_HAVE for heading in headings)
 
 
 def lines_for(payments: list[Payment], members: list[Member]) -> list[Line]:

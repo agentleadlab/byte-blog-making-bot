@@ -719,6 +719,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _move_cards(responder, config, request.brief or "")
                 return
 
+            if request.action == "levinson":
+                await _levinson_report(bot, responder, config, request.brief or "")
+                return
+
             if request.action == "rollover":
                 await _rollover(responder, config, named=request.brief or "")
                 return
@@ -3164,6 +3168,142 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         )
     if problems:
         note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
+    await responder.send(note)
+
+
+# How far back to read the payment channel. A month of payments is a few
+# hundred messages; this is the ceiling that stops a first run walking two
+# years of history and rate-limiting the bot on start-up.
+PAYMENT_SCAN = 4000
+
+
+async def _payments_in(bot: "WilByteBot", year: int, month: int) -> tuple[list, str]:
+    """Every Payra notification in that month. (payments, problem).
+
+    Read from the channel rather than remembered, because the channel is the
+    record. Running the report twice costs a read and produces the same answer.
+    """
+    from .. import levinson
+
+    where = bot.config.secrets.discord_payment_channel_id
+    if not where:
+        return [], "DISCORD_PAYMENT_CHANNEL_ID isn't set in .env."
+    channel = bot.get_channel(int(where))
+    if channel is None:
+        return [], (
+            f"I can't see channel {where}. Add RYTE to it with View Channel "
+            "and Read Message History."
+        )
+
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    since = datetime(year, month, 1, tzinfo=zone)
+    until = datetime(year + (month == 12), (month % 12) + 1, 1, tzinfo=zone)
+
+    found = []
+    try:
+        async for old in channel.history(limit=PAYMENT_SCAN, after=since, before=until):
+            paid = levinson.read_payment(_all_text(old), paid_at=old.created_at.astimezone(zone))
+            if paid is not None:
+                found.append(paid)
+    except discord.Forbidden:
+        return [], (
+            f"RYTE can see #{getattr(channel, 'name', where)} but can't read its "
+            "history. Give it Read Message History."
+        )
+    return found, ""
+
+
+def _all_text(message) -> str:
+    """A message and its embeds as one blob.
+
+    Payra's notification is an embed, and which part of one carries the fields
+    is up to whoever built the automation - title, description, or named
+    fields. Reading all of it as text means a change of shape at their end
+    doesn't stop the report at ours.
+    """
+    parts = [message.content or ""]
+    for embed in getattr(message, "embeds", None) or []:
+        parts.extend(
+            str(bit) for bit in (embed.title, embed.description) if bit
+        )
+        for field in getattr(embed, "fields", None) or []:
+            parts.append(f"{field.name}: {field.value}")
+        footer = getattr(embed, "footer", None)
+        if footer is not None and getattr(footer, "text", None):
+            parts.append(str(footer.text))
+    return "\n".join(part for part in parts if part)
+
+
+async def _levinson_report(
+    bot: "WilByteBot", responder: Responder, config: Config, said: str
+) -> None:
+    """Who Levinson sent us and what they paid, for one month.
+
+    Read and shown before it is written. The sheet goes to an agency partner
+    as a statement of what they are owed, so the numbers get looked at by a
+    person once before they land on it.
+    """
+    from .. import levinson
+
+    today = await asyncio.to_thread(jobs.board_day, config)
+    asked = levinson.month_named(said, today=today)
+    if asked is None:
+        await responder.send(
+            "Which month? `@RYTE levinson`, `levinson last month`, or "
+            "`levinson august`."
+        )
+        return
+    year, month = asked
+    label = levinson.tab_for(year, month)
+
+    await responder.send(f"Reading {label} — nothing will be written yet.")
+
+    payments, problem = await _payments_in(bot, year, month)
+    if problem:
+        await responder.send(embed=embeds.error(problem))
+        return
+
+    members, notes = await asyncio.to_thread(jobs.levinson_members, config)
+    lines = levinson.lines_for(payments, members)
+
+    head = (
+        f"**Levinson — {label}**\n"
+        f"{len(payments)} payment(s) in the channel, "
+        f"{len(lines)} from Levinson agents, {levinson.total(lines)} total."
+    )
+    if notes:
+        head += "\n" + "\n".join(f"⚠ {note}" for note in notes)
+    if not lines:
+        await responder.send(head)
+        return
+
+    listed = "\n".join(
+        f"• {line.paid_on:%b %d} — **{line.name}** — {line.amount}"
+        + (f" — {line.product}" if line.product else "")
+        for line in lines[:40]
+    )
+    if len(lines) > 40:
+        listed += f"\n-# and {len(lines) - 40} more"
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add {len(lines)} to the sheet",
+        emoji="📗",
+    )
+    await responder.send(f"{head}\n{listed}", view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    written, problems = await asyncio.to_thread(jobs.write_levinson, config, lines)
+    note = (
+        f"📗 Added {written} row(s) to the tracker."
+        if written else
+        "📗 Nothing new — every one of those is already on the sheet."
+    )
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
     await responder.send(note)
 
 
