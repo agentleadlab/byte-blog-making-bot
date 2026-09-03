@@ -2227,12 +2227,12 @@ def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
     Check silts up - "as long as the cards are on quality check ... you move
     them to done".
 
-    Ads and Lead Order are finished at two in the morning rather than at half
-    eight, because that is when their work actually stops - so the half eight
-    move leaves them where they are and the two o'clock one takes only those
-    two. A card nobody dated goes with the half eight sweep; at two in the
-    morning only the two named cards move, because anything else in Quality
-    Check at that hour is something somebody left there on purpose.
+    Ads and Lead Order are finished at ten rather than at half eight, because
+    that is when their work actually stops - so the half eight move leaves
+    them where they are and the ten o'clock one takes only those two. A card
+    nobody dated goes with the half eight sweep; at ten only the two named
+    cards move, because anything else in Quality Check at that hour is
+    something somebody left there on purpose.
 
     A card somebody held back from the carry stays too. Holding its items back
     is saying the work is not finished, and filing the card away in the same
