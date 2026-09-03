@@ -187,6 +187,19 @@ def quoted(span: str) -> str:
 def explain_token(status: int, body: str) -> str:
     """Why signing in failed, in terms of what to do about it."""
     said = _said(body)
+    if "unauthorized_client" in said:
+        # The token is real and the client is real; they are just not each
+        # other's. Google says only "Unauthorized", which reads like a wrong
+        # password and sends somebody back to mint the same token again.
+        return (
+            "That refresh token was minted for a different OAuth client than "
+            "the GOOGLE_CLIENT_ID in .env. In the OAuth playground, tick the "
+            "gear icon's **Use your own OAuth credentials** and paste this "
+            "app's client ID and secret before authorizing - without it the "
+            "token belongs to Google's own playground app. The client also "
+            "needs https://developers.google.com/oauthplayground listed under "
+            "Authorized redirect URIs."
+        )
     if "invalid_grant" in said or status == 400:
         return (
             "Google rejected the refresh token. That happens when the OAuth "
