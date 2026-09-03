@@ -647,8 +647,22 @@ def with_line(phrase: str, text: str) -> str:
     Only when the phrase names no level of its own. "Phoenix Standard" on a
     card that also says "Uprise" is already saying which, and a card naming
     both is naming one thing twice rather than two things.
+
+    And only when the phrase is not already a whole order. A phrase naming its
+    family and its tier has said what was bought, and a line word somewhere
+    else on the card is then something else being talked about. Jason
+    Hagedorn's card says "Jason paid for OTP Trucker IUL leads / same states as
+    his Phoenix + campaign" - Phoenix is the campaign he already runs, named to
+    say which states to use, and it made his trucker order read as a Phoenix
+    one. "Yes he's agency is phnx, but the setup is just trucker."
+
+    Benji Missey's "Lead Type: vets" with "uprise" below it still comes out as
+    Uprise vets: vets alone names no tier, so the card has not yet said what
+    was bought and the level is the half that finishes it.
     """
     if not phrase or LINE.search(phrase):
+        return phrase
+    if family_of(phrase) and tier_of(phrase):
         return phrase
     word = line_word(text)
     return f"{word} {phrase}" if word else phrase

@@ -2952,3 +2952,66 @@ def test_what_cannot_honestly_be_compared_is_not_questioned(card_says, setup_say
     """Eleven correct spreads questioned is a question nobody reads the
     twelfth time."""
     assert agents.setup_conflict(card_says, setup_says) is None
+
+
+# --------------------------------- an agency named on the card is not the order
+
+
+JASON = """-- New Client Onboarded --
+
+First Name: Jason
+Last Name: Hagedorn
+Phone: +14023805681
+Email: jasonhagedorn1@gmail.com
+Package Selected: Text Verified
+Lead Type: Indexed Universal Life
+Target Areas for Marketing:
+
+Jason paid for OTP Trucker IUL leads
+same states as his Phoenix + campaign. Get him setup tonight and rolling into
+the weekend. He got 20 of them
+
+AL,AK,AZ,AR,GA,IL,IN,KS,KY,LA,ME,MS,MO,NE,OH,TN,TX,VA,WA,WI
+Uprise
+
+Live Saturday, September 5
+"""
+
+
+def test_a_campaign_the_card_refers_to_is_not_what_was_bought():
+    """"Jason paid for OTP Trucker IUL leads / same states as his Phoenix +
+    campaign" - Phoenix is the campaign he already runs, named to say which
+    states to use. It made his trucker order read as a Phoenix one. "Yes he's
+    agency is phnx, but the setup is just trucker"."""
+    assert agents.stated_lead_type(JASON) == "OTP Trucker IUL leads"
+
+
+def test_the_trucker_order_lands_on_the_trucker_checklist():
+    said = agents.stated_lead_type(JASON)
+
+    assert agents.match_checklist(
+        said, ["OTP IUL TRUCKER", "OTP IUL Plus", "Phoenix Plus"],
+        tier=agents.tier_of(said),
+    ) == "OTP IUL TRUCKER"
+
+
+def test_a_card_naming_one_kind_of_leads_can_be_checked_against_its_setup():
+    """Reading it as Phoenix trucker named two families at once, and both the
+    wrong-setup check and the spread conflict stay silent on those - so the
+    one card that most needed checking was the one that could not be."""
+    assert agents.families_in(agents.stated_lead_type(JASON)) == {"iul"}
+
+
+def test_the_level_still_finishes_a_phrase_that_has_not_said_enough():
+    """Benji Missey's card: "Lead Type: vets" with "uprise" below it. Vets
+    alone names no tier, so the card has not yet said what was bought and the
+    level is the half that finishes it."""
+    assert agents.stated_lead_type("Lead Type: vets\nuprise\n") == "uprise vets"
+
+
+def test_a_phrase_that_names_a_whole_order_is_left_alone():
+    assert agents.with_line("OTP Trucker IUL", "his Phoenix campaign") == (
+        "OTP Trucker IUL"
+    )
+    # No tier of its own, so the level still goes in front.
+    assert agents.with_line("vets", "uprise") == "uprise vets"
