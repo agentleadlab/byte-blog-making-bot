@@ -1904,7 +1904,7 @@ def test_the_typed_rollover_offers_to_carry_the_stuck_ones_anyway(monkeypatch):
     from wilbyte import dailyops
     from wilbyte.bot import client as bot_client
 
-    plan = dailyops.RolloverPlan(kind="lead_order", from_title="a", to_title="b")
+    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
     plan.leftovers = [
         dailyops.Leftover(person="Nicole", name="one"),
         dailyops.Leftover(person="Nicole", name="two", times_rolled=3),
@@ -1954,7 +1954,7 @@ def test_nothing_stuck_means_no_second_button(monkeypatch):
     from wilbyte import dailyops
     from wilbyte.bot import client as bot_client
 
-    plan = dailyops.RolloverPlan(kind="lead_order", from_title="a", to_title="b")
+    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
     plan.leftovers = [dailyops.Leftover(person="Nicole", name="one")]
     pressed = []
 
@@ -1996,7 +1996,7 @@ def test_the_offer_still_comes_when_there_is_nothing_else_left_to_carry(monkeypa
     from wilbyte import dailyops
     from wilbyte.bot import client as bot_client
 
-    plan = dailyops.RolloverPlan(kind="lead_order", from_title="a", to_title="b")
+    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
     plan.leftovers = [
         dailyops.Leftover(person="Nicole", name="gone across", already=True),
         dailyops.Leftover(person="Nicole", name="stuck", times_rolled=3),

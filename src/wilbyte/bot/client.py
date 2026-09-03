@@ -1185,7 +1185,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # ten for Ads and Lead Order - so both read today's cards.
             when = None
             kinds = dailyops.LATE_KINDS if late else dailyops.EVENING_KINDS
-            moved, problems, flagged = await asyncio.to_thread(
+            moved, problems, flagged, held = await asyncio.to_thread(
                 partial(jobs.run_rollover, bot.config, day=when, only=kinds)
             )
             note = (
@@ -1193,14 +1193,15 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"unfinished {'Ads and Lead Order ' if late else ''}item(s) "
                 "onto the next day's cards."
             )
+            holding = {(item.person, item.name) for item in held}
             if flagged:
                 note += "\n" + "\n".join(
-                    f"⚠ {item.person}: {item.name[:60]} — "
-                    + ("already Done but unticked" if item.looks_done
-                       else f"carried {item.times_rolled} days, left for you")
+                    f"⚠ {item.person}: {item.name[:60]} — " + _why_flagged(
+                        item, held=(item.person, item.name) in holding
+                    )
                     for item in flagged
                 )
-            stuck = [item for item in flagged if item.stuck and not item.looks_done]
+            stuck = [item for item in held if not item.looks_done]
             carry_again = (when, kinds) if stuck else None
         elif step == dailyops.LATE_DONE:
             # Ten o'clock, same day: the cards being finished are today's.
@@ -1261,6 +1262,17 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             if problems:
                 said += "\n⚠ " + "\n⚠ ".join(problems)
             await responder.send(said)
+
+
+def _why_flagged(item, *, held: bool) -> str:
+    """Why a carried-over item is worth a line of its own tonight."""
+    if item.looks_done:
+        return "already Done but unticked"
+    if held:
+        return f"carried {item.times_rolled} days, left for you"
+    # A Lead Order line moves however long it has been waiting, and saying so
+    # is the only way anybody finds out it has been waiting.
+    return f"carried {item.times_rolled} days running — moved again"
 
 
 def _board_responder(bot: "WilByteBot"):
@@ -3151,9 +3163,7 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
             f"{', '.join(missing)}"
         )
 
-    movable = sum(
-        1 for plan in plans for item in plan.carried if not item.stuck
-    )
+    movable = sum(len(plan.moving) for plan in plans)
     if not movable:
         # Nothing left to carry is the normal way to meet the held-back ones:
         # everything else went across an hour ago, and these two are all that
@@ -3208,8 +3218,8 @@ async def _offer_stuck(responder: Responder, config: Config, plans, *, day, only
     hand - which is the thing this replaces.
     """
     stuck = [
-        item for plan in plans for item in plan.needs_a_look
-        if item.stuck and not item.looks_done
+        item for plan in plans for item in plan.held_back
+        if not item.looks_done
     ]
     if not stuck:
         return

@@ -3012,13 +3012,18 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     return moved, problems
 
 
-def run_rollover(config: Config, *, day=None, only=None) -> tuple[int, list[str], list]:
-    """Read the board and carry the items over. (moved, problems, flagged).
+def run_rollover(
+    config: Config, *, day=None, only=None
+) -> tuple[int, list[str], list, list]:
+    """Read the board and carry the items over. (moved, problems, flagged, held).
 
-    The unattended version of what the button does, and the same two things
-    stay put: an item whose linked card already reads Done, and one carried
-    three nights running. Those come back to be said out loud rather than
-    moved while nobody is watching.
+    The unattended version of what the button does. `flagged` is everything
+    worth a line in the night's message; `held` is the part of it that stayed
+    put - an item whose linked card already reads Done, and, off the Lead Order
+    card, one carried three nights running. Those come back to be said out loud
+    rather than moved while nobody is watching. A Lead Order line is flagged
+    and carried anyway: unticked there means the leads have not gone out, and
+    it follows the day until somebody ticks it.
 
     A card somebody held back is named in the problems, so the night's message
     says what did not happen as well as what did - a silent skip is a card
@@ -3036,7 +3041,8 @@ def run_rollover(config: Config, *, day=None, only=None) -> tuple[int, list[str]
         named = ", ".join(dailyops.CARD_KINDS.get(k, k) for k in held)
         problems.append(f"Held back at your request: {named}")
     flagged = [item for plan in plans for item in plan.needs_a_look]
-    return moved, problems, flagged
+    held_back = [item for plan in plans for item in plan.held_back]
+    return moved, problems, flagged, held_back
 
 
 def carry_stuck(config: Config, *, day=None, only=None) -> tuple[int, list[str]]:
@@ -3055,7 +3061,7 @@ def carry_stuck(config: Config, *, day=None, only=None) -> tuple[int, list[str]]
 
     day = day or board_day(config)
     plans, _missing, targets = read_rollover(config, day=day, only=only)
-    stuck = [plan for plan in plans if any(item.stuck for item in plan.carried)]
+    stuck = [plan for plan in plans if plan.held_back]
     if not stuck:
         return 0, []
     return apply_rollover(config, stuck, targets, day=day, include_stuck=True)
@@ -3476,8 +3482,12 @@ def apply_rollover(
                 for c in target_lists or []
                 for existing in c.get("checkItems") or []
             }
+            holding = (
+                set() if include_stuck
+                else {(item.person, item.name) for item in plan.held_back}
+            )
             for item in plan.carried:
-                if item.stuck and not include_stuck:
+                if (item.person, item.name) in holding:
                     continue
                 key = " ".join(item.person.split()).casefold()
                 if (key, " ".join(item.name.split())) in already:

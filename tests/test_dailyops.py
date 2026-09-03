@@ -366,6 +366,51 @@ def test_a_stuck_item_is_raised_rather_than_carried_again(tmp_path):
     assert "rolled forward 4 days" in dailyops.summarise([plan])
 
 
+def lead_order_plan(times_rolled):
+    """One Lead Order line that has been carried this many days already."""
+    plan = dailyops.RolloverPlan(
+        kind="lead_order", from_title="Lead Order 09/02/26", to_title="Lead Order 09/03/26",
+    )
+    plan.leftovers = [
+        dailyops.Leftover(
+            person="own setup",
+            name="40 Basic FB Spanish IUL MONDAY not signed",
+            times_rolled=times_rolled,
+        )
+    ]
+    return plan
+
+
+def test_a_lead_order_line_carries_however_long_it_has_been_waiting():
+    """"As long as its unticked on lead order, its being move next day." An
+    unticked line there is somebody's leads not gone out, and holding the one
+    that has waited longest off tomorrow's card puts it where nobody is
+    looking any more."""
+    plan = lead_order_plan(6)
+
+    assert [item.name for item in plan.moving] == [plan.leftovers[0].name]
+    assert plan.held_back == []
+
+
+def test_a_lead_order_line_that_keeps_coming_back_is_still_said_out_loud():
+    """Moving it is not the same as saying nothing about it. Six days on one
+    line is the card telling somebody something."""
+    text = dailyops.summarise([lead_order_plan(6)])
+
+    assert "1 item(s)" in text
+    assert "carried 6 days running" in text
+
+
+def test_the_three_day_hold_still_applies_to_the_other_cards():
+    """A General task on its fourth night usually is one nobody is going to
+    do, and stopping to ask is right there."""
+    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
+    plan.leftovers = [dailyops.Leftover(person="Nicole", name="x", times_rolled=4)]
+
+    assert plan.moving == []
+    assert [item.name for item in plan.held_back] == ["x"]
+
+
 def test_the_heading_counts_what_moves_not_what_is_held_back(tmp_path):
     """The button is labelled with what will actually be written. A heading
     counting the held-back ones as well says fourteen over a button saying
