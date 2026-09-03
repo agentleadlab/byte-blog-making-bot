@@ -2694,3 +2694,53 @@ def test_without_a_today_the_wording_is_unchanged():
 
     assert "launching today" in said
     assert "already past" not in said
+
+
+# --------------------------------- a copied card brings the old comments
+
+
+EDUARDO = """-- New Client Onboarded --
+
+First Name: Eduardo
+Last Name: Munoz
+Lead Type: Basic/Instant Spanish IUL
+40 Spanish Basic Leads
+Launch Date: Friday, Sept 04
+"""
+
+COPIED = """DEDICATED SPANISH IUL IF setup is complete for EDUARDO MUNOZ
+Fired a test in the Discord channel and Google Sheet.
+Ready to go live WED, AUG 26"""
+
+
+def read_eduardo(comments, today=date(2026, 9, 3)):
+    return agents.read_agent(
+        {"name": "New Agent - Eduardo Munoz", "id": "c1", "shortUrl": "u"},
+        text=EDUARDO, comments=comments, today=today,
+    )
+
+
+def test_a_stale_comment_never_beats_the_description():
+    """These cards are copied from one agent to the next with the comments
+    attached. Eduardo's carried a launch date from somebody else's card a week
+    earlier, next to a description plainly saying Friday, Sept 04."""
+    assert read_eduardo((COPIED,)).launch == date(2026, 9, 4)
+
+
+def test_the_comments_are_still_read_when_the_description_is_silent():
+    """It turns up in either, and which one is nobody's decision to make -
+    but only when the description doesn't say."""
+    silent = agents.read_agent(
+        {"name": "New Agent - Eduardo Munoz", "id": "c1", "shortUrl": "u"},
+        text=EDUARDO.replace("Launch Date: Friday, Sept 04", ""),
+        comments=("Going live Sept 9",),
+        today=date(2026, 9, 3),
+    )
+
+    assert silent.launch == date(2026, 9, 9)
+
+
+def test_a_weekday_argument_in_a_stale_comment_is_not_raised():
+    """The date came off the description, so the description is what gets
+    argued with. A copied comment is not a disagreement."""
+    assert read_eduardo(("live fri, aug 27",)).note == ""

@@ -1128,20 +1128,30 @@ def read_agent(
         return None
 
     said = text or ""
-    everything = "\n".join([said, *comments])
+    # The description first, and the comments only when it names no date at
+    # all. These cards are copied from one agent to the next with the comments
+    # attached: Eduardo Munoz's carried "Ready to go live WED, AUG 26" from
+    # somebody else's card a week earlier, next to a description that plainly
+    # said Friday, Sept 04. Reading both together and letting them race left
+    # the answer resting on which phrasing a regex happened to reach first.
+    from_comments = "\n".join(comments)
     agent = Agent(
         name=agent_name(title),
         card_id=str(card.get("id") or ""),
         url=str(card.get("shortUrl") or card.get("url") or ""),
         lead_type=find_lead_type(said),
-        launch=find_launch(everything, today=today),
+        launch=find_launch(said, today=today) or find_launch(from_comments, today=today),
         # What gets matched against the board's checklists, so it carries the
         # same restriction.
         said=said,
         # Both halves when two things were ordered - this is what the line on
         # every checklist says, and half an order is worse than none.
         stated=stated_orders(said),
-        note=launch_conflict(everything, today=today),
+        # Argued with on the half the date was read from, so a stale comment
+        # is not held up as a disagreement with the description.
+        note=launch_conflict(
+            said if find_launch(said, today=today) else from_comments, today=today
+        ),
     )
     return agent
 
