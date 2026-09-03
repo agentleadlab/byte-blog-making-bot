@@ -3191,6 +3191,40 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
     await responder.send(note)
 
+    # The same offer the evening run makes. Naming an item as held back and
+    # then giving no way to say "it is still the plan" is how somebody ends up
+    # dragging it across in Trello by hand - which is the thing this replaces.
+    stuck = [item for item in flagged if item.stuck and not item.looks_done]
+    if not stuck:
+        return
+
+    again = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Carry {len(stuck)} anyway",
+        emoji="↪",
+    )
+    await responder.send(
+        f"Keep carrying {'it' if len(stuck) == 1 else 'them'} to tomorrow?",
+        view=again,
+    )
+    await again.wait()
+    if not again.confirmed:
+        return
+
+    try:
+        moved, problems = await asyncio.to_thread(
+            partial(jobs.carry_stuck, config, day=day, only=only)
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
+        return
+
+    said = f"↪ Carried {moved} item(s) onto tomorrow's cards."
+    if problems:
+        said += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(said)
+
 
 async def _probe_update(responder: Responder, config: Config) -> None:
     """Ask GHL what it will accept on an update, on a post nobody can see."""
