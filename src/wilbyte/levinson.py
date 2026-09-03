@@ -121,6 +121,31 @@ def read_payment(text: str, *, paid_at: datetime) -> Payment | None:
     )
 
 
+# A word that is all one case is a word nobody chose the case of. "dave luft"
+# and "JOCHEBED LAWRENCE" both come off a form that way.
+_ONE_CASE = re.compile(r"^[^A-Za-z]*(?:[a-z][^A-Z]*|[A-Z][^a-z]*)$")
+
+
+def capitalised(name: str) -> str:
+    """"dave luft" -> "Dave Luft". A name somebody already cased is left alone.
+
+    Only words written entirely in one case are touched. `str.title()` would
+    turn McCarthy into Mccarthy and DeLuca into Deluca - names people are
+    particular about, and this report goes to an agency partner with their own
+    agents' names on it.
+    """
+    fixed = []
+    for word in re.split(r"(\s+)", name or ""):
+        if not word.strip() or not _ONE_CASE.match(word):
+            fixed.append(word)
+            continue
+        # Hyphens and apostrophes start a name too: mary-jane, o'brien.
+        fixed.append(
+            re.sub(r"[A-Za-z]+", lambda part: part.group(0).capitalize(), word.lower())
+        )
+    return "".join(fixed)
+
+
 def digits(phone: str) -> str:
     """Just the numbers, so +1 (801) 637-1314 and 18016371314 are one phone."""
     kept = re.sub(r"\D", "", phone or "")
@@ -264,7 +289,7 @@ def lines_for(payments: list[Payment], members: list[Member]) -> list[Line]:
                 # The name Payra has is the name on the card; the member list
                 # has the name they signed up with. Levinson know the second
                 # one, so that is the one on the report.
-                name=member.name or one.name,
+                name=capitalised(member.name or one.name),
                 email=one.email or member.email,
                 phone=one.phone or digits(member.phone),
                 amount=one.dollars,

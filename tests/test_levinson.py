@@ -337,3 +337,41 @@ def test_a_new_tab_is_named_like_the_ones_already_there():
     assert levinson.new_tab_name(["September", "August"], 2026, 10) == "October"
     assert levinson.new_tab_name(["August 2026"], 2026, 10) == "October 2026"
     assert levinson.new_tab_name([], 2026, 10) == "October 2026"
+
+
+# --------------------------------- names as somebody would write them
+
+
+@pytest.mark.parametrize(
+    "typed,wanted",
+    [
+        ("dave luft", "Dave Luft"),
+        ("emmanuel butmankiewicz", "Emmanuel Butmankiewicz"),
+        ("dawson m sullivan", "Dawson M Sullivan"),
+        ("JOCHEBED LAWRENCE", "Jochebed Lawrence"),
+        ("mary-jane parker", "Mary-Jane Parker"),
+        ("shawn o'brien", "Shawn O'Brien"),
+        ("", ""),
+    ],
+)
+def test_a_name_off_a_form_is_capitalised(typed, wanted):
+    assert levinson.capitalised(typed) == wanted
+
+
+@pytest.mark.parametrize(
+    "already",
+    ["Tony Moderno", "Ryan McCarthy", "Sofia DeLuca", "Shawn O'Brien", "Dave  Luft"],
+)
+def test_a_name_somebody_already_cased_is_left_exactly_as_it_is(already):
+    """title() turns McCarthy into Mccarthy. People are particular about their
+    own names, and this report goes to a partner with their agents on it."""
+    assert levinson.capitalised(already) == already
+
+
+def test_the_row_gets_the_capitalised_name():
+    said = TONY.replace("Tony Moderno", "tony moderno")
+    people = [levinson.Member(name="tony moderno", email="tony.moderno@tryeverlife.com")]
+
+    (line,) = levinson.lines_for([levinson.read_payment(said, paid_at=WHEN)], people)
+
+    assert line.name == "Tony Moderno"
