@@ -1816,3 +1816,78 @@ def test_publishing_a_due_post_survives_the_same_crash(tmp_path):
     publisher.publish_entry(client, entry)
 
     assert [call["status"] for call in client.calls] == ["PUBLISHED", "DRAFT", "PUBLISHED"]
+
+
+# ------------------------------------------------- moving the cards by hand
+
+
+class Asked:
+    """A responder that keeps what it was told and always says yes."""
+
+    requester_id = 1
+
+    def __init__(self):
+        self.messages = []
+
+    async def send(self, content=None, *, embed=None, file=None, view=None):
+        self.messages.append(content or "")
+
+
+def run_move(named, monkeypatch):
+    """`trello move <named>`, with the board and the button stubbed out."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    read, walked = [], []
+
+    def waiting(config, step, **kw):
+        read.append(step)
+        return [f"{step} card"], []
+
+    def walk(config, step, **kw):
+        walked.append(step)
+        return 1, []
+
+    class Pressed:
+        def __init__(self, **kw):
+            self.confirmed = True
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.jobs, "moves_waiting", waiting)
+    monkeypatch.setattr(bot_client.jobs, "walk_board", walk)
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+
+    heard = Asked()
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(bot_client._move_cards(heard, config, named))
+    return read, walked, heard.messages
+
+
+def test_move_done_finishes_ads_and_lead_order_too(monkeypatch):
+    """The clock splits the two Done steps by the hour their work stops.
+    Somebody typing "move done" is asking for the cards to be put away, and
+    being told nothing was waiting while two sit in Quality Check is the
+    command failing at the only thing it is for."""
+    from wilbyte import dailyops
+
+    read, walked, _said = run_move("done", monkeypatch)
+
+    assert read == list(dailyops.DONE_STEPS)
+    assert walked == list(dailyops.DONE_STEPS)
+
+
+def test_move_done_counts_both_steps_in_what_it_says(monkeypatch):
+    _read, _walked, said = run_move("done", monkeypatch)
+
+    assert "Moved 2 card(s)" in said[-1]
+
+
+def test_the_other_moves_are_still_one_step(monkeypatch):
+    read, walked, _said = run_move("quality check", monkeypatch)
+
+    assert read == ["to_quality_check"]
+    assert walked == ["to_quality_check"]

@@ -2990,7 +2990,15 @@ async def agent_loop(bot: "WilByteBot") -> None:
 
 
 async def _move_cards(responder: Responder, config: Config, named: str) -> None:
-    """Walk today's cards from one list to the next, once approved."""
+    """Walk today's cards from one list to the next, once approved.
+
+    "Move done" means both Done steps. The clock splits them - half eight for
+    General and Ops, ten for Ads and Lead Order - because that is when each
+    one's work stops, but somebody typing this is asking for the cards to be
+    put away, not for step seven of the walk. Asking for it and being told
+    nothing was waiting, while two cards sat in Quality Check, is the command
+    failing at the only thing it is for.
+    """
     from .. import dailyops
 
     step = dailyops.move_named(named)
@@ -3000,18 +3008,22 @@ async def _move_cards(responder: Responder, config: Config, named: str) -> None:
         )
         return
 
+    steps = dailyops.DONE_STEPS if step in dailyops.DONE_STEPS else (step,)
     where = dailyops.STEP_NAMES[step]
+    cards: list[str] = []
     try:
-        cards, problems = await asyncio.to_thread(
-            partial(jobs.moves_waiting, config, step)
-        )
+        for one in steps:
+            found, problems = await asyncio.to_thread(
+                partial(jobs.moves_waiting, config, one)
+            )
+            if problems:
+                await responder.send(embed=embeds.error("\n".join(problems)))
+                return
+            cards.extend(found)
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
 
-    if problems:
-        await responder.send(embed=embeds.error("\n".join(problems)))
-        return
     if not cards:
         await responder.send(
             f"Nothing to move {where} — today's cards aren't sitting in "
@@ -3031,8 +3043,12 @@ async def _move_cards(responder: Responder, config: Config, named: str) -> None:
     if not view.confirmed:
         return
 
+    moved, problems = 0, []
     try:
-        moved, problems = await asyncio.to_thread(jobs.walk_board, config, step)
+        for one in steps:
+            went, trouble = await asyncio.to_thread(jobs.walk_board, config, one)
+            moved += went
+            problems.extend(trouble)
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
         return
