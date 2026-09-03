@@ -2,6 +2,11 @@
 __pycache__/
 *.pyc
 .env
+# Anything beside it too - .env.backup, .env.old, a copy made before an edit.
+# One `git add -A` on a stray copy is a credential in the history forever, and
+# the example file is the only one that belongs in the repo.
+.env.*
+!.env.example
 # A YouTube login in a file. Never committed, for the same reason .env isn't.
 cookies.txt
 yt-cookies-*.txt
@@ -12,7 +17,9 @@ dist/
 
 # Runtime output
 out/
-state/ledger.json
-# Settings RYTE changes about itself. Untracked on purpose: a local edit to a
-# tracked file blocks the auto-update from fast-forwarding.
-state/preferences.json
+# Everything RYTE remembers about itself: the ledger, its preferences, which
+# board steps have run, which cards it has already spoken about. All of it is
+# written by the copy that is running and belongs to that machine, and a local
+# edit to a tracked file blocks the auto-update from fast-forwarding - which
+# is a bot that quietly stops updating and nobody notices for a week.
+state/*.json
