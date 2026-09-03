@@ -15,6 +15,7 @@ bottom, which anybody can delete.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -152,36 +153,85 @@ class SheetsClient:
 
     # ------------------------------------------------------------------ writing
 
-    def append(self, sheet_id: str, tab: str, rows: list[list[str]]) -> int:
-        """Add rows under whatever is already in the tab. Returns how many.
+    def append(self, sheet_id: str, tab: str, rows: list[list[str]]) -> str:
+        """Add rows under whatever is already in the tab. Returns their range.
 
         `INSERT_ROWS` rather than `OVERWRITE`: overwrite writes into the first
         empty row it finds, which on a sheet with a gap in it means writing
         over what comes after the gap.
+
+        The range comes back because a row has to be formatted after it is
+        written, and this is the only thing that knows where it landed.
         """
         if not rows:
-            return 0
-        self._request(
+            return ""
+        got = self._request(
             "POST",
             f"/{sheet_id}/values/{quoted(tab)}:append"
             "?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",
             json={"values": rows},
         )
-        return len(rows)
+        return str((got.get("updates") or {}).get("updatedRange") or "")
 
-    def add_tab(self, sheet_id: str, title: str) -> None:
-        """A new empty tab. Left alone if one by that name is already there."""
+    def add_tab(self, sheet_id: str, title: str) -> int | None:
+        """A new empty tab, and its id. None if one by that name already exists."""
         if any(one.get("title") == title for one in self.tabs(sheet_id)):
+            return None
+        got = self._request(
+            "POST",
+            f"/{sheet_id}:batchUpdate",
+            json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+        )
+        made = (got.get("replies") or [{}])[0].get("addSheet") or {}
+        found = (made.get("properties") or {}).get("sheetId")
+        return int(found) if found is not None else None
+
+    def restyle(
+        self, sheet_id: str, tab_id: int, first: int, last: int, *, bold: bool
+    ) -> None:
+        """Set bold and alignment on rows `first`..`last` (1-based, inclusive).
+
+        A row appended to a tab holding nothing but its heading row arrives
+        wearing the heading's clothes - bold and centred - because that is what
+        Sheets copies down. The agents' names came out looking like column
+        titles, which on a document going to an agency reads as a mistake
+        before anybody has read a word of it.
+        """
+        if tab_id is None or last < first:
             return
         self._request(
             "POST",
             f"/{sheet_id}:batchUpdate",
-            json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+            json={"requests": [{
+                "repeatCell": {
+                    "range": {
+                        "sheetId": tab_id,
+                        "startRowIndex": first - 1,
+                        "endRowIndex": last,
+                    },
+                    "cell": {"userEnteredFormat": {
+                        "horizontalAlignment": "LEFT",
+                        "textFormat": {"bold": bold},
+                    }},
+                    "fields": (
+                        "userEnteredFormat(horizontalAlignment,textFormat.bold)"
+                    ),
+                }
+            }]},
         )
 
 
 def quoted(span: str) -> str:
     return urllib.parse.quote(span, safe="")
+
+
+def rows_in(span: str) -> tuple[int, int] | None:
+    """The first and last row of a range like "August!A7:E10", or 'August 2026'!…"""
+    found = re.findall(r"[A-Z]+(\d+)", (span or "").split("!")[-1])
+    if not found:
+        return None
+    numbers = [int(one) for one in found]
+    return min(numbers), max(numbers)
 
 
 def explain_token(status: int, body: str) -> str:

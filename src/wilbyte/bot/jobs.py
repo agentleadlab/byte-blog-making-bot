@@ -3979,22 +3979,28 @@ def write_levinson(config: Config, batches) -> tuple[int, list[str]]:
     written, problems = 0, []
     try:
         with open_sheets(config) as client:
-            titles = [str(one.get("title") or "") for one in client.tabs(sheet_id)]
+            tabs = {
+                str(one.get("title") or ""): one.get("sheetId")
+                for one in client.tabs(sheet_id)
+            }
             for (year, month), lines in batches:
                 if not lines:
                     continue
-                title = levinson.pick_tab(titles, year, month)
+                title = levinson.pick_tab(list(tabs), year, month)
                 if title is None:
-                    title = levinson.new_tab_name(titles, year, month)
-                    client.add_tab(sheet_id, title)
-                    titles.append(title)
+                    title = levinson.new_tab_name(list(tabs), year, month)
+                    tabs[title] = client.add_tab(sheet_id, title)
                     # A brand new tab has no headings, so it gets the ones the
-                    # rest of the sheet uses rather than a shape of its own.
-                    heads = _headings_anywhere(client, sheet_id, titles)
+                    # rest of the sheet uses rather than a shape of its own -
+                    # bold, the way a heading row looks everywhere else.
+                    heads = _headings_anywhere(client, sheet_id, list(tabs))
                     if heads:
-                        client.append(sheet_id, title, [heads])
+                        where = client.append(sheet_id, title, [heads])
+                        _restyle(client, sheet_id, tabs[title], where, bold=True)
 
-                count, said = _append_month(client, sheet_id, title, lines)
+                count, said = _append_month(
+                    client, sheet_id, title, tabs.get(title), lines
+                )
                 written += count
                 problems.extend(said)
     except gsheets.SheetsError as exc:
@@ -4019,7 +4025,18 @@ def _headings_anywhere(client, sheet_id: str, titles: list[str]) -> list[str]:
     return []
 
 
-def _append_month(client, sheet_id: str, title: str, lines: list):
+def _restyle(client, sheet_id: str, tab_id, where: str, *, bold: bool) -> None:
+    """Make the rows just written look like rows rather than headings."""
+    from .. import gsheets
+
+    span = gsheets.rows_in(where)
+    if tab_id is None or span is None:
+        return
+    first, last = span
+    client.restyle(sheet_id, int(tab_id), first, last, bold=bold)
+
+
+def _append_month(client, sheet_id: str, title: str, tab_id, lines: list):
     """One month onto one tab, skipping what is already on it."""
     from .. import levinson
 
@@ -4057,7 +4074,11 @@ def _append_month(client, sheet_id: str, title: str, lines: list):
         seen.add(mark)
         fresh.append(levinson.row_for(line, headings))
 
-    written = client.append(sheet_id, title, fresh)
+    where = client.append(sheet_id, title, fresh)
+    written = len(fresh)
+    # Sheets copies the format of the row above, so rows appended under a
+    # lone heading row arrive bold and centred.
+    _restyle(client, sheet_id, tab_id, where, bold=False)
     said = []
     if date_at is None and written:
         # Without a date on the row there is nothing to tell one payment from

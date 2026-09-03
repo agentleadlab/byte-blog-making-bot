@@ -63,3 +63,22 @@ def test_a_missing_credential_is_named(name):
         gsheets.credentials(Half())
 
     assert f"GOOGLE_{name.upper()}" in str(raised.value)
+
+
+# ------------------------------------------------- where a write landed
+
+
+@pytest.mark.parametrize(
+    "span,wanted",
+    [
+        ("August!A7:E10", (7, 10)),
+        ("'August 2026'!A2:G2", (2, 2)),
+        ("Sheet1!A1:Z1000", (1, 1000)),
+        ("", None),
+        ("nothing like a range", None),
+    ],
+)
+def test_the_rows_a_write_landed_on(span, wanted):
+    """A row has to be formatted after it is written, and the range Sheets
+    hands back is the only thing that knows where it went."""
+    assert gsheets.rows_in(span) == wanted
