@@ -115,7 +115,17 @@ FAMILIES = (
     # too - all three are IUL products on this board, and the checklists say
     # so outright: "OTP Blue Collar IUL", "OTP IUL TRUCKER". So a card saying
     # only "OTP Truckers" still names the family it belongs to.
-    ("iul", re.compile(r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b", re.IGNORECASE)),
+    # Written out in full on Siona Paradas's card: "Text Verified Index
+    # Universal Life". Three words nobody abbreviated, naming the same product
+    # as every other IUL line on the board.
+    (
+        "iul",
+        re.compile(
+            r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b"
+            r"|\bindex(?:ed)?\s+universal\s+life\b",
+            re.IGNORECASE,
+        ),
+    ),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
@@ -144,7 +154,12 @@ QUALIFIERS = (
 
 # Franklin's rule: standard or basic means Standard; text-verified or OTP
 # means Plus. OTP and text-verified are the same thing said two ways.
-STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b", re.IGNORECASE)
+#
+# "PHX STNDRD" is how five agents came through on one setup card. Dropping the
+# vowels is not a typo `despell` can put right - it only reorders letters that
+# are already there - and a lead type with no tier in it matches Standard and
+# Plus equally, so all five were refused rather than filed.
+STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b|\bstndr?ds?\b", re.IGNORECASE)
 PLUS = re.compile(r"\bplus\b|\btext[\s-]*verified\b|\botp\b", re.IGNORECASE)
 
 # The customer level, which is part of what the leads are rather than a

@@ -1559,6 +1559,48 @@ def test_standard_is_read_singular_or_plural(said, expected):
     assert agents.tier_of(said) == expected
 
 
+@pytest.mark.parametrize("said", ["PHX STNDRD", "phx stndrds", "PHNX STNDRD"])
+def test_standard_with_the_vowels_dropped_is_still_standard(said):
+    """Five agents came through one setup card written "PHX STNDRD". despell
+    only reorders letters that are already there, so this was not a typo it
+    could put right - and a lead type naming no tier fits Standard and Plus
+    equally, so all five were refused instead of filed."""
+    assert agents.tier_of(said) == "standard"
+
+
+def test_the_abbreviated_standard_lands_on_the_standard_checklist():
+    have = ["Phoenix Standard", "Phoenix Plus", "OTP VET Plus", "OTP Widows"]
+
+    assert agents.match_checklist(
+        "PHX STNDRD", have, tier=agents.tier_of("PHX STNDRD")
+    ) == "Phoenix Standard"
+
+
+def test_iul_written_out_in_full_is_iul():
+    """Siona Paradas's card said "Text Verified Index Universal Life" - the
+    product every other line on the board abbreviates."""
+    assert agents.family_of("Text Verified Index Universal Life") == "iul"
+    assert agents.family_of("Indexed Universal Life") == "iul"
+    assert agents.shape_of("Text Verified Index Universal Life") == agents.shape_of(
+        "OTP IUL Plus"
+    )
+
+
+def test_iul_written_out_lands_where_the_abbreviated_one_does():
+    assert agents.match_checklist(
+        "Text Verified Index Universal Life", ["OTP IUL Plus", "OTP IUL Standard"],
+        tier=agents.tier_of("Text Verified Index Universal Life"),
+    ) == "OTP IUL Plus"
+
+
+def test_a_lead_type_naming_no_tier_is_still_refused():
+    """"PHX 2.0" says Phoenix and nothing about Standard or Plus. Which of the
+    two it is belongs to somebody who knows, not to a coin toss."""
+    have = ["Phoenix Standard", "Phoenix Plus"]
+
+    assert agents.match_checklist("PHX 2.0", have, tier=agents.tier_of("PHX 2.0")) is None
+
+
 # --------------------------------- two things on one order
 
 
