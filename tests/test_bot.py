@@ -1893,10 +1893,9 @@ def test_the_other_moves_are_still_one_step(monkeypatch):
     assert walked == ["to_quality_check"]
 
 
-def test_the_typed_rollover_offers_to_carry_the_stuck_ones_anyway(monkeypatch):
-    """The evening run offers it. Naming an item as held back and then giving
-    no way to say "it is still the plan" leaves somebody dragging it across in
-    Trello by hand, which is the thing this replaces."""
+def test_the_typed_rollover_carries_an_item_however_long_it_has_waited(monkeypatch):
+    """"Just carry unticked task for all card." No button to press, no line
+    left behind for somebody to drag across in Trello by hand."""
     import asyncio
     from datetime import date
     from types import SimpleNamespace
@@ -1907,101 +1906,9 @@ def test_the_typed_rollover_offers_to_carry_the_stuck_ones_anyway(monkeypatch):
     plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
     plan.leftovers = [
         dailyops.Leftover(person="Nicole", name="one"),
-        dailyops.Leftover(person="Nicole", name="two", times_rolled=3),
+        dailyops.Leftover(person="Nicole", name="two", times_rolled=6),
     ]
-    pressed = []
-
-    class Pressed:
-        def __init__(self, **kw):
-            pressed.append(kw.get("label", ""))
-            self.confirmed = True
-
-        async def wait(self):
-            return None
-
-    monkeypatch.setattr(bot_client.jobs, "board_day", lambda config: date(2026, 9, 3))
-    monkeypatch.setattr(
-        bot_client.jobs, "read_rollover", lambda config, **kw: ([plan], [], {})
-    )
-    monkeypatch.setattr(
-        bot_client.jobs, "apply_rollover", lambda config, plans, targets, **kw: (1, [])
-    )
-    carried_anyway = []
-    monkeypatch.setattr(
-        bot_client.jobs,
-        "carry_stuck",
-        lambda config, **kw: (carried_anyway.append(kw), (1, []))[1],
-    )
-    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
-
-    heard = Asked()
-    config = SimpleNamespace(
-        discord=SimpleNamespace(approval_timeout_seconds=1),
-        schedule=SimpleNamespace(timezone="America/New_York"),
-    )
-    asyncio.run(bot_client._rollover(heard, config, named=""))
-
-    assert "Carry 1 anyway" in pressed
-    assert carried_anyway == [{"day": date(2026, 9, 3), "only": None}]
-    assert "↪ Carried 1 item(s)" in heard.messages[-1]
-
-
-def test_nothing_stuck_means_no_second_button(monkeypatch):
-    import asyncio
-    from datetime import date
-    from types import SimpleNamespace
-
-    from wilbyte import dailyops
-    from wilbyte.bot import client as bot_client
-
-    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
-    plan.leftovers = [dailyops.Leftover(person="Nicole", name="one")]
-    pressed = []
-
-    class Pressed:
-        def __init__(self, **kw):
-            pressed.append(kw.get("label", ""))
-            self.confirmed = True
-
-        async def wait(self):
-            return None
-
-    monkeypatch.setattr(bot_client.jobs, "board_day", lambda config: date(2026, 9, 3))
-    monkeypatch.setattr(
-        bot_client.jobs, "read_rollover", lambda config, **kw: ([plan], [], {})
-    )
-    monkeypatch.setattr(
-        bot_client.jobs, "apply_rollover", lambda config, plans, targets, **kw: (1, [])
-    )
-    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
-
-    config = SimpleNamespace(
-        discord=SimpleNamespace(approval_timeout_seconds=1),
-        schedule=SimpleNamespace(timezone="America/New_York"),
-    )
-    asyncio.run(bot_client._rollover(Asked(), config, named=""))
-
-    assert len(pressed) == 1
-
-
-def test_the_offer_still_comes_when_there_is_nothing_else_left_to_carry(monkeypatch):
-    """This is the normal way to meet them: everything else went across an
-    hour ago and the held-back two are all that is still on the card. "Nothing
-    to move" and a full stop is the report describing the problem and then
-    walking away from it."""
-    import asyncio
-    from datetime import date
-    from types import SimpleNamespace
-
-    from wilbyte import dailyops
-    from wilbyte.bot import client as bot_client
-
-    plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
-    plan.leftovers = [
-        dailyops.Leftover(person="Nicole", name="gone across", already=True),
-        dailyops.Leftover(person="Nicole", name="stuck", times_rolled=3),
-    ]
-    pressed, carried_anyway = [], []
+    pressed, written = [], []
 
     class Pressed:
         def __init__(self, **kw):
@@ -2017,17 +1924,19 @@ def test_the_offer_still_comes_when_there_is_nothing_else_left_to_carry(monkeypa
     )
     monkeypatch.setattr(
         bot_client.jobs,
-        "carry_stuck",
-        lambda config, **kw: (carried_anyway.append(kw), (1, []))[1],
+        "apply_rollover",
+        lambda config, plans, targets, **kw: (written.append(plans), (2, []))[1],
     )
     monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
 
+    heard = Asked()
     config = SimpleNamespace(
         discord=SimpleNamespace(approval_timeout_seconds=1),
         schedule=SimpleNamespace(timezone="America/New_York"),
     )
-    heard = Asked()
     asyncio.run(bot_client._rollover(heard, config, named=""))
 
-    assert pressed == ["Carry 1 anyway"]
-    assert carried_anyway == [{"day": date(2026, 9, 3), "only": None}]
+    # One button, and it carries both.
+    assert pressed == ["Trello rollover — 2 item(s)"]
+    assert "Carried 2 item(s)" in heard.messages[-1]
+    assert "carried 6 days running" in "\n".join(heard.messages)

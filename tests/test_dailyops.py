@@ -342,7 +342,7 @@ def test_a_count_of_three_makes_an_item_stuck():
     assert dailyops.Leftover(person="Nicole", name="x", times_rolled=2).stuck is False
 
 
-def test_a_stuck_item_is_raised_rather_than_carried_again(tmp_path):
+def test_a_stuck_item_is_raised_and_carried_anyway(tmp_path):
     from wilbyte import carried
 
     store = tmp_path / "carried.json"
@@ -363,7 +363,8 @@ def test_a_stuck_item_is_raised_rather_than_carried_again(tmp_path):
 
     (flagged,) = plan.needs_a_look
     assert flagged.stuck is True
-    assert "rolled forward 4 days" in dailyops.summarise([plan])
+    assert [item.name for item in plan.carried] == ["Chase the Thompson docs"]
+    assert "carried 4 days running" in dailyops.summarise([plan])
 
 
 def lead_order_plan(times_rolled):
@@ -388,8 +389,7 @@ def test_a_lead_order_line_carries_however_long_it_has_been_waiting():
     looking any more."""
     plan = lead_order_plan(6)
 
-    assert [item.name for item in plan.moving] == [plan.leftovers[0].name]
-    assert plan.held_back == []
+    assert [item.name for item in plan.carried] == [plan.leftovers[0].name]
 
 
 def test_a_lead_order_line_that_keeps_coming_back_is_still_said_out_loud():
@@ -401,21 +401,18 @@ def test_a_lead_order_line_that_keeps_coming_back_is_still_said_out_loud():
     assert "carried 6 days running" in text
 
 
-def test_the_three_day_hold_still_applies_to_the_other_cards():
-    """A General task on its fourth night usually is one nobody is going to
-    do, and stopping to ask is right there."""
+def test_every_card_works_the_same_way():
+    """One rule, so nobody has to remember which card holds things back."""
     plan = dailyops.RolloverPlan(kind="general", from_title="a", to_title="b")
     plan.leftovers = [dailyops.Leftover(person="Nicole", name="x", times_rolled=4)]
 
-    assert plan.moving == []
-    assert [item.name for item in plan.held_back] == ["x"]
+    assert [item.name for item in plan.carried] == ["x"]
+    assert "carried 4 days running" in dailyops.summarise([plan])
 
 
-def test_the_heading_counts_what_moves_not_what_is_held_back(tmp_path):
-    """The button is labelled with what will actually be written. A heading
-    counting the held-back ones as well says fourteen over a button saying
-    twelve, and leaves somebody counting ticks on the card to find out which
-    number to believe."""
+def test_the_heading_counts_every_unticked_item(tmp_path):
+    """The heading and the button have to agree. They disagreed once, and the
+    only way to find out which was true was counting ticks on the card."""
     from wilbyte import carried
 
     store = tmp_path / "carried.json"
@@ -442,10 +439,10 @@ def test_the_heading_counts_what_moves_not_what_is_held_back(tmp_path):
     )
     text = dailyops.summarise([plan])
 
-    assert "1 item(s)" in text
-    assert "Nicole: 1" in text
-    # Still named, with why - held back is not the same as unmentioned.
-    assert "rolled forward 4 days" in text
+    assert "2 item(s)" in text
+    assert "Nicole: 2" in text
+    # Moved, and still named: four days on one line is worth saying.
+    assert "carried 4 days running" in text
 
 
 def test_a_finished_item_stops_being_counted(tmp_path):
@@ -615,16 +612,19 @@ def test_a_card_link_travels_as_the_url_not_the_label(monkeypatch, config, tmp_p
     assert board.items_added == [("l1", link)]
 
 
-def test_an_item_carried_three_days_is_not_carried_a_fourth(monkeypatch, config, tmp_path):
-    """It is raised instead. Moving it again silently is the failure that doing
-    this by hand would have caught."""
+def test_an_item_carried_three_days_is_carried_a_fourth(monkeypatch, config, tmp_path):
+    """"Just carry unticked task for all card." Unticked is work not done, and
+    a card that decides for itself which of it to leave behind is a card
+    somebody has to check by hand - which is the thing this replaces. It is
+    still named, so a task on its sixth day gets said out loud."""
     key = dailyops.item_key("general", "Nicole", "Chase the docs")
     plan = rollover_of(("Nicole", "Chase the docs", "incomplete"), history={key: 3})
     targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"}])}
 
     board, moved, _ = apply_with(monkeypatch, config, plan, targets, store=tmp_path / "c.json")
 
-    assert board.items_added == [] and moved == 0
+    assert moved == 1
+    assert board.items_added == [("l1", "Chase the docs")]
     assert plan.needs_a_look[0].stuck is True
 
 
@@ -3817,36 +3817,6 @@ def test_an_item_carried_three_nights_stops_moving_on_its_own():
     assert Leftover(person="Nicole", name="OPUS CLIP", times_rolled=3).stuck is True
     assert Leftover(person="Nicole", name="OPUS CLIP", times_rolled=2).stuck is False
 
-
-def test_the_write_step_can_be_told_to_carry_them_after_all(monkeypatch, config, tmp_path):
-    """"It is still the plan" is an answer, and it shouldn't cost a trip to
-    Trello to give it."""
-    from datetime import date as _date
-
-    from wilbyte import carried
-    from wilbyte.bot import jobs
-
-    plan = rollover_of(
-        ("Nicole", "OPUS CLIP", "incomplete"),
-        ("Kath", "Fresh one", "incomplete"),
-    )
-    for item in plan.leftovers:
-        item.times_rolled = 3 if item.person == "Nicole" else 0
-    targets = {"general": ("card-tomorrow", [{"id": "l1", "name": "Nicole"},
-                                             {"id": "l2", "name": "Kath"}])}
-    monkeypatch.setattr(carried, "CARRIED_PATH", tmp_path / "c.json")
-
-    board = FakeTrello(holds={"card-tomorrow": list(targets["general"][1])})
-    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
-    moved, _ = jobs.apply_rollover(config, [plan], targets, day=_date(2026, 9, 1))
-    assert moved == 1, "the stuck one stays put on its own"
-
-    board = FakeTrello(holds={"card-tomorrow": list(targets["general"][1])})
-    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
-    moved, _ = jobs.apply_rollover(
-        config, [plan], targets, day=_date(2026, 9, 1), include_stuck=True
-    )
-    assert moved == 2, "and moves when somebody says to"
 
 
 # --------------------------------------------- surviving Discord's bad minute

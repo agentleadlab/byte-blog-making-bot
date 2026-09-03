@@ -1142,10 +1142,6 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
 
     responder = _board_responder(bot)
     card = None
-    # Set by the rollover branch when something was held back for having been
-    # carried too often, so the message can offer to carry it anyway.
-    stuck: list = []
-    carry_again = None
     try:
         if step == "make_setup":
             title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
@@ -1185,7 +1181,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # ten for Ads and Lead Order - so both read today's cards.
             when = None
             kinds = dailyops.LATE_KINDS if late else dailyops.EVENING_KINDS
-            moved, problems, flagged, held = await asyncio.to_thread(
+            moved, problems, flagged = await asyncio.to_thread(
                 partial(jobs.run_rollover, bot.config, day=when, only=kinds)
             )
             note = (
@@ -1193,16 +1189,11 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"unfinished {'Ads and Lead Order ' if late else ''}item(s) "
                 "onto the next day's cards."
             )
-            holding = {(item.person, item.name) for item in held}
             if flagged:
                 note += "\n" + "\n".join(
-                    f"⚠ {item.person}: {item.name[:60]} — " + _why_flagged(
-                        item, held=(item.person, item.name) in holding
-                    )
+                    f"⚠ {item.person}: {item.name[:60]} — " + _why_flagged(item)
                     for item in flagged
                 )
-            stuck = [item for item in held if not item.looks_done]
-            carry_again = (when, kinds) if stuck else None
         elif step == dailyops.LATE_DONE:
             # Ten o'clock, same day: the cards being finished are today's.
             moved, problems = await asyncio.to_thread(
@@ -1237,42 +1228,16 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     if responder and (note or card):
         await responder.send(note or None, embed=card)
 
-    # An item on its fourth night stops moving on its own, because carrying it
-    # forever is how a card nobody is going to do follows the team around. But
-    # "it is still the plan" is an answer too, and it should not cost a trip to
-    # Trello to give it.
-    if responder and carry_again and stuck:
-        when, kinds = carry_again
-        view = views.ConfirmView(
-            requester_id=None,
-            timeout=bot.config.discord.approval_timeout_seconds,
-            label=f"Carry {len(stuck)} anyway",
-            emoji="↪",
-        )
-        await responder.send(
-            f"Keep carrying {'it' if len(stuck) == 1 else 'them'} to tomorrow?",
-            view=view,
-        )
-        await view.wait()
-        if view.confirmed:
-            moved, problems = await asyncio.to_thread(
-                partial(jobs.carry_stuck, bot.config, day=when, only=kinds)
-            )
-            said = f"↪ Carried {moved} item(s) onto tomorrow's cards."
-            if problems:
-                said += "\n⚠ " + "\n⚠ ".join(problems)
-            await responder.send(said)
 
+def _why_flagged(item) -> str:
+    """Why a carried-over item is worth a line of its own tonight.
 
-def _why_flagged(item, *, held: bool) -> str:
-    """Why a carried-over item is worth a line of its own tonight."""
+    It moved, like everything else unticked. Saying how long it has been
+    moving is the only way anybody finds out it has been waiting a week.
+    """
     if item.looks_done:
         return "already Done but unticked"
-    if held:
-        return f"carried {item.times_rolled} days, left for you"
-    # A Lead Order line moves however long it has been waiting, and saying so
-    # is the only way anybody finds out it has been waiting.
-    return f"carried {item.times_rolled} days running — moved again"
+    return f"carried {item.times_rolled} days running"
 
 
 def _board_responder(bot: "WilByteBot"):
@@ -3163,14 +3128,9 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
             f"{', '.join(missing)}"
         )
 
-    movable = sum(len(plan.moving) for plan in plans)
+    movable = sum(len(plan.carried) for plan in plans)
     if not movable:
-        # Nothing left to carry is the normal way to meet the held-back ones:
-        # everything else went across an hour ago, and these two are all that
-        # is still on the card. Answering "nothing to move" and stopping is
-        # the report describing the problem and then walking away from it.
         await responder.send(report)
-        await _offer_stuck(responder, config, plans, day=day, only=only)
         return
 
     if which:
@@ -3199,57 +3159,12 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
     flagged = [item for plan in plans for item in plan.needs_a_look]
     if flagged:
         note += (
-            f"\n{len(flagged)} left where they are for you to look at — "
-            f"they're in the list above."
+            f"\n{len(flagged)} of them have been carried for days — "
+            f"they're marked in the list above."
         )
     if problems:
         note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
     await responder.send(note)
-    await _offer_stuck(responder, config, plans, day=day, only=only)
-
-
-async def _offer_stuck(responder: Responder, config: Config, plans, *, day, only) -> None:
-    """The same offer the evening run makes, on a rollover somebody typed.
-
-    An item on its fourth night stops moving on its own, because carrying it
-    forever is how a card nobody is going to do follows the team around. But
-    "it is still the plan" is an answer too, and naming the item as held back
-    without offering it leaves somebody dragging the line across in Trello by
-    hand - which is the thing this replaces.
-    """
-    stuck = [
-        item for plan in plans for item in plan.held_back
-        if not item.looks_done
-    ]
-    if not stuck:
-        return
-
-    again = views.ConfirmView(
-        requester_id=responder.requester_id,
-        timeout=config.discord.approval_timeout_seconds,
-        label=f"Carry {len(stuck)} anyway",
-        emoji="↪",
-    )
-    await responder.send(
-        f"Keep carrying {'it' if len(stuck) == 1 else 'them'} to tomorrow?",
-        view=again,
-    )
-    await again.wait()
-    if not again.confirmed:
-        return
-
-    try:
-        moved, problems = await asyncio.to_thread(
-            partial(jobs.carry_stuck, config, day=day, only=only)
-        )
-    except PIPELINE_ERRORS as exc:
-        await responder.send(embed=embeds.error(f"Couldn't move them\n{exc}"))
-        return
-
-    said = f"↪ Carried {moved} item(s) onto tomorrow's cards."
-    if problems:
-        said += "\n⚠ " + "\n⚠ ".join(problems)
-    await responder.send(said)
 
 
 async def _probe_update(responder: Responder, config: Config) -> None:

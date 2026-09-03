@@ -554,16 +554,6 @@ class Leftover:
         return self.times_rolled >= 3
 
 
-# Cards where being carried too often is not a reason to stop carrying.
-# A line on the Lead Order card is somebody's leads not gone out yet, and it
-# follows the day until it is ticked - "as long as its unticked on lead order,
-# its being move next day". Holding one back to be asked about leaves the one
-# thing that has been waiting longest on the card nobody is looking at any
-# more. Elsewhere a task on its fourth night usually is one nobody is going to
-# do, and stopping to ask is right.
-ALWAYS_CARRY = ("lead_order",)
-
-
 @dataclass
 class RolloverPlan:
     kind: str
@@ -576,23 +566,17 @@ class RolloverPlan:
     checklists_to_create: list[str] = field(default_factory=list)
 
     @property
-    def always_carries(self) -> bool:
-        return self.kind in ALWAYS_CARRY
-
-    @property
     def needs_a_look(self) -> list[Leftover]:
-        """Worth a line of its own, whether or not it is being moved."""
+        """Worth a line of its own. Every one of these is still carried.
+
+        An item on the board unticked is work not done, and work not done goes
+        onto tomorrow's card - "just carry unticked task for all card". What a
+        line here buys is that a task on its sixth day is *said*, rather than
+        moved quietly for a week while everyone assumes somebody is on it.
+        """
         return [
             item for item in self.leftovers
             if not item.already and (item.looks_done or item.stuck)
-        ]
-
-    @property
-    def held_back(self) -> list[Leftover]:
-        """Named and left where they are, for somebody to answer."""
-        return [
-            item for item in self.needs_a_look
-            if item.looks_done or not self.always_carries
         ]
 
     @property
@@ -600,14 +584,6 @@ class RolloverPlan:
         return [
             item for item in self.leftovers
             if not item.looks_done and not item.already
-        ]
-
-    @property
-    def moving(self) -> list[Leftover]:
-        """What a press of the button actually writes onto tomorrow's card."""
-        held = {(item.person, item.name) for item in self.held_back}
-        return [
-            item for item in self.carried if (item.person, item.name) not in held
         ]
 
 
@@ -731,12 +707,10 @@ def summarise(plans: list[RolloverPlan], *, missing=()) -> str:
 
     lines = []
     for plan in plans:
-        # What actually moves when the button is pressed. An item held back
-        # for somebody to answer is named below with a reason; counting it here
-        # as well made the heading say fourteen while the button said twelve,
-        # and left somebody counting ticks on the card to work out which number
-        # was the lie.
-        carried = plan.moving
+        # Everything unticked, which is everything that moves. The heading and
+        # the button have to agree: they disagreed once, and the only way to
+        # find out which was true was counting ticks on the card by hand.
+        carried = plan.carried
         label = CARD_KINDS.get(plan.kind, plan.kind)
         lines.append(f"**{label}** — {len(carried)} item(s) → `{plan.to_title}`")
         by_person: dict[str, int] = {}
@@ -745,16 +719,12 @@ def summarise(plans: list[RolloverPlan], *, missing=()) -> str:
         for person, count in by_person.items():
             new = " (new checklist)" if person in plan.checklists_to_create else ""
             lines.append(f"  • {person}: {count}{new}")
-        held = {(item.person, item.name) for item in plan.held_back}
         for item in plan.needs_a_look:
-            if item.looks_done:
-                why = "already Done but unticked"
-            elif (item.person, item.name) in held:
-                why = f"rolled forward {item.times_rolled} days"
-            else:
-                # Moving anyway, and still worth saying. Four days on the same
-                # line is the card telling somebody something.
-                why = f"carried {item.times_rolled} days running — moving again"
+            # Moving either way. Four days on the same line is the card
+            # telling somebody something.
+            why = "already Done but unticked" if item.looks_done else (
+                f"carried {item.times_rolled} days running"
+            )
             lines.append(f"  ⚠ {item.person}: {_short(item.name)} — {why}")
     return "\n".join(lines)
 

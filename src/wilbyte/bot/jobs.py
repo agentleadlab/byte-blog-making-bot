@@ -3012,18 +3012,12 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
     return moved, problems
 
 
-def run_rollover(
-    config: Config, *, day=None, only=None
-) -> tuple[int, list[str], list, list]:
-    """Read the board and carry the items over. (moved, problems, flagged, held).
+def run_rollover(config: Config, *, day=None, only=None) -> tuple[int, list[str], list]:
+    """Read the board and carry the items over. (moved, problems, flagged).
 
-    The unattended version of what the button does. `flagged` is everything
-    worth a line in the night's message; `held` is the part of it that stayed
-    put - an item whose linked card already reads Done, and, off the Lead Order
-    card, one carried three nights running. Those come back to be said out loud
-    rather than moved while nobody is watching. A Lead Order line is flagged
-    and carried anyway: unticked there means the leads have not gone out, and
-    it follows the day until somebody ticks it.
+    The unattended version of what the button does. Everything unticked moves;
+    `flagged` is the part of it worth a line in the night's message, which is
+    an item that has been carried for days. Said, and moved with the rest.
 
     A card somebody held back is named in the problems, so the night's message
     says what did not happen as well as what did - a silent skip is a card
@@ -3041,30 +3035,7 @@ def run_rollover(
         named = ", ".join(dailyops.CARD_KINDS.get(k, k) for k in held)
         problems.append(f"Held back at your request: {named}")
     flagged = [item for plan in plans for item in plan.needs_a_look]
-    held_back = [item for plan in plans for item in plan.held_back]
-    return moved, problems, flagged, held_back
-
-
-def carry_stuck(config: Config, *, day=None, only=None) -> tuple[int, list[str]]:
-    """Carry the items that were held back for having been carried too often.
-
-    Only ever reached by somebody pressing the button. An item on its fourth
-    night is usually one nobody is going to do, which is why it stops moving
-    on its own - but "it is still the plan, move it" is an answer too, and it
-    should not cost a trip to Trello to say so.
-
-    The board is read again rather than trusted from the message: the button
-    may have sat in the channel for an hour, and somebody may have ticked the
-    item in the meantime.
-    """
-    from .. import dailyops
-
-    day = day or board_day(config)
-    plans, _missing, targets = read_rollover(config, day=day, only=only)
-    stuck = [plan for plan in plans if plan.held_back]
-    if not stuck:
-        return 0, []
-    return apply_rollover(config, stuck, targets, day=day, include_stuck=True)
+    return moved, problems, flagged
 
 
 # ------------------------------------------------- new agents going live
@@ -3422,15 +3393,13 @@ def read_rollover(config: Config, *, day=None, only=None, skip=None):
         client.close()
 
 
-def apply_rollover(
-    config: Config, plans, targets, *, day=None, include_stuck: bool = False
-) -> tuple[int, list[str]]:
+def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, list[str]]:
     """Write the carried items onto tomorrow's cards. Returns (moved, problems).
 
-    Only what the plan called `carried` - an item whose linked card already
-    reads Done, or one that has been carried three days running, is left where
-    it is and raised instead. Those are the two cases where moving it silently
-    is the wrong answer, and they are the reason this asks before it writes.
+    Everything still unticked goes across. An item that has been carried for
+    days is named in the report and moved with the rest: work not done is work
+    not done, and a card that decides for itself which of it to leave behind is
+    a card the team has to check by hand.
 
     A checklist item that links to another card is stored as that card's URL,
     and Trello renders the name and badge from it. So the raw `name` goes
@@ -3482,13 +3451,7 @@ def apply_rollover(
                 for c in target_lists or []
                 for existing in c.get("checkItems") or []
             }
-            holding = (
-                set() if include_stuck
-                else {(item.person, item.name) for item in plan.held_back}
-            )
             for item in plan.carried:
-                if (item.person, item.name) in holding:
-                    continue
                 key = " ".join(item.person.split()).casefold()
                 if (key, " ".join(item.name.split())) in already:
                     continue
