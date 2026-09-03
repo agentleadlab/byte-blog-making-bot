@@ -2459,11 +2459,22 @@ def wrong_setups(
             clash = agents.wrong_setup(ordered, said)
             if clash is None:
                 continue
+            # What the confirmation says about the leads away from its opening
+            # line. Faith's on Eduardo Munoz opened "OTP VET" and then gave a
+            # form slug and a sheet both saying FB Spanish IUL - which is what
+            # he ordered. Nothing was set up wrong; a template wasn't finished.
+            also = agents.setup_also_said(said)
             found.append({
                 **card,
                 "agent": agents.agent_name(title),
                 "ordered": clash[0],
                 "setup": clash[1],
+                "also": also,
+                # Compared the way the spread compares two spellings, not the
+                # way the headline is: a sheet name saying "SPANISH IUL" leaves
+                # the tier out, and holding that against it would call a
+                # matching body a mismatch.
+                "typo": bool(also) and agents.setup_conflict(ordered, also) is None,
                 "when": "today" if launch == day else "tomorrow",
                 "where": _list_named(lists, str(card.get("idList") or "")),
             })

@@ -331,11 +331,24 @@ def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
     Red rather than amber. The unticked nudge is a job somebody has not got to
     yet; this is money already going to the wrong campaign.
     """
+    # A confirmation whose own body names the leads that were ordered is a
+    # sentence nobody finished editing, not a setup on the wrong campaign. The
+    # difference matters: one is somebody's money in the wrong place, the other
+    # is a line to correct.
+    typos = sum(1 for card in found if card.get("typo"))
     embed = discord.Embed(
-        title=f"{len(found)} agent(s) set up wrong",
-        colour=RED,
+        title=(
+            f"{len(found)} agent(s) to look at"
+            if typos == len(found) else
+            f"{len(found)} agent(s) set up wrong"
+        ),
+        colour=AMBER if typos == len(found) else RED,
     )
-    embed.set_author(name="⚠ going live today or tomorrow, set up on the wrong leads")
+    embed.set_author(name=(
+        "⚠ going live today or tomorrow, the confirmation disagrees with itself"
+        if typos == len(found) else
+        "⚠ going live today or tomorrow, set up on the wrong leads"
+    ))
 
     lines = []
     for card in found[:shown]:
@@ -343,11 +356,18 @@ def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
         link = str(card.get("url") or card.get("shortUrl") or "")
         head = f"[{name}]({link})" if link else name
         when = str(card.get("when") or "")
-        lines.append(
+        said = (
             f"**{head}**{f' — live {when}' if when else ''}\n"
             f"  ordered `{_truncate(str(card.get('ordered') or '?'), 60)}`\n"
             f"  set up  `{_truncate(str(card.get('setup') or '?'), 60)}`"
         )
+        also = str(card.get("also") or "")
+        if also:
+            said += (
+                f"\n  …but the same comment says `{_truncate(also, 60)}`"
+                + (", which is what they ordered" if card.get("typo") else "")
+            )
+        lines.append(said)
     if len(found) > shown:
         lines.append(f"*…and {len(found) - shown} more.*")
     embed.description = _truncate("\n".join(lines), 4096)

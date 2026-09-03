@@ -2363,3 +2363,48 @@ def test_the_conflict_reads_as_a_question_rather_than_a_fault(config, monkeypatc
     assert "OTP IUL Plus" in card.description
     assert "OTP SPANISH IUL" in card.description
     assert card.colour.value == embeds.AMBER
+
+
+def test_a_self_contradicting_confirmation_is_not_an_accusation():
+    """"Set up on the wrong leads" points at whoever did the setup. When the
+    confirmation's own body names what the agent ordered, the setup was right
+    and a sentence wasn't finished - which is a different message."""
+    card = {
+        "agent": "Eduardo Munoz", "url": "https://trello.com/c/e", "when": "tomorrow",
+        "ordered": "Basic/Instant Spanish IUL", "setup": "OTP VET",
+        "also": "SPANISH IUL", "typo": True,
+    }
+
+    said = embeds.wrong_setups([card], shown=10)
+
+    assert "disagrees with itself" in said.author.name
+    assert said.colour.value == embeds.AMBER
+    assert "which is what they ordered" in said.description
+
+
+def test_leads_in_the_wrong_campaign_still_reads_as_one():
+    card = {
+        "agent": "Someone", "url": "", "when": "today",
+        "ordered": "OTP VETS", "setup": "OTP FEX", "also": "", "typo": False,
+    }
+
+    said = embeds.wrong_setups([card], shown=10)
+
+    assert "set up on the wrong leads" in said.author.name
+    assert said.colour.value == embeds.RED
+
+
+def test_one_of_each_is_reported_as_the_serious_one():
+    """A batch with a real wrong setup in it is not softened by the typo
+    beside it."""
+    cards = [
+        {"agent": "A", "url": "", "when": "today", "ordered": "OTP VETS",
+         "setup": "OTP FEX", "also": "", "typo": False},
+        {"agent": "B", "url": "", "when": "today", "ordered": "Spanish IUL",
+         "setup": "OTP VET", "also": "SPANISH IUL", "typo": True},
+    ]
+
+    said = embeds.wrong_setups(cards, shown=10)
+
+    assert said.colour.value == embeds.RED
+    assert "set up wrong" in said.title

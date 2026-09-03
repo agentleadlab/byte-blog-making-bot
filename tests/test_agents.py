@@ -3015,3 +3015,63 @@ def test_a_phrase_that_names_a_whole_order_is_left_alone():
     )
     # No tier of its own, so the level still goes in front.
     assert agents.with_line("vets", "uprise") == "uprise vets"
+
+
+# --------------------------------- a confirmation that disagrees with itself
+
+
+EDUARDO_SETUP = """OTP VET ON DISTRO HUB setup is complete for Eduardo Munoz
+Fired a test in the Discord channel and Google Sheet to ensure it is working properly.
+Added EMAIL & SMS notifications.
+eduardo-munoz-fb-spanish-iul
+@Eduardo Munoz
+Ready to go live Friday, September 4
+Sheet link: Eduardo Munoz - FB SPANISH IUL"""
+
+
+def test_the_confirmations_own_body_is_read_too():
+    """Faith's comment opens "OTP VET" and then gives a form slug and a sheet
+    both saying FB Spanish IUL. Nothing was set up wrong - a template wasn't
+    finished being edited."""
+    assert agents.setup_said([EDUARDO_SETUP]) == "OTP VET"
+    assert agents.setup_also_said([EDUARDO_SETUP]) == "SPANISH IUL"
+
+
+def test_the_body_is_what_the_agent_actually_ordered():
+    also = agents.setup_also_said([EDUARDO_SETUP])
+
+    assert agents.setup_conflict("Basic/Instant Spanish IUL", also) is None
+
+
+def test_a_confirmation_that_agrees_with_itself_says_nothing():
+    said = (
+        "OTP SPANISH FEX ON DISTRO HUB setup is complete for ALIANA AREVALO\n"
+        "Sheet link: Aliana Arevalo - OTP SPANISH FEX"
+    )
+
+    assert agents.setup_also_said([said]) == ""
+
+
+def test_a_confirmation_with_no_leads_anywhere_else_says_nothing():
+    said = "OTP VET ON DISTRO HUB setup is complete for MILLS FINANCIAL LLC"
+
+    assert agents.setup_also_said([said]) == ""
+
+
+def test_only_the_last_confirmation_is_read():
+    """A setup gets redone, and the earlier comment is history."""
+    first = "OTP FEX ON DISTRO HUB setup is complete\nSheet: someone - OTP WIDOWS"
+    second = "OTP VET ON DISTRO HUB setup is complete\nSheet: someone - SPANISH IUL"
+
+    assert agents.setup_also_said([first, second]) == "SPANISH IUL"
+
+
+def test_a_body_naming_two_kinds_of_leads_is_not_a_second_opinion():
+    said = "OTP VET ON DISTRO HUB setup is complete\nSheet: someone - OTP WIDOW VET"
+
+    assert agents.setup_also_said([said]) == ""
+
+
+def test_nothing_is_read_off_a_card_with_no_confirmation():
+    assert agents.setup_also_said([]) == ""
+    assert agents.setup_also_said(["nice work everyone"]) == ""

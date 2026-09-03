@@ -903,6 +903,45 @@ def setup_said(comments) -> str:
     return found[-1] if found else ""
 
 
+def setup_also_said(comments) -> str:
+    """The lead type the confirmation names somewhere other than its headline.
+
+    A confirmation is not one sentence. Faith's on Eduardo Munoz opens "OTP VET
+    ON DISTRO HUB setup is complete" and then, in the same comment, gives the
+    form slug `eduardo-munoz-fb-spanish-iul` and a sheet called "Eduardo Munoz -
+    FB SPANISH IUL". Those are the leads that were actually set up; the first
+    line is a template somebody didn't finish editing.
+
+    Only the last confirmation, and only what it says away from that headline -
+    so this answers "does this comment agree with itself", which is a different
+    question from "was the right thing set up".
+    """
+    where = [
+        (said, match)
+        for said in comments or []
+        for match in DISTRO_HUB.finditer(said or "")
+        if _from_the_leads(match.group(1))
+    ]
+    if not where:
+        return ""
+    said, match = where[-1]
+    headline = shape_of(_from_the_leads(match.group(1)))
+    # The headline itself is cut out rather than skipped, so a phrase that
+    # happens to repeat it elsewhere doesn't read as a second opinion.
+    rest = said[: match.start()] + " " + said[match.end():]
+    found = [
+        phrase for phrase in named_lead_types(rest)
+        if len(families_in(phrase)) == 1 and shape_of(phrase) != headline
+    ]
+    if not found:
+        return ""
+    # The last one, and from its first lead word on. A confirmation names the
+    # leads twice - once as a form slug, once as the sheet's title - and
+    # "SPANISH IUL" out of "Eduardo Munoz - FB SPANISH IUL" is the half worth
+    # putting in front of somebody.
+    return _from_the_leads(found[-1]) or found[-1]
+
+
 def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
     """(what was ordered, what was set up) when they are not the same leads.
 
