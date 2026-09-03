@@ -1593,12 +1593,26 @@ def test_iul_written_out_lands_where_the_abbreviated_one_does():
     ) == "OTP IUL Plus"
 
 
-def test_a_lead_type_naming_no_tier_is_still_refused():
-    """"PHX 2.0" says Phoenix and nothing about Standard or Plus. Which of the
-    two it is belongs to somebody who knows, not to a coin toss."""
-    have = ["Phoenix Standard", "Phoenix Plus"]
+@pytest.mark.parametrize("said", ["PHX 2.0", "PHOENIX 2.0", "PHNX 2.0"])
+def test_two_point_oh_is_the_plus_tier(said):
+    """"phnx plus = phnx 2.0" - the version number is what Plus is called on
+    the cards that don't use the word."""
+    assert agents.tier_of(said) == "plus"
+    assert agents.shape_of(said) == agents.shape_of("Phoenix Plus")
 
-    assert agents.match_checklist("PHX 2.0", have, tier=agents.tier_of("PHX 2.0")) is None
+
+def test_the_version_number_lands_on_the_plus_checklist():
+    have = ["Phoenix Standard", "Phoenix Plus", "OTP VET Plus", "OTP Widows"]
+
+    assert agents.match_checklist(
+        "PHX 2.0", have, tier=agents.tier_of("PHX 2.0")
+    ) == "Phoenix Plus"
+
+
+def test_a_price_is_not_a_tier():
+    """"$2.00/WEEK" is what the leads cost, not which ones they are."""
+    assert agents.tier_of("$2.00/WEEK PHX STNDRD") == "standard"
+    assert agents.tier_of("$2.0/WEEK PHX") is None
 
 
 # --------------------------------- two things on one order

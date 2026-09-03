@@ -160,7 +160,12 @@ QUALIFIERS = (
 # are already there - and a lead type with no tier in it matches Standard and
 # Plus equally, so all five were refused rather than filed.
 STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b|\bstndr?ds?\b", re.IGNORECASE)
-PLUS = re.compile(r"\bplus\b|\btext[\s-]*verified\b|\botp\b", re.IGNORECASE)
+# "phnx plus = phnx 2.0" - 2.0 is what the Plus tier is called on the cards
+# that use a version number instead of a word. Not preceded by a dollar sign,
+# so a price never reads as a tier.
+PLUS = re.compile(
+    r"\bplus\b|\btext[\s-]*verified\b|\botp\b|(?<!\$)\b2\.0\b", re.IGNORECASE
+)
 
 # The customer level, which is part of what the leads are rather than a
 # description of them - "when its uprise/phnx/phoenix always include this".
