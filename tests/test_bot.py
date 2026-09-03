@@ -1940,3 +1940,34 @@ def test_the_typed_rollover_carries_an_item_however_long_it_has_waited(monkeypat
     assert pressed == ["Trello rollover — 2 item(s)"]
     assert "Carried 2 item(s)" in heard.messages[-1]
     assert "carried 6 days running" in "\n".join(heard.messages)
+
+
+def test_the_window_is_not_three_thousand_lines_of_200_ok(monkeypatch):
+    """The agent watcher costs sixteen requests every twenty seconds. At that
+    volume httpx's own logging is a window nobody reads - and the two real
+    failures so far each sat buried in thousands of lines of it."""
+    import logging
+
+    from wilbyte.bot.client import _quieten_http
+
+    monkeypatch.delenv("RYTE_LOG_HTTP", raising=False)
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.NOTSET)
+
+    _quieten_http()
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
+
+
+def test_the_requests_can_be_put_back_when_an_api_is_the_problem(monkeypatch):
+    import logging
+
+    from wilbyte.bot.client import _quieten_http
+
+    monkeypatch.setenv("RYTE_LOG_HTTP", "true")
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+
+    _quieten_http()
+
+    assert logging.getLogger("httpx").level == logging.NOTSET

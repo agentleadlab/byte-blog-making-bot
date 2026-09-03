@@ -3862,8 +3862,28 @@ def starts_again(exc: BaseException) -> bool:
     return True
 
 
+def _quieten_http() -> None:
+    """Keep every Trello and Google request out of the window.
+
+    The agent watcher looks at the board every twenty seconds and costs about
+    sixteen requests, so httpx's one-line-per-request logging is roughly three
+    thousand lines an hour of "200 OK". A window at that volume is one nobody
+    reads, and the two real failures so far - a read timeout and a 422 - each
+    sat buried in thousands of lines of it.
+
+    Warnings and errors still come through, and RYTE's own lines are
+    untouched. Set RYTE_LOG_HTTP=true to put the requests back when a
+    misbehaving API is the thing being looked at.
+    """
+    if os.getenv("RYTE_LOG_HTTP", "").strip().lower() in ("1", "true", "yes"):
+        return
+    for noisy in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
 def run_bot(config: Config | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    _quieten_http()
 
     try:
         config = config or load_config()
