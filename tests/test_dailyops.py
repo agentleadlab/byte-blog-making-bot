@@ -608,10 +608,6 @@ def at_hour(hour, minute=0):
     return _dt(2026, 8, 24, hour, minute)
 
 
-# Two in the morning, before anything else: yesterday's Ads and Lead Order
-# cards get carried over then, because both are still worked after the board
-# has been put to bed.
-SMALL_HOURS = [dailyops.LATE_ROLLOVER, dailyops.LATE_DONE]
 MORNING = ["make_setup"]
 WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
@@ -621,17 +617,19 @@ EVENING = CHASE_2 + ["to_quality_check"]
 CHASE_3 = EVENING + [dailyops.UNMARKED[2]]
 CHASE_4 = CHASE_3 + [dailyops.UNMARKED[3]]
 NIGHT = CHASE_4 + ["rollover", "to_done"]
-LATE_NIGHT = NIGHT + ["archive_aged"]
+# Ten o'clock: Ads and Lead Order are carried and finished then, because both
+# are still worked after the board has been put to bed.
+LATE_NIGHT = NIGHT + [
+    dailyops.LATE_ROLLOVER, dailyops.LATE_DONE, "archive_aged",
+]
 
 
 @pytest.mark.parametrize(
     "hour,minute,expected",
     [
         (1, 59, []),
-        (2, 0, SMALL_HOURS),
-        (5, 0, SMALL_HOURS),
-        # Six o'clock is the cut-off: after it the night pair is not caught up.
-        (6, 0, ["make_setup"]),
+        (5, 0, []),
+        (6, 0, MORNING),
         (8, 0, MORNING),
         (9, 0, WORKING),
         # Half past matters now, so both sides of it are worth pinning.
@@ -3682,20 +3680,25 @@ def test_ads_and_lead_order_are_the_late_pair():
     assert set(dailyops.EVENING_KINDS) == {"general", "ops"}
 
 
-def test_the_late_rollover_runs_at_two_in_the_morning():
-    assert dailyops.time_of(dailyops.LATE_ROLLOVER) == (2, 0)
+def test_the_late_pair_runs_at_ten(): 
+    assert dailyops.time_of(dailyops.LATE_ROLLOVER) == (22, 0)
+    assert dailyops.time_of(dailyops.LATE_DONE) == (22, 0)
     assert dailyops.time_of("rollover") == (20, 30)
 
 
-def test_two_in_the_morning_works_on_yesterdays_cards():
-    """The calendar day has already turned over; the cards the team worked
-    last night are yesterday's."""
-    assert dailyops.day_before(date(2026, 9, 1)) == date(2026, 8, 31)
+def test_the_late_carry_happens_before_those_cards_are_finished():
+    """The carry has to read them while they are still the day's."""
+    due = dailyops.steps_due(at_hour(22, 0), set())
+    assert due.index(dailyops.LATE_ROLLOVER) < due.index(dailyops.LATE_DONE)
 
 
-def test_the_late_rollover_is_the_first_thing_in_the_day():
-    every = [step for _h, _m, step in dailyops.STEPS]
-    assert every[0] == dailyops.LATE_ROLLOVER
+def test_the_late_pair_is_the_same_day_not_the_next():
+    """Ten o'clock is still today, so they read today's cards."""
+    import inspect
+    from wilbyte.bot import client
+
+    source = inspect.getsource(client._board_step)
+    assert "day_before" not in source
 
 
 def test_the_evening_carry_still_happens_before_the_cards_go_to_done():
@@ -3703,21 +3706,17 @@ def test_the_evening_carry_still_happens_before_the_cards_go_to_done():
     assert due.index("rollover") < due.index("to_done")
 
 
-def test_a_small_hours_step_is_never_caught_up_in_the_evening():
-    """A restart at half seven ran both of them: they carried the wrong day's
-    cards and filed away a Lead Order card the team was still working on."""
-    evening = dailyops.steps_due(at_hour(19, 34), set())
-
-    assert dailyops.LATE_ROLLOVER not in evening
-    assert dailyops.LATE_DONE not in evening
+def test_a_step_scheduled_overnight_is_never_caught_up_in_the_evening(monkeypatch):
+    """A restart at half seven once ran the two-in-the-morning pair, which
+    carried the wrong day and filed away a card the team was still working."""
+    monkeypatch.setattr(dailyops, "NIGHT_STEPS", ("archive_aged",))
+    assert "archive_aged" not in dailyops.steps_due(at_hour(23, 0), set())
 
 
-def test_it_still_catches_up_within_the_small_hours():
-    """Missing 2am by an hour is worth catching up; missing it by fifteen is
-    tomorrow's problem."""
-    assert dailyops.LATE_ROLLOVER in dailyops.steps_due(at_hour(4, 0), set())
-    assert dailyops.LATE_DONE in dailyops.steps_due(at_hour(5, 59), set())
-    assert dailyops.LATE_DONE not in dailyops.steps_due(at_hour(6, 0), set())
+def test_the_late_pair_catches_up_like_any_other_step():
+    """Nothing runs overnight now, so nothing needs the overnight rule."""
+    assert dailyops.NIGHT_STEPS == ()
+    assert dailyops.LATE_ROLLOVER in dailyops.steps_due(at_hour(23, 30), set())
 
 
 def test_the_ordinary_steps_still_catch_up_all_day():

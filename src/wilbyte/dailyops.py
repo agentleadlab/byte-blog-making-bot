@@ -78,15 +78,6 @@ LATE_KINDS = ("ads", "lead_order")
 # carry has to read the cards while they are still the day's, so it goes
 # first.
 STEPS = (
-    # Ads and Lead Order are carried at two in the morning, not with the other
-    # two at half eight: both are still being worked long after the board has
-    # been put to bed, and carrying them at half eight moves lines somebody is
-    # about to tick. Two o'clock is the following calendar day, so this step
-    # reads *yesterday's* cards - see LATE_KINDS.
-    (2, 0, LATE_ROLLOVER),
-    # ...and then those two cards are finished, in that order: the carry has to
-    # read them while they are still the day's.
-    (2, 0, LATE_DONE),
     (6, 0, "make_setup"),
     (9, 0, "to_today"),
     # Half eleven, because "the in que cards comes in by 11am" - and the setup
@@ -105,6 +96,14 @@ STEPS = (
     # Order card and invented checklists on it, and an unattended step that
     # does that at half eight is one nobody sees until morning.
     (20, 30, "to_done"),
+    # Ads and Lead Order are carried and finished at ten, not with the other
+    # two at half eight: both are still being worked after the board has been
+    # put to bed, and carrying them at half eight moves lines somebody is
+    # about to tick. Ten is still the same day, so these read today's cards.
+    (22, 0, LATE_ROLLOVER),
+    # ...and then those two are finished, in that order: the carry has to read
+    # them while they are still the day's.
+    (22, 0, LATE_DONE),
     (22, 0, "archive_aged"),
 )
 
@@ -116,7 +115,7 @@ STEP_NAMES = {
     "to_done": f"{QUALITY_CHECK} → {DONE}",
     LATE_DONE: f"{QUALITY_CHECK} → {DONE} for Ads and Lead Order",
     "rollover": "carry the unfinished General and Ops items to tomorrow",
-    LATE_ROLLOVER: "carry yesterday's unfinished Ads and Lead Order items over",
+    LATE_ROLLOVER: "carry the unfinished Ads and Lead Order items to tomorrow",
     "to_lead_order": "put today's setup-card agents on today's Lead Order card",
     **{
         step: f"the New Agent cards in {DONE} nobody has ticked"
@@ -138,11 +137,11 @@ STEP_LISTS = {
 # `walks_today`; they share a destination and differ only in what they carry.
 DONE_STEPS = ("to_done", LATE_DONE)
 
-# The steps that work on yesterday's cards, and the hour after which they are
-# no longer allowed to catch up. A restart at half seven in the evening ran
-# both of these and filed away a Lead Order card the team was still working -
-# a step whose whole meaning is "last night" has no business running at dusk.
-NIGHT_STEPS = (LATE_ROLLOVER, LATE_DONE)
+# Steps that must not be caught up hours after their time. Nothing needs it
+# now that the late pair runs at ten on the same day; kept because the rule is
+# what stopped a two-in-the-morning step running at dusk, and the next step
+# somebody schedules overnight will want it.
+NIGHT_STEPS: tuple[str, ...] = ()
 CATCH_UP_UNTIL = 6
 
 # What somebody types to ask for a move, by where they want the cards to end
@@ -189,10 +188,8 @@ def steps_due(now, done_today: set[str]) -> list[str]:
     team's cards are where they should be either way, just later.
 
     Catching up is right for a step that missed its hour by an hour or two.
-    It is wrong for the small-hours pair: those work on *yesterday's* cards, so
-    a restart at half seven in the evening had them carry the wrong day and
-    file a Lead Order card away that was still being worked on. They run in the
-    small hours or they wait for tomorrow's.
+    A step scheduled overnight is the exception - one that means "last night"
+    has no business running at dusk - and NIGHT_STEPS is where those go.
 
     Ordered, because the 6pm move takes cards the 9am move put there.
     """
