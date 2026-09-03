@@ -2,7 +2,7 @@
 import asyncio
 
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -1971,3 +1971,263 @@ def test_the_requests_can_be_put_back_when_an_api_is_the_problem(monkeypatch):
     _quieten_http()
 
     assert logging.getLogger("httpx").level == logging.NOTSET
+
+
+# ------------------------------------------------- a payment landing live
+
+
+PAYRA = """New Payment | Payra 💰
+
+**NAME:** dave luft
+**EMAIL:** daveluft@gmail.com
+**PHONE:** +13195551212
+**AMOUNT:** $606.51
+**PRODUCT:** Aged Leads (FEX)"""
+
+
+def paying(channel_id="777", *, text=PAYRA, at=datetime(2026, 8, 14, 15, 4, tzinfo=timezone.utc)):
+    """A Payra notification, as it arrives: another bot, embed, no mention."""
+    return SimpleNamespace(
+        content="",
+        embeds=[SimpleNamespace(url=None, title=None, description=text, author=None)],
+        mentions=[],
+        mention_everyone=False,
+        channel=SimpleNamespace(id=channel_id),
+        author=SimpleNamespace(id=999, bot=True),
+        created_at=at,
+    )
+
+
+class Listening:
+    """Somewhere for RYTE's notes to go, and a note of what went there."""
+
+    def __init__(self):
+        self.said = []
+
+    async def send(self, content=None, **kwargs):
+        self.said.append(content if content is not None else kwargs.get("embed"))
+        return SimpleNamespace(id=1)
+
+
+class PaymentBot:
+    def __init__(self, config, channel):
+        self.config = config
+        self._channel = channel
+
+    def get_channel(self, _id):
+        return self._channel
+
+
+def watching_payments(config, channel_id="777"):
+    secrets = replace(
+        config.secrets,
+        discord_payment_channel_id=channel_id,
+        discord_board_channel_id="888",
+        levinson_sheet_id="sheet",
+    )
+    return replace(config, secrets=secrets)
+
+
+DAVE = [
+    SimpleNamespace(name="dave luft", email="daveluft@gmail.com", phone="", source="ghl")
+]
+
+
+def levinson_bot(config, monkeypatch, *, members=None, written=(1, [])):
+    """A bot wired to a fake member list and a fake sheet. (bot, channel, writes)"""
+    from wilbyte import levinson as levinson_mod
+
+    people = [
+        levinson_mod.Member(name=one.name, email=one.email, phone=one.phone, source=one.source)
+        for one in (DAVE if members is None else members)
+    ]
+    writes = []
+
+    def wrote(cfg, batches):
+        writes.append(batches)
+        return written
+
+    monkeypatch.setattr(jobs, "levinson_members", lambda cfg: (people, []))
+    monkeypatch.setattr(jobs, "write_levinson", wrote)
+
+    channel = Listening()
+    return PaymentBot(watching_payments(config), channel), channel, writes
+
+
+def test_the_payment_channel_is_acted_on(config):
+    from wilbyte.bot.client import is_payment
+
+    assert is_payment(paying("777"), watching_payments(config, "777"))
+
+
+def test_payments_elsewhere_are_not_the_payment_channel(config):
+    from wilbyte.bot.client import is_payment
+
+    assert not is_payment(paying("666"), watching_payments(config, "777"))
+
+
+def test_no_payment_channel_means_nothing_is_one(config):
+    from wilbyte.bot.client import is_payment
+
+    assert not is_payment(paying("777"), config)
+
+
+def test_a_levinson_agents_payment_goes_on_that_months_tab(config, monkeypatch):
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, writes = levinson_bot(config, monkeypatch)
+
+    asyncio.run(handle_payment(bot, paying()))
+
+    (batches,) = writes
+    ((month, lines),) = batches
+    # 15:04 UTC on the 14th is still the 14th in New York; the month is the
+    # month the money arrived in, not the month somebody happens to run this.
+    assert month == (2026, 8)
+    assert [(one.name, one.amount) for one in lines] == [("Dave Luft", "$606.51")]
+    assert "Dave Luft" in channel.said[0] and "August 2026" in channel.said[0]
+
+
+def test_a_payment_from_somebody_else_leaves_no_trace(config, monkeypatch):
+    """Most of the channel is not Levinson's. A row for each of those would be
+    wrong, and a message about each of those would bury the ones that aren't."""
+    from wilbyte.bot.client import handle_payment
+
+    stranger = [
+        SimpleNamespace(
+            name="Someone Else", email="someone@else.com", phone="", source="ghl"
+        )
+    ]
+    bot, channel, writes = levinson_bot(config, monkeypatch, members=stranger)
+
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert writes == []
+    assert channel.said == []
+
+
+def test_a_message_that_is_not_a_payment_is_not_looked_up(config, monkeypatch):
+    """Somebody says "nice" in the channel. That is not two hundred requests
+    to GoHighLevel."""
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, writes = levinson_bot(config, monkeypatch)
+
+    def never(cfg):
+        raise AssertionError("read the member list for a message with no payment in it")
+
+    monkeypatch.setattr(jobs, "levinson_members", never)
+
+    asyncio.run(handle_payment(bot, paying(text="nice 🎉")))
+
+    assert writes == [] and channel.said == []
+
+
+def test_the_member_list_is_read_once_and_kept(config, monkeypatch):
+    """Walking the contacts is two hundred requests. Two payments a minute
+    apart is one walk."""
+    from wilbyte.bot.client import handle_payment
+
+    bot, _, writes = levinson_bot(config, monkeypatch)
+    reads = []
+    people = jobs.levinson_members(bot.config)[0]
+    monkeypatch.setattr(
+        jobs, "levinson_members", lambda cfg: (reads.append(1), (people, []))[1]
+    )
+
+    asyncio.run(handle_payment(bot, paying()))
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert len(reads) == 1
+    assert len(writes) == 2
+
+
+def test_the_kept_member_list_goes_stale(config, monkeypatch):
+    """Somebody who opted in this morning has to arrive eventually."""
+    from wilbyte.bot import client
+    from wilbyte.bot.client import handle_payment
+
+    bot, _, _ = levinson_bot(config, monkeypatch)
+    reads = []
+    people = jobs.levinson_members(bot.config)[0]
+    monkeypatch.setattr(
+        jobs, "levinson_members", lambda cfg: (reads.append(1), (people, []))[1]
+    )
+
+    asyncio.run(handle_payment(bot, paying()))
+    bot._levinson_members_at -= client.MEMBERS_GOOD_FOR + 1
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert len(reads) == 2
+
+
+def test_no_member_list_at_all_is_said_rather_than_swallowed(config, monkeypatch):
+    """An empty list is not "not a Levinson agent", it is not knowing - and a
+    payment quietly dropped is the whole failure this report exists to avoid."""
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, writes = levinson_bot(config, monkeypatch, members=[])
+    monkeypatch.setattr(
+        jobs, "levinson_members", lambda cfg: ([], ["GHL_API_TOKEN isn't set."])
+    )
+
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert writes == []
+    assert "GHL_API_TOKEN" in str(channel.said[0].description)
+
+
+def test_the_same_complaint_is_not_made_for_every_payment(config, monkeypatch):
+    """A thousand messages a month through this channel. One warning an hour."""
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, _ = levinson_bot(config, monkeypatch, members=[])
+    monkeypatch.setattr(jobs, "levinson_members", lambda cfg: ([], ["nothing came back."]))
+
+    for _ in range(5):
+        asyncio.run(handle_payment(bot, paying()))
+
+    assert len(channel.said) == 1
+
+
+def test_the_complaint_comes_back_after_an_hour(config, monkeypatch):
+    from wilbyte.bot import client
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, _ = levinson_bot(config, monkeypatch, members=[])
+    monkeypatch.setattr(jobs, "levinson_members", lambda cfg: ([], ["nothing came back."]))
+
+    asyncio.run(handle_payment(bot, paying()))
+    bot._grumbles["levinson-members"] -= client.SAY_AGAIN_AFTER + 1
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert len(channel.said) == 2
+
+
+def test_a_sheet_that_refuses_the_row_is_reported(config, monkeypatch):
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, _ = levinson_bot(
+        config, monkeypatch, written=(0, ["The tracker didn't accept the row."])
+    )
+
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert "didn't accept" in str(channel.said[0].description)
+
+
+def test_a_broken_member_lookup_is_said_rather_than_swallowed(config, monkeypatch):
+    """GoHighLevel falling over looks exactly like a quiet month otherwise."""
+    from wilbyte.bot.client import handle_payment
+
+    bot, channel, writes = levinson_bot(config, monkeypatch)
+
+    def blew_up(cfg):
+        raise RuntimeError("GoHighLevel said 500")
+
+    monkeypatch.setattr(jobs, "levinson_members", blew_up)
+
+    asyncio.run(handle_payment(bot, paying()))
+
+    assert writes == []
+    assert "500" in str(channel.said[0].description)

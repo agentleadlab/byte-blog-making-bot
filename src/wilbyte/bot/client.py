@@ -86,8 +86,13 @@ def _intents() -> discord.Intents:
     # here rather than making it a second thing to remember: a watcher that
     # silently sees blank messages is worse than one that fails at login with a
     # message naming the switch to flip.
-    if _id_list(os.getenv("DISCORD_WATCH_CHANNEL_IDS")) or _id_list(
-        os.getenv("DISCORD_SOP_CHANNEL_IDS")
+    if (
+        _id_list(os.getenv("DISCORD_WATCH_CHANNEL_IDS"))
+        or _id_list(os.getenv("DISCORD_SOP_CHANNEL_IDS"))
+        # Payra's payments arrive as another bot's embed in a channel that
+        # never mentions RYTE. Without this the message turns up with its
+        # fields blank, which reads exactly like a month with no sales.
+        or _id_list(os.getenv("DISCORD_PAYMENT_CHANNEL_ID"))
     ):
         intents.message_content = True
     return intents
@@ -275,6 +280,9 @@ class WilByteBot(discord.Client):
         if is_direct_mention(message, self.user):
             await handle_mention(self, message)
             return
+        if is_payment(message, self.config):
+            await handle_payment(self, message)
+            return
         if is_watched(message, self.config):
             await handle_watched(self, message)
             return
@@ -310,6 +318,18 @@ def is_direct_mention(message, bot_user) -> bool:
 
 
 # ------------------------------------------------------------- watching a channel
+
+
+def is_payment(message, config: Config) -> bool:
+    """True for a message in the channel Payra announces payments in.
+
+    Not filtered by author, for the same reason a watched channel isn't: the
+    payments are posted by another bot, and somebody chose that channel for
+    exactly this.
+    """
+    where = config.secrets.discord_payment_channel_id
+    channel = getattr(message, "channel", None)
+    return bool(where) and str(getattr(channel, "id", "")) == str(where)
 
 
 def is_watched(message, config: Config) -> bool:
@@ -3232,6 +3252,122 @@ def _all_text(message) -> str:
         if footer is not None and getattr(footer, "text", None):
             parts.append(str(footer.text))
     return "\n".join(part for part in parts if part)
+
+
+# How long the Levinson member list is kept before it is read again. Walking
+# GoHighLevel's contacts is two hundred requests, and a payment lands often
+# enough that doing it per payment would spend the whole minute on it. Half an
+# hour late on an agent who opted in this morning is a row RYTE adds when the
+# next payment lands or when the month is run by hand.
+MEMBERS_GOOD_FOR = 30 * 60
+
+# Long enough that a broken tag lookup is said once an hour rather than once a
+# payment. A warning repeated eleven hundred times is a warning nobody reads.
+SAY_AGAIN_AFTER = 60 * 60
+
+
+async def _levinson_members(bot: "WilByteBot") -> tuple[list, list[str]]:
+    """The member list, from memory when it was read recently enough."""
+    held = getattr(bot, "_levinson_members", None)
+    read_at = getattr(bot, "_levinson_members_at", 0.0)
+    if held is not None and time.time() - read_at < MEMBERS_GOOD_FOR:
+        return held, []
+
+    members, notes = await asyncio.to_thread(jobs.levinson_members, bot.config)
+    if members:
+        bot._levinson_members = members
+        bot._levinson_members_at = time.time()
+    return members, notes
+
+
+async def handle_payment(bot: "WilByteBot", message) -> None:
+    """One Payra notification, onto the Levinson tracker if it is theirs.
+
+    Every payment in the channel comes through here and most are nothing to do
+    with Levinson - "all payments are notified the same thing so there's no
+    identifying if its levinson agent unless you know their contact
+    information". The ones that aren't theirs leave no trace at all: no row, no
+    message, nothing to scroll past.
+
+    Writing is the same append the monthly command does, so a payment that
+    reaches the sheet twice - live now and again when somebody runs the month -
+    is added once.
+    """
+    from .. import levinson
+
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    when = getattr(message, "created_at", None)
+    paid = levinson.read_payment(
+        _all_text(message),
+        paid_at=when.astimezone(zone) if when is not None else datetime.now(zone),
+    )
+    if paid is None:
+        return
+
+    # Not knowing who the Levinson agents are is not the same as knowing this
+    # isn't one of them, and a payment dropped in silence is the failure this
+    # whole report exists to avoid. Both ways of not knowing get said out loud.
+    try:
+        members, notes = await _levinson_members(bot)
+    except Exception as exc:
+        log.warning("Couldn't read the Levinson members: %s", exc)
+        await _grumble(bot, "levinson-members", (
+            "A payment landed and I can't tell whether it's a Levinson agent — "
+            f"{_readable(exc)}"
+        ))
+        return
+
+    if not members:
+        await _grumble(bot, "levinson-members", (
+            "A payment landed and I can't tell whether it's a Levinson agent — "
+            + (notes[0] if notes else "the member list came back empty.")
+        ))
+        return
+
+    lines = levinson.lines_for([paid], members)
+    if not lines:
+        return
+
+    (line,) = lines
+    written, problems = await asyncio.to_thread(
+        jobs.write_levinson, bot.config,
+        [((paid.paid_at.year, paid.paid_at.month), lines)],
+    )
+
+    responder = _board_responder(bot)
+    if responder is None:
+        return
+    if problems:
+        await responder.send(embed=embeds.error(
+            f"Couldn't put {line.name}'s payment on the Levinson tracker\n"
+            + "\n".join(problems)
+        ))
+        return
+    if not written:
+        return
+    await responder.send(
+        f"📗 **{line.name}** — {line.amount}"
+        + (f" — {line.product}" if line.product else "")
+        + f" → {levinson.tab_for(paid.paid_at.year, paid.paid_at.month)}"
+    )
+
+
+async def _grumble(bot: "WilByteBot", about: str, said: str) -> None:
+    """Say something that is wrong, and not again for an hour.
+
+    The payment channel carries better than a thousand messages a month. A
+    warning that repeats per payment is a warning nobody reads by lunchtime.
+    """
+    last = getattr(bot, "_grumbles", None)
+    if last is None:
+        last = bot._grumbles = {}
+    now = time.time()
+    if now - last.get(about, 0.0) < SAY_AGAIN_AFTER:
+        return
+    last[about] = now
+    responder = _board_responder(bot)
+    if responder is not None:
+        await responder.send(embed=embeds.error(said))
 
 
 async def _levinson_report(
