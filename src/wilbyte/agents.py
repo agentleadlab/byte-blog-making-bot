@@ -118,10 +118,17 @@ FAMILIES = (
     # Written out in full on Siona Paradas's card: "Text Verified Index
     # Universal Life". Three words nobody abbreviated, naming the same product
     # as every other IUL line on the board.
+    #
+    # "ascend standard = iul standard". Ascend is the name the line is sold
+    # under, not a different product, so its orders belong on the IUL
+    # checklists rather than on a set of their own. This was read the other way
+    # in August, off Lars Christofferson's card - which said "Lead Type: IUL"
+    # up top and "$350/week- Ascend Standard" below, both halves of the same
+    # thing, and was taken for two.
     (
         "iul",
         re.compile(
-            r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b"
+            r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b|\bascend\b"
             r"|\bindex(?:ed)?\s+universal\s+life\b",
             re.IGNORECASE,
         ),
@@ -134,7 +141,6 @@ FAMILIES = (
     # "UPRISE STANDARDS" are the same leads - so they reduce to one family and
     # a card written either way lands on the same checklist.
     ("phnx", re.compile(r"\bpho?e?nix\b|\bphnx\b|\bphx\b|\buprise\b", re.IGNORECASE)),
-    ("ascend", re.compile(r"\bascend\b", re.IGNORECASE)),
 )
 
 # Variants that sit alongside the plain one and are not it. "OTP Spanish IUL"

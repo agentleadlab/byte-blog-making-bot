@@ -1369,16 +1369,37 @@ def test_ascend_standard_is_read_off_the_price_line():
     """"Lead Type: IUL" up top and "$350/week- Ascend Standard" below. The
     price comes off the front; the level and the tier are what he bought."""
     assert agents.stated_lead_type(LARS) == "Ascend Standard"
-    assert agents.shape_of("Ascend Standard") == ("ascend", "standard", frozenset())
+    assert agents.shape_of("Ascend Standard") == ("iul", "standard", frozenset())
 
 
-def test_ascend_is_a_family_of_its_own_like_phoenix():
-    """Named on its own it is the lead type, the same as Phoenix is - not a
-    modifier waiting to be grafted onto something else."""
-    assert agents.family_of("Ascend Standard") == "ascend"
+def test_ascend_is_the_name_the_iul_line_is_sold_under():
+    """"ascend standard = iul standard". Lars Christofferson's card said both
+    halves of one thing - "Lead Type: IUL" up top, "Ascend Standard" below -
+    and this was read in August as two products rather than one."""
+    assert agents.family_of("Ascend Standard") == "iul"
+    assert agents.shape_of("Ascend Standard") == agents.shape_of("OTP IUL Standard")
+    assert agents.shape_of("Ascend Plus") == agents.shape_of("OTP IUL Plus")
+
+
+def test_an_ascend_order_lands_on_the_iul_checklist():
+    """Alanna Jackson's, which had nowhere to go while Ascend was its own
+    product and the Lead Order card had no checklist by that name."""
+    have = ["OTP IUL Standard", "OTP IUL Plus", "Phoenix Standard", "OTP Widows"]
+
+    assert agents.match_checklist(
+        "Ascend Standard", have, tier=agents.tier_of("Ascend Standard")
+    ) == "OTP IUL Standard"
+
+
+def test_ascend_is_still_the_level_that_was_ordered():
+    """A family it shares with IUL, and a name of its own that stays on the
+    line - "Lead Type: vets" with "ascend" below it is still an Ascend order."""
     assert agents.stated_lead_type("Lead Type: IUL\n$350/week- Ascend Plus") == (
         "Ascend Plus"
     )
+    # Ordered, not self-setup: Standard is a tier of the line rather than a
+    # synonym for setting yourself up, exactly as it is for Phoenix.
+    assert agents.is_own_setup("Ascend Standard") is False
 
 
 def test_ascend_and_phoenix_are_not_the_same_order():
