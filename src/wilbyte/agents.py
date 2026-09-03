@@ -788,9 +788,29 @@ def tier_hint(text: str) -> str | None:
     return tier_of(text)
 
 
-def checklist_item(url: str, lead_type: str) -> str:
-    """The link, then the lead type. What goes onto every checklist."""
-    return f"{url} {lead_type}".strip()
+def checklist_item(url: str, lead_type: str, *, day: str = "") -> str:
+    """The link, then the lead type, then the day when the card holds several.
+
+    The Friday card runs Saturday to Monday, so three days of agents sit on
+    one checklist looking alike. Which day each one goes live is the thing
+    somebody working that card actually needs, and until now it was only on
+    the agent's own card - a click away, three days at a time.
+
+    Only on a card that spans days. On Tuesday's card everything goes live on
+    the Wednesday, and saying so on every line is noise.
+    """
+    said = f"{url} {lead_type}".strip()
+    return f"{said} {day}".strip() if day else said
+
+
+def spans_days(title: str) -> bool:
+    """Whether a setup card covers more than one launch day."""
+    return len(set(_SETUP_DATE.findall(title or ""))) > 1
+
+
+def day_label(when: date | None) -> str:
+    """"SATURDAY" - the way it reads on the checklist beside the lead type."""
+    return f"{when:%A}".upper() if when is not None else ""
 
 
 # ----------------------------------------- what was actually set up, and for whom

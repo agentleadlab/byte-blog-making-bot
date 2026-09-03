@@ -3240,6 +3240,11 @@ def _step(card_title, card_id, checklist, agent, held, *, exact, label=""):
     `label` is what the line says the leads are, which is not always the Lead
     Type field: a card whose body names the tier outright is filed by what the
     body said, and the line should say the same thing.
+
+    A setup card covering several days gets the day on the end of the line.
+    The Friday card runs Saturday to Monday, and three days of agents on one
+    checklist all look alike until you open each card to find out which is
+    which.
     """
     from .. import agents as rules
 
@@ -3248,7 +3253,11 @@ def _step(card_title, card_id, checklist, agent, held, *, exact, label=""):
         card_title=card_title,
         card_id=card_id,
         checklist=checklist,
-        item=rules.checklist_item(agent.url, label or agent.lead_type),
+        item=rules.checklist_item(
+            agent.url,
+            label or agent.lead_type,
+            day=rules.day_label(agent.launch) if rules.spans_days(card_title) else "",
+        ),
         make_checklist=" ".join(checklist.split()).casefold() not in names,
     )
 

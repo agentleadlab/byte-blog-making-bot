@@ -2744,3 +2744,40 @@ def test_a_weekday_argument_in_a_stale_comment_is_not_raised():
     """The date came off the description, so the description is what gets
     argued with. A copied comment is not a disagreement."""
     assert read_eduardo(("live fri, aug 27",)).note == ""
+
+
+# --------------------------------- three days on one setup card
+
+
+SPAN = "Agent Setup Going Live Saturday-Monday 09/05-09/07"
+ONE_DAY = "Agent Setup Going Live Thursday 09/03"
+
+
+def test_a_card_covering_three_days_is_a_span():
+    assert agents.spans_days(SPAN) is True
+    assert agents.spans_days(ONE_DAY) is False
+    assert agents.spans_days("Agent Setup Going Live") is False
+
+
+def test_a_line_on_a_span_says_which_day():
+    """Three days of agents on one checklist all look alike until you open
+    each card to find out which is which."""
+    said = agents.checklist_item(
+        "https://trello.com/c/abc", "OTP Vets",
+        day=agents.day_label(date(2026, 9, 5)),
+    )
+
+    assert said == "https://trello.com/c/abc OTP Vets SATURDAY"
+
+
+def test_a_line_on_a_one_day_card_does_not():
+    """Everything on Tuesday's card goes live Wednesday. Saying so on every
+    line is noise."""
+    assert agents.checklist_item("https://trello.com/c/abc", "OTP Vets") == (
+        "https://trello.com/c/abc OTP Vets"
+    )
+
+
+def test_the_day_is_left_off_when_there_is_no_launch_date():
+    assert agents.day_label(None) == ""
+    assert agents.checklist_item("u", "OTP Vets", day="") == "u OTP Vets"
