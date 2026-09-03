@@ -15,11 +15,29 @@ Credentials come from https://trello.com/power-ups/admin (key, then token).
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
 
 BASE_URL = "https://api.trello.com/1"
+
+# How long to wait before asking again when Trello has a bad second. Their API
+# answers 503 now and then for no reason that outlasts the retry, and RYTE
+# reads the board every twenty seconds all day - without this, a one-second
+# outage in the middle of a rollover abandons it half done.
+RETRY_PAUSES = (1.0, 3.0, 8.0)
+
+# Worth asking again about. 429 is the rate limiter, which means the request
+# was not performed at all; 5xx is their end having a moment.
+_AGAIN = {429, 500, 502, 503, 504}
+
+# Asking twice must not do it twice. GET changes nothing; PUT and DELETE say
+# what the answer should be rather than "one more of these", so ticking an
+# item complete twice leaves it complete. POST creates, and a POST that
+# actually landed before the 503 would create a second card - those are asked
+# again only when the rate limiter says it never ran.
+_SAFE_TO_REPEAT = {"GET", "HEAD", "PUT", "DELETE"}
 
 
 class TrelloError(RuntimeError):
@@ -46,10 +64,7 @@ class TrelloClient:
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
         params = {**self._auth, **kwargs.pop("params", {})}
-        try:
-            response = self._client.request(method, path, params=params, **kwargs)
-        except httpx.HTTPError as exc:
-            raise TrelloError(f"{method} {path} failed to send: {exc}") from exc
+        response = self._send(method, path, params, kwargs)
 
         if response.status_code >= 400:
             raise TrelloError(
@@ -61,6 +76,37 @@ class TrelloClient:
             return response.json()
         except ValueError as exc:
             raise TrelloError(f"{method} {path} returned non-JSON: {response.text[:200]}") from exc
+
+    def _send(self, method: str, path: str, params: dict, kwargs: dict):
+        """The request, asked again when the answer was Trello having a moment.
+
+        Returns the last response whatever it says - a 503 that never clears is
+        still a 503, and the caller raises it with the status in the message.
+        """
+        for pause in (*RETRY_PAUSES, None):
+            try:
+                response = self._client.request(method, path, params=params, **kwargs)
+            except httpx.HTTPError as exc:
+                # A request that failed to send never reached Trello, so asking
+                # again cannot duplicate anything, whatever the method was.
+                if pause is None:
+                    raise TrelloError(f"{method} {path} failed to send: {exc}") from exc
+                self._wait(pause)
+                continue
+
+            if pause is None or response.status_code not in _AGAIN:
+                return response
+            repeatable = (
+                method.upper() in _SAFE_TO_REPEAT or response.status_code == 429
+            )
+            if not repeatable:
+                return response
+            self._wait(pause)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    @staticmethod
+    def _wait(seconds: float) -> None:
+        time.sleep(seconds)
 
     # ------------------------------------------------------------- reading
 

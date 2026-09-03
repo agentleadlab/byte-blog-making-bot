@@ -3953,6 +3953,15 @@ _PREFLIGHT = [
     ("ghl_location_id", "GHL_LOCATION_ID", False, "post to GoHighLevel"),
     ("ghl_blog_id", "GHL_BLOG_ID", False, "post to GoHighLevel"),
     ("discord_guild_id", "DISCORD_GUILD_ID", False, "sync slash commands instantly"),
+    # The live payment watcher has no other sign of life. Everything else here
+    # announces itself the first time somebody uses it; this one is silent by
+    # design until a Levinson agent pays, and "no line yet" and "never armed"
+    # look identical from the outside. So it says at boot which it is.
+    (
+        "discord_payment_channel_id", "DISCORD_PAYMENT_CHANNEL_ID", False,
+        "watch for Levinson payments as they land",
+    ),
+    ("levinson_sheet_id", "LEVINSON_SHEET_ID", False, "write the Levinson tracker"),
 ]
 
 
