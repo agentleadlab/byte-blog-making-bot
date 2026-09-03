@@ -1391,6 +1391,36 @@ def test_an_ascend_order_lands_on_the_iul_checklist():
     ) == "OTP IUL Standard"
 
 
+@pytest.mark.parametrize(
+    "ordered,lands_on",
+    [
+        ("Ascend Standard", "OTP IUL Standard"),
+        ("PHX STNDRD", "Phoenix Standard"),
+        ("PHX 2.0", "Phoenix Plus"),
+        ("Text Verified Index Universal Life", "OTP IUL Plus"),
+    ],
+)
+def test_matching_decides_the_checklist_and_never_rewrites_the_order(ordered, lands_on):
+    """The checklist is the filing; the line is the record of what was bought.
+    An order written "PHX 2.0" is filed under Phoenix Plus and still reads
+    "PHX 2.0" on the card - normalising it would lose the only place the
+    customer's own words survive."""
+    setup = [{"id": "s", "name": "Nicole", "checkItems": [
+        {"name": f"https://trello.com/c/zzz {ordered}"}
+    ]}]
+    order = [
+        {"id": "1", "name": "OTP IUL Standard", "checkItems": []},
+        {"id": "2", "name": "OTP IUL Plus", "checkItems": []},
+        {"id": "3", "name": "Phoenix Standard", "checkItems": []},
+        {"id": "4", "name": "Phoenix Plus", "checkItems": []},
+    ]
+
+    (spread,), _ = agents.plan_spread(setup, order)
+
+    assert spread.checklist == lands_on
+    assert agents.checklist_item(spread.url, spread.label).endswith(ordered)
+
+
 def test_ascend_is_still_the_level_that_was_ordered():
     """A family it shares with IUL, and a name of its own that stays on the
     line - "Lead Type: vets" with "ascend" below it is still an Ascend order."""
