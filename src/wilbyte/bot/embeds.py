@@ -357,5 +357,37 @@ def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
     return embed
 
 
+def spread_conflicts(found: list[dict], *, shown: int) -> discord.Embed:
+    """Lines that went on where the setup card said, against their own card.
+
+    Amber rather than red. The line is on the board and the day can carry on;
+    what is not settled is which of the two spellings is the order, and that
+    is a question rather than a fault.
+    """
+    embed = discord.Embed(
+        title=f"{len(found)} agent(s) to check",
+        colour=AMBER,
+    )
+    embed.set_author(name="⚠ spread where the setup card said, but their card disagrees")
+
+    lines = []
+    for one in found[:shown]:
+        name = _truncate(str(one.get("agent") or "?"), 60)
+        link = str(one.get("url") or "")
+        head = f"[{name}]({link})" if link else name
+        lines.append(
+            f"**{head}** — put on `{_truncate(str(one.get('checklist') or '?'), 60)}`\n"
+            f"  setup card `{_truncate(str(one.get('setup') or '?'), 60)}`\n"
+            f"  their card `{_truncate(str(one.get('ordered') or '?'), 60)}`"
+        )
+    if len(found) > shown:
+        lines.append(f"*…and {len(found) - shown} more.*")
+    embed.description = _truncate("\n".join(lines), 4096)
+
+    embed.set_footer(text="The setup card decides where it goes; their own card is what they ordered")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(title="Something went wrong", description=_truncate(message, 4000), colour=RED)

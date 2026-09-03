@@ -2231,3 +2231,135 @@ def test_a_broken_member_lookup_is_said_rather_than_swallowed(config, monkeypatc
 
     assert writes == []
     assert "500" in str(channel.said[0].description)
+
+
+# ------------------------------------------------- spreading against their own card
+
+
+AGENT_URL = "https://trello.com/c/siona"
+
+
+class SpreadBoard:
+    """Enough of a board to spread one agent off a setup card."""
+
+    def __init__(self, *, on_setup, their_card, checklists=("OTP IUL Plus",)):
+        self.on_setup = on_setup
+        self.their_card = their_card
+        self.written = []
+        self.checklists = list(checklists)
+        self.closed = False
+
+    def board_lists(self, _board_id):
+        return [{"id": "L"}]
+
+    def list_cards(self, _list_id):
+        return [
+            {"id": "setup", "name": "Agent Setup Going Live Friday 09/04"},
+            {"id": "order", "name": "Lead Order 09/04/26"},
+            {"id": "agent", "name": "New Agent - Siona Paradas",
+             "url": AGENT_URL, "shortUrl": AGENT_URL},
+        ]
+
+    def card_checklists(self, card_id):
+        if card_id == "setup":
+            return [{"id": "s1", "name": "Therese", "checkItems": [
+                {"name": f"{AGENT_URL} {self.on_setup}"}
+            ]}]
+        return [
+            {"id": f"c{n}", "name": name, "checkItems": []}
+            for n, name in enumerate(self.checklists)
+        ]
+
+    def card_detail(self, card_id):
+        return {"id": card_id, "desc": self.their_card}
+
+    def add_check_item(self, checklist_id, name, **kwargs):
+        self.written.append((checklist_id, name))
+        return {"id": "i1"}
+
+    def close(self):
+        self.closed = True
+
+
+SIONA_CARD = """-- New Client Onboarded --
+
+First Name: Siona
+Last Name: Paradas
+Lead Type: Index Universal Life
+
+OTP SPANISH IUL
+"""
+
+
+def spreading(board, monkeypatch, config):
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 3))
+    return jobs.spread_to_lead_order(config)
+
+
+def test_a_line_whose_card_disagrees_is_placed_and_questioned(config, monkeypatch):
+    """The setup card said "OTP IUL" and her own card says Spanish. The line
+    goes where the setup card says - that is what the spread is for - and the
+    disagreement is raised rather than swallowed."""
+    board = SpreadBoard(on_setup="OTP IUL", their_card=SIONA_CARD)
+
+    added, conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert problems == []
+    assert board.written == [("c0", f"{AGENT_URL} OTP IUL")]
+    assert [line for line in added if "Siona" in line]
+    (clash,) = conflicts
+    assert clash["agent"] == "New Agent - Siona Paradas"
+    assert clash["checklist"] == "OTP IUL Plus"
+    assert clash["setup"] == "OTP IUL"
+    assert clash["ordered"] == "OTP SPANISH IUL"
+    assert clash["url"] == AGENT_URL
+
+
+def test_a_card_that_agrees_is_not_questioned(config, monkeypatch):
+    board = SpreadBoard(
+        on_setup="OTP SPANISH IUL",
+        their_card=SIONA_CARD,
+        checklists=("OTP SPANISH IUL",),
+    )
+
+    added, conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert conflicts == [] and problems == []
+    assert board.written == [("c0", f"{AGENT_URL} OTP SPANISH IUL")]
+
+
+def test_a_card_nobody_can_read_is_not_a_conflict(config, monkeypatch):
+    """Trello having a bad second is not somebody's leads going astray, and
+    saying it is teaches people to skip the message."""
+    board = SpreadBoard(on_setup="OTP IUL", their_card=SIONA_CARD)
+    board.card_detail = lambda card_id: (_ for _ in ()).throw(RuntimeError("HTTP 503"))
+
+    added, conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert conflicts == [] and problems == []
+    assert len(board.written) == 1
+
+
+def test_a_line_that_could_not_be_placed_is_never_questioned(config, monkeypatch):
+    """Nothing was written, so there is nothing to disagree about - and the
+    unplaced line is already reported on its own."""
+    board = SpreadBoard(
+        on_setup="OTP IUL", their_card=SIONA_CARD, checklists=("OTP Widows",)
+    )
+
+    added, conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert board.written == [] and conflicts == []
+    assert "doesn't match any checklist" in problems[0]
+
+
+def test_the_conflict_reads_as_a_question_rather_than_a_fault(config, monkeypatch):
+    board = SpreadBoard(on_setup="OTP IUL", their_card=SIONA_CARD)
+    _, conflicts, _ = spreading(board, monkeypatch, config)
+
+    card = embeds.spread_conflicts(conflicts, shown=10)
+
+    assert "OTP IUL Plus" in card.description
+    assert "OTP SPANISH IUL" in card.description
+    assert card.colour.value == embeds.AMBER

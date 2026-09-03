@@ -2888,3 +2888,67 @@ def test_a_line_on_a_one_day_card_does_not():
 def test_the_day_is_left_off_when_there_is_no_launch_date():
     assert agents.day_label(None) == ""
     assert agents.checklist_item("u", "OTP Vets", day="") == "u OTP Vets"
+
+
+# --------------------------------- the setup card against their own card
+
+
+SIONA = """-- New Client Onboarded --
+
+First Name: Siona
+Last Name: Paradas
+Package Selected: Text Verified
+Lead Type: Index Universal Life
+
+OTP SPANISH IUL
+States: Ga, FL, NC, SC, TX, CA
+Internal: LAUNCH DATE: FRIDAY, Sept 04 @ 10 am EST
+"""
+
+
+def test_a_qualifier_on_one_side_only_is_a_conflict():
+    """Siona Paradas ordered OTP Spanish IUL. Her line on the setup card said
+    "OTP IUL", so she was filed onto OTP IUL Plus - the correct home for that
+    phrase, the wrong campaign for her leads, and nothing looking wrong."""
+    assert agents.setup_conflict(
+        agents.stated_lead_type(SIONA), "OTP IUL"
+    ) == ("OTP SPANISH IUL", "OTP IUL")
+
+
+def test_the_same_leads_written_differently_is_not_a_conflict():
+    assert agents.setup_conflict("OTP Vets", "30 more OTP vets") is None
+    assert agents.setup_conflict("Text Verified IUL Plus", "OTP IUL Plus") is None
+
+
+def test_different_leads_are_a_conflict():
+    assert agents.setup_conflict("OTP VETS", "OTP FEX") is not None
+
+
+def test_a_tier_only_one_of_them_names_is_not_a_conflict():
+    """The setup card's line is usually the fuller phrase. "Ascend Standard"
+    against a card whose field says plain IUL is one order written twice."""
+    assert agents.setup_conflict("Index Universal Life", "Ascend Standard") is None
+    assert agents.setup_conflict("IUL", "OTP IUL Plus") is None
+
+
+def test_two_tiers_that_disagree_are_a_conflict():
+    assert agents.setup_conflict("OTP IUL Plus", "IUL Standard") is not None
+
+
+@pytest.mark.parametrize(
+    "card_says,setup_says",
+    [
+        ("", "OTP IUL"),
+        ("OTP IUL", ""),
+        # Naming two kinds of leads at once. Which one it is, or whether it is
+        # both, is not something to work out from the words.
+        ("OTP WIDOW VET", "OTP VETS"),
+        ("OTP VETS", "OTP WIDOW VET"),
+        # Nothing that names leads at all.
+        ("Siona Paradas", "OTP IUL"),
+    ],
+)
+def test_what_cannot_honestly_be_compared_is_not_questioned(card_says, setup_says):
+    """Eleven correct spreads questioned is a question nobody reads the
+    twelfth time."""
+    assert agents.setup_conflict(card_says, setup_says) is None

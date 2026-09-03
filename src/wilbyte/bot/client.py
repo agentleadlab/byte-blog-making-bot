@@ -1070,7 +1070,7 @@ async def _spread_setup(responder: Responder, config: Config, said: str) -> None
 
     day = dailyops.day_named(said, today=_today(config))
     try:
-        added, problems = await asyncio.to_thread(
+        added, conflicts, problems = await asyncio.to_thread(
             jobs.spread_to_lead_order, config, day=day
         )
     except PIPELINE_ERRORS as exc:
@@ -1083,7 +1083,11 @@ async def _spread_setup(responder: Responder, config: Config, said: str) -> None
             f"Put {len(lines)} agent(s) on the Lead Order card.\n{head}\n"
             + "\n".join(f"· {line}" for line in lines)
         )
-    elif not problems:
+    if conflicts:
+        await responder.send(
+            embed=embeds.spread_conflicts(conflicts, shown=UNMARKED_SHOWN)
+        )
+    if not added and not problems:
         await responder.send(
             "Every agent on the setup card is already on the Lead Order card."
         )
@@ -1192,13 +1196,17 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"{dailyops.AGED_DONE}."
             ) if gone else ""
         elif step == "to_lead_order":
-            added, problems = await asyncio.to_thread(
+            added, conflicts, problems = await asyncio.to_thread(
                 jobs.spread_to_lead_order, bot.config
             )
             note = (
                 f"📋 {dailyops.said_at(step)} — put {len(added) - 1} setup-card "
                 f"agent(s) on the Lead Order card.\n" + "\n".join(added)
             ) if added else ""
+            card = (
+                embeds.spread_conflicts(conflicts, shown=UNMARKED_SHOWN)
+                if conflicts else None
+            )
         elif step in ("rollover", dailyops.LATE_ROLLOVER):
             late = step == dailyops.LATE_ROLLOVER
             # Both run on the same day now - half eight for General and Ops,

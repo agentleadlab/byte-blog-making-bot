@@ -924,6 +924,46 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
     return None if shape_of(ordered) == shape_of(said) else (ordered, said)
 
 
+def setup_conflict(card_says: str, setup_says: str) -> tuple[str, str] | None:
+    """(what their card says, what the setup card says) when those disagree.
+
+    The spread copies the setup card's wording and files by it, and never used
+    to look at the agent's own card - which is linked right there on the line.
+    Siona Paradas ordered OTP Spanish IUL, her line on the setup card said
+    "OTP IUL", and she was filed onto OTP IUL Plus: the correct home for that
+    phrase and the wrong campaign for her leads, with nothing looking wrong.
+
+    Different leads, not different words. Compared by shape, so "OTP Vets" and
+    "30 more OTP vets" agree and nobody is bothered about it.
+
+    None whenever the two cannot honestly be compared, on the same reasoning
+    `wrong_setup` uses: eleven correct spreads questioned is a question nobody
+    reads the twelfth time.
+
+    - Either side naming no kind of leads, or naming two at once.
+    - A tier only one of them mentions. The setup card's line is often the
+      fuller phrase - "Ascend Standard" against a card whose field says plain
+      "IUL" is one order written twice, not two orders.
+
+    A qualifier only one of them mentions *is* a conflict, and is the whole
+    reason this exists: Spanish IUL and IUL are different checklists, and
+    silence about Spanish on one side is exactly how the leads go astray.
+    """
+    if not card_says or not setup_says:
+        return None
+    theirs, ours = families_in(card_says), families_in(setup_says)
+    if len(theirs) != 1 or len(ours) != 1:
+        return None
+    if theirs != ours:
+        return (card_says, setup_says)
+    if qualifiers_of(card_says) != qualifiers_of(setup_says):
+        return (card_says, setup_says)
+    said, wrote = tier_of(card_says), tier_of(setup_says)
+    if said and wrote and said != wrote:
+        return (card_says, setup_says)
+    return None
+
+
 # ------------------------------------------------------ when they go live
 
 _MONTHS = {

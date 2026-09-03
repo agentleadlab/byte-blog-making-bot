@@ -2683,8 +2683,16 @@ def comment_on_daily(
         client.close()
 
 
-def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[str]]:
-    """Put today's setup-card agents onto today's Lead Order card. (added, problems).
+def spread_to_lead_order(
+    config: Config, *, day=None
+) -> tuple[list[str], list[dict], list[str]]:
+    """Put today's setup-card agents onto today's Lead Order card.
+
+    (added, conflicts, problems). A conflict is a line that went on, filed by
+    the setup card's wording, onto a checklist the agent's own card disagrees
+    with - see `agents.setup_conflict`. Said rather than refused: the line is
+    where the setup card says it belongs, and which of the two is wrong is not
+    something to decide from here.
 
     The setup card is filed by who does the setting up; the Lead Order card is
     filed by what was bought. An agent set up in advance only ever reaches the
@@ -2710,7 +2718,7 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
 
         setup = rules.find_setup_card(every, day)
         if setup is None:
-            return [], [
+            return [], [], [
                 f"No setup card for the agents going live {day:%m/%d/%y} "
                 "anywhere on the board."
             ]
@@ -2723,7 +2731,9 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
         if order is None and starts is not None and starts != day:
             order = dailyops.cards_covering(every, starts).get("lead_order")
         if order is None:
-            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
+            return [], [], [
+                f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."
+            ]
 
         order_id = str(order.get("id") or "")
         held = client.card_checklists(order_id)
@@ -2731,7 +2741,7 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
             client.card_checklists(str(setup.get("id") or "")), held
         )
         if not spreads:
-            return [], problems
+            return [], [], problems
 
         # Read back between writes rather than trusting the plan: one agent's
         # line may have just made the checklist the next one is looking for.
@@ -2740,7 +2750,11 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
             for c in held
         }
         named = _by_url(every)
+        # The agent's own card by the URL its line links to, so what they
+        # ordered can be read against what the setup card called it.
+        cards = _cards_by_url(every)
         added: list[str] = []
+        conflicts: list[dict] = []
         for spread in spreads:
             key = " ".join(spread.checklist.split()).casefold()
             who = named.get(spread.url, spread.url)
@@ -2763,13 +2777,64 @@ def spread_to_lead_order(config: Config, *, day=None) -> tuple[list[str], list[s
                 problems.append(f"{spread.label} — {_short(exc, 160)}")
                 continue
             added.append(f"{named.get(spread.url, spread.label)} — {spread.checklist}")
+
+            # Filed by the setup card's wording, which is sometimes thinner
+            # than the agent's own card. Read after the write, not before: the
+            # line belongs where the setup card says, and this only says so.
+            clash = _their_card_disagrees(client, cards.get(spread.url), spread.label)
+            if clash is not None:
+                ordered, on_setup = clash
+                conflicts.append({
+                    "agent": who,
+                    "url": spread.url,
+                    "checklist": spread.checklist,
+                    "ordered": ordered,
+                    "setup": on_setup,
+                })
         if added:
             # Name both cards. The whole failure here was a wrong pairing, and
             # a count alone would have hidden it again.
             added.insert(0, f"**{setup.get('name')}** → **{order.get('name')}**")
-        return added, problems
+        return added, conflicts, problems
     finally:
         client.close()
+
+
+def _cards_by_url(cards: list[dict]) -> dict[str, str]:
+    """Card id by URL, both the short and the long one.
+
+    Same reason `_by_url` keeps both: a checklist item stores whichever URL was
+    copied, and looking the card up by the other one silently finds nothing.
+    """
+    found: dict[str, str] = {}
+    for card in cards or []:
+        card_id = str(card.get("id") or "")
+        if not card_id:
+            continue
+        for field in ("url", "shortUrl"):
+            where = str(card.get(field) or "")
+            if where:
+                found[where] = card_id
+    return found
+
+
+def _their_card_disagrees(client, card_id, on_setup: str):
+    """(what their card says, what the setup card says), or None.
+
+    One read of the agent's own card per line written, which is why it happens
+    after the placement rather than for every agent considered. A card that
+    can't be read is not a conflict - saying one because Trello had a bad
+    second is how a real one stops being looked at.
+    """
+    from .. import agents as rules
+
+    if not card_id:
+        return None
+    try:
+        said = str(client.card_detail(card_id).get("desc") or "")
+    except Exception:
+        return None
+    return rules.setup_conflict(rules.stated_lead_type(said), on_setup)
 
 
 def _by_url(cards: list[dict]) -> dict[str, str]:
@@ -2815,7 +2880,9 @@ def unspread_lead_order(
 
         order = dailyops.cards_covering(every, day).get("lead_order")
         if order is None:
-            return [], [f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."]
+            return [], [], [
+                f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."
+            ]
 
         belongs = rules.find_setup_card(every, day)
         if belongs is None:
