@@ -1982,3 +1982,52 @@ def test_nothing_stuck_means_no_second_button(monkeypatch):
     asyncio.run(bot_client._rollover(Asked(), config, named=""))
 
     assert len(pressed) == 1
+
+
+def test_the_offer_still_comes_when_there_is_nothing_else_left_to_carry(monkeypatch):
+    """This is the normal way to meet them: everything else went across an
+    hour ago and the held-back two are all that is still on the card. "Nothing
+    to move" and a full stop is the report describing the problem and then
+    walking away from it."""
+    import asyncio
+    from datetime import date
+    from types import SimpleNamespace
+
+    from wilbyte import dailyops
+    from wilbyte.bot import client as bot_client
+
+    plan = dailyops.RolloverPlan(kind="lead_order", from_title="a", to_title="b")
+    plan.leftovers = [
+        dailyops.Leftover(person="Nicole", name="gone across", already=True),
+        dailyops.Leftover(person="Nicole", name="stuck", times_rolled=3),
+    ]
+    pressed, carried_anyway = [], []
+
+    class Pressed:
+        def __init__(self, **kw):
+            pressed.append(kw.get("label", ""))
+            self.confirmed = True
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.jobs, "board_day", lambda config: date(2026, 9, 3))
+    monkeypatch.setattr(
+        bot_client.jobs, "read_rollover", lambda config, **kw: ([plan], [], {})
+    )
+    monkeypatch.setattr(
+        bot_client.jobs,
+        "carry_stuck",
+        lambda config, **kw: (carried_anyway.append(kw), (1, []))[1],
+    )
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+
+    config = SimpleNamespace(
+        discord=SimpleNamespace(approval_timeout_seconds=1),
+        schedule=SimpleNamespace(timezone="America/New_York"),
+    )
+    heard = Asked()
+    asyncio.run(bot_client._rollover(heard, config, named=""))
+
+    assert pressed == ["Carry 1 anyway"]
+    assert carried_anyway == [{"day": date(2026, 9, 3), "only": None}]

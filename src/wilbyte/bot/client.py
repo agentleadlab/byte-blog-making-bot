@@ -3155,7 +3155,12 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         1 for plan in plans for item in plan.carried if not item.stuck
     )
     if not movable:
+        # Nothing left to carry is the normal way to meet the held-back ones:
+        # everything else went across an hour ago, and these two are all that
+        # is still on the card. Answering "nothing to move" and stopping is
+        # the report describing the problem and then walking away from it.
         await responder.send(report)
+        await _offer_stuck(responder, config, plans, day=day, only=only)
         return
 
     if which:
@@ -3190,11 +3195,22 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
     if problems:
         note += "\n⚠ Couldn't move:\n" + "\n".join(f"• {line}" for line in problems)
     await responder.send(note)
+    await _offer_stuck(responder, config, plans, day=day, only=only)
 
-    # The same offer the evening run makes. Naming an item as held back and
-    # then giving no way to say "it is still the plan" is how somebody ends up
-    # dragging it across in Trello by hand - which is the thing this replaces.
-    stuck = [item for item in flagged if item.stuck and not item.looks_done]
+
+async def _offer_stuck(responder: Responder, config: Config, plans, *, day, only) -> None:
+    """The same offer the evening run makes, on a rollover somebody typed.
+
+    An item on its fourth night stops moving on its own, because carrying it
+    forever is how a card nobody is going to do follows the team around. But
+    "it is still the plan" is an answer too, and naming the item as held back
+    without offering it leaves somebody dragging the line across in Trello by
+    hand - which is the thing this replaces.
+    """
+    stuck = [
+        item for plan in plans for item in plan.needs_a_look
+        if item.stuck and not item.looks_done
+    ]
     if not stuck:
         return
 
