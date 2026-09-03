@@ -700,7 +700,12 @@ def summarise(plans: list[RolloverPlan], *, missing=()) -> str:
 
     lines = []
     for plan in plans:
-        carried = plan.carried
+        # What actually moves when the button is pressed. An item held back
+        # for having been carried three days running is named below with a
+        # reason; counting it here as well made the heading say fourteen while
+        # the button said twelve, and left somebody counting ticks on the card
+        # to work out which number was the lie.
+        carried = [item for item in plan.carried if not item.stuck]
         label = CARD_KINDS.get(plan.kind, plan.kind)
         lines.append(f"**{label}** — {len(carried)} item(s) → `{plan.to_title}`")
         by_person: dict[str, int] = {}

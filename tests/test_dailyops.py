@@ -366,6 +366,43 @@ def test_a_stuck_item_is_raised_rather_than_carried_again(tmp_path):
     assert "rolled forward 4 days" in dailyops.summarise([plan])
 
 
+def test_the_heading_counts_what_moves_not_what_is_held_back(tmp_path):
+    """The button is labelled with what will actually be written. A heading
+    counting the held-back ones as well says fourteen over a button saying
+    twelve, and leaves somebody counting ticks on the card to find out which
+    number to believe."""
+    from wilbyte import carried
+
+    store = tmp_path / "carried.json"
+    carried.save(
+        {dailyops.item_key("general", "Nicole", "Chase the Thompson docs"): {
+            "count": 4, "last": "2026-08-24",
+        }},
+        store,
+    )
+
+    plan = dailyops.plan_rollover(
+        "general",
+        source_card={"name": "💎 General 08/24/26"},
+        source_checklists=[{
+            "name": "Nicole",
+            "checkItems": [
+                {"name": "Chase the Thompson docs", "state": "incomplete"},
+                {"name": "Send the Tuesday numbers", "state": "incomplete"},
+            ],
+        }],
+        target_card={"name": "💎 General 08/25/26"},
+        target_checklists=[],
+        history=carried.history(store),
+    )
+    text = dailyops.summarise([plan])
+
+    assert "1 item(s)" in text
+    assert "Nicole: 1" in text
+    # Still named, with why - held back is not the same as unmentioned.
+    assert "rolled forward 4 days" in text
+
+
 def test_a_finished_item_stops_being_counted(tmp_path):
     from wilbyte import carried
 
