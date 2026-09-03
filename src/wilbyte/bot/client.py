@@ -2820,7 +2820,7 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
                 label=f"File {len(doable)} agent(s)",
                 emoji="🧾",
             )
-        await responder.send(rules.describe(plans), view=view)
+        await responder.send(rules.describe(plans, today=_today(config)), view=view)
         if view is None:
             return
         await view.wait()
@@ -2840,7 +2840,7 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
 
     note = f"🧾 Filed {filed} agent(s)."
     if silent and filed:
-        note += "\n" + rules.describe(doable)
+        note += "\n" + rules.describe(doable, today=_today(config))
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     if filed or problems:

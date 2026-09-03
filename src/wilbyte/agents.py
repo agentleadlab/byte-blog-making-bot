@@ -1441,7 +1441,22 @@ class AgentPlan:
         return not self.problems and (bool(self.steps) or bool(self.move_to))
 
 
-def describe(plans: list[AgentPlan]) -> str:
+def said_today(agent: "Agent", today: date | None) -> str:
+    """"launching today", and the date behind it when that isn't today's.
+
+    A launch date already gone by is filed today on purpose: a card that
+    should have gone live and didn't is due now, not never. But saying only
+    "launching today" hides which it is, and these cards get copied from one
+    agent to the next with the old comments attached - Eduardo Munoz's carried
+    "Ready to go live WED, AUG 26" from somebody else's card a week earlier.
+    Read as today, filed today, and nothing on the board looked wrong.
+    """
+    if today is None or agent.launch is None or agent.launch >= today:
+        return "launching today"
+    return f"launching today — the card is dated {agent.launch:%a %b %d}, already past"
+
+
+def describe(plans: list[AgentPlan], *, today: date | None = None) -> str:
     """The whole pass, as something to read before pressing anything."""
     if not plans:
         return "No new agents waiting in In Que."
@@ -1450,7 +1465,7 @@ def describe(plans: list[AgentPlan]) -> str:
     for plan in plans:
         agent = plan.agent
         when = {
-            "today": "launching today",
+            "today": said_today(agent, today),
             "tomorrow": "launching tomorrow",
             "later": f"launching {agent.launch:%a %b %d}" if agent.launch else "later",
             "unknown": "no launch date",

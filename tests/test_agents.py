@@ -2653,3 +2653,44 @@ def test_naming_the_family_still_beats_naming_the_variant():
 
 def test_a_variant_with_no_checklist_for_it_is_still_nothing():
     assert agents.match_checklist("30 blue collar", SPANISH_BOARD, tier="plus") is None
+
+
+# --------------------------------- a launch date already gone by
+
+
+def dated_plan(launch):
+    agent = agents.Agent(
+        name="Eduardo Munoz", card_id="c1", url="https://trello.com/c/x",
+        lead_type="Basic/Instant Spanish IUL", launch=launch,
+    )
+    return agents.AgentPlan(agent=agent, when=agent.when(date(2026, 9, 3)))
+
+
+def test_a_launch_date_already_past_says_so():
+    """Eduardo Munoz's card carried "Ready to go live WED, AUG 26", copied
+    from somebody else's card a week earlier. It was read as today, filed
+    today, and nothing on the board looked wrong."""
+    said = agents.describe([dated_plan(date(2026, 8, 26))], today=date(2026, 9, 3))
+
+    assert "launching today" in said
+    assert "Wed Aug 26" in said and "already past" in said
+
+
+def test_a_launch_date_that_really_is_today_says_only_that():
+    said = agents.describe([dated_plan(date(2026, 9, 3))], today=date(2026, 9, 3))
+
+    assert "launching today" in said
+    assert "already past" not in said
+
+
+def test_it_is_still_filed_today_either_way():
+    """A card that should have gone live and didn't is due now, not never."""
+    assert dated_plan(date(2026, 8, 26)).when == "today"
+
+
+def test_without_a_today_the_wording_is_unchanged():
+    """Every other caller keeps the message it had."""
+    said = agents.describe([dated_plan(date(2026, 8, 26))])
+
+    assert "launching today" in said
+    assert "already past" not in said
