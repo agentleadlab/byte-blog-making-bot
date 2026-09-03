@@ -2396,6 +2396,35 @@ def test_the_one_that_says_more_of_the_order_wins():
     )
 
 
+FEX_TWICE = ["OTP VETS/FEX", "OTP FEX"]
+
+
+def test_an_order_that_tells_them_apart_by_nothing_is_a_question():
+    """Kara E Williams bought Final Expense. Both of these are Final Expense
+    to this module, her card names neither, and taking the first one on the
+    board is a coin toss dressed up as a decision."""
+    assert agents.match_checklist(
+        "Text-Verified Final Expense", FEX_TWICE, tier="plus"
+    ) is None
+
+
+def test_two_names_equally_close_are_a_question_too():
+    """The same words in a different order is the same distance from the order
+    that was placed. There is nothing here to decide it on."""
+    assert agents.match_checklist(
+        "25 OTP FEX", ["OTP VETS/FEX", "FEX/VETS OTP"], tier="plus"
+    ) is None
+
+
+def test_naming_one_of_them_still_decides_it():
+    """The point is not to stop deciding - it is to decide on evidence. Both
+    of these are the order word for word; "OTP FEX" is closer because the
+    other one brings vets along."""
+    assert agents.match_checklist(
+        "25 OTP FEX", FEX_TWICE, tier="plus"
+    ) == "OTP FEX"
+
+
 def test_a_real_choice_is_still_a_question():
     """Standard and Plus are two products. Picking one is somebody's money."""
     assert agents.match_checklist(

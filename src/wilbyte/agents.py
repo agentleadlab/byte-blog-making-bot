@@ -682,7 +682,8 @@ def match_checklist(
     are one product written twice: Marcel Trifan's card offered "OTP IUL
     TRUCKER" or "OTP TRUCKERS", which are the same thing, and asking which
     only asked somebody to pick a spelling. Those get the one whose name says
-    more of what was ordered.
+    more of what was ordered - and still nothing when the order says nothing
+    that tells them apart.
     """
     found = candidates(lead_type, existing, tier=tier)
     if len(found) == 1:
@@ -696,15 +697,36 @@ def _words_of(text: str) -> set[str]:
     return {word for word in re.split(r"[^A-Za-z0-9]+", (text or "").lower()) if word}
 
 
-def _closest(lead_type: str, names: list[str]) -> str:
+def _closest(lead_type: str, names: list[str]) -> str | None:
     """The checklist whose name says most of what was ordered.
 
     Only ever asked among checklists that mean the same leads, so this decides
-    a spelling and never a product. Ties keep the board's own order, which is
-    the one somebody looking at the card would land on first.
+    a spelling and never a product.
+
+    Most of the order, and then the least of anything else: "25 OTP FEX" is
+    both of "OTP FEX" and "OTP VETS/FEX" word for word, and the first one is
+    closer to it because the second one brings vets along.
+
+    None when the order says nothing that tells them apart, and none when two
+    of them are equally close. Taking the board's own order in that case looks
+    like a decision and is a coin toss: "OTP FEX" and "OTP VETS/FEX" are the
+    same product to this module, and an order naming neither would land on
+    whichever the card happens to list first. A line on the wrong checklist is
+    not something anybody notices afterwards, so the tie goes to a person.
     """
     asked = _words_of(despell(lead_type))
-    return max(names, key=lambda name: len(_words_of(despell(name)) & asked))
+
+    def score(name: str) -> tuple[int, int]:
+        theirs = _words_of(despell(name))
+        return len(theirs & asked), -len(theirs - asked)
+
+    ranked = sorted(names, key=score, reverse=True)
+    best = score(ranked[0])
+    if not best[0]:
+        return None
+    if len(ranked) > 1 and score(ranked[1]) == best:
+        return None
+    return ranked[0]
 
 
 
