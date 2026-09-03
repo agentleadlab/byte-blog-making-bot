@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.ghl import (
+    as_millis,
     SCHEDULE_FIELD,
     created_id,
     GHLClient,
@@ -292,3 +293,22 @@ def test_the_search_does_not_recurse_forever():
     looped["data"]["self"] = looped
 
     assert created_id(looped) is None
+
+
+# ------------------------------------------------- paging the contacts list
+
+
+def test_a_contacts_cursor_is_a_number_not_a_date():
+    """GHL hands back an ISO date on the contact and refuses it as a cursor:
+    "startAfter must be a number conforming to the specified constraints"."""
+    assert as_millis("2026-05-19T13:34:00.000Z") == 1779197640000
+    assert as_millis(1779197640000) == 1779197640000
+    assert as_millis("1779197640000") == 1779197640000
+
+
+def test_a_cursor_that_is_no_use_is_left_out_rather_than_guessed():
+    """Without it the id alone still pages. With a bad one the whole read is
+    a 422 and the report comes back empty for no visible reason."""
+    assert as_millis("") is None
+    assert as_millis(None) is None
+    assert as_millis("whenever") is None

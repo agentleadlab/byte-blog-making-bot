@@ -60,6 +60,30 @@ class GHLError(RuntimeError):
     """Raised when the LeadConnector API rejects a request."""
 
 
+def as_millis(value) -> int | None:
+    """A contact's date, as the number GoHighLevel pages by.
+
+    It comes off a contact as an ISO string - "2026-05-19T13:34:00.000Z" - and
+    handing that straight back as `startAfter` is a 422: "startAfter must be a
+    number conforming to the specified constraints". None when there is nothing
+    usable, in which case the cursor is the id alone.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(moment.timestamp() * 1000)
+
+
 def created_id(response: dict, *, depth: int = 4) -> str | None:
     """The new post's id, wherever the create response happens to put it.
 
@@ -211,7 +235,7 @@ class GHLClient:
             params = {"locationId": self.location_id, "limit": MAX_PAGE}
             if after_id:
                 params["startAfterId"] = after_id
-            if after:
+            if after is not None:
                 params["startAfter"] = after
             data = self._request("GET", "/contacts/", params=params)
             batch = data.get("contacts") or data.get("data") or []
@@ -228,7 +252,7 @@ class GHLClient:
                 return found
             last = batch[-1]
             after_id = str(last.get("id") or "")
-            after = last.get("dateAdded") or last.get("dateUpdated")
+            after = as_millis(last.get("dateAdded") or last.get("dateUpdated"))
             if not after_id:
                 return found
         return found
