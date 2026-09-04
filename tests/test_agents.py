@@ -3116,3 +3116,64 @@ def test_the_two_comparisons_are_now_one():
         assert bool(agents.wrong_setup(ordered, _hub(confirmed))) == bool(
             agents.setup_conflict(ordered, confirmed)
         ), f"{ordered!r} vs {confirmed!r}"
+
+
+# --------------------------------- states in brackets are not the lead type
+
+
+HERIBERTO = """-- New Client Onboarded --
+
+First Name: Heriberto
+Last Name: G Chavez
+Phone: +13035027482
+Email: hgonza.chavez@gmail.com
+Package Selected: OTP Spanish IUL / Text Verified
+Lead Type: Spanish IUL Leads
+Target Areas for Marketing: Heriberto Chavez
+3035027482
+hgonza.chavez@gmail.com
+25 OTP Spanish IUL (Colorado, Texas & California)
+Launch Date: Monday, September 07
+"""
+
+
+def test_a_bracketed_list_of_states_comes_off_the_lead_type():
+    """The sales-note trimmer splits on commas, so "(Colorado, Texas &
+    California)" was cut after Colorado and the rest thrown away — and
+    "25 OTP Spanish IUL (Colorado" went onto the Lead Order card with the
+    bracket still hanging open."""
+    assert agents.stated_lead_type(HERIBERTO) == "25 OTP Spanish IUL"
+
+
+def test_the_line_that_reaches_the_card_is_clean():
+    said = agents.stated_lead_type(HERIBERTO)
+
+    assert agents.checklist_item("https://trello.com/c/x", said, day="MONDAY") == (
+        "https://trello.com/c/x 25 OTP Spanish IUL MONDAY"
+    )
+
+
+def test_a_bracket_nobody_closed_is_handled_too():
+    assert agents.tidy_lead_type("25 OTP Spanish IUL (Colorado, Texas") == (
+        "25 OTP Spanish IUL"
+    )
+
+
+@pytest.mark.parametrize(
+    "written,kept",
+    [
+        ("Aged Leads (VET)", "Aged Leads (VET)"),
+        ("OTP IUL (Spanish)", "OTP IUL (Spanish)"),
+        ("40 OTP FEX (Plus)", "40 OTP FEX (Plus)"),
+    ],
+)
+def test_brackets_holding_the_leads_themselves_stay(written, kept):
+    """A card is allowed to put the only thing identifying the order inside
+    brackets, and dropping those would lose the order."""
+    assert agents.tidy_lead_type(written) == kept
+
+
+def test_the_states_do_not_change_what_the_leads_are():
+    assert agents.shape_of(agents.stated_lead_type(HERIBERTO)) == agents.shape_of(
+        "OTP Spanish IUL"
+    )

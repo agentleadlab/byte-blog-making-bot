@@ -375,6 +375,28 @@ _TRAILING = re.compile(r"^(?P<head>.+?)\s*[-–—,]\s*(?P<tail>[^-–—,]+)$")
 
 KEEP_ANYWAY = re.compile(r"\buprise\b", re.IGNORECASE)
 
+# "25 OTP Spanish IUL (Colorado, Texas & California)" - the states, in
+# brackets, on the same line as the order. Taken off whole, before anything
+# splits on the comma inside them: that comma turned Heriberto G Chavez's line
+# into "25 OTP Spanish IUL (Colorado", which then went onto the Lead Order card
+# with the bracket still open.
+_BRACKETED = re.compile(r"\s*[(\[][^)\]]*(?:[)\]]|$)")
+
+
+def _drop_brackets(said: str) -> str:
+    """Bracketed asides removed — unless the aside is the leads themselves.
+
+    "(Colorado, Texas & California)" says where to run them and goes. "(VET)"
+    and "(Spanish)" say what they are and stay, because a card is allowed to
+    put the only thing that identifies the order inside brackets.
+    """
+    def keep(found) -> str:
+        inside = found.group(0).strip(" ()[]")
+        said_leads = families_in(inside) or qualifiers_of(inside) or tier_of(inside)
+        return found.group(0) if said_leads else " "
+
+    return " ".join(_BRACKETED.sub(keep, said or "").split())
+
 
 def _has_count(said: str) -> bool:
     return bool(re.search(r"\d", said or ""))
@@ -420,6 +442,9 @@ def tidy_lead_type(phrase: str) -> str:
     said = _PRICE_PREFIX.sub("", said).strip(" -–—:")
     said = _WHO_BOUGHT.sub("", said, count=1)
     said = _LEAD_IN.sub("", said, count=1)
+    # Before `_drop_notes`, which splits on commas and would otherwise cut a
+    # bracketed list of states in half and keep the opening bracket.
+    said = _drop_brackets(said)
     if not KEEP_ANYWAY.search(said):
         said = _drop_notes(said)
     return said.strip(" -–—:,")
