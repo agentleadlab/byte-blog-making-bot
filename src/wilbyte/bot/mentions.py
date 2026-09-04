@@ -385,6 +385,16 @@ class MentionRequest:
     sources: tuple[str, ...] = ()
 
 
+# "when did Faith go live", "when is Faith's live date", "Faith live date".
+# A question rather than a command, so it is recognised by its shape: a name
+# with going-live language on one side of it or the other.
+WHEN_LIVE = re.compile(
+    r"\bwhen\b.{0,60}?\b(?:go(?:es|ing)?|went|gone|will|launch\w*|live)\b"
+    r"|\blive\s+date\b|\blaunch\s+date\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -395,6 +405,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Zoom share link contains "zoom" and a blog URL can contain "status" or
     # "check" - words inside a URL are addresses, not instructions.
     action = _first_action_word(_without_links(lowered))
+
+    # A question about one agent's launch, before anything else looks at the
+    # words: "when did Faith go live" carries no command word, and the name in
+    # the middle of it must not be read as one.
+    if WHEN_LIVE.search(text):
+        return MentionRequest(action="whenlive", brief=text)
 
     # `cover` takes free text, so handle it before the link/number extraction.
     # "trello" names the board and then says what to do with it. On its own it
@@ -723,6 +739,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **comment** leads went out late **on monday general**. All the same thing.
 > Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
 > @RYTE **trello setups** — agents set up on leads they didn't order
+> @RYTE **when did Faith go live?** — an agent's launch date, past or future.
+> Also **when is Faith's live date**, or just **Faith live date**. Archived
+> cards too, so agents from months ago still answer
 > @RYTE **words** — the lead-type words you've taught me
 > @RYTE **words STNDRD = standard** — teach me one. A word can mean a family
 > (iul, fex, mtg, vet, widows, phnx), a tier (standard, plus) or a qualifier

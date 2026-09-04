@@ -364,6 +364,67 @@ _SAYS_NOTHING = re.compile(
 )
 
 
+# "when did faith go live", "when is faith's live date", "faith live date".
+# The question wrapped around a name, in the shapes somebody actually types.
+_ASK_BEFORE = re.compile(
+    r"^\s*(?:so\s+)?(?:when|what)\s*(?:'s|s)?\s*"
+    # Longest first: "do" before "does" leaves the "es" on the front of the
+    # name, and "when does soar life agency go live" asks about "es soar".
+    r"(?:does|did|do|will|would|was|were|are|is|the)?\s*"
+    r"(?:the\s+)?(?:live|launch|go[\s-]?live)?\s*(?:date\s+)?"
+    r"(?:for|of|on)?\s*",
+    re.IGNORECASE,
+)
+_ASK_AFTER = re.compile(
+    r"\s*(?:'s|s')?\s*"
+    r"(?:going\s+live|goes\s+live|go\s+live|went\s+live|gone\s+live|going\s+to\s+go\s+live"
+    r"|live\s+date|launch\s+date|launching|launched|launch|live)"
+    r"\s*(?:date)?\s*\??\s*$",
+    re.IGNORECASE,
+)
+
+
+def who_asked_about(text: str) -> str:
+    """The agent named in a question about a launch date, or "".
+
+    Everything that isn't the question is taken to be the name, rather than
+    trying to recognise names: "Vitality Key Financial LLC" is a name and so is
+    "Soar Life Agency", and nothing about either of them looks like a person.
+    """
+    said = " ".join((text or "").split())
+    if not said:
+        return ""
+    shorter = _ASK_AFTER.sub("", _ASK_BEFORE.sub("", said, count=1), count=1)
+    left = " ".join(shorter.strip(" -–—:?").split())
+    # "When is the live date" is a question with nobody in it. What survives
+    # the stripping is a word off the question itself, not a name, and
+    # searching the board for an agent called "date" finds nothing and says
+    # the wrong thing about why.
+    return "" if left.casefold() in ("date", "live", "launch", "") else left
+
+
+def named_that(name: str, cards: list[dict]) -> list[dict]:
+    """Every New Agent card whose agent looks like the name asked about.
+
+    Every word of the question in the name, in any order - "vitality key" finds
+    Vitality Key Financial LLC, and "faith" finds Faith Hannah Calla. Not the
+    other way round: matching a name against part of the question would make
+    "when did the leads go live" find an agent called Leads.
+    """
+    wanted = [word for word in re.split(r"\W+", (name or "").casefold()) if word]
+    if not wanted:
+        return []
+    found = []
+    for card in cards or []:
+        title = str(card.get("name") or "")
+        if not is_agent_card(title):
+            continue
+        theirs = agent_name(title).casefold()
+        if all(re.search(rf"(?<!\w){re.escape(word)}", theirs) for word in wanted):
+            found.append(card)
+    return found
+
+
 def words_it_cannot_place(text: str) -> list[str]:
     """The words in a lead type that mean nothing to RYTE, in order.
 

@@ -731,6 +731,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _archive_aged(responder, config)
                 return
 
+            if request.action == "whenlive":
+                await _when_live(responder, config, request.brief or "")
+                return
+
             if request.action == "words":
                 await _lead_words(responder, request.brief or "")
                 return
@@ -988,6 +992,56 @@ _TAUGHT = re.compile(
     r"^\s*(?P<word>.+?)\s*(?:=|:|\bmeans\b|\bis\b)\s*(?P<means>.+?)\s*$",
     re.IGNORECASE,
 )
+
+
+def _said_launch(one: dict, today) -> str:
+    """One agent's launch, in the tense the day it falls on deserves."""
+    launch = one.get("launch")
+    name = str(one.get("agent") or "?")
+    link = str(one.get("url") or one.get("shortUrl") or "")
+    said = f"[**{name}**]({link})" if link else f"**{name}**"
+    if launch is None:
+        return f"{said} — I can't find a launch date on the card."
+    if launch < today:
+        return f"{said} went live **{launch:%A, %B %-d}**."
+    if launch == today:
+        return f"{said} goes live **today** — {launch:%A, %B %-d}."
+    days = (launch - today).days
+    return (
+        f"{said} goes live **{launch:%A, %B %-d}** — "
+        + ("tomorrow." if days == 1 else f"in {days} days.")
+    )
+
+
+async def _when_live(responder: Responder, config: Config, said: str) -> None:
+    """Answer "when did Faith go live", past or future.
+
+    The board already holds the answer on every agent's card; until now it
+    could only be got at by opening the card, and only if you knew which list
+    it had ended up in.
+    """
+    try:
+        found, problems = await asyncio.to_thread(jobs.agent_launch, config, said)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send("\n".join(problems))
+        return
+
+    today = _today(config)
+    if len(found) == 1:
+        await responder.send(_said_launch(found[0], today))
+        return
+
+    # More than one agent answers to the name, so all of them are given rather
+    # than one of them guessed at.
+    await responder.send(
+        f"{len(found)} agents match that:\n"
+        + "\n".join(f"• {_said_launch(one, today)}" for one in found[:8])
+        + (f"\n…and {len(found) - 8} more." if len(found) > 8 else "")
+    )
 
 
 async def _lead_words(responder: Responder, said: str) -> None:

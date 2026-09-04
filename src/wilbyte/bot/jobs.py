@@ -2829,6 +2829,52 @@ def spread_to_lead_order(
         client.close()
 
 
+def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
+    """When the agent somebody named goes live. (found, problems). Reads only.
+
+    The whole board in one request, archived cards included: "when did Faith go
+    live" is a fair question about somebody whose card was put away weeks ago,
+    and a search that only sees the open lists answers it with silence.
+
+    The description first and the comments only when it is silent, which is the
+    same order everything else reads a launch in - a copied card carries the
+    old one's comments, and the description is the half that gets rewritten.
+    """
+    from .. import agents as rules
+
+    name = rules.who_asked_about(asked)
+    if not name:
+        return [], ["Who do you want the launch date for? Try `@RYTE when did Faith go live`."]
+
+    day = board_day(config)
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = rules.named_that(name, every)
+        if not cards:
+            return [], [f"I can't find a New Agent card for “{name}” anywhere on the board."]
+
+        found = []
+        for card in cards:
+            said = str(card.get("desc") or "")
+            launch = rules.find_launch(said, today=day)
+            if launch is None:
+                launch = rules.find_launch(
+                    "\n".join(client.card_comments(str(card.get("id") or ""))), today=day
+                )
+            found.append({
+                **card,
+                "agent": rules.agent_name(str(card.get("name") or "")),
+                "launch": launch,
+            })
+        # Soonest first among the ones with a date; anything undated last,
+        # because "I don't know" is not an answer to lead with.
+        found.sort(key=lambda one: (one["launch"] is None, one["launch"] or day))
+        return found, []
+    finally:
+        client.close()
+
+
 def _teach_me(label: str) -> str:
     """" — I don't know what "STNDRD" means; …", or "" when nothing is unknown.
 

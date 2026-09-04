@@ -114,6 +114,20 @@ class TrelloClient:
         """Every list on the board, in board order."""
         return self._request("GET", f"/boards/{board_id}/lists", params={"cards": "none"})
 
+    def board_cards(self, board_id: str, *, archived: bool = False) -> list[dict]:
+        """Every card on the board in one request, archived ones optional.
+
+        Walking the lists costs a request each and misses anything archived.
+        Looking one agent up by name wants the opposite of both: the whole
+        board at once, including the cards that have been put away - an agent
+        who went live last month is a fair question and their card is gone
+        from every list.
+        """
+        return self._request(
+            "GET", f"/boards/{board_id}/cards/{'all' if archived else 'open'}",
+            params={"fields": "name,idList,url,shortUrl,desc,closed,dateLastActivity"},
+        )
+
     def list_cards(self, list_id: str) -> list[dict]:
         return self._request(
             "GET", f"/lists/{list_id}/cards",

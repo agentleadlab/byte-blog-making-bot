@@ -2650,3 +2650,148 @@ def test_a_message_it_cannot_read_explains_the_shape(monkeypatch, tmp_path):
 
     assert "STNDRD = standard" in said[0]
     assert held == {}
+
+
+# ------------------------------------------------- when did an agent go live
+
+
+class LaunchBoard:
+    """A board holding a few agent cards, archived ones included."""
+
+    def __init__(self, cards):
+        self.cards = cards
+        self.asked_archived = None
+
+    def board_cards(self, _board_id, *, archived=False):
+        self.asked_archived = archived
+        return self.cards
+
+    def card_comments(self, _card_id):
+        return []
+
+    def close(self):
+        pass
+
+
+def agent_card(name, said, card_id="1"):
+    return {
+        "id": card_id, "name": f"New Agent - {name}", "desc": said,
+        "url": f"https://trello.com/c/{card_id}",
+    }
+
+
+def _asked(monkeypatch, config, question, cards):
+    from wilbyte.bot import client
+
+    board = LaunchBoard(cards)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 4))
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+    heard = Listening()
+    asyncio.run(client._when_live(ChannelResponder(heard), config, question))
+    return heard.said, board
+
+
+def test_an_agent_who_already_went_live(config, monkeypatch):
+    """It's September 4th and Faith went live on the 31st of August."""
+    said, _ = _asked(
+        monkeypatch, config, "when did Faith go live",
+        [agent_card("Faith Ortega", "Launch Date: Monday, August 31")],
+    )
+
+    assert "went live" in said[0]
+    assert "August 31" in said[0]
+
+
+def test_an_agent_who_has_not_gone_live_yet(config, monkeypatch):
+    """Faith is supposed to go live Sep 8 and today is the 4th."""
+    said, _ = _asked(
+        monkeypatch, config, "when is Faith live date",
+        [agent_card("Faith Ortega", "Launch Date: Tuesday, September 8")],
+    )
+
+    assert "goes live" in said[0]
+    assert "September 8" in said[0]
+    assert "in 4 days" in said[0]
+
+
+def test_going_live_today_is_said_as_today(config, monkeypatch):
+    said, _ = _asked(
+        monkeypatch, config, "when does Jose Vargas go live",
+        [agent_card("Jose Vargas", "Launch Date: Friday, September 4")],
+    )
+
+    assert "today" in said[0]
+
+
+def test_going_live_tomorrow_is_said_as_tomorrow(config, monkeypatch):
+    said, _ = _asked(
+        monkeypatch, config, "when does Soar Life Agency go live",
+        [agent_card("Soar Life Agency", "Launch Date: Saturday, September 5")],
+    )
+
+    assert "tomorrow" in said[0]
+
+
+def test_archived_cards_are_searched_too(config, monkeypatch):
+    """An agent who went live last month has no card in any open list, and a
+    search that misses those answers a fair question with silence."""
+    _, board = _asked(
+        monkeypatch, config, "when did Faith go live",
+        [agent_card("Faith Ortega", "Launch Date: Monday, August 31")],
+    )
+
+    assert board.asked_archived is True
+
+
+def test_a_name_nobody_has_a_card_for_says_so(config, monkeypatch):
+    said, _ = _asked(monkeypatch, config, "when did Nobody go live", [])
+
+    assert "can't find a New Agent card" in said[0]
+
+
+def test_two_agents_of_the_same_name_are_both_given(config, monkeypatch):
+    """Picking one of two would be guessing at which person was meant."""
+    said, _ = _asked(
+        monkeypatch, config, "when did Faith go live",
+        [
+            agent_card("Faith Ortega", "Launch Date: Monday, August 31", "1"),
+            agent_card("Faith Hannah Calla", "Launch Date: Tuesday, September 8", "2"),
+        ],
+    )
+
+    assert "2 agents match" in said[0]
+    assert "Faith Ortega" in said[0] and "Faith Hannah Calla" in said[0]
+
+
+def test_a_card_with_no_launch_date_says_that_rather_than_guessing(config, monkeypatch):
+    said, _ = _asked(
+        monkeypatch, config, "when did Heriberto go live",
+        [agent_card("Heriberto G Chavez", "No date anywhere on this one")],
+    )
+
+    assert "can't find a launch date" in said[0]
+
+
+def test_asking_without_naming_anybody_asks_who(config, monkeypatch):
+    said, _ = _asked(monkeypatch, config, "when is the live date", [])
+
+    assert "Who do you want" in said[0]
+
+
+def test_the_full_business_name_is_found(config, monkeypatch):
+    said, _ = _asked(
+        monkeypatch, config, "when did Vitality Key Financial LLC launch",
+        [agent_card("Vitality Key Financial LLC", "Launch Date: Saturday, September 5")],
+    )
+
+    assert "September 5" in said[0]
+
+
+def test_part_of_a_business_name_is_enough(config, monkeypatch):
+    said, _ = _asked(
+        monkeypatch, config, "when does vitality key go live",
+        [agent_card("Vitality Key Financial LLC", "Launch Date: Saturday, September 5")],
+    )
+
+    assert "September 5" in said[0]
