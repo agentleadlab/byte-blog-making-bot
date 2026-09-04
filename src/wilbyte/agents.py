@@ -246,11 +246,47 @@ def find_lead_type(text: str) -> str:
     return " ".join(found[-1].group(1).split()) if found else ""
 
 
+# Words RYTE was taught rather than shipped with - see `vocab`. Held here
+# rather than passed through every call because a lead type is read in twenty
+# places and none of them should have to know the vocabulary is extensible.
+# Empty until something loads it, so tests and the CLI read the shipped words
+# alone unless they ask otherwise.
+_LEARNED: dict[str, dict] = {}
+
+
+def taught(held: dict | None) -> None:
+    """Replace the learned vocabulary. `None` or `{}` clears it."""
+    _LEARNED.clear()
+    for key, said in (held or {}).items():
+        _LEARNED[str(key).casefold()] = dict(said)
+
+
+def learned() -> dict:
+    return {key: dict(said) for key, said in _LEARNED.items()}
+
+
+def _learned_as(kind: str, text: str) -> set[str]:
+    """What the learned words say this phrase is, for one kind of meaning."""
+    if not _LEARNED or not text:
+        return set()
+    found = set()
+    for said in _LEARNED.values():
+        if str(said.get("kind")) != kind:
+            continue
+        word = str(said.get("word") or "")
+        if word and re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text, re.IGNORECASE):
+            found.add(str(said.get("means")))
+    return found
+
+
 def family_of(text: str) -> str | None:
     for name, pattern in FAMILIES:
         if pattern.search(text or ""):
             return name
-    return None
+    # After the shipped words, not before: a card that already says IUL is not
+    # waiting on anything anybody typed into Discord.
+    taught_families = _learned_as("family", text)
+    return sorted(taught_families)[0] if taught_families else None
 
 
 def families_in(text: str) -> set[str]:
@@ -263,14 +299,15 @@ def families_in(text: str) -> set[str]:
     """
     return {
         name for name, pattern in FAMILIES if pattern.search(text or "")
-    }
+    } | _learned_as("family", text)
 
 
 def tier_of(text: str) -> str | None:
     """Standard beats Plus when both are said - "basic" is the stronger word."""
-    if STANDARD.search(text or ""):
+    said = _learned_as("tier", text)
+    if STANDARD.search(text or "") or "standard" in said:
         return "standard"
-    if PLUS.search(text or ""):
+    if PLUS.search(text or "") or "plus" in said:
         return "plus"
     return None
 
@@ -318,9 +355,44 @@ def despell(text: str) -> str:
     return re.sub(r"[A-Za-z]+", lambda found: fixed(found.group(0)), text or "")
 
 
+# Words that appear in every other lead type and say nothing about which one
+# it is: the count, the price, and the nouns for leads themselves.
+_SAYS_NOTHING = re.compile(
+    r"^(?:\d+|\$[\d,.]+|leads?|lead|for|and|the|a|an|of|on|per|week|weekly|"
+    r"more|new|order|orders|package|selected|plan|campaign)$",
+    re.IGNORECASE,
+)
+
+
+def words_it_cannot_place(text: str) -> list[str]:
+    """The words in a lead type that mean nothing to RYTE, in order.
+
+    What is left after the family, the tier, the qualifiers, the count and the
+    filler have all been accounted for. On "PHX STNDRD" before anybody taught
+    it anything, that is ["STNDRD"] - the one word standing between the card
+    and being filed, and the one worth asking about.
+    """
+    found = []
+    # Split on the slash as well, so "$1050/WEEK" comes apart into a number
+    # and a unit rather than arriving as one word nobody has ever taught.
+    for word in re.split(r"[^\w.&+-]+|/", text or ""):
+        said = word.strip(".-/&+")
+        if not said or _SAYS_NOTHING.match(said) or not re.search(r"[A-Za-z]", said):
+            continue
+        if (
+            family_of(said) or tier_of(said) or qualifiers_of(said)
+            or LINE.search(said) or OWN_SETUP_WORDS.search(said)
+        ):
+            continue
+        if said not in found:
+            found.append(said)
+    return found
+
+
 def qualifiers_of(text: str) -> frozenset[str]:
     return frozenset(
-        name for name, pattern in QUALIFIERS if pattern.search(text or "")
+        {name for name, pattern in QUALIFIERS if pattern.search(text or "")}
+        | _learned_as("qualifier", text)
     )
 
 

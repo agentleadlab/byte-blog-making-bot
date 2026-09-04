@@ -731,6 +731,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _archive_aged(responder, config)
                 return
 
+            if request.action == "words":
+                await _lead_words(responder, request.brief or "")
+                return
+
             if request.action == "unticked":
                 await _send_unticked(responder, config, request.brief or "")
                 return
@@ -975,6 +979,71 @@ def _unmarked_card(found: list[dict], *, step: str = "", days: str = ""):
     return embeds.unticked_agents(
         found, said_at=dailyops.said_at(step) if step else "",
         days=days, shown=UNMARKED_SHOWN,
+    )
+
+
+# "words STNDRD = standard", or "words STNDRD means standard". The word is
+# whatever is on the left, so a phrase works as well as a word.
+_TAUGHT = re.compile(
+    r"^\s*(?P<word>.+?)\s*(?:=|:|\bmeans\b|\bis\b)\s*(?P<means>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+async def _lead_words(responder: Responder, said: str) -> None:
+    """What RYTE has been taught about lead types, and teaching him more.
+
+    The vocabulary is Franklin's, not the source's. Every product on this board
+    gets written half a dozen ways, and each new spelling used to cost a code
+    change - which meant the board waited on a developer to learn a word.
+    """
+    from .. import agents as rules, vocab
+
+    # Only what follows the command word: "words STNDRD = standard".
+    asked = re.sub(r"^\s*(?:trello\s+)?(?:words|word|vocab)\b", "", said or "", count=1,
+                   flags=re.IGNORECASE).strip()
+
+    held = await asyncio.to_thread(vocab.load)
+
+    if not asked:
+        await responder.send(vocab.describe(held))
+        return
+
+    forgetting = re.match(r"^(?:forget|drop|remove)\s+(?P<word>.+)$", asked, re.IGNORECASE)
+    if forgetting:
+        word = forgetting.group("word").strip()
+        shorter = vocab.forget(word, held=held)
+        if shorter == held:
+            await responder.send(f"I wasn't taught “{word}”, so there's nothing to drop.")
+            return
+        await asyncio.to_thread(vocab.save, shorter)
+        rules.taught(shorter)
+        await responder.send(f"Forgotten — “{word}” goes back to meaning nothing.")
+        return
+
+    found = _TAUGHT.match(asked)
+    if not found:
+        await responder.send(
+            "Tell me a word and what it means, like `@RYTE words STNDRD = standard`.\n"
+            f"{vocab.choices()}"
+        )
+        return
+
+    try:
+        fuller = vocab.teach(found.group("word"), found.group("means"), held=held)
+    except vocab.VocabError as exc:
+        await responder.send(str(exc))
+        return
+
+    await asyncio.to_thread(vocab.save, fuller)
+    rules.taught(fuller)
+
+    word = vocab.tidy(found.group("word"))
+    means = vocab.settle(found.group("means"))
+    kind = vocab.kind_of(means)
+    await responder.send(
+        f"Got it — `{word}` is a {kind} meaning **{means}**. "
+        f"I'll read it that way from now on."
     )
 
 
@@ -4031,6 +4100,16 @@ def preflight(config: Config) -> list[str]:
     log.info("RYTE starting up")
     log.info("config: %s", config.path)
     log.info("state:  %s", DEFAULT_OUTPUT_DIR)
+
+    # Words somebody taught RYTE about lead types, back into the matching
+    # before the first card is read. Without this they last until the Mac is
+    # restarted, which is the same as not being learned at all.
+    from .. import agents as rules, vocab
+
+    held = vocab.load()
+    rules.taught(held)
+    if held:
+        log.info("words:  %d lead-type word(s) I was taught", len(held))
 
     said, how = clocks(config)
     log.info("clock:  %s", said) if how == "info" else log.warning("clock:  %s", said)

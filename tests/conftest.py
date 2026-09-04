@@ -32,3 +32,18 @@ def copy_package():
         ),
         url_slug="insurance-lead-progression-roadmap",
     )
+
+
+@pytest.fixture(autouse=True)
+def _shipped_words_only():
+    """Every test reads the shipped vocabulary unless it says otherwise.
+
+    The learned words live in module state so a lead type can be read without
+    twenty call sites knowing the vocabulary is extensible — which means one
+    test teaching a word would otherwise change what the next one reads.
+    """
+    from wilbyte import agents
+
+    agents.taught({})
+    yield
+    agents.taught({})

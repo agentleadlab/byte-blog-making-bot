@@ -122,6 +122,10 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # Lead-type words RYTE was taught rather than shipped with.
+    "words": "words",
+    "word": "words",
+    "vocab": "words",
     # Agents set up on leads they did not order.
     "setups": "setups",
     "setup": "setups",
@@ -404,7 +408,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         after = _first_action_word(rest.lower())
         return MentionRequest(
             action=after
-            if after in ("board", "rollover", "move", "agents", "unticked",
+            if after in ("board", "rollover", "move", "agents", "unticked", "words",
                          "archive", "setups", "spread", "unspread")
             else "board",
             brief=rest,
@@ -515,6 +519,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
+        "words",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -718,6 +723,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **comment** leads went out late **on monday general**. All the same thing.
 > Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
 > @RYTE **trello setups** — agents set up on leads they didn't order
+> @RYTE **words** — the lead-type words you've taught me
+> @RYTE **words STNDRD = standard** — teach me one. A word can mean a family
+> (iul, fex, mtg, vet, widows, phnx), a tier (standard, plus) or a qualifier
+> (spanish, blue collar, trucker). **words forget STNDRD** drops it
 > Each one shows which cards would move and waits for the button
 > @RYTE **trello rollover** — carry tonight's unfinished items to tomorrow\n> @RYTE **trello rollover general** — one card only, to try it on\n> @RYTE **trello rollover yesterday** — carry a day you held back
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight

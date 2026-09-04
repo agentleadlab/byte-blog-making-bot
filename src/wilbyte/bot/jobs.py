@@ -2795,6 +2795,7 @@ def spread_to_lead_order(
                 problems.append(
                     f"{who} — “{spread.label}” doesn't match any checklist on "
                     f"{order.get('name')}"
+                    + _teach_me(spread.label)
                 )
                 continue
             try:
@@ -2826,6 +2827,25 @@ def spread_to_lead_order(
         return added, conflicts, problems
     finally:
         client.close()
+
+
+def _teach_me(label: str) -> str:
+    """" — I don't know what "STNDRD" means; …", or "" when nothing is unknown.
+
+    The moment a lead type can't be placed is the moment somebody knows why,
+    and it is the only moment they are looking. Asking then costs nothing and
+    means the next card with that word on it files itself.
+    """
+    from .. import agents as rules
+
+    unknown = rules.words_it_cannot_place(label)
+    if not unknown:
+        return ""
+    word = unknown[0]
+    return (
+        f"\n   I don't know what “{word}” means. "
+        f"`@RYTE words {word} = standard` (or plus, iul, spanish…) and I'll remember."
+    )
 
 
 def _cards_by_url(cards: list[dict]) -> dict[str, str]:

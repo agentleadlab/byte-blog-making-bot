@@ -2553,3 +2553,100 @@ def test_a_half_hour_offset_is_not_rounded_away(config, monkeypatch):
 
     assert "UTC+05:30" in said
     assert "9.5 hours ahead" in said
+
+
+# ------------------------------------------------- teaching him a lead-type word
+
+
+def _words(monkeypatch, tmp_path, said, *, start=None):
+    """Run the words command against a scratch file. (reply, what's stored)"""
+    from wilbyte import vocab
+    from wilbyte.bot import client
+
+    where = tmp_path / "lead-words.json"
+    if start:
+        vocab.save(start, where)
+    monkeypatch.setattr(vocab, "VOCAB_PATH", where)
+    heard = Listening()
+    asyncio.run(client._lead_words(ChannelResponder(heard), said))
+    return heard.said, vocab.load(where)
+
+
+def test_a_word_taught_in_discord_is_kept(monkeypatch, tmp_path):
+    said, held = _words(monkeypatch, tmp_path, "words PREM = plus")
+
+    assert "PREM" in said[0] and "plus" in said[0]
+    assert held["prem"]["means"] == "plus"
+
+
+def test_it_starts_reading_cards_that_way_at_once(monkeypatch, tmp_path):
+    """Not after the next restart. The card that prompted the question is on
+    the board now."""
+    from wilbyte import agents
+
+    _words(monkeypatch, tmp_path, "words PREM = plus")
+
+    assert agents.tier_of("PHNX PREM") == "plus"
+
+
+@pytest.mark.parametrize(
+    "typed", ["words PREM = plus", "words PREM means plus", "words PREM: plus"],
+)
+def test_the_ways_somebody_would_write_it(typed, monkeypatch, tmp_path):
+    _, held = _words(monkeypatch, tmp_path, typed)
+
+    assert held["prem"]["means"] == "plus"
+
+
+def test_a_phrase_works_as_well_as_a_word(monkeypatch, tmp_path):
+    _, held = _words(monkeypatch, tmp_path, "words Summit Financial = fex")
+
+    assert held["summit financial"]["word"] == "Summit Financial"
+
+
+def test_a_meaning_it_does_not_have_is_answered_with_the_list(monkeypatch, tmp_path):
+    said, held = _words(monkeypatch, tmp_path, "words PREM = premium")
+
+    assert "premium" in said[0] and "standard" in said[0]
+    assert held == {}
+
+
+def test_asking_with_nothing_lists_what_it_knows(monkeypatch, tmp_path):
+    from wilbyte import vocab
+
+    said, _ = _words(
+        monkeypatch, tmp_path, "words", start=vocab.teach("PREM", "plus")
+    )
+
+    assert "`PREM` → plus" in said[0]
+
+
+def test_nothing_taught_yet_says_how(monkeypatch, tmp_path):
+    said, _ = _words(monkeypatch, tmp_path, "words")
+
+    assert "@RYTE words" in said[0]
+
+
+def test_a_word_can_be_dropped(monkeypatch, tmp_path):
+    from wilbyte import agents, vocab
+
+    said, held = _words(
+        monkeypatch, tmp_path, "words forget PREM", start=vocab.teach("PREM", "plus")
+    )
+
+    assert held == {}
+    assert "Forgotten" in said[0]
+    assert agents.tier_of("PHNX PREM") is None
+
+
+def test_dropping_something_never_taught_says_so(monkeypatch, tmp_path):
+    said, _ = _words(monkeypatch, tmp_path, "words forget NOTHING")
+
+    assert "wasn't taught" in said[0]
+
+
+def test_a_message_it_cannot_read_explains_the_shape(monkeypatch, tmp_path):
+    said, held = _words(monkeypatch, tmp_path, "words absolute nonsense here")
+
+    assert "STNDRD = standard" in said[0]
+    assert held == {}
