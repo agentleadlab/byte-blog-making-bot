@@ -2414,64 +2414,62 @@ def test_one_of_each_is_reported_as_the_serious_one():
 # ------------------------------------------------- unticked, on a day you name
 
 
-def test_a_day_named_on_unticked_reaches_the_board(config, monkeypatch):
-    """"unticked yesterday" used to be answered about today, with nothing in
-    the reply admitting a different question had been asked."""
+def _unticked(monkeypatch, config, said, *, found=()):
+    """Run the handler and report what reached the board. (asked, sent)"""
     from wilbyte.bot import client
 
     asked = {}
 
-    def reading(cfg, *, day=None):
-        asked["day"] = day
-        return [], []
+    def reading(cfg, *, day=None, and_tomorrow=True):
+        asked["day"], asked["and_tomorrow"] = day, and_tomorrow
+        return list(found), []
 
     monkeypatch.setattr(jobs, "unmarked_agents", reading)
     monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
-    said = Listening()
+    heard = Listening()
+    asyncio.run(client._send_unticked(ChannelResponder(heard), config, said))
+    return asked, heard.said
 
-    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
+
+def test_a_day_named_on_unticked_reaches_the_board(config, monkeypatch):
+    """"unticked yesterday" used to be answered about today, with nothing in
+    the reply admitting a different question had been asked."""
+    asked, _ = _unticked(monkeypatch, config, "unticked yesterday")
 
     assert asked["day"] == date(2026, 9, 3)
 
 
-def test_no_day_named_still_means_today(config, monkeypatch):
-    from wilbyte.bot import client
+def test_a_named_day_is_asked_about_on_its_own(config, monkeypatch):
+    """"Unticked 09/03" is a question about the third. Answering it about the
+    third and the fourth answers a question nobody asked - the more so when
+    the fourth is today."""
+    asked, _ = _unticked(monkeypatch, config, "unticked 09/03")
 
-    asked = {}
-    monkeypatch.setattr(
-        jobs, "unmarked_agents",
-        lambda cfg, *, day=None: (asked.setdefault("day", day), ([], []))[1],
-    )
-    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+    assert asked["day"] == date(2026, 9, 3)
+    assert asked["and_tomorrow"] is False
 
-    asyncio.run(client._send_unticked(ChannelResponder(Listening()), config, "unticked"))
+
+def test_no_day_named_still_means_today_and_tomorrow(config, monkeypatch):
+    """The afternoon check is about what is running out of time, so it keeps
+    both days."""
+    asked, _ = _unticked(monkeypatch, config, "unticked")
 
     assert asked["day"] is None
+    assert asked["and_tomorrow"] is True
 
 
-def test_the_answer_names_the_days_it_covered(config, monkeypatch):
-    from wilbyte.bot import client
-
-    monkeypatch.setattr(
-        jobs, "unmarked_agents",
-        lambda cfg, *, day=None: ([{"name": "New Agent - Someone", "url": "", "when": "today"}], []),
+def test_the_answer_names_the_day_it_covered(config, monkeypatch):
+    _, sent = _unticked(
+        monkeypatch, config, "unticked yesterday",
+        found=[{"name": "New Agent - Someone", "url": "", "when": "Thu Sep 03"}],
     )
-    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
-    said = Listening()
 
-    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
-
-    (sent,) = said.said
-    assert "Thu Sep 03 or Fri Sep 04" in sent.author.name
+    (card,) = sent
+    assert "Thu Sep 03" in card.author.name
+    assert "or Fri Sep 04" not in card.author.name
 
 
-def test_nothing_outstanding_says_which_days_that_was(config, monkeypatch):
-    from wilbyte.bot import client
+def test_nothing_outstanding_says_which_day_that_was(config, monkeypatch):
+    _, sent = _unticked(monkeypatch, config, "unticked yesterday")
 
-    monkeypatch.setattr(jobs, "unmarked_agents", lambda cfg, *, day=None: ([], []))
-    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
-    said = Listening()
-
-    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
-
-    assert "Thu Sep 03 or Fri Sep 04" in said.said[0]
+    assert "Thu Sep 03" in sent[0]

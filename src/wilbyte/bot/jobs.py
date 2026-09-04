@@ -2564,10 +2564,17 @@ def archive_aged(config: Config) -> tuple[list[str], list[str]]:
     return archived, problems
 
 
-def unmarked_agents(config: Config, *, day=None) -> tuple[list[dict], list[str]]:
+def unmarked_agents(
+    config: Config, *, day=None, and_tomorrow: bool = True
+) -> tuple[list[dict], list[str]]:
     """Unticked New Agent cards in Done going live today or tomorrow.
 
     (cards, problems). Each card carries a `when` of "today" or "tomorrow".
+
+    `and_tomorrow` is what the afternoon check wants and a person asking about
+    one day does not. "Unticked 09/03" is a question about the third, and
+    answering it about the third and the fourth answers a question nobody
+    asked - the more so when the fourth is today.
 
     The green circle on the card front is how the team says an agent is
     actually set up, and Trello carries it as `dueComplete` whether or not the
@@ -2609,9 +2616,19 @@ def unmarked_agents(config: Config, *, day=None) -> tuple[list[dict], list[str]]
                 launch = agents.find_launch(
                     "\n".join(client.card_comments(card_id)), today=day
                 )
-            if launch not in (day, tomorrow):
+            wanted = (day, tomorrow) if and_tomorrow else (day,)
+            if launch not in wanted:
                 continue
-            found.append({**card, "when": "today" if launch == day else "tomorrow"})
+            found.append({
+                **card,
+                # Named by the date when only one day was asked about: "live
+                # today" on an answer about the third, given on the fourth, is
+                # the reply describing a day it wasn't asked about.
+                "when": (
+                    ("today" if launch == day else "tomorrow")
+                    if and_tomorrow else f"{launch:%a %b %d}"
+                ),
+            })
         # Today's first: those are the ones that have run out of time.
         found.sort(key=lambda held: held["when"] != "today")
         return found, []

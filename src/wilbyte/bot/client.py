@@ -987,13 +987,15 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
     """
     from .. import dailyops
 
+    # A named day is a question about that day. Only the afternoon check, which
+    # nobody asked for and which is about what is running out of time, looks at
+    # tomorrow as well.
     day = dailyops.day_named(said, today=_today(config))
-    covers = (
-        f"{day:%a %b %d} or {dailyops.next_day(day):%a %b %d}" if day else ""
-    )
+    covers = f"{day:%a %b %d}" if day else ""
     try:
         found, problems = await asyncio.to_thread(
-            jobs.unmarked_agents, config, day=day
+            partial(jobs.unmarked_agents, and_tomorrow=day is None),
+            config, day=day,
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
