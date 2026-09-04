@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -3992,11 +3992,53 @@ _PREFLIGHT = [
 ]
 
 
+def clocks(config: Config) -> tuple[str, str]:
+    """(what to say about the two clocks, "info" or "warning").
+
+    RYTE keeps the board on its own timezone whatever the machine is set to,
+    so the two disagreeing breaks nothing here - it breaks the reading. Every
+    log line, and every timestamp Discord renders, comes out in the machine's
+    zone; on a Mac twelve hours ahead, "live tomorrow" and the clock beside it
+    describe different days, and the person in the middle does the arithmetic.
+    So it is said at boot rather than discovered from a wrong answer.
+    """
+    board = datetime.now(ZoneInfo(config.schedule.timezone))
+    here = datetime.now().astimezone()
+    said = f"board {board:%a %b %d %H:%M %Z}"
+    if here.utcoffset() == board.utcoffset():
+        return f"{said} — this Mac agrees", "info"
+
+    hours = (here.utcoffset() - board.utcoffset()).total_seconds() / 3600
+    # The offset rather than the abbreviation: Asia/Manila renders as "PST",
+    # which on a line next to EDT reads as US Pacific and sends somebody
+    # looking three thousand miles from the problem.
+    return (
+        f"{said} — this Mac says {here:%a %b %d %H:%M} {_utc_offset(here)}, "
+        f"{abs(hours):g} hours {'ahead' if hours > 0 else 'behind'}"
+    ), "warning"
+
+
+def _utc_offset(when: datetime) -> str:
+    """"UTC+08" - how far off the machine is, in the one form nobody misreads."""
+    minutes = int((when.utcoffset() or timedelta()).total_seconds() // 60)
+    sign = "-" if minutes < 0 else "+"
+    hours, left = divmod(abs(minutes), 60)
+    return f"UTC{sign}{hours:02d}" + (f":{left:02d}" if left else "")
+
+
 def preflight(config: Config) -> list[str]:
     """Log which credentials are present. Returns the missing required ones."""
     log.info("RYTE starting up")
     log.info("config: %s", config.path)
     log.info("state:  %s", DEFAULT_OUTPUT_DIR)
+
+    said, how = clocks(config)
+    log.info("clock:  %s", said) if how == "info" else log.warning("clock:  %s", said)
+    if how == "warning":
+        log.warning(
+            "         RYTE still works off the board's clock; it's the log "
+            "timestamps and Discord that will read wrong to you"
+        )
 
     missing_required = []
     for attr, env_name, required, purpose in _PREFLIGHT:

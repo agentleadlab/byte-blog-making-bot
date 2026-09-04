@@ -2496,3 +2496,60 @@ def test_the_start_day_is_read_on_the_boards_clock(config, monkeypatch):
     )
 
     assert seen["today"] == date(2026, 9, 4)
+
+
+# ------------------------------------------------- the two clocks, said at boot
+
+
+def _at(tz, monkeypatch, config):
+    """`clocks` as it reads on a machine set to `tz`."""
+    import os
+    import time as _time
+    from wilbyte.bot import client
+
+    monkeypatch.setenv("TZ", tz)
+    _time.tzset()
+    try:
+        return client.clocks(config)
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        _time.tzset()
+
+
+def test_a_mac_on_the_boards_clock_says_so_quietly(config, monkeypatch):
+    said, how = _at("America/New_York", monkeypatch, config)
+
+    assert how == "info"
+    assert "this Mac agrees" in said
+    assert "board" in said
+
+
+def test_a_mac_that_drifted_says_how_far(config, monkeypatch):
+    """macOS puts "set time zone automatically" back on a network change, and
+    RYTE keeps working — it is the reading that breaks."""
+    said, how = _at("Asia/Manila", monkeypatch, config)
+
+    assert how == "warning"
+    assert "12 hours ahead" in said
+
+
+def test_a_mac_behind_the_board_is_named_as_behind(config, monkeypatch):
+    said, how = _at("America/Los_Angeles", monkeypatch, config)
+
+    assert how == "warning"
+    assert "3 hours behind" in said
+
+
+def test_the_offset_is_shown_rather_than_the_abbreviation(config, monkeypatch):
+    """Asia/Manila renders as "PST", which beside EDT reads as US Pacific and
+    sends somebody looking three thousand miles from the problem."""
+    said, _ = _at("Asia/Manila", monkeypatch, config)
+
+    assert "UTC+08" in said and "PST" not in said
+
+
+def test_a_half_hour_offset_is_not_rounded_away(config, monkeypatch):
+    said, _ = _at("Asia/Kolkata", monkeypatch, config)
+
+    assert "UTC+05:30" in said
+    assert "9.5 hours ahead" in said
