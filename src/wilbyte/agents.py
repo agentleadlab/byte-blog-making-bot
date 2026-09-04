@@ -403,6 +403,63 @@ def who_asked_about(text: str) -> str:
     return "" if left.casefold() in ("date", "live", "launch", "") else left
 
 
+_SHEET_BEFORE = re.compile(
+    r"^\s*(?:can\s+you\s+|please\s+)?(?:send|give|show|get|find|pull|share)?\s*"
+    r"(?:me\s+|us\s+)?(?:the\s+|a\s+|an\s+)?"
+    r"(?:google\s+)?(?:sheet\s+link|spreadsheet|sheet)?\s*(?:link\s+)?"
+    r"(?:for|of|on|to)?\s*",
+    re.IGNORECASE,
+)
+_SHEET_AFTER = re.compile(
+    r"\s*(?:'s|s')?\s*(?:google\s+)?(?:sheet\s+link|spreadsheet|sheet)\s*(?:link)?\s*\??\s*$",
+    re.IGNORECASE,
+)
+
+
+def who_wants_a_sheet(text: str) -> str:
+    """The agent whose setup sheet was asked for, or "".
+
+    Same shape as `who_asked_about`: strip the question off both ends and take
+    what is left to be the name, rather than trying to recognise names.
+    """
+    said = " ".join((text or "").split())
+    if not said:
+        return ""
+    shorter = _SHEET_AFTER.sub("", _SHEET_BEFORE.sub("", said, count=1), count=1)
+    left = " ".join(shorter.strip(" -–—:?").split())
+    return "" if left.casefold() in ("sheet", "spreadsheet", "link", "") else left
+
+
+# A Google Sheet, however the comment happens to write it: a bare URL, or
+# Trello markdown with the sheet's name in front of it.
+_SHEET_URL = re.compile(
+    r"https?://docs\.google\.com/spreadsheets/d/[\w-]+[^\s)\]]*", re.IGNORECASE
+)
+_SHEET_LINKED = re.compile(
+    r"\[([^\]]{1,120})\]\((https?://docs\.google\.com/spreadsheets/d/[^)\s]+)\)"
+)
+
+
+def sheet_links(comments) -> list[tuple[str, str]]:
+    """(name, url) for every Google Sheet named in the comments, newest last.
+
+    A setup gets redone - "Updated previous setup of…" - and each round leaves
+    its own sheet link, so the order is kept and the caller takes the last.
+    """
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for said in comments or []:
+        text = said or ""
+        labelled = {url: label for label, url in _SHEET_LINKED.findall(text)}
+        for url in _SHEET_URL.findall(text):
+            tidy_url = url.rstrip(".,;")
+            if tidy_url in seen:
+                continue
+            seen.add(tidy_url)
+            found.append((" ".join(labelled.get(url, "").split()), tidy_url))
+    return found
+
+
 def named_that(name: str, cards: list[dict]) -> list[dict]:
     """Every New Agent card whose agent looks like the name asked about.
 

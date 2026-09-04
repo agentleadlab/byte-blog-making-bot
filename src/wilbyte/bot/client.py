@@ -731,6 +731,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _archive_aged(responder, config)
                 return
 
+            if request.action == "agentsheet":
+                await _send_sheet(responder, config, request.brief or "")
+                return
+
             if request.action == "whenlive":
                 await _when_live(responder, config, request.brief or "")
                 return
@@ -992,6 +996,45 @@ _TAUGHT = re.compile(
     r"^\s*(?P<word>.+?)\s*(?:=|:|\bmeans\b|\bis\b)\s*(?P<means>.+?)\s*$",
     re.IGNORECASE,
 )
+
+
+def _said_sheet(one: dict) -> str:
+    """One agent's setup sheet, or why there isn't one to give."""
+    name = str(one.get("agent") or "?")
+    link = str(one.get("url") or one.get("shortUrl") or "")
+    said = f"[**{name}**]({link})" if link else f"**{name}**"
+    sheets = list(one.get("sheets") or [])
+    if not sheets:
+        return f"{said} — no sheet link on the card yet, so the setup isn't finished."
+
+    # The last one: a setup gets redone and each round leaves its own link, so
+    # the newest is the sheet the leads are actually flowing into.
+    label, url = sheets[-1]
+    line = f"{said} — [{label or 'setup sheet'}]({url})"
+    if len(sheets) > 1:
+        line += f"\n  *(the newest of {len(sheets)} — the setup was redone)*"
+    return line
+
+
+async def _send_sheet(responder: Responder, config: Config, said: str) -> None:
+    """Answer "sheet for Faith" with the Google Sheet off her card."""
+    try:
+        found, problems = await asyncio.to_thread(jobs.agent_sheet, config, said)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+
+    if problems:
+        await responder.send("\n".join(problems))
+        return
+    if len(found) == 1:
+        await responder.send(_said_sheet(found[0]))
+        return
+    await responder.send(
+        f"{len(found)} agents match that:\n"
+        + "\n".join(f"• {_said_sheet(one)}" for one in found[:8])
+        + (f"\n…and {len(found) - 8} more." if len(found) > 8 else "")
+    )
 
 
 def _said_launch(one: dict, today) -> str:

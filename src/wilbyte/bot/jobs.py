@@ -2875,6 +2875,42 @@ def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
+    """The setup sheet for the agent somebody named. (found, problems). Reads only.
+
+    The sheet is already on the card - Therese and Faith post it as "Sheet
+    link:" when the setup is finished. Getting at it meant finding the card
+    first, which is the part that costs a person a minute and RYTE a request.
+    """
+    from .. import agents as rules
+
+    name = rules.who_wants_a_sheet(asked)
+    if not name:
+        return [], ["Whose sheet do you want? Try `@RYTE sheet for Faith`."]
+
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = rules.named_that(name, every)
+        if not cards:
+            return [], [f"I can't find a New Agent card for “{name}” anywhere on the board."]
+
+        found = []
+        for card in cards:
+            links = rules.sheet_links(client.card_comments(str(card.get("id") or "")))
+            found.append({
+                **card,
+                "agent": rules.agent_name(str(card.get("name") or "")),
+                "sheets": links,
+            })
+        # The ones that have a sheet first: an agent set up twice has two, and
+        # an agent not set up yet has none and is not the answer to lead with.
+        found.sort(key=lambda one: not one["sheets"])
+        return found, []
+    finally:
+        client.close()
+
+
 def _teach_me(label: str) -> str:
     """" — I don't know what "STNDRD" means; …", or "" when nothing is unknown.
 

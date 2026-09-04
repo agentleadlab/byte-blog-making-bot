@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from wilbyte.bot import embeds, jobs
+from wilbyte.bot import embeds, jobs, mentions
 from wilbyte.bot.responders import ChannelResponder
 from wilbyte.bot.client import (
     is_allowed,
@@ -2795,3 +2795,118 @@ def test_part_of_a_business_name_is_enough(config, monkeypatch):
     )
 
     assert "September 5" in said[0]
+
+
+# ------------------------------------------------- the agent's own setup sheet
+
+
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1abcDEF/edit?usp=sharing"
+
+
+class SheetBoard(LaunchBoard):
+    def __init__(self, cards, comments):
+        super().__init__(cards)
+        self.comments = comments
+
+    def card_comments(self, card_id):
+        return self.comments.get(card_id, [])
+
+
+def _sheet_asked(monkeypatch, config, question, cards, comments):
+    from wilbyte.bot import client
+
+    board = SheetBoard(cards, comments)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    heard = Listening()
+    asyncio.run(client._send_sheet(ChannelResponder(heard), config, question))
+    return heard.said, board
+
+
+def test_the_sheet_link_comes_off_the_card(config, monkeypatch):
+    said, _ = _sheet_asked(
+        monkeypatch, config, "sheet for Faith",
+        [agent_card("Faith Ortega", "", "1")],
+        {"1": [f"OTP SPANISH IUL ON DISTRO HUB setup is complete\n"
+               f"Sheet link: [Faith_Ortega - OTP SPANISH IUL]({SHEET_URL})"]},
+    )
+
+    assert SHEET_URL in said[0]
+    assert "Faith_Ortega - OTP SPANISH IUL" in said[0]
+
+
+def test_a_bare_url_works_as_well_as_a_linked_one(config, monkeypatch):
+    said, _ = _sheet_asked(
+        monkeypatch, config, "sheet for Faith",
+        [agent_card("Faith Ortega", "", "1")],
+        {"1": [f"Sheet link: {SHEET_URL}"]},
+    )
+
+    assert SHEET_URL in said[0]
+
+
+def test_a_setup_redone_gives_the_newest_sheet(config, monkeypatch):
+    """Each round of setting up leaves its own link, and the newest is the one
+    the leads are actually flowing into."""
+    older = "https://docs.google.com/spreadsheets/d/1OLD/edit"
+    said, _ = _sheet_asked(
+        monkeypatch, config, "sheet for Faith",
+        [agent_card("Faith Ortega", "", "1")],
+        {"1": [f"Sheet link: {older}", f"Updated previous setup.\nSheet link: {SHEET_URL}"]},
+    )
+
+    assert SHEET_URL in said[0]
+    assert "the newest of 2" in said[0]
+
+
+def test_no_sheet_yet_says_the_setup_is_not_finished(config, monkeypatch):
+    said, _ = _sheet_asked(
+        monkeypatch, config, "sheet for Faith",
+        [agent_card("Faith Ortega", "", "1")], {"1": ["informed"]},
+    )
+
+    assert "no sheet link on the card yet" in said[0]
+
+
+def test_archived_cards_are_searched_for_sheets_too(config, monkeypatch):
+    _, board = _sheet_asked(
+        monkeypatch, config, "sheet for Faith",
+        [agent_card("Faith Ortega", "", "1")], {"1": [f"Sheet link: {SHEET_URL}"]},
+    )
+
+    assert board.asked_archived is True
+
+
+def test_a_name_with_no_card_says_so(config, monkeypatch):
+    said, _ = _sheet_asked(monkeypatch, config, "sheet for Nobody", [], {})
+
+    assert "can't find a New Agent card" in said[0]
+
+
+def test_asking_for_a_sheet_without_a_name_asks_whose(config, monkeypatch):
+    said, _ = _sheet_asked(monkeypatch, config, "sheet", [], {})
+
+    assert "Whose sheet" in said[0]
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["sheet for faith", "faith's sheet", "send me the sheet for faith",
+     "google sheet for faith", "sheet link for faith"],
+)
+def test_the_ways_somebody_would_ask(typed):
+    assert mentions.parse(typed).action == "agentsheet"
+
+
+@pytest.mark.parametrize(
+    "typed,action",
+    [
+        # A copy brief that happens to say "sheet" is not a lookup.
+        ("email about the new lead sheet we published", "write"),
+        ("ad for agents who never open the sheet", "write"),
+        # The Levinson tracker said what it wanted first.
+        ("levinson august", "levinson"),
+        ("when did faith go live", "whenlive"),
+    ],
+)
+def test_what_must_not_be_read_as_a_sheet_lookup(typed, action):
+    assert mentions.parse(typed).action == action
