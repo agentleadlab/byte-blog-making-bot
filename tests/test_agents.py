@@ -3075,3 +3075,44 @@ def test_a_body_naming_two_kinds_of_leads_is_not_a_second_opinion():
 def test_nothing_is_read_off_a_card_with_no_confirmation():
     assert agents.setup_also_said([]) == ""
     assert agents.setup_also_said(["nice work everyone"]) == ""
+
+
+def _hub(said):
+    return [f"{said} ON DISTRO HUB setup is complete for SOMEBODY"]
+
+
+def test_a_tier_the_confirmation_leaves_off_is_not_a_wrong_setup():
+    """Jason Hagedorn ordered "OTP Trucker IUL leads" and Therese confirmed
+    "TRUCKER IUL". The same leads, with the tier left off the second telling —
+    and he was raised as set up wrong for it."""
+    assert agents.wrong_setup("OTP Trucker IUL leads", _hub("TRUCKER IUL")) is None
+    assert agents.wrong_setup("Basic Spanish IUL", _hub("SPANISH IUL")) is None
+
+
+@pytest.mark.parametrize(
+    "ordered,confirmed",
+    [
+        # The case the check exists for: money in the wrong campaign.
+        ("OTP VETS", "OTP FEX"),
+        # A qualifier on one side only — Spanish IUL is its own checklist.
+        ("Spanish IUL", "OTP IUL"),
+        # Both name a tier and the tiers differ.
+        ("OTP IUL Plus", "IUL Standard"),
+    ],
+)
+def test_leads_in_the_wrong_campaign_are_still_caught(ordered, confirmed):
+    assert agents.wrong_setup(ordered, _hub(confirmed)) is not None
+
+
+def test_the_two_comparisons_are_now_one():
+    """`wrong_setup` and the spread's `setup_conflict` used to disagree about
+    every phrase that left its tier unsaid. One question, one answer."""
+    for ordered, confirmed in [
+        ("OTP Trucker IUL leads", "TRUCKER IUL"),
+        ("OTP VETS", "OTP FEX"),
+        ("Basic/Instant Spanish IUL", "OTP VET"),
+        ("OTP Vets - 30 more OTP vets", "OTP VET"),
+    ]:
+        assert bool(agents.wrong_setup(ordered, _hub(confirmed))) == bool(
+            agents.setup_conflict(ordered, confirmed)
+        ), f"{ordered!r} vs {confirmed!r}"

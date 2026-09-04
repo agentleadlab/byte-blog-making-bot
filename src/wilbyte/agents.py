@@ -963,6 +963,10 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
       STANDARD" and the two words have nothing to do with each other. Landon
       Brown ordered Uprise vets, was set up correctly, and was raised as
       wrong.
+    - A tier only one of them names. Jason Hagedorn ordered "OTP Trucker IUL
+      leads" and the confirmation said "TRUCKER IUL" - the same leads, with
+      the tier left off the second telling. Demanding it twice raised him as
+      wrong.
 
     Eleven correct setups raised as wrong and none caught is a check nobody
     reads the twelfth time, so where it cannot tell it says nothing.
@@ -972,9 +976,11 @@ def wrong_setup(ordered: str, comments) -> tuple[str, str] | None:
         return None
     if line_word(ordered) or line_word(said):
         return None
-    if len(families_in(ordered)) != 1 or len(families_in(said)) != 1:
-        return None
-    return None if shape_of(ordered) == shape_of(said) else (ordered, said)
+    # One comparison, shared with the spread's. Two ways of deciding whether
+    # two phrases name the same leads is one way too many: this one used to
+    # demand the shapes match outright, and disagreed with the other about
+    # every phrase that left its tier unsaid.
+    return setup_conflict(ordered, said)
 
 
 def setup_conflict(card_says: str, setup_says: str) -> tuple[str, str] | None:
