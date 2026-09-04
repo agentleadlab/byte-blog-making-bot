@@ -290,12 +290,16 @@ def _checklist(rows: list[tuple[bool, str]]) -> str:
 
 
 def unticked_agents(
-    cards: list[dict], *, shown: int, said_at: str = ""
+    cards: list[dict], *, shown: int, said_at: str = "", days: str = ""
 ) -> discord.Embed:
     """The afternoon look at Done, as a card rather than a wall of URLs.
 
     The links go behind the names. Eight raw Trello URLs is eight lines of
     hex nobody reads, and the name is the only part anybody is scanning for.
+
+    `days` names the two days covered, for when somebody asked about a day
+    that isn't today. "Going live today or tomorrow" on an answer about
+    Thursday is the reply agreeing with itself and not with the question.
     """
     embed = discord.Embed(
         title=f"{len(cards)} agent(s) need ticking",
@@ -306,7 +310,9 @@ def unticked_agents(
     # message carries its own timestamp anyway. Saying "3:30pm" at half ten
     # in the morning is worse than saying nothing.
     when = f"{said_at} · " if said_at else ""
-    embed.set_author(name=f"🔔 {when}going live today or tomorrow, not ticked")
+    embed.set_author(
+        name=f"🔔 {when}going live {days or 'today or tomorrow'}, not ticked"
+    )
 
     lines = []
     for card in cards[:shown]:

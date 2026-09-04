@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from wilbyte.bot import embeds, jobs
+from wilbyte.bot.responders import ChannelResponder
 from wilbyte.bot.client import (
     is_allowed,
     is_direct_mention,
@@ -2408,3 +2409,69 @@ def test_one_of_each_is_reported_as_the_serious_one():
 
     assert said.colour.value == embeds.RED
     assert "set up wrong" in said.title
+
+
+# ------------------------------------------------- unticked, on a day you name
+
+
+def test_a_day_named_on_unticked_reaches_the_board(config, monkeypatch):
+    """"unticked yesterday" used to be answered about today, with nothing in
+    the reply admitting a different question had been asked."""
+    from wilbyte.bot import client
+
+    asked = {}
+
+    def reading(cfg, *, day=None):
+        asked["day"] = day
+        return [], []
+
+    monkeypatch.setattr(jobs, "unmarked_agents", reading)
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+    said = Listening()
+
+    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
+
+    assert asked["day"] == date(2026, 9, 3)
+
+
+def test_no_day_named_still_means_today(config, monkeypatch):
+    from wilbyte.bot import client
+
+    asked = {}
+    monkeypatch.setattr(
+        jobs, "unmarked_agents",
+        lambda cfg, *, day=None: (asked.setdefault("day", day), ([], []))[1],
+    )
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+
+    asyncio.run(client._send_unticked(ChannelResponder(Listening()), config, "unticked"))
+
+    assert asked["day"] is None
+
+
+def test_the_answer_names_the_days_it_covered(config, monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(
+        jobs, "unmarked_agents",
+        lambda cfg, *, day=None: ([{"name": "New Agent - Someone", "url": "", "when": "today"}], []),
+    )
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+    said = Listening()
+
+    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
+
+    (sent,) = said.said
+    assert "Thu Sep 03 or Fri Sep 04" in sent.author.name
+
+
+def test_nothing_outstanding_says_which_days_that_was(config, monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(jobs, "unmarked_agents", lambda cfg, *, day=None: ([], []))
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+    said = Listening()
+
+    asyncio.run(client._send_unticked(ChannelResponder(said), config, "unticked yesterday"))
+
+    assert "Thu Sep 03 or Fri Sep 04" in said.said[0]

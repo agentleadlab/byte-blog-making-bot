@@ -732,7 +732,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "unticked":
-                await _send_unticked(responder, config)
+                await _send_unticked(responder, config, request.brief or "")
                 return
 
             if request.action == "move":
@@ -964,7 +964,7 @@ def _unmarked_ping(config: Config, *, ping: bool = True) -> str:
     return f"<@{who}>" if who else ""
 
 
-def _unmarked_card(found: list[dict], *, step: str = ""):
+def _unmarked_card(found: list[dict], *, step: str = "", days: str = ""):
     """The look at Done, as something to read.
 
     The time is named only when the clock decided it. Somebody who just typed
@@ -973,16 +973,28 @@ def _unmarked_card(found: list[dict], *, step: str = ""):
     from .. import dailyops
 
     return embeds.unticked_agents(
-        found, said_at=dailyops.said_at(step) if step else "", shown=UNMARKED_SHOWN
+        found, said_at=dailyops.said_at(step) if step else "",
+        days=days, shown=UNMARKED_SHOWN,
     )
 
 
-async def _send_unticked(responder: Responder, config: Config) -> None:
-    """The same look the afternoon takes, when somebody asks for it now."""
+async def _send_unticked(responder: Responder, config: Config, said: str = "") -> None:
+    """The same look the afternoon takes, when somebody asks for it now.
+
+    A day can be named - "unticked yesterday" - and it used to be dropped on
+    the floor: the answer came back about today either way, with nothing in it
+    admitting that a different question had been asked.
+    """
     from .. import dailyops
 
+    day = dailyops.day_named(said, today=_today(config))
+    covers = (
+        f"{day:%a %b %d} or {dailyops.next_day(day):%a %b %d}" if day else ""
+    )
     try:
-        found, problems = await asyncio.to_thread(jobs.unmarked_agents, config)
+        found, problems = await asyncio.to_thread(
+            jobs.unmarked_agents, config, day=day
+        )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
@@ -992,11 +1004,12 @@ async def _send_unticked(responder: Responder, config: Config) -> None:
         return
     if not found:
         await responder.send(
-            f"Every New Agent card in {dailyops.DONE} has been ticked."
+            f"Every New Agent card in {dailyops.DONE} has been ticked"
+            + (f" for {covers}." if covers else ".")
         )
         return
     # No ping: somebody just asked, so they are already looking at it.
-    await responder.send(embed=_unmarked_card(found))
+    await responder.send(embed=_unmarked_card(found, days=covers))
 
 
 async def _comment_on_card(responder: Responder, config: Config, said: str) -> None:
