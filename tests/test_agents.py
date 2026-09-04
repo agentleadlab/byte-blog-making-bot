@@ -3247,22 +3247,71 @@ def _agent(card, today=date(2026, 9, 4)):
     )
 
 
-def test_a_maybe_is_not_a_launch_date():
-    """"Live once his previous order is completed / Maybe Tuesday, September 8"
-    is a card saying the day is not decided. Filing him for the Tuesday would
-    launch him before the order he is waiting on has finished."""
-    assert agents.find_launch(AIDAN, today=date(2026, 9, 4)) is None
+def test_a_hedged_day_is_still_the_day():
+    """"Maybe Tuesday, September 8" on a line of its own. Franklin: "just do
+    the date unless it changes" — the hedge is how somebody writes a day they
+    might move, not a reason to leave the agent unfiled."""
+    assert agents.find_launch(AIDAN, today=date(2026, 9, 4)) == date(2026, 9, 8)
 
 
-def test_the_card_is_quoted_back_rather_than_called_empty():
-    """"I can't find a launch date" sends somebody to fill in a blank that
-    isn't blank."""
-    said = agents.cannot_read(_agent(AIDAN), needs_lead_type=True)
+@pytest.mark.parametrize(
+    "line,launch",
+    [
+        ("Maybe Tuesday, September 8", date(2026, 9, 8)),
+        ("Sept 8", date(2026, 9, 8)),
+        ("Tuesday", date(2026, 9, 8)),
+        ("09/08", date(2026, 9, 8)),
+        ("Target Thursday, September 10", date(2026, 9, 10)),
+    ],
+)
+def test_a_day_on_a_line_of_its_own(line, launch):
+    said = f"Lead Type: OTP VETS\n{line}\n"
+
+    assert agents.find_launch(said, today=date(2026, 9, 4)) == launch
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A day in the middle of a sentence is not somebody naming a launch.
+        "Target areas: Monday through Friday coverage nationwide",
+        "States: Same as last",
+        "Notes: NXT",
+        "Phone: +19544645315",
+        "TBD",
+    ],
+)
+def test_what_is_not_a_day_on_a_line_of_its_own(line):
+    said = f"Lead Type: OTP VETS\n{line}\n"
+
+    assert agents.find_launch(said, today=date(2026, 9, 4)) is None
+
+
+def test_a_card_that_says_when_properly_is_not_overruled():
+    """A stray date elsewhere on the card must not beat the launch line."""
+    said = (
+        "Lead Type: OTP VETS\n"
+        "Launch Date: Friday, September 4\n"
+        "Sept 8\n"
+    )
+
+    assert agents.find_launch(said, today=date(2026, 9, 4)) == date(2026, 9, 4)
+
+
+def test_a_card_with_a_day_on_it_is_filed_rather_than_reported():
+    """Aidan's card has a day on it, so there is nothing to report."""
+    assert agents.cannot_read(_agent(AIDAN), needs_lead_type=True) == ""
+
+
+def test_a_hedge_with_no_day_at_all_is_quoted_back():
+    """"I can't find a launch date" sends somebody to fill in a blank. When the
+    card says the day depends on something, that is what it says."""
+    card = "Lead Type: OTP VETS\nLaunch date to be confirmed, waiting on his last order\n"
+
+    said = agents.cannot_read(_agent(card), needs_lead_type=True)
 
     assert "isn't settled" in said
-    assert "Maybe Tuesday, September 8" in said
-    assert "previous order is completed" in said
-    assert "I can't find" not in said
+    assert "waiting on his last order" in said
 
 
 def test_a_card_with_nothing_on_it_still_says_what_is_missing():
@@ -3294,9 +3343,9 @@ def test_the_ways_a_day_gets_left_open(line):
 
 
 def test_a_lead_type_still_missing_is_still_said():
-    """The day being unsettled doesn't excuse the rest of the card."""
+    """A day being read off the card doesn't excuse the rest of it."""
     card = "Name: Aidan\nMaybe Tuesday, September 8\n"
 
-    said = agents.cannot_read(_agent(card), needs_lead_type=True)
-
-    assert "a lead type" in said and "isn't settled" in said
+    assert agents.cannot_read(_agent(card), needs_lead_type=True) == (
+        "I can't find a lead type on this card."
+    )

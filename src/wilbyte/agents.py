@@ -1359,12 +1359,61 @@ def find_launch(text: str, *, today: date) -> date | None:
         if found:
             return found
 
+    # A day written on a line of its own, with no launch word anywhere near
+    # it: "Maybe Tuesday, September 8". Hedged or not, it is the day - "just do
+    # the date unless it changes" - and if it moves, the card gets edited and
+    # this is read again. Last, so a card that says when properly is never
+    # decided by a date mentioned somewhere else on it.
+    for sentence in _lines_that_are_a_day(text):
+        found = _written_date_in(sentence, today=today) or _date_in(
+            sentence, today=today
+        )
+        if found:
+            return found
+
     # A top-up has no launch date because it isn't a launch - it goes on as
     # soon as it is set up. Looked for across the whole card rather than in a
     # launch sentence, because a card like this has no launch sentence at all.
     if ADD_TO_ORDER.search(text or ""):
         return today
     return None
+
+
+# Words somebody puts in front of a day they have not committed to. They make
+# no difference to which day it is.
+_HEDGED = re.compile(
+    r"^(?:maybe|perhaps|possibly|probably|likely|around|approx\w*|est|tentative\w*|"
+    r"target|targeting|hopefully|ideally|prob)\b[,: ]*",
+    re.IGNORECASE,
+)
+
+# The start of a line that is a day: a weekday, a month and a number, or a
+# numeric date.
+_STARTS_A_DAY = re.compile(
+    r"^(?:on\s+)?(?:"
+    r"(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?\b"
+    r"|(?:" + "|".join(_MONTHS) + r")[a-z]*\.?\s+\d{1,2}\b"
+    r"|\d{1,2}/\d{1,2}\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Long enough for "Tuesday, September 8th @ 10 am EST", short enough that a
+# sentence with a day in the middle of it is not one of these.
+_MOST_WORDS_IN_A_DAY = 7
+
+
+def _lines_that_are_a_day(text: str) -> list[str]:
+    """Lines that say a day and almost nothing else, in the order written."""
+    found = []
+    for line in spelled_out(text or "").splitlines():
+        said = " ".join(line.split())
+        if not said or len(said.split()) > _MOST_WORDS_IN_A_DAY:
+            continue
+        bare = _HEDGED.sub("", said).strip()
+        if bare and _STARTS_A_DAY.match(bare):
+            found.append(bare)
+    return found
 
 
 def _written_date_in(sentence: str, *, today: date) -> date | None:
