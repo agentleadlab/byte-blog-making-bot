@@ -1157,10 +1157,12 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
     # nobody asked for and which is about what is running out of time, looks at
     # tomorrow as well.
     day = dailyops.day_named(said, today=_today(config))
-    covers = f"{day:%a %b %d}" if day else ""
+    # A named day is that day; otherwise however far the chase reaches, which
+    # is Monday on a Friday and tomorrow the rest of the week.
+    covers = f"{day:%a %b %d}" if day else dailyops.days_chased(_today(config))
     try:
         found, problems = await asyncio.to_thread(
-            partial(jobs.unmarked_agents, and_tomorrow=day is None),
+            partial(jobs.unmarked_agents, ahead=day is None),
             config, day=day,
         )
     except PIPELINE_ERRORS as exc:
@@ -1363,7 +1365,9 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # reporting that all is well is how the one that matters stops
             # being looked at.
             note = _unmarked_ping(bot.config) if found else ""
-            card = _unmarked_card(found, step=step) if found else None
+            card = _unmarked_card(
+                found, step=step, days=dailyops.days_chased(_today(bot.config)),
+            ) if found else None
         elif step == "link_setup":
             added, problems = await asyncio.to_thread(jobs.link_setup_on_day, bot.config)
             note = (

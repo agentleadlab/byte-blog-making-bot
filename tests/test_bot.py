@@ -2420,8 +2420,8 @@ def _unticked(monkeypatch, config, said, *, found=()):
 
     asked = {}
 
-    def reading(cfg, *, day=None, and_tomorrow=True):
-        asked["day"], asked["and_tomorrow"] = day, and_tomorrow
+    def reading(cfg, *, day=None, ahead=True):
+        asked["day"], asked["ahead"] = day, ahead
         return list(found), []
 
     monkeypatch.setattr(jobs, "unmarked_agents", reading)
@@ -2446,16 +2446,16 @@ def test_a_named_day_is_asked_about_on_its_own(config, monkeypatch):
     asked, _ = _unticked(monkeypatch, config, "unticked 09/03")
 
     assert asked["day"] == date(2026, 9, 3)
-    assert asked["and_tomorrow"] is False
+    assert asked["ahead"] is False
 
 
-def test_no_day_named_still_means_today_and_tomorrow(config, monkeypatch):
-    """The afternoon check is about what is running out of time, so it keeps
-    both days."""
+def test_no_day_named_looks_ahead(config, monkeypatch):
+    """The afternoon check is about what is running out of time, so it reaches
+    past today."""
     asked, _ = _unticked(monkeypatch, config, "unticked")
 
     assert asked["day"] is None
-    assert asked["and_tomorrow"] is True
+    assert asked["ahead"] is True
 
 
 def test_the_answer_names_the_day_it_covered(config, monkeypatch):
@@ -2910,3 +2910,107 @@ def test_the_ways_somebody_would_ask(typed):
 )
 def test_what_must_not_be_read_as_a_sheet_lookup(typed, action):
     assert mentions.parse(typed).action == action
+
+
+# ------------------------------------------------- Friday reaches to Monday
+
+
+class DoneBoard:
+    """The Done list, holding unticked New Agent cards with launch dates."""
+
+    def __init__(self, cards):
+        self.cards = cards
+
+    def board_lists(self, _board_id):
+        return [{"id": "D", "name": "Done"}]
+
+    def list_cards(self, _list_id):
+        return [
+            {"id": str(n), "name": f"New Agent - {who}", "dueComplete": False,
+             "url": f"https://trello.com/c/{n}"}
+            for n, (who, _said) in enumerate(self.cards)
+        ]
+
+    def card_detail(self, card_id):
+        return {"desc": self.cards[int(card_id)][1]}
+
+    def card_comments(self, _card_id):
+        return []
+
+    def close(self):
+        pass
+
+
+def _unticked_on(monkeypatch, config, today, cards, **kwargs):
+    board = DoneBoard(cards)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: today)
+    return jobs.unmarked_agents(config, **kwargs)
+
+
+LAUNCHES = [
+    ("Connor Swart", "Launch Date: Friday, September 4"),
+    ("Marissa Marill", "Launch Date: Saturday, September 5"),
+    ("Someone Sunday", "Launch Date: Sunday, September 6"),
+    ("Vitality Key Financial LLC", "Launch Date: Monday, September 7"),
+    ("Too Far Out", "Launch Date: Tuesday, September 8"),
+]
+
+
+def test_a_friday_chases_everyone_up_to_monday(config, monkeypatch):
+    """Saturday, Sunday and Monday are all set up on the Friday — one
+    Saturday-Monday card — so all of them want ticking before the weekend."""
+    found, _ = _unticked_on(monkeypatch, config, date(2026, 9, 4), LAUNCHES)
+
+    assert [one["name"] for one in found] == [
+        "New Agent - Connor Swart",
+        "New Agent - Marissa Marill",
+        "New Agent - Someone Sunday",
+        "New Agent - Vitality Key Financial LLC",
+    ]
+
+
+def test_tuesdays_launch_is_still_too_far_out_on_the_friday(config, monkeypatch):
+    found, _ = _unticked_on(monkeypatch, config, date(2026, 9, 4), LAUNCHES)
+
+    assert "New Agent - Too Far Out" not in [one["name"] for one in found]
+
+
+def test_a_thursday_still_only_reaches_tomorrow(config, monkeypatch):
+    found, _ = _unticked_on(
+        monkeypatch, config, date(2026, 9, 3),
+        [("Connor Swart", "Launch Date: Friday, September 4"),
+         ("Marissa Marill", "Launch Date: Saturday, September 5")],
+    )
+
+    assert [one["name"] for one in found] == ["New Agent - Connor Swart"]
+
+
+def test_the_further_days_are_named_by_date_not_by_tomorrow(config, monkeypatch):
+    """On a Friday reaching to Monday there are three days that are neither
+    today nor tomorrow, and calling any of them "tomorrow" would be wrong."""
+    found, _ = _unticked_on(monkeypatch, config, date(2026, 9, 4), LAUNCHES)
+
+    assert [one["when"] for one in found] == [
+        "today", "tomorrow", "Sun Sep 06", "Mon Sep 07",
+    ]
+
+
+def test_soonest_first_so_the_ones_out_of_time_lead(config, monkeypatch):
+    found, _ = _unticked_on(
+        monkeypatch, config, date(2026, 9, 4), list(reversed(LAUNCHES)),
+    )
+
+    assert [one["when"] for one in found] == [
+        "today", "tomorrow", "Sun Sep 06", "Mon Sep 07",
+    ]
+
+
+def test_a_named_day_is_still_only_that_day(config, monkeypatch):
+    """Asking about the Friday asks about the Friday, even on a Friday."""
+    found, _ = _unticked_on(
+        monkeypatch, config, date(2026, 9, 4), LAUNCHES,
+        day=date(2026, 9, 4), ahead=False,
+    )
+
+    assert [one["when"] for one in found] == ["today"]

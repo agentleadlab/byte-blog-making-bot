@@ -681,6 +681,30 @@ def day_before(day: date) -> date:
     return day - timedelta(days=1)
 
 
+FRIDAY = 4
+
+
+def chased_through(day: date) -> date:
+    """The last launch day worth chasing about on `day`.
+
+    Tomorrow, except on a Friday - and then Monday. Nobody is at the board on
+    Saturday or Sunday, and the setup card that covers those two days covers
+    the Monday with them: one card, "Saturday-Monday", worked on the Friday. So
+    all three are set up before anybody goes home, and all three want ticking
+    before anybody goes home. Asking on the Monday morning is asking after the
+    leads have already started flowing.
+    """
+    return day + timedelta(days=3 if day.weekday() == FRIDAY else 1)
+
+
+def days_chased(day: date) -> str:
+    """"today or tomorrow", or "today through Monday" - what was looked at."""
+    through = chased_through(day)
+    if through == next_day(day):
+        return "today or tomorrow"
+    return f"today through {through:%A}"
+
+
 def next_day(day: date) -> date:
     """The day a rollover targets. Deliberately the next calendar day.
 

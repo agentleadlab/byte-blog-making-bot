@@ -3855,3 +3855,34 @@ def test_it_waits_longer_each_time_but_never_gives_up():
     assert client.RESTART_PAUSES[0] <= 10, "a wobble should cost seconds"
     assert client.RESTART_PAUSES == tuple(sorted(client.RESTART_PAUSES))
     assert client.RESTART_PAUSES[-1] <= 300, "and it should keep trying"
+
+
+# --------------------------------- how far the unticked chase reaches
+
+
+@pytest.mark.parametrize(
+    "day,through",
+    [
+        # Friday reaches to Monday: nobody is at the board on Saturday or
+        # Sunday, and the Saturday-Monday setup card sets all three of those
+        # days up at once, so all three want ticking before anybody goes home.
+        (date(2026, 9, 4), date(2026, 9, 7)),
+        (date(2026, 9, 5), date(2026, 9, 6)),
+        (date(2026, 9, 6), date(2026, 9, 7)),
+        (date(2026, 9, 7), date(2026, 9, 8)),
+        (date(2026, 9, 8), date(2026, 9, 9)),
+        (date(2026, 9, 9), date(2026, 9, 10)),
+        (date(2026, 9, 10), date(2026, 9, 11)),
+    ],
+)
+def test_the_last_day_worth_chasing(day, through):
+    assert dailyops.chased_through(day) == through
+
+
+def test_a_friday_says_it_looked_as_far_as_monday():
+    assert dailyops.days_chased(date(2026, 9, 4)) == "today through Monday"
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 7), date(2026, 9, 10)])
+def test_every_other_day_says_today_or_tomorrow(day):
+    assert dailyops.days_chased(day) == "today or tomorrow"

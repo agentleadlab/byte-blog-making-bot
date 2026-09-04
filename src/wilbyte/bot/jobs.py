@@ -2565,16 +2565,21 @@ def archive_aged(config: Config) -> tuple[list[str], list[str]]:
 
 
 def unmarked_agents(
-    config: Config, *, day=None, and_tomorrow: bool = True
+    config: Config, *, day=None, ahead: bool = True
 ) -> tuple[list[dict], list[str]]:
-    """Unticked New Agent cards in Done going live today or tomorrow.
+    """Unticked New Agent cards in Done going live in the next day or so.
 
-    (cards, problems). Each card carries a `when` of "today" or "tomorrow".
+    (cards, problems). Each card carries a `when`: "today", "tomorrow", or the
+    date when it is further out than that.
 
-    `and_tomorrow` is what the afternoon check wants and a person asking about
-    one day does not. "Unticked 09/03" is a question about the third, and
-    answering it about the third and the fourth answers a question nobody
-    asked - the more so when the fourth is today.
+    How far ahead is `dailyops.chased_through` - tomorrow on most days, and
+    Monday on a Friday, because nobody is at the board over a weekend and the
+    Saturday-Monday setup card sets all three of those days up at once.
+
+    `ahead` is what the afternoon check wants and a person asking about one day
+    does not. "Unticked 09/03" is a question about the third, and answering it
+    about the third and the fourth answers a question nobody asked - the more
+    so when the fourth is today.
 
     The green circle on the card front is how the team says an agent is
     actually set up, and Trello carries it as `dueComplete` whether or not the
@@ -2592,6 +2597,7 @@ def unmarked_agents(
 
     day = day or board_day(config)
     tomorrow = dailyops.next_day(day)
+    through = dailyops.chased_through(day) if ahead else day
     client = open_trello(config)
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
@@ -2616,21 +2622,24 @@ def unmarked_agents(
                 launch = agents.find_launch(
                     "\n".join(client.card_comments(card_id)), today=day
                 )
-            wanted = (day, tomorrow) if and_tomorrow else (day,)
-            if launch not in wanted:
+            if launch is None or not (day <= launch <= through):
                 continue
             found.append({
                 **card,
-                # Named by the date when only one day was asked about: "live
-                # today" on an answer about the third, given on the fourth, is
-                # the reply describing a day it wasn't asked about.
+                # Today and tomorrow by name; anything further out by its date.
+                # "Live today" on an answer about the third, given on the
+                # fourth, describes a day it wasn't asked about - and on a
+                # Friday reaching to Monday there are three days that are
+                # neither today nor tomorrow.
                 "when": (
-                    ("today" if launch == day else "tomorrow")
-                    if and_tomorrow else f"{launch:%a %b %d}"
+                    "today" if launch == day
+                    else "tomorrow" if ahead and launch == tomorrow
+                    else f"{launch:%a %b %d}"
                 ),
+                "launch": launch,
             })
-        # Today's first: those are the ones that have run out of time.
-        found.sort(key=lambda held: held["when"] != "today")
+        # Soonest first: those are the ones that have run out of time.
+        found.sort(key=lambda held: held["launch"])
         return found, []
     finally:
         client.close()
