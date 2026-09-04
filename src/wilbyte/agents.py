@@ -1518,6 +1518,45 @@ def read_agent(
     return agent
 
 
+# A day named without committing to it. Aidan Abell's card: "Live once his
+# previous order is completed please, as per Aidan's request / Maybe Tuesday,
+# September 8". There is a day on that card and it is not a launch date.
+_UNSETTLED = re.compile(
+    r"\bmaybe\b|\bperhaps\b|\bpossibly\b|\bprobably\b|\btbd\b|\btba\b"
+    r"|\bto\s+be\s+(?:confirmed|advised|decided)\b|\bnot\s+sure\b"
+    r"|\bonce\b|\bafter\b|\bpending\b|\bwaiting\b|\bdepend\w*\b|\bconfirm\w*\b",
+    re.IGNORECASE,
+)
+
+# A line that names a day without the words that would make it a launch.
+_A_DAY = re.compile(
+    r"\b(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}\b"
+    r"|\b\d{1,2}/\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+
+def unsettled_launch(text: str) -> list[str]:
+    """The lines that talk about a day without settling on one.
+
+    Read only when nothing on the card is a launch date. "I can't find a launch
+    date" says the card is missing something; on a card like Aidan Abell's it
+    is the opposite - the card says quite clearly that the day is not decided,
+    and quoting it back is the difference between "fill this in" and "this is
+    waiting on his last order".
+    """
+    found = []
+    for line in (text or "").splitlines():
+        said = " ".join(line.split())
+        if not said or len(said) > 200:
+            continue
+        if _A_DAY.search(said) or _UNSETTLED.search(said):
+            if _UNSETTLED.search(said) or _A_DAY.search(said):
+                found.append(said)
+    return found[:2]
+
+
 def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     """What is missing, and only what is missing *yet*.
 
@@ -1526,7 +1565,12 @@ def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     anybody needs it is how a warning stops being read.
     """
     missing = []
-    if agent.launch is None:
+    # A card that talks about the day without settling on one is not a card
+    # with something missing off it. Saying "I can't find a launch date" about
+    # Aidan Abell's sends somebody to fill in a blank that isn't blank, when
+    # what it actually says is that he is waiting on his last order.
+    unsettled = unsettled_launch(agent.said) if agent.launch is None else []
+    if agent.launch is None and not unsettled:
         missing.append("a launch date")
     # What the card is read as saying, not only the field it wrote it in. A
     # card can name the leads three times over and still not have the form's
@@ -1534,7 +1578,14 @@ def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     # exactly what it is.
     if needs_lead_type and not (agent.lead_type or agent.stated):
         missing.append("a lead type")
-    return f"I can't find {' or '.join(missing)} on this card." if missing else ""
+
+    said = f"I can't find {' or '.join(missing)} on this card." if missing else ""
+    if unsettled:
+        quoted = " / ".join(f"“{line}”" for line in unsettled)
+        said = f"{said} the day isn't settled — the card says {quoted}".strip()
+        if not missing:
+            said = "The day isn't settled — the card says " + quoted
+    return said
 
 
 # ------------------------------------------- the card tomorrow's ones go on

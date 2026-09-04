@@ -3213,3 +3213,90 @@ def test_the_agent_asked_about(typed, name):
 )
 def test_the_agent_whose_sheet_was_asked_for(typed, name):
     assert agents.who_wants_a_sheet(typed) == name
+
+
+# --------------------------------- a day named without being settled on
+
+
+AIDAN = """-- New Client Onboarded --
+
+First Name: Aidan
+Last Name: Abell
+Phone: +19544645315
+Email: aidanabell22@gmail.com
+Package Selected: Text Verified
+Lead Type: Veteran Final Expense
+Target Areas for Marketing:
+
+Name: Aidan Abell
+Lead Type: OTP Vets - 45 more OTP Vets
+States: Same as last
+Notes: NXT
+
+Live once his previous order is completed please, as per Aidan's request
+Maybe Tuesday, September 8
+"""
+
+
+def _agent(card, today=date(2026, 9, 4)):
+    return agents.Agent(
+        name="Aidan Abell", card_id="1", url="https://trello.com/c/x",
+        lead_type=agents.find_lead_type(card),
+        launch=agents.find_launch(card, today=today),
+        said=card, stated=agents.stated_lead_type(card),
+    )
+
+
+def test_a_maybe_is_not_a_launch_date():
+    """"Live once his previous order is completed / Maybe Tuesday, September 8"
+    is a card saying the day is not decided. Filing him for the Tuesday would
+    launch him before the order he is waiting on has finished."""
+    assert agents.find_launch(AIDAN, today=date(2026, 9, 4)) is None
+
+
+def test_the_card_is_quoted_back_rather_than_called_empty():
+    """"I can't find a launch date" sends somebody to fill in a blank that
+    isn't blank."""
+    said = agents.cannot_read(_agent(AIDAN), needs_lead_type=True)
+
+    assert "isn't settled" in said
+    assert "Maybe Tuesday, September 8" in said
+    assert "previous order is completed" in said
+    assert "I can't find" not in said
+
+
+def test_a_card_with_nothing_on_it_still_says_what_is_missing():
+    bare = agents.Agent(name="Nobody", card_id="2", url="", said="Notes: NXT\n")
+
+    assert agents.cannot_read(bare, needs_lead_type=True) == (
+        "I can't find a launch date or a lead type on this card."
+    )
+
+
+def test_a_settled_card_is_not_second_guessed():
+    said = "Lead Type: OTP VETS\nLaunch Date: Friday, Sept 04 @ 10 am EST\n"
+
+    assert agents.cannot_read(_agent(said), needs_lead_type=True) == ""
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Maybe Tuesday, September 8",
+        "TBD — waiting on his last order",
+        "Launch date to be confirmed",
+        "Live after his current order finishes",
+        "Start once payment clears, probably Thursday",
+    ],
+)
+def test_the_ways_a_day_gets_left_open(line):
+    assert agents.unsettled_launch(f"Lead Type: OTP VETS\n{line}\n")
+
+
+def test_a_lead_type_still_missing_is_still_said():
+    """The day being unsettled doesn't excuse the rest of the card."""
+    card = "Name: Aidan\nMaybe Tuesday, September 8\n"
+
+    said = agents.cannot_read(_agent(card), needs_lead_type=True)
+
+    assert "a lead type" in said and "isn't settled" in said
