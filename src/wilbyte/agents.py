@@ -1942,7 +1942,10 @@ def describe(plans: list[AgentPlan], *, today: date | None = None) -> str:
             "later": f"launching {agent.launch:%a %b %d}" if agent.launch else "later",
             "unknown": "no launch date",
         }[plan.when]
-        head = f"**{agent.name}**"
+        # The name links to the card. Every line under it is about that card,
+        # and without this the only way to reach it is to go and find it -
+        # which for a filed agent means guessing which list it ended up in.
+        head = f"[**{agent.name}**]({agent.url})" if agent.url else f"**{agent.name}**"
         leads = agent.stated or agent.lead_type
         if leads:
             head += f" — {leads}"

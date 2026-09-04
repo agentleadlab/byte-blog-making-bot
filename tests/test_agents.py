@@ -3349,3 +3349,25 @@ def test_a_lead_type_still_missing_is_still_said():
     assert agents.cannot_read(_agent(card), needs_lead_type=True) == (
         "I can't find a lead type on this card."
     )
+
+
+def test_the_filed_agents_name_links_to_their_card():
+    """Every line under the name is about that card. Without the link the only
+    way to reach it is to guess which list it ended up in."""
+    agent = agents.Agent(
+        name="Justin Kerby", card_id="1", url="https://trello.com/c/aBcD1234",
+        stated="50 OTP WIDOWS", launch=date(2026, 9, 7), said="",
+    )
+    plan = agents.AgentPlan(agent=agent, when="later", move_to="Done")
+
+    said = agents.describe([plan], today=date(2026, 9, 4))
+
+    assert said.startswith("[**Justin Kerby**](https://trello.com/c/aBcD1234)")
+    assert "50 OTP WIDOWS" in said and "launching Mon Sep 07" in said
+
+
+def test_a_card_with_no_url_is_still_named():
+    agent = agents.Agent(name="Nobody", card_id="2", url="", said="")
+    plan = agents.AgentPlan(agent=agent, when="unknown", problems=["nothing to go on"])
+
+    assert agents.describe([plan]).startswith("**Nobody**")
