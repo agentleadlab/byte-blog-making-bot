@@ -2734,7 +2734,11 @@ async def _set_earliest_day(responder: Responder, config: Config, text: str) -> 
         return
 
     try:
-        day = prefs.parse_day(text)
+        # The board's clock, not the machine's. "start monday" decides which
+        # day a blog post may land on, and the posting schedule is Eastern -
+        # so reading "monday" off a Mac in Manila picks the wrong Monday for
+        # half of every day.
+        day = prefs.parse_day(text, today=_today(config))
     except prefs.PrefsError as exc:
         await responder.send(str(exc))
         return

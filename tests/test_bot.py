@@ -2473,3 +2473,26 @@ def test_nothing_outstanding_says_which_day_that_was(config, monkeypatch):
     _, sent = _unticked(monkeypatch, config, "unticked yesterday")
 
     assert "Thu Sep 03" in sent[0]
+
+
+def test_the_start_day_is_read_on_the_boards_clock(config, monkeypatch):
+    """"start monday" decides which day a blog post may land on, and the
+    posting schedule is Eastern. Read off a Mac in Manila it picks the wrong
+    Monday for half of every day."""
+    from wilbyte import prefs
+    from wilbyte.bot import client
+
+    seen = {}
+
+    def parsing(text, *, today=None):
+        seen["today"] = today
+        raise prefs.PrefsError("stop here — the clock it read is the point")
+
+    monkeypatch.setattr(prefs, "parse_day", parsing)
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
+
+    asyncio.run(
+        client._set_earliest_day(ChannelResponder(Listening()), config, "monday")
+    )
+
+    assert seen["today"] == date(2026, 9, 4)
