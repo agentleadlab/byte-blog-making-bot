@@ -401,7 +401,9 @@ WHEN_LIVE = re.compile(
 # last thing in the message.
 SHEET_ASKED = re.compile(
     r"\b(?:sheets?|spreadsheets?)\s+(?:links?\s+)?(?:for|of)\b"
-    r"|\b(?:sheets?|spreadsheets?)\s*\??\s*$",
+    r"|\b(?:sheets?|spreadsheets?)\s*\??\s*$"
+    # Opening the message, the way "live date Connor Tuttle" opens one.
+    r"|^\s*(?:google\s+)?(?:sheets?|spreadsheets?)\b",
     re.IGNORECASE,
 )
 

@@ -3177,3 +3177,39 @@ def test_the_states_do_not_change_what_the_leads_are():
     assert agents.shape_of(agents.stated_lead_type(HERIBERTO)) == agents.shape_of(
         "OTP Spanish IUL"
     )
+
+
+@pytest.mark.parametrize(
+    "typed,name",
+    [
+        # Asked from the front, which is how Franklin actually types it.
+        ("live date Connor Tuttle", "Connor Tuttle"),
+        ("launch date Connor Tuttle", "Connor Tuttle"),
+        ("go live date for jose vargas", "jose vargas"),
+        # …and from the back, and wrapped around.
+        ("faith live date", "faith"),
+        ("when did faith go live", "faith"),
+        ("when does soar life agency go live", "soar life agency"),
+        ("what is the live date for faith", "faith"),
+        ("when will lucy brigman launch", "lucy brigman"),
+        # A question with nobody in it.
+        ("when is the live date", ""),
+    ],
+)
+def test_the_agent_asked_about(typed, name):
+    assert agents.who_asked_about(typed) == name
+
+
+@pytest.mark.parametrize(
+    "typed,name",
+    [
+        ("sheet Connor Tuttle", "Connor Tuttle"),
+        ("SHEET FOR Connor Tuttle", "Connor Tuttle"),
+        ("faith's sheet", "faith"),
+        ("google sheet vitality key", "vitality key"),
+        ("send me the sheet for soar life agency", "soar life agency"),
+        ("sheet", ""),
+    ],
+)
+def test_the_agent_whose_sheet_was_asked_for(typed, name):
+    assert agents.who_wants_a_sheet(typed) == name

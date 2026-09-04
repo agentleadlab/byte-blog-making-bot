@@ -367,11 +367,13 @@ _SAYS_NOTHING = re.compile(
 # "when did faith go live", "when is faith's live date", "faith live date".
 # The question wrapped around a name, in the shapes somebody actually types.
 _ASK_BEFORE = re.compile(
-    r"^\s*(?:so\s+)?(?:when|what)\s*(?:'s|s)?\s*"
-    # Longest first: "do" before "does" leaves the "es" on the front of the
-    # name, and "when does soar life agency go live" asks about "es soar".
-    r"(?:does|did|do|will|would|was|were|are|is|the)?\s*"
-    r"(?:the\s+)?(?:live|launch|go[\s-]?live)?\s*(?:date\s+)?"
+    r"^\s*(?:so\s+)?"
+    # The question word is optional: "live date Connor Tuttle" is the same
+    # question as "when is Connor Tuttle's live date", asked from the front.
+    # Longest first inside it - "do" before "does" leaves the "es" on the front
+    # of the name, and "when does soar life agency go live" asks about "es soar".
+    r"(?:(?:when|what)\s*(?:'s|s)?\s*(?:does|did|do|will|would|was|were|are|is|the)?\s*)?"
+    r"(?:the\s+)?(?:go[\s-]?live|live|launch)?\s*(?:date)?\s*"
     r"(?:for|of|on)?\s*",
     re.IGNORECASE,
 )
