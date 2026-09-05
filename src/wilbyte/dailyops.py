@@ -518,6 +518,28 @@ def why_missing(cards: list[dict], kind: str, wanted: date) -> str:
     return "nothing dated after today"
 
 
+# How far forward to look for somewhere to put tonight's unfinished work. A
+# week covers a weekend and a card Zapier missed; past that, the card is not
+# late, it is gone.
+LOOK_AHEAD = 7
+
+
+def carry_onto(cards: list[dict], kind: str, tomorrow: date) -> tuple[dict, date] | None:
+    """The card this kind's unfinished items should move onto, and its day.
+
+    Tomorrow's when there is one, and otherwise the next one there is. On a
+    Friday there is no Saturday General card and the next is Monday's - and
+    refusing to carry because tomorrow is missing leaves the work on a card
+    that goes to Done twenty minutes later, which loses it.
+    """
+    for ahead in range(LOOK_AHEAD):
+        when = tomorrow + timedelta(days=ahead)
+        found = cards_covering(cards, when).get(kind)
+        if found is not None:
+            return found, when
+    return None
+
+
 def missing_kinds(cards: list[dict], day: date) -> list[str]:
     """Which of the four didn't get generated - Lead Order has gone missing before.
 

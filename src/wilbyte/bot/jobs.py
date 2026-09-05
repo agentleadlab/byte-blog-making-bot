@@ -3232,10 +3232,18 @@ def run_rollover(config: Config, *, day=None, only=None) -> tuple[int, list[str]
     from .. import dailyops, rollskip
 
     day = day or board_day(config)
-    plans, missing, targets = read_rollover(config, day=day, only=only)
+    plans, missing, targets, ahead = read_rollover(config, day=day, only=only)
     moved, problems = apply_rollover(config, plans, targets, day=day)
+    if ahead:
+        # Not tomorrow's card. Said plainly, because "carried 14 items" reads
+        # as onto tomorrow and this is the one night a week it isn't.
+        landed = ", ".join(
+            f"{dailyops.CARD_KINDS.get(kind, kind)} → {when:%a %b %d}"
+            for kind, when in sorted(ahead.items())
+        )
+        problems.append(f"No card for tomorrow, so these went onto the next one: {landed}")
     if missing:
-        problems.append(f"No card for tomorrow yet: {', '.join(missing)}")
+        problems.append(f"Nowhere to carry: {', '.join(missing)}")
     held = rollskip.for_day(day)
     if held:
         named = ", ".join(dailyops.CARD_KINDS.get(k, k) for k in held)
@@ -3538,7 +3546,7 @@ def rollover_plan(config: Config, *, day=None) -> str:
     """What the evening rollover would move, as words. Writes nothing."""
     from .. import dailyops
 
-    plans, missing, _ = read_rollover(config, day=day)
+    plans, missing, _, _ = read_rollover(config, day=day)
     report = dailyops.summarise(plans)
     if missing:
         report += f"\n⚠ No card for tomorrow yet: {', '.join(missing)}"
@@ -3578,10 +3586,17 @@ def read_rollover(config: Config, *, day=None, only=None, skip=None):
             today_cards = {k: v for k, v in today_cards.items() if k not in held}
 
         plans, targets = [], {}
+        carried_onto: dict[str, date] = {}
         for kind, card in today_cards.items():
-            target = tomorrow_cards.get(kind)
-            if target is None:
+            # Tomorrow's card when there is one, and otherwise the next one
+            # there is. On a Friday there is no Saturday General card, and
+            # refusing to carry leaves the work on a card that goes to Done
+            # twenty minutes later.
+            found = dailyops.carry_onto(cards, kind, tomorrow)
+            if found is None:
                 continue
+            target, lands_on = found
+            carried_onto[kind] = lands_on
             target_id = str(target.get("id") or "")
             target_lists = client.card_checklists(target_id)
             plans.append(
@@ -3597,13 +3612,20 @@ def read_rollover(config: Config, *, day=None, only=None, skip=None):
             targets[kind] = (target_id, target_lists)
 
         # Named with a reason. "No card for tomorrow" is true and useless when
-        # the card is sitting right there with the wrong year on it.
+        # the card is sitting right there with the wrong year on it - and it is
+        # only worth saying at all about a kind with nowhere to go, now that a
+        # missing tomorrow is carried onto the next day instead.
         missing = [
             f"{dailyops.CARD_KINDS.get(kind, kind)} ({dailyops.why_missing(cards, kind, tomorrow)})"
             for kind in today_cards
-            if kind not in tomorrow_cards
+            if kind not in carried_onto
         ]
-        return plans, missing, targets
+        # Which kinds landed on a day that isn't tomorrow, so the night's
+        # message can say so rather than looking like it moved them silently.
+        ahead = {
+            kind: when for kind, when in carried_onto.items() if when != tomorrow
+        }
+        return plans, missing, targets, ahead
     finally:
         client.close()
 

@@ -1332,7 +1332,7 @@ def test_the_whole_board_reads_right_on_the_day_it_actually_is(monkeypatch, conf
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    plans, missing, targets = jobs.read_rollover(config, day=date(2026, 8, 25))
+    plans, missing, targets, _ahead = jobs.read_rollover(config, day=date(2026, 8, 25))
 
     assert missing == [], missing
     assert sorted(targets) == ["ads", "general", "lead_order", "ops"]
@@ -1363,7 +1363,7 @@ def test_the_carry_never_touches_the_setup_card(monkeypatch, config):
     ]
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    plans, _missing, targets = jobs.read_rollover(config, day=date(2026, 8, 25))
+    plans, _missing, targets, _ahead = jobs.read_rollover(config, day=date(2026, 8, 25))
 
     assert [plan.kind for plan in plans] == ["general"]
     assert sorted(targets) == ["general"]
@@ -1529,7 +1529,7 @@ def test_naming_one_card_leaves_the_others_alone(monkeypatch, config):
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    plans, missing, targets = jobs.read_rollover(
+    plans, missing, targets, _ahead = jobs.read_rollover(
         config, day=date(2026, 8, 25), only="general"
     )
 
@@ -1552,7 +1552,7 @@ def test_asking_for_all_of_them_is_still_the_default(monkeypatch, config):
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    plans, _, _ = jobs.read_rollover(config, day=date(2026, 8, 25))
+    plans, _, _, _ahead = jobs.read_rollover(config, day=date(2026, 8, 25))
 
     assert sorted(plan.kind for plan in plans) == ["general", "ops"]
 
@@ -3167,7 +3167,7 @@ def test_the_held_card_is_left_out_of_the_carry(monkeypatch, config):
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    plans, _missing, targets = jobs.read_rollover(
+    plans, _missing, targets, _ahead = jobs.read_rollover(
         config, day=date(2026, 8, 25), skip=["ads"]
     )
 
@@ -3191,7 +3191,7 @@ def test_nothing_held_carries_all_four(monkeypatch, config):
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    _plans, _missing, targets = jobs.read_rollover(
+    _plans, _missing, targets, _ahead = jobs.read_rollover(
         config, day=date(2026, 8, 25), skip=[]
     )
 
@@ -3334,11 +3334,11 @@ def test_a_day_asked_for_by_hand_ignores_the_hold(monkeypatch, config, tmp_path)
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
     # What the automatic run would have done last night: nothing.
-    _p, _m, held_back = jobs.read_rollover(config, day=yesterday)
+    _p, _m, held_back, _ahead = jobs.read_rollover(config, day=yesterday)
     assert held_back == {}
 
     # What "rollover yesterday" does this morning.
-    _p, _m, targets = jobs.read_rollover(config, day=yesterday, skip=[])
+    _p, _m, targets, _ahead = jobs.read_rollover(config, day=yesterday, skip=[])
     assert sorted(targets) == ["ads", "lead_order"]
 
 
@@ -3358,7 +3358,7 @@ def test_carrying_yesterday_targets_today_not_tomorrow(monkeypatch, config):
     board.card_checklists = lambda card_id: []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
 
-    _plans, missing, targets = jobs.read_rollover(
+    _plans, missing, targets, _ahead = jobs.read_rollover(
         config, day=date(2026, 8, 26), skip=[]
     )
 
@@ -3886,3 +3886,59 @@ def test_a_friday_says_it_looked_as_far_as_monday():
 @pytest.mark.parametrize("day", [date(2026, 9, 7), date(2026, 9, 10)])
 def test_every_other_day_says_today_or_tomorrow(day):
     assert dailyops.days_chased(day) == "today or tomorrow"
+
+
+# --------------------------------- carrying onto the next card there is
+
+
+FRIDAY_NIGHT = [
+    {"id": "1", "name": "General 09/04/26"},
+    {"id": "2", "name": "Ops 09/04/26"},
+    {"id": "3", "name": "General 09/07/26"},
+    {"id": "4", "name": "Ops 09/07/26"},
+    {"id": "5", "name": "Lead Order 09/05/26-09/07/26"},
+]
+SATURDAY = date(2026, 9, 5)
+
+
+@pytest.mark.parametrize("kind", ["general", "ops"])
+def test_a_friday_carries_onto_mondays_card(kind):
+    """There is no Saturday General card. Refusing to carry leaves the work on
+    a card that goes to Done twenty minutes later, which loses it."""
+    card, when = dailyops.carry_onto(FRIDAY_NIGHT, kind, SATURDAY)
+
+    assert when == date(2026, 9, 7)
+    assert "09/07/26" in card["name"]
+
+
+def test_a_card_that_covers_tomorrow_is_still_tomorrows():
+    """The weekend Lead Order card is titled with the Saturday and worked
+    through Monday, so Saturday is not a day it is missing from."""
+    card, when = dailyops.carry_onto(FRIDAY_NIGHT, "lead_order", SATURDAY)
+
+    assert when == SATURDAY
+    assert card["name"] == "Lead Order 09/05/26-09/07/26"
+
+
+def test_a_kind_with_no_card_at_all_has_nowhere_to_go():
+    assert dailyops.carry_onto(FRIDAY_NIGHT, "ads", SATURDAY) is None
+
+
+def test_it_does_not_reach_forever():
+    """A card a fortnight out is not tomorrow's card running late."""
+    far = [{"id": "9", "name": "General 09/30/26"}]
+
+    assert dailyops.carry_onto(far, "general", SATURDAY) is None
+
+
+def test_a_day_zapier_missed_is_stepped_over():
+    """Not only weekends: a Tuesday card that never got generated should not
+    strand Monday night's work either."""
+    cards = [
+        {"id": "1", "name": "General 09/07/26"},
+        {"id": "2", "name": "General 09/09/26"},
+    ]
+
+    _card, when = dailyops.carry_onto(cards, "general", date(2026, 9, 8))
+
+    assert when == date(2026, 9, 9)
