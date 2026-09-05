@@ -199,6 +199,27 @@ class TrelloClient:
             for item in actions or []
         ]
 
+    def card_story(self, card_id: str) -> tuple[list[str], bool]:
+        """(what people said, whether this card was copied from another one).
+
+        One request for both. The copy shows up in the same activity feed the
+        comments come from, so asking for it separately would double the cost
+        of reading a card to learn one boolean.
+        """
+        actions = self._request(
+            "GET", f"/cards/{card_id}/actions",
+            params={"filter": "commentCard,copyCard", "limit": 50},
+        )
+        said, copied = [], False
+        for item in actions or []:
+            if str(item.get("type")) == "copyCard":
+                copied = True
+                continue
+            text = str((item.get("data") or {}).get("text") or "")
+            if text:
+                said.append(text)
+        return said, copied
+
     # ------------------------------------------------------------- writing
 
     def move_card(self, card_id: str, list_id: str, *, position: str = "top") -> dict:

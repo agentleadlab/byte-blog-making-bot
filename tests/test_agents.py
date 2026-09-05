@@ -3379,7 +3379,7 @@ def test_a_card_with_no_url_is_still_named():
 NOW = datetime(2026, 9, 5, 14, 30, tzinfo=timezone.utc)
 
 
-def _card(touched_minutes_ago, *, made_minutes_ago=None):
+def _card(touched_minutes_ago, *, made_minutes_ago=None, copied=True):
     touched = NOW - timedelta(minutes=touched_minutes_ago)
     made = NOW - timedelta(
         minutes=made_minutes_ago if made_minutes_ago is not None else touched_minutes_ago
@@ -3389,7 +3389,15 @@ def _card(touched_minutes_ago, *, made_minutes_ago=None):
         card_id=f"{int(made.timestamp()):08x}" + "0" * 16,
         url="",
         touched=touched.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        copied=copied,
     )
+
+
+@pytest.mark.parametrize("minutes", [0, 1, 4])
+def test_a_card_off_the_form_is_never_waited_on(minutes):
+    """Holding every card would slow every ordinary agent down to buy nothing.
+    A card the form made is one nobody has edited yet."""
+    assert agents.still_being_written(_card(minutes, copied=False), now=NOW) is False
 
 
 @pytest.mark.parametrize("minutes", [0, 1, 4])
@@ -3406,16 +3414,23 @@ def test_a_card_nobody_has_touched_is_finished(minutes):
     assert agents.still_being_written(_card(minutes), now=NOW) is False
 
 
-def test_waiting_stops_eventually():
-    """A card somebody comments on every few minutes still has to be filed."""
+@pytest.mark.parametrize("made_ago", [11, 20, 50])
+def test_a_copy_is_never_held_longer_than_ten_minutes(made_ago):
+    """A copy somebody keeps adding members to still has to be filed."""
     assert agents.still_being_written(
-        _card(1, made_minutes_ago=50), now=NOW
+        _card(1, made_minutes_ago=made_ago), now=NOW
     ) is False
+
+
+def test_a_copy_inside_the_ten_minutes_is_still_waited_on():
+    assert agents.still_being_written(
+        _card(1, made_minutes_ago=9), now=NOW
+    ) is True
 
 
 def test_a_card_with_no_timestamp_is_not_held():
     assert agents.still_being_written(
-        agents.Agent(name="X", card_id="", url=""), now=NOW
+        agents.Agent(name="X", card_id="", url="", copied=True), now=NOW
     ) is False
 
 

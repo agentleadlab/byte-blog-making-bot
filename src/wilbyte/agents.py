@@ -201,8 +201,10 @@ class Agent:
     # on a setup card and for saying what an agent is before matching.
     stated: str = ""
     note: str = ""
-    # When Trello last saw anything happen on the card - see `still_being_written`.
+    # When Trello last saw anything happen on the card, and whether the card
+    # was made by copying another - both for `still_being_written`.
     touched: str = ""
+    copied: bool = False
 
     @property
     def ready(self) -> bool:
@@ -225,17 +227,17 @@ def is_agent_card(title: str) -> bool:
     return bool(AGENT_CARD.match(title or ""))
 
 
-# How long a card has to sit untouched before it is taken to be finished.
-# These cards are made by copying the last one, so they land complete and
-# wrong: Fabiana Roman's arrived saying Basic/Instant Spanish IUL, was filed
-# twenty seconds later, and was corrected to OTP Spanish IUL after that - by
-# which time her line was already written on three checklists.
+# How long a *copied* card has to sit untouched before it is taken to be
+# finished. A card made by copying the last agent's lands complete and wrong:
+# Fabiana Roman's arrived saying Basic/Instant Spanish IUL, was filed twenty
+# seconds later, and was corrected to OTP Spanish IUL after that - by which
+# time her line was already written on three checklists.
 SETTLE_FOR = 5 * 60
 
-# ...and how long to go on waiting. A card somebody keeps commenting on is
-# still a card that has to be filed, and waiting for silence that never comes
-# is the same as never filing it.
-WAIT_NO_LONGER = 45 * 60
+# ...and the longest a card is ever held, counted from when it was made. A
+# card that comes off the form fresh is not waited on at all; one that was
+# copied is filed within ten minutes whatever else is happening to it.
+WAIT_NO_LONGER = 10 * 60
 
 
 def made_at(card_id: str) -> datetime | None:
@@ -263,17 +265,22 @@ def _read_stamp(said: str) -> datetime | None:
 
 
 def still_being_written(agent: "Agent", *, now: datetime) -> bool:
-    """Whether the card was touched too recently to act on yet.
+    """Whether a copied card was touched too recently to act on yet.
 
-    Not a rule about Spanish, or about copies, though both are what asked for
-    it. The thing the two have in common is that the card arrives finished and
-    is then corrected, and what tells you that is happening is the card
-    changing - so that is what is waited on. A card nobody has touched for five
-    minutes is a card somebody has stopped writing.
+    Only copied cards. A card the form made is a card nobody has edited yet,
+    and holding those would slow every ordinary agent down to buy nothing - the
+    whole point of watching In Que every twenty seconds is that a card is filed
+    while somebody is still looking at it.
 
-    Given up on after `WAIT_NO_LONGER`, counted from when the card was made. A
-    card somebody comments on every few minutes still has to be filed.
+    A copy is different: it lands complete, carrying the last agent's order,
+    and is then corrected. Five minutes of nobody touching it means somebody
+    has stopped correcting it.
+
+    Ten minutes at the outside, counted from when Trello made the card. A copy
+    somebody keeps adding members to still has to be filed.
     """
+    if not agent.copied:
+        return False
     touched = _read_stamp(agent.touched)
     if touched is None:
         return False
@@ -1577,7 +1584,8 @@ def _made(month: int, day: int, year: str | None, *, today: date) -> date | None
 
 
 def read_agent(
-    card: dict, *, text: str, today: date, comments: tuple[str, ...] = ()
+    card: dict, *, text: str, today: date, comments: tuple[str, ...] = (),
+    copied: bool = False,
 ) -> Agent | None:
     """One agent card read into what RYTE needs, or None if it isn't one.
 
@@ -1611,6 +1619,7 @@ def read_agent(
         card_id=str(card.get("id") or ""),
         url=str(card.get("shortUrl") or card.get("url") or ""),
         touched=str(card.get("dateLastActivity") or ""),
+        copied=copied,
         lead_type=find_lead_type(said),
         launch=find_launch(said, today=today) or find_launch(from_comments, today=today),
         # What gets matched against the board's checklists, so it carries the

@@ -823,6 +823,12 @@ class FakeBoard:
             for card in self.lists[list_id.removeprefix("id-")]
         ]
 
+    def card_story(self, card_id):
+        """Comments and whether the card was copied, the way the real client
+        gives them: one request for both."""
+        said = getattr(self, "card_comments", lambda _id: [])(card_id)
+        return list(said), card_id in getattr(self, "copies", ())
+
     def move_card(self, card_id, list_id, *, position="top"):
         self.moves.append((card_id, list_id, position))
         return {}
@@ -2868,6 +2874,9 @@ class SetupBoard(FakeBoard):
 
     def card_comments(self, card_id):
         return self.said.get(card_id, [])
+
+    def card_story(self, card_id):
+        return self.said.get(card_id, []), card_id in getattr(self, "copies", ())
 
 
 FRESH = "2099-01-01T00:00:00.000Z"     # always inside the window

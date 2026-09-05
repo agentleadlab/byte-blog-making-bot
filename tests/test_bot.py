@@ -3029,7 +3029,7 @@ def _plan_for(agent, doable=True):
     )
 
 
-def _settling_agent(minutes_ago):
+def _settling_agent(minutes_ago, *, copied=True):
     from datetime import timedelta, timezone as tz
     from wilbyte import agents as rules
 
@@ -3041,6 +3041,7 @@ def _settling_agent(minutes_ago):
         url="https://trello.com/c/f",
         stated="OTP Spanish IUL", launch=date(2026, 9, 7), said="",
         touched=touched.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        copied=copied,
     )
 
 
@@ -3063,13 +3064,23 @@ def _filing(monkeypatch, config, agent, *, silent):
     return filed.get("plans", []), heard.said
 
 
-def test_the_watcher_waits_for_a_card_to_stop_changing(config, monkeypatch):
+def test_the_watcher_waits_for_a_copied_card_to_stop_changing(config, monkeypatch):
     """Fabiana Roman's card was copied, landed wrong, and was filed twenty
     seconds later — before anybody had corrected it."""
     filed, said = _filing(monkeypatch, config, _settling_agent(1), silent=True)
 
     assert filed == []
     assert said == []
+
+
+def test_an_ordinary_card_is_filed_at_once(config, monkeypatch):
+    """The whole point of watching In Que every twenty seconds is that a card
+    is filed while somebody is still looking at it."""
+    filed, _ = _filing(
+        monkeypatch, config, _settling_agent(0, copied=False), silent=True,
+    )
+
+    assert len(filed) == 1
 
 
 def test_a_card_that_has_settled_is_filed(config, monkeypatch):

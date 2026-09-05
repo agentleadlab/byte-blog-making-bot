@@ -3302,10 +3302,14 @@ def read_agents(config: Config, *, day=None):
             if not agents.is_agent_card(str(card.get("name", ""))):
                 continue
             detail = client.card_detail(str(card.get("id") or ""))
+            # One request for the comments and for whether this card was
+            # copied from another - see `agents.still_being_written`.
+            said, copied = client.card_story(str(card.get("id") or ""))
             agent = agents.read_agent(
                 {**card, **detail},
                 text=str(detail.get("desc") or ""),
-                comments=tuple(client.card_comments(str(card.get("id") or ""))),
+                comments=tuple(said),
+                copied=copied,
                 today=day,
             )
             if agent is None:
