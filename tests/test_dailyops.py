@@ -3951,3 +3951,33 @@ def test_a_day_zapier_missed_is_stepped_over():
     _card, when = dailyops.carry_onto(cards, "general", date(2026, 9, 8))
 
     assert when == date(2026, 9, 9)
+
+
+# --------------------------------- which cards a typed rollover covers
+
+
+def test_a_bare_rollover_is_the_half_eight_pair():
+    """The board carries General and Ops at half eight and Ads and Lead Order
+    at ten, because those two are still being worked. Typing it at nine and
+    having it carry Lead Order moves lines somebody is about to tick."""
+    assert dailyops.rollover_kinds("") == ("general", "ops")
+    assert dailyops.rollover_kinds("trello rollover") == ("general", "ops")
+
+
+@pytest.mark.parametrize("typed", ["late", "rollover late", "the ten pm ones"])
+def test_late_is_the_ten_oclock_pair(typed):
+    assert dailyops.rollover_kinds(typed) == ("ads", "lead_order")
+
+
+@pytest.mark.parametrize("typed", ["all", "rollover everything", "all four"])
+def test_all_is_all_four(typed):
+    assert set(dailyops.rollover_kinds(typed)) == {
+        "general", "ops", "ads", "lead_order",
+    }
+
+
+@pytest.mark.parametrize("typed", ["general", "ops", "ads", "lead order"])
+def test_naming_one_card_still_means_that_card(typed):
+    """`kind_named` answers those, so this stands back and says so."""
+    assert dailyops.rollover_kinds(typed) is None
+    assert dailyops.kind_named(typed) is not None

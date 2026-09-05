@@ -332,6 +332,34 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
     return said, None, day_named(said, today=today) or today
 
 
+# "rollover all" - every card at once, which is not what a bare rollover does
+# any more. "rollover late" is the ten o'clock pair on their own.
+ALL_KINDS = re.compile(r"\ball\b|\beverything\b|\bfour\b", re.IGNORECASE)
+LATE_ASKED = re.compile(r"\blate\b|\bten\b|\b10\s*pm\b", re.IGNORECASE)
+
+
+def rollover_kinds(text: str) -> tuple[str, ...] | None:
+    """Which cards a typed rollover covers. None means "whichever was named".
+
+    A bare `trello rollover` used to mean all four, which does not match what
+    the board does: General and Ops are carried at half eight and Ads and Lead
+    Order at ten, because those two are still being worked after the others
+    have been put to bed. Typing it at nine and having it carry Lead Order
+    moves lines somebody is about to tick.
+
+    So a bare one is the half-eight pair, `late` is the ten o'clock pair, and
+    `all` is everything - said out loud rather than assumed either way.
+    """
+    said = " ".join((text or "").split())
+    if ALL_KINDS.search(said):
+        return EVENING_KINDS + LATE_KINDS
+    if LATE_ASKED.search(said):
+        return LATE_KINDS
+    if kind_named(said):
+        return None
+    return EVENING_KINDS
+
+
 def kind_named(text: str) -> str | None:
     """Which of the four somebody meant, or None for all of them.
 

@@ -3316,6 +3316,33 @@ async def _hold_back(responder: Responder, config: Config, asked) -> None:
     )
 
 
+def _rollover_covers(only, which: str) -> str:
+    """The line above the plan saying which cards this run is about.
+
+    A bare rollover is the half-eight pair now, and somebody who typed it at
+    nine expecting all four should find that out before they press anything -
+    not tomorrow, from Lead Order still holding yesterday's lines.
+    """
+    from .. import dailyops
+
+    if isinstance(only, str):
+        return f"**{which} only** — the other cards are untouched."
+    kinds = tuple(only or ())
+    if set(kinds) == set(dailyops.EVENING_KINDS):
+        late = " and ".join(
+            dailyops.CARD_KINDS.get(k, k) for k in dailyops.LATE_KINDS
+        )
+        return (
+            f"**{which}** — {late} are carried at "
+            f"{dailyops.said_at(dailyops.LATE_ROLLOVER)}, because they're still "
+            "being worked. `trello rollover late` does those now; "
+            "`trello rollover all` does everything."
+        )
+    if set(kinds) == set(dailyops.LATE_KINDS):
+        return f"**{which}** — the ten o'clock pair. General and Ops are untouched."
+    return "**All four cards.**"
+
+
 def _held_as_words(held) -> str:
     from .. import dailyops
 
@@ -3341,8 +3368,11 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         await _hold_back(responder, config, asked)
         return
 
-    only = dailyops.kind_named(named)
-    which = dailyops.CARD_KINDS.get(only, "") if only else ""
+    only = dailyops.kind_named(named) or dailyops.rollover_kinds(named)
+    which = (
+        dailyops.CARD_KINDS.get(only, "") if isinstance(only, str)
+        else " and ".join(dailyops.CARD_KINDS.get(k, k) for k in only)
+    )
     today = await asyncio.to_thread(jobs.board_day, config)
     # "rollover yesterday" - the carry always works from a day to the day
     # after it, so running it today reads today's cards and leaves last
@@ -3383,8 +3413,7 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         await responder.send(report)
         return
 
-    if which:
-        report = f"**{which} only** — the other cards are untouched.\n{report}"
+    report = f"{_rollover_covers(only, which)}\n{report}"
 
     view = views.ConfirmView(
         requester_id=responder.requester_id,
