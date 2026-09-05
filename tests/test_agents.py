@@ -8,7 +8,7 @@ place and nothing about the board looks different afterwards.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -3371,3 +3371,68 @@ def test_a_card_with_no_url_is_still_named():
     plan = agents.AgentPlan(agent=agent, when="unknown", problems=["nothing to go on"])
 
     assert agents.describe([plan]).startswith("**Nobody**")
+
+
+# --------------------------------- a card somebody is still writing
+
+
+NOW = datetime(2026, 9, 5, 14, 30, tzinfo=timezone.utc)
+
+
+def _card(touched_minutes_ago, *, made_minutes_ago=None):
+    touched = NOW - timedelta(minutes=touched_minutes_ago)
+    made = NOW - timedelta(
+        minutes=made_minutes_ago if made_minutes_ago is not None else touched_minutes_ago
+    )
+    return agents.Agent(
+        name="Fabiana Roman",
+        card_id=f"{int(made.timestamp()):08x}" + "0" * 16,
+        url="",
+        touched=touched.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    )
+
+
+@pytest.mark.parametrize("minutes", [0, 1, 4])
+def test_a_card_touched_a_moment_ago_is_left_alone(minutes):
+    """Fabiana Roman's card was copied from the last agent, landed saying
+    Basic/Instant Spanish IUL, was filed twenty seconds later, and was
+    corrected to OTP Spanish IUL after that — by which time her line was
+    already on three checklists."""
+    assert agents.still_being_written(_card(minutes), now=NOW) is True
+
+
+@pytest.mark.parametrize("minutes", [5, 10, 60])
+def test_a_card_nobody_has_touched_is_finished(minutes):
+    assert agents.still_being_written(_card(minutes), now=NOW) is False
+
+
+def test_waiting_stops_eventually():
+    """A card somebody comments on every few minutes still has to be filed."""
+    assert agents.still_being_written(
+        _card(1, made_minutes_ago=50), now=NOW
+    ) is False
+
+
+def test_a_card_with_no_timestamp_is_not_held():
+    assert agents.still_being_written(
+        agents.Agent(name="X", card_id="", url=""), now=NOW
+    ) is False
+
+
+def test_a_clock_that_disagrees_does_not_hold_a_card_for_ever():
+    """A timestamp in the future would otherwise never come round."""
+    ahead = _card(-30)
+
+    assert agents.still_being_written(ahead, now=NOW) is False
+
+
+def test_when_trello_made_the_card_is_read_from_its_id():
+    made = datetime(2026, 9, 5, 14, 0, tzinfo=timezone.utc)
+    card_id = f"{int(made.timestamp()):08x}" + "0" * 16
+
+    assert agents.made_at(card_id) == made
+
+
+@pytest.mark.parametrize("said", ["", "short", "nothexnothex000000000000"])
+def test_an_id_that_says_nothing_about_when_says_nothing(said):
+    assert agents.made_at(said) is None

@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -3027,6 +3027,15 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
 
     doable = [plan for plan in plans if plan.doable]
     stuck = [plan for plan in plans if not plan.doable]
+
+    # Cards somebody is still writing. Only the watcher waits: it files on its
+    # own twenty seconds after a card lands, and these cards land finished and
+    # wrong - copied from the last agent, then corrected. Asked for by hand,
+    # everything is shown and the button is somebody's to press.
+    if silent:
+        now = datetime.now(timezone.utc)
+        settling = [plan for plan in doable if rules.still_being_written(plan.agent, now=now)]
+        doable = [plan for plan in doable if plan not in settling]
 
     if not silent:
         view = None

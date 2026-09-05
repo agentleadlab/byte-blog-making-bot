@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 # Where an agent card waits, and where it ends up. Today is watched as well as
 # In Que: the daily walk leaves agent cards alone, but somebody dragging one
@@ -201,6 +201,8 @@ class Agent:
     # on a setup card and for saying what an agent is before matching.
     stated: str = ""
     note: str = ""
+    # When Trello last saw anything happen on the card - see `still_being_written`.
+    touched: str = ""
 
     @property
     def ready(self) -> bool:
@@ -221,6 +223,64 @@ class Agent:
 def is_agent_card(title: str) -> bool:
     """Whether a card in In Que is a new agent rather than a daily card."""
     return bool(AGENT_CARD.match(title or ""))
+
+
+# How long a card has to sit untouched before it is taken to be finished.
+# These cards are made by copying the last one, so they land complete and
+# wrong: Fabiana Roman's arrived saying Basic/Instant Spanish IUL, was filed
+# twenty seconds later, and was corrected to OTP Spanish IUL after that - by
+# which time her line was already written on three checklists.
+SETTLE_FOR = 5 * 60
+
+# ...and how long to go on waiting. A card somebody keeps commenting on is
+# still a card that has to be filed, and waiting for silence that never comes
+# is the same as never filing it.
+WAIT_NO_LONGER = 45 * 60
+
+
+def made_at(card_id: str) -> datetime | None:
+    """The second Trello made this card, out of the id itself.
+
+    A Trello id is a MongoDB ObjectId whose first four bytes are the creation
+    time. Free: no request, no field to ask for, and on every card already in
+    hand.
+    """
+    said = (card_id or "").strip()
+    if len(said) < 8:
+        return None
+    try:
+        return datetime.fromtimestamp(int(said[:8], 16), tz=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _read_stamp(said: str) -> datetime | None:
+    """Trello's "2026-09-05T14:22:31.000Z" as something comparable."""
+    try:
+        return datetime.fromisoformat((said or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def still_being_written(agent: "Agent", *, now: datetime) -> bool:
+    """Whether the card was touched too recently to act on yet.
+
+    Not a rule about Spanish, or about copies, though both are what asked for
+    it. The thing the two have in common is that the card arrives finished and
+    is then corrected, and what tells you that is happening is the card
+    changing - so that is what is waited on. A card nobody has touched for five
+    minutes is a card somebody has stopped writing.
+
+    Given up on after `WAIT_NO_LONGER`, counted from when the card was made. A
+    card somebody comments on every few minutes still has to be filed.
+    """
+    touched = _read_stamp(agent.touched)
+    if touched is None:
+        return False
+    made = made_at(agent.card_id)
+    if made is not None and (now - made).total_seconds() > WAIT_NO_LONGER:
+        return False
+    return 0 <= (now - touched).total_seconds() < SETTLE_FOR
 
 
 def agent_name(title: str) -> str:
@@ -1550,6 +1610,7 @@ def read_agent(
         name=agent_name(title),
         card_id=str(card.get("id") or ""),
         url=str(card.get("shortUrl") or card.get("url") or ""),
+        touched=str(card.get("dateLastActivity") or ""),
         lead_type=find_lead_type(said),
         launch=find_launch(said, today=today) or find_launch(from_comments, today=today),
         # What gets matched against the board's checklists, so it carries the

@@ -3014,3 +3014,89 @@ def test_a_named_day_is_still_only_that_day(config, monkeypatch):
     )
 
     assert [one["when"] for one in found] == ["today"]
+
+
+# ------------------------------------------------- a card still being written
+
+
+def _plan_for(agent, doable=True):
+    from wilbyte import agents as rules
+
+    return rules.AgentPlan(
+        agent=agent, when="tomorrow",
+        move_to="Done" if doable else "",
+        problems=[] if doable else ["nothing to go on"],
+    )
+
+
+def _settling_agent(minutes_ago):
+    from datetime import timedelta, timezone as tz
+    from wilbyte import agents as rules
+
+    now = datetime.now(tz.utc)
+    touched = now - timedelta(minutes=minutes_ago)
+    return rules.Agent(
+        name="Fabiana Roman",
+        card_id=f"{int(touched.timestamp()):08x}" + "0" * 16,
+        url="https://trello.com/c/f",
+        stated="OTP Spanish IUL", launch=date(2026, 9, 7), said="",
+        touched=touched.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    )
+
+
+def _filing(monkeypatch, config, agent, *, silent):
+    from wilbyte.bot import client
+
+    filed = {}
+    monkeypatch.setattr(
+        jobs, "read_agents", lambda cfg: ([_plan_for(agent)], {"Done": "d"}, []),
+    )
+    monkeypatch.setattr(
+        jobs, "apply_agents",
+        lambda cfg, plans, where: (filed.setdefault("plans", plans), (len(plans), []))[1],
+    )
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 5))
+    heard = Listening()
+    asyncio.run(
+        client._file_agents(ChannelResponder(heard), config, silent=silent)
+    )
+    return filed.get("plans", []), heard.said
+
+
+def test_the_watcher_waits_for_a_card_to_stop_changing(config, monkeypatch):
+    """Fabiana Roman's card was copied, landed wrong, and was filed twenty
+    seconds later — before anybody had corrected it."""
+    filed, said = _filing(monkeypatch, config, _settling_agent(1), silent=True)
+
+    assert filed == []
+    assert said == []
+
+
+def test_a_card_that_has_settled_is_filed(config, monkeypatch):
+    filed, _ = _filing(monkeypatch, config, _settling_agent(30), silent=True)
+
+    assert len(filed) == 1
+
+
+class NoButton:
+    """A confirm view nobody presses."""
+
+    confirmed = False
+
+    def __init__(self, **kwargs):
+        pass
+
+    async def wait(self):
+        return True
+
+
+def test_asking_by_hand_shows_it_anyway(config, monkeypatch):
+    """The watcher waits because nobody is looking. Somebody who typed the
+    command is looking, and the button is theirs to press."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client.views, "ConfirmView", NoButton)
+
+    _, said = _filing(monkeypatch, config, _settling_agent(1), silent=False)
+
+    assert "Fabiana Roman" in said[0]
