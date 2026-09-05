@@ -2786,6 +2786,9 @@ def spread_to_lead_order(
             " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
             for c in held
         }
+        # The checklist names as they are written on the card, for saying which
+        # ones a lead type could have meant.
+        by_name_shown = [" ".join(str(c.get("name") or "").split()) for c in held]
         named = _by_url(every)
         # The agent's own card by the URL its line links to, so what they
         # ordered can be read against what the setup card called it.
@@ -2801,11 +2804,25 @@ def spread_to_lead_order(
                 # makes its own leaves "22 OTP BC" sitting on the board as
                 # though it were a product. An agent RYTE can't place is one
                 # for somebody to place.
-                problems.append(
-                    f"{who} — “{spread.label}” doesn't match any checklist on "
-                    f"{order.get('name')}"
-                    + _teach_me(spread.label)
+                # Why it didn't place, not just that it didn't. "Doesn't match
+                # any checklist" is wrong when the truth is that it matches
+                # two, and it sends somebody looking for a checklist that is
+                # sitting right there.
+                could_be = rules.candidates(
+                    spread.label, list(by_name_shown), tier=rules.tier_of(spread.label)
                 )
+                if len(could_be) > 1:
+                    problems.append(
+                        f"{who} — “{spread.label}” could be "
+                        + " or ".join(f"“{one}”" for one in could_be)
+                        + f" on {order.get('name')}. It doesn't say which."
+                    )
+                else:
+                    problems.append(
+                        f"{who} — “{spread.label}” doesn't match any checklist on "
+                        f"{order.get('name')}"
+                        + _teach_me(spread.label)
+                    )
                 continue
             try:
                 client.add_check_item(

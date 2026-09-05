@@ -3111,3 +3111,42 @@ def test_asking_by_hand_shows_it_anyway(config, monkeypatch):
     _, said = _filing(monkeypatch, config, _settling_agent(1), silent=False)
 
     assert "Fabiana Roman" in said[0]
+
+
+def test_a_lead_type_that_fits_two_checklists_says_which_two(config, monkeypatch):
+    """"Doesn't match any checklist" is wrong when the truth is that it matches
+    two, and it sends somebody looking for a checklist sitting right there."""
+    board = SpreadBoard(
+        on_setup="25 OTP SPANISH", their_card=SIONA_CARD,
+        checklists=("OTP Spanish IUL", "OTP Spanish FEX", "OTP IUL TRUCKER"),
+    )
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert added == [] and board.written == []
+    assert "could be" in problems[0]
+    assert "OTP Spanish IUL" in problems[0] and "OTP Spanish FEX" in problems[0]
+    assert "doesn't say which" in problems[0]
+
+
+def test_one_spanish_checklist_is_not_ambiguous(config, monkeypatch):
+    board = SpreadBoard(
+        on_setup="25 OTP SPANISH", their_card=SIONA_CARD,
+        checklists=("OTP Spanish IUL", "OTP IUL TRUCKER"),
+    )
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert problems == []
+    assert board.written == [("c0", f"{AGENT_URL} 25 OTP SPANISH")]
+
+
+def test_a_lead_type_that_fits_nothing_still_reads_that_way(config, monkeypatch):
+    board = SpreadBoard(
+        on_setup="25 OTP SPANISH", their_card=SIONA_CARD,
+        checklists=("OTP VETS", "OTP FEX"),
+    )
+
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert "doesn't match any checklist" in problems[0]
