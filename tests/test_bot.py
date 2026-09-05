@@ -1921,7 +1921,7 @@ def test_the_typed_rollover_carries_an_item_however_long_it_has_waited(monkeypat
 
     monkeypatch.setattr(bot_client.jobs, "board_day", lambda config: date(2026, 9, 3))
     monkeypatch.setattr(
-        bot_client.jobs, "read_rollover", lambda config, **kw: ([plan], [], {})
+        bot_client.jobs, "read_rollover", lambda config, **kw: ([plan], [], {}, {})
     )
     monkeypatch.setattr(
         bot_client.jobs,
@@ -3150,3 +3150,41 @@ def test_a_lead_type_that_fits_nothing_still_reads_that_way(config, monkeypatch)
     _added, _conflicts, problems = spreading(board, monkeypatch, config)
 
     assert "doesn't match any checklist" in problems[0]
+
+
+# ------------------------------------------------- a handler that breaks
+
+
+def test_a_broken_command_says_so_rather_than_going_quiet(config, monkeypatch):
+    """discord.py logs an exception in an event handler and says nothing, so a
+    bug leaves somebody looking at "Reading the board —" with no second message
+    ever coming — and no way to tell that from RYTE being slow."""
+    from wilbyte.bot import client
+
+    said = []
+
+    class Replying:
+        content = "<@1> trello rollover"
+        author = SimpleNamespace(id=555, bot=False)
+        channel = SimpleNamespace(id=111)
+        embeds = []
+        mentions = [BOT_USER]
+        mention_everyone = False
+
+        async def reply(self, text, **kwargs):
+            said.append(text)
+
+    async def broken(bot, message):
+        raise ValueError("not enough values to unpack (expected 4, got 3)")
+
+    monkeypatch.setattr(client, "handle_mention", broken)
+    monkeypatch.setattr(client, "is_direct_mention", lambda m, u: True)
+
+    bot = SimpleNamespace(
+        user=BOT_USER, config=config,
+        get_channel=lambda _id: None,
+    )
+    asyncio.run(client.WilByteBot.on_message(bot, Replying()))
+
+    assert said and "Something broke" in said[0]
+    assert "terminal window" in said[0]

@@ -278,7 +278,23 @@ class WilByteBot(discord.Client):
         if self.user is not None and message.author.id == self.user.id:
             return
         if is_direct_mention(message, self.user):
-            await handle_mention(self, message)
+            # Somebody is waiting on this one. discord.py logs an exception in
+            # an event handler and says nothing, so a bug leaves them looking
+            # at "Reading the board —" with no second message ever coming, and
+            # no way to tell that from RYTE being slow.
+            try:
+                await handle_mention(self, message)
+            except Exception:
+                log.exception("That mention broke something")
+                try:
+                    await message.reply(
+                        "Something broke while I was doing that — the details are "
+                        "in the terminal window. Have a look at the board before "
+                        "running it again, in case it stopped part way.",
+                        mention_author=False,
+                    )
+                except Exception:  # Discord unreachable as well; the log has it
+                    log.exception("...and I couldn't say so either")
             return
         if is_payment(message, self.config):
             await handle_payment(self, message)
@@ -3344,7 +3360,7 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         + " — nothing will move yet."
     )
     try:
-        plans, missing, targets = await asyncio.to_thread(
+        plans, missing, targets, ahead = await asyncio.to_thread(
             partial(jobs.read_rollover, config, only=only, day=day, skip=skip)
         )
     except PIPELINE_ERRORS as exc:
@@ -3352,11 +3368,15 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         return
 
     report = dailyops.summarise(plans, missing=missing)
-    if missing:
-        report += (
-            f"\n⚠ No card for {dailyops.next_day(day):%m/%d/%y} yet: "
-            f"{', '.join(missing)}"
+    if ahead:
+        # Not tomorrow's card. Said before the button rather than after it, so
+        # nobody approves a move onto a day they weren't told about.
+        report += "\n⚠ No card for tomorrow, so these would go onto the next one: " + ", ".join(
+            f"{dailyops.CARD_KINDS.get(kind, kind)} → {when:%a %b %d}"
+            for kind, when in sorted(ahead.items())
         )
+    if missing:
+        report += f"\n⚠ Nowhere to carry: {', '.join(missing)}"
 
     movable = sum(len(plan.carried) for plan in plans)
     if not movable:
