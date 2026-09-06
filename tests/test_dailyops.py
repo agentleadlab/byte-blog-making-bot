@@ -3981,3 +3981,56 @@ def test_naming_one_card_still_means_that_card(typed):
     """`kind_named` answers those, so this stands back and says so."""
     assert dailyops.rollover_kinds(typed) is None
     assert dailyops.kind_named(typed) is not None
+
+
+# --------------------------------- a card that covers several days
+
+
+WEEKEND_LEAD_ORDER = {"name": "Lead Order 09/05/26-09/07/26"}
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 5), date(2026, 9, 6)])
+def test_a_weekend_lead_order_card_is_not_finished_yet(day):
+    """"Lead Order 09/05/26-09/07/26" is the Lead Order card on the Saturday,
+    the Sunday and the Monday. Filing it away on the Saturday night puts two
+    days of live work out of sight."""
+    from wilbyte.bot import jobs
+
+    assert jobs.walks_today(WEEKEND_LEAD_ORDER, day, step=dailyops.LATE_DONE) is False
+
+
+def test_it_is_finished_on_the_last_day_it_covers():
+    from wilbyte.bot import jobs
+
+    assert jobs.walks_today(
+        WEEKEND_LEAD_ORDER, date(2026, 9, 7), step=dailyops.LATE_DONE
+    ) is True
+
+
+def test_a_spanning_card_left_behind_is_still_swept_up():
+    """Quality Check silts up otherwise."""
+    from wilbyte.bot import jobs
+
+    assert jobs.walks_today(
+        WEEKEND_LEAD_ORDER, date(2026, 9, 9), step=dailyops.LATE_DONE
+    ) is True
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 4), date(2026, 9, 6)])
+def test_a_one_day_card_is_unchanged(day):
+    """On its day, and on any day after it — only a span waits."""
+    from wilbyte.bot import jobs
+
+    assert jobs.walks_today(
+        {"name": "Lead Order 09/04/26"}, day, step=dailyops.LATE_DONE
+    ) is True
+
+
+def test_the_earlier_moves_are_not_held_back_by_a_span():
+    """In Que → Today and Today → Quality Check still go on the card's own
+    first day: it is being worked from then, it is only finished later."""
+    from wilbyte.bot import jobs
+
+    assert jobs.walks_today(
+        WEEKEND_LEAD_ORDER, date(2026, 9, 5), step="to_quality_check"
+    ) is True

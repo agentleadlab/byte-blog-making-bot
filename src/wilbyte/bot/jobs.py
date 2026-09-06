@@ -2254,6 +2254,13 @@ def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
         return False
     if (named[0] in dailyops.LATE_KINDS) != late:
         return False
+    # A card covering several days is finished on the last of them, not the
+    # first. "Lead Order 09/05/26-09/07/26" is the Lead Order card on the
+    # Saturday, the Sunday and the Monday - filing it away on the Saturday
+    # night puts two days of live work out of sight.
+    covers = dailyops.card_days(title)
+    if len(covers) > 1 and day < max(covers):
+        return False
     return named[1] <= day
 
 
