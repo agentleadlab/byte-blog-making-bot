@@ -4058,16 +4058,20 @@ SETUP_LISTS = [
 ]
 
 
-def _pulled_from(sitting_in, *, day=date(2026, 9, 8)):
+def _setups_from(sitting_in, *, day=date(2026, 9, 8), title=None):
     from wilbyte.bot import jobs
 
     card = {
-        "id": "s", "name": "Agent Setup Going Live Tuesday 09/08",
+        "id": "s", "name": title or "Agent Setup Going Live Tuesday 09/08",
         "idList": sitting_in,
     }
     board = WhereverBoard({sitting_in: [card]})
-    found, _ = jobs.setups_to_pull(board, SETUP_LISTS, day, "to_quality_check")
-    return found
+    fetch, home, _ = jobs.setups_to_pull(board, SETUP_LISTS, day, "to_quality_check")
+    return fetch, home
+
+
+def _pulled_from(sitting_in, **kw):
+    return _setups_from(sitting_in, **kw)[0]
 
 
 def test_a_setup_card_still_in_automation_is_fetched():
@@ -4076,11 +4080,53 @@ def test_a_setup_card_still_in_automation_is_fetched():
     assert _pulled_from("Automation Department")
 
 
-@pytest.mark.parametrize(
-    "finished", [dailyops.AGED_DONE, dailyops.DONE, dailyops.QUALITY_CHECK]
-)
-def test_a_card_somebody_filed_away_is_left_where_it_is(finished):
-    """The Tuesday 09/08 card was filed into Aged Leads Order Done with every
-    item ticked and fetched straight back into In Que the same evening — that
-    list wasn't among the places a card could already have got to."""
+@pytest.mark.parametrize("finished", [dailyops.DONE, dailyops.QUALITY_CHECK])
+def test_a_card_that_has_reached_the_days_lists_is_left_where_it_is(finished):
+    """The point is to fetch it out of Automation, not to drag it back."""
     assert _pulled_from(finished) == []
+
+
+def test_a_setup_card_in_the_aged_leads_list_goes_to_done():
+    """The Tuesday 09/08 card was filed into Aged Leads Order Done and fetched
+    straight back into In Que the same evening. It belongs in neither: that
+    list holds Lead Order cards and the ten o'clock archive empties it, and a
+    finished setup card's home is Done."""
+    fetch, home = _setups_from(dailyops.AGED_DONE)
+    assert fetch == []
+    assert [card["name"] for card in home] == ["Agent Setup Going Live Tuesday 09/08"]
+
+
+def test_a_setup_card_whose_agents_went_live_weeks_ago_still_goes_to_done():
+    """Whatever its dates say. The list it is in is already the whole answer,
+    and the alternative is the archive taking it at ten."""
+    _fetch, home = _setups_from(
+        dailyops.AGED_DONE, title="Agent Setup Going Live Monday 08/17"
+    )
+    assert [card["name"] for card in home] == ["Agent Setup Going Live Monday 08/17"]
+
+
+def test_the_aged_archive_leaves_a_setup_card_alone(monkeypatch, config):
+    """If one is still sitting there at ten it is skipped rather than archived:
+    a setup card is the record of who went live that day."""
+    from wilbyte.bot import jobs
+
+    order = {"id": "a", "name": "Aged 500 — Levinson", "idList": "aged", "dueComplete": True}
+    setup = {
+        "id": "s", "name": "Agent Setup Going Live Tuesday 09/08",
+        "idList": "aged", "dueComplete": True,
+    }
+
+    class Board:
+        def board_lists(self, _board_id):
+            return [{"id": "aged", "name": dailyops.AGED_DONE}]
+
+        def list_cards(self, _list_id):
+            return [order, setup]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda _config: Board())
+    cards, problems = jobs.aged_to_archive(config)
+    assert problems == []
+    assert [card["name"] for card in cards] == ["Aged 500 — Levinson"]
