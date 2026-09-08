@@ -3451,3 +3451,83 @@ def test_when_trello_made_the_card_is_read_from_its_id():
 @pytest.mark.parametrize("said", ["", "short", "nothexnothex000000000000"])
 def test_an_id_that_says_nothing_about_when_says_nothing(said):
     assert agents.made_at(said) is None
+
+
+# --------------------------------- starting is what going live is called
+
+
+CESAR = """-- New Client Onboarded --
+
+First Name: Cesar
+Last Name: Yanes
+Phone: +12405434491
+Email: yanesc90@gmail.com
+Package Selected: Text Verified
+Lead Type: Index Universal Life
+Target Areas for Marketing:
+
+10 Text Verified IUL leads
+States: same states last time
+
+Start today, September 8
+"""
+
+
+def test_start_today_is_a_launch_date():
+    """"Start today, September 8" was Cesar Yanes's whole launch line, and the
+    card read as having no date on it at all — none of the words RYTE knew for
+    going live were on it."""
+    assert agents.find_launch(CESAR, today=date(2026, 9, 8)) == date(2026, 9, 8)
+
+
+@pytest.mark.parametrize(
+    "line,launch",
+    [
+        ("Start today, September 8", date(2026, 9, 8)),
+        ("Starts September 8", date(2026, 9, 8)),
+        ("Started Friday, September 4", date(2026, 9, 4)),
+    ],
+)
+def test_the_ways_starting_gets_written(line, launch):
+    assert agents.find_launch(line, today=date(2026, 9, 8)) == launch
+
+
+def test_a_card_that_starts_today_is_filed_rather_than_reported():
+    agent = agents.Agent(
+        name="Cesar Yanes", card_id="1", url="", said=CESAR,
+        lead_type=agents.find_lead_type(CESAR),
+        stated=agents.stated_lead_type(CESAR),
+        launch=agents.find_launch(CESAR, today=date(2026, 9, 8)),
+    )
+
+    assert agents.cannot_read(agent, needs_lead_type=True) == ""
+
+
+def test_a_hedge_and_an_unreadable_day_read_differently():
+    """"The day isn't settled" blames the card. A plain day RYTE couldn't
+    parse is RYTE failing, and should say so."""
+    hedged, was_hedged = agents.unsettled_launch(
+        "Lead Type: OTP VETS\nMaybe waiting on his last order\n"
+    )
+    plain, not_hedged = agents.unsettled_launch(
+        "Lead Type: OTP VETS\nthe week of September 14 works for him\n"
+    )
+
+    assert was_hedged is True and hedged
+    assert not_hedged is False and plain
+
+
+def test_an_unreadable_day_says_it_is_unreadable():
+    card = "Lead Type: OTP VETS\nthe week of September 14 works for him\n"
+    agent = agents.Agent(
+        name="X", card_id="1", url="", said=card,
+        lead_type=agents.find_lead_type(card),
+        stated=agents.stated_lead_type(card),
+        launch=agents.find_launch(card, today=date(2026, 9, 8)),
+    )
+
+    said = agents.cannot_read(agent, needs_lead_type=True)
+
+    assert "can't read" in said
+    assert "isn't settled" not in said
+    assert "week of September 14" in said

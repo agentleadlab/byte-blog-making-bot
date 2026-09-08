@@ -1353,10 +1353,14 @@ _WHEN_SAID = (
     re.compile(r"[^.\n]*\blaunch\s*date\b[^.\n]*", re.IGNORECASE),
     # "Going live" is one way of saying it. "Leads going by tomorrow" and
     # "leads go out Friday" are two more, and neither contains the word live.
+    # "Start today, September 8" is Cesar Yanes's whole launch line. Starting
+    # is what going live is called about half the time, and without it the card
+    # read as having no date on it at all.
     re.compile(
         r"[^.\n]*\b(?:launch(?:ing|es|ed)?"
         r"|go(?:es|ing)?\s+(?:live|out|by)"
-        r"|leads?\s+(?:are\s+)?go(?:es|ing)?)\b[^.\n]*",
+        r"|leads?\s+(?:are\s+)?go(?:es|ing)?"
+        r"|start(?:s|ing|ed)?)\b[^.\n]*",
         re.IGNORECASE,
     ),
     re.compile(
@@ -1656,24 +1660,31 @@ _A_DAY = re.compile(
 )
 
 
-def unsettled_launch(text: str) -> list[str]:
-    """The lines that talk about a day without settling on one.
+def unsettled_launch(text: str) -> tuple[list[str], bool]:
+    """(the lines that talk about a day, whether any of them hedges it).
 
     Read only when nothing on the card is a launch date. "I can't find a launch
-    date" says the card is missing something; on a card like Aidan Abell's it
-    is the opposite - the card says quite clearly that the day is not decided,
-    and quoting it back is the difference between "fill this in" and "this is
+    date" says the card is missing something; on a card like Aidan Abell's it is
+    the opposite - the card says quite clearly that the day is not decided, and
+    quoting it back is the difference between "fill this in" and "this is
     waiting on his last order".
+
+    The second value keeps those two apart. A line with maybe or pending in it
+    is a day nobody has settled on; a line naming a plain day that RYTE still
+    could not read is RYTE failing, and saying "the day isn't settled" about it
+    blames the card for something it did not do.
     """
-    found = []
+    found, hedged = [], False
     for line in (text or "").splitlines():
         said = " ".join(line.split())
         if not said or len(said) > 200:
             continue
-        if _A_DAY.search(said) or _UNSETTLED.search(said):
-            if _UNSETTLED.search(said) or _A_DAY.search(said):
-                found.append(said)
-    return found[:2]
+        if _UNSETTLED.search(said):
+            hedged = True
+            found.append(said)
+        elif _A_DAY.search(said):
+            found.append(said)
+    return found[:2], hedged
 
 
 def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
@@ -1688,7 +1699,9 @@ def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     # with something missing off it. Saying "I can't find a launch date" about
     # Aidan Abell's sends somebody to fill in a blank that isn't blank, when
     # what it actually says is that he is waiting on his last order.
-    unsettled = unsettled_launch(agent.said) if agent.launch is None else []
+    unsettled, hedged = (
+        unsettled_launch(agent.said) if agent.launch is None else ([], False)
+    )
     if agent.launch is None and not unsettled:
         missing.append("a launch date")
     # What the card is read as saying, not only the field it wrote it in. A
@@ -1701,9 +1714,13 @@ def cannot_read(agent: "Agent", *, needs_lead_type: bool) -> str:
     said = f"I can't find {' or '.join(missing)} on this card." if missing else ""
     if unsettled:
         quoted = " / ".join(f"“{line}”" for line in unsettled)
-        said = f"{said} the day isn't settled — the card says {quoted}".strip()
+        why = (
+            "the day isn't settled" if hedged
+            else "there's a day on the card I can't read"
+        )
+        said = f"{said} {why} — the card says {quoted}".strip()
         if not missing:
-            said = "The day isn't settled — the card says " + quoted
+            said = f"{why[0].upper()}{why[1:]} — the card says {quoted}"
     return said
 
 
