@@ -2299,6 +2299,11 @@ def setups_to_pull(client, lists, day: date, step: str):
         str((trello.find_list(lists, name) or {}).get("id") or "\0")
         for name in (
             dailyops.IN_QUE, dailyops.TODAY, dailyops.QUALITY_CHECK, dailyops.DONE,
+            # Somebody put it there because it is finished with. The Tuesday
+            # 09/08 card was filed here with every item ticked and fetched back
+            # into In Que the same evening, because this list was not on the
+            # list of places a card can already have got to.
+            dailyops.AGED_DONE,
         )
     }
     tomorrow = dailyops.next_day(day)

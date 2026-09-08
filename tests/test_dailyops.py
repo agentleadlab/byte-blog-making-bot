@@ -4034,3 +4034,53 @@ def test_the_earlier_moves_are_not_held_back_by_a_span():
     assert jobs.walks_today(
         WEEKEND_LEAD_ORDER, date(2026, 9, 5), step="to_quality_check"
     ) is True
+
+
+# --------------------------------- fetching setup cards into In Que
+
+
+class WhereverBoard:
+    """A board where each list holds whatever it was given."""
+
+    def __init__(self, where):
+        self.where = where
+
+    def list_cards(self, list_id):
+        return self.where.get(list_id, [])
+
+
+SETUP_LISTS = [
+    {"id": name, "name": name}
+    for name in (
+        dailyops.IN_QUE, dailyops.TODAY, dailyops.QUALITY_CHECK, dailyops.DONE,
+        dailyops.AGED_DONE, "Automation Department",
+    )
+]
+
+
+def _pulled_from(sitting_in, *, day=date(2026, 9, 8)):
+    from wilbyte.bot import jobs
+
+    card = {
+        "id": "s", "name": "Agent Setup Going Live Tuesday 09/08",
+        "idList": sitting_in,
+    }
+    board = WhereverBoard({sitting_in: [card]})
+    found, _ = jobs.setups_to_pull(board, SETUP_LISTS, day, "to_quality_check")
+    return found
+
+
+def test_a_setup_card_still_in_automation_is_fetched():
+    """In Que is the only list nine the next morning looks in, so a card left
+    in Automation spends its working day off to the side of the board."""
+    assert _pulled_from("Automation Department")
+
+
+@pytest.mark.parametrize(
+    "finished", [dailyops.AGED_DONE, dailyops.DONE, dailyops.QUALITY_CHECK]
+)
+def test_a_card_somebody_filed_away_is_left_where_it_is(finished):
+    """The Tuesday 09/08 card was filed into Aged Leads Order Done with every
+    item ticked and fetched straight back into In Que the same evening — that
+    list wasn't among the places a card could already have got to."""
+    assert _pulled_from(finished) == []
