@@ -2202,15 +2202,11 @@ def moves_waiting(config: Config, step: str, *, day=None) -> tuple[list[str], li
             # card going somewhere else is visible before it goes there.
             found.append(title if where == to_name else f"{title} → {where}")
 
-        fetch, home, problem = setups_to_pull(client, lists, day, step)
+        fetch, notes = setups_to_pull(client, lists, day, step)
         found.extend(
             f"{card.get('name')} → {dailyops.IN_QUE} (for tomorrow)" for card in fetch
         )
-        found.extend(
-            f"{card.get('name')} → {dailyops.DONE} (filed in {dailyops.AGED_DONE})"
-            for card in home
-        )
-        return found, [problem] if problem else []
+        return found, notes
     finally:
         client.close()
 
@@ -2269,7 +2265,7 @@ def walks_today(card: dict, day: date, *, step: str, held=()) -> bool:
 
 
 def setups_to_pull(client, lists, day: date, step: str):
-    """What six in the evening does with the setup cards. (fetch, home, problem).
+    """The setup cards six in the evening should fetch into In Que. (cards, notes).
 
     They are made in the Automation Department and sit there until it is their
     turn. In Que is the only list nine the next morning looks in, so a card
@@ -2290,21 +2286,22 @@ def setups_to_pull(client, lists, day: date, step: str):
     always stay where they were made, and left alone once one has reached the
     day's lists: the point is to fetch it, not to drag it back.
 
-    `home` is the other half: a setup card sitting in the aged-leads list,
-    which is a place it cannot belong. That list holds Lead Order cards and
-    the ten o'clock archive empties it, so a setup card left there is a
-    finished card on its way out of the board. A finished setup card belongs
-    in Done, so that is where this sends it - whatever its dates say, because
-    the list it is in is already the whole answer.
+    A setup card walks like everything else once it is in the day's lists -
+    Today by nine on its working day, Quality Check by six, Done by half
+    eight. Nothing here has to put one in Done, and nothing here moves one out
+    of the aged-leads list: nothing but an aged-leads order belongs in there,
+    so a setup card in it is somebody's slip, and the answer to a slip is to
+    say so, not to shuffle it somewhere quietly. It is named in the notes and
+    left exactly where it is.
     """
     from .. import agents, dailyops, trello
 
     if step != "to_quality_check":
-        return [], [], None
+        return [], []
 
     in_que = trello.find_list(lists, dailyops.IN_QUE)
     if in_que is None:
-        return [], [], f"The board has no list called {dailyops.IN_QUE!r}"
+        return [], [f"The board has no list called {dailyops.IN_QUE!r}"]
 
     already = {
         str((trello.find_list(lists, name) or {}).get("id") or "\0")
@@ -2312,13 +2309,16 @@ def setups_to_pull(client, lists, day: date, step: str):
     }
     aged = str((trello.find_list(lists, dailyops.AGED_DONE) or {}).get("id") or "\0")
     tomorrow = dailyops.next_day(day)
-    found, home = [], []
+    found, notes = [], []
     for card in (c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))):
         title = str(card.get("name", ""))
         if not agents.is_setup_card(title):
             continue
         if str(card.get("idList") or "") == aged:
-            home.append(card)
+            notes.append(
+                f"{title} is in {dailyops.AGED_DONE} — nothing but an aged-leads "
+                "order belongs in there. Left it where it is."
+            )
             continue
         worked = agents.setup_worked_on(title, day)
         starts = agents.setup_starts(title, day)
@@ -2334,7 +2334,7 @@ def setups_to_pull(client, lists, day: date, step: str):
     # Furthest out first, because each move goes to the top: the one whose
     # agents go live soonest is moved last and ends up above the rest.
     found.sort(key=lambda pair: pair[0], reverse=True)
-    return [card for _starts, card in found], home, None
+    return [card for _starts, card in found], notes
 
 
 def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[str]]:
@@ -3246,25 +3246,12 @@ def walk_board(config: Config, step: str, *, day=None) -> tuple[int, list[str]]:
                 problems.append(problem)
 
         # Last, so they land on top of In Que rather than under tomorrow's four.
-        fetch, home, problem = setups_to_pull(client, lists, day, step)
-        if problem:
-            problems.append(problem)
+        fetch, notes = setups_to_pull(client, lists, day, step)
+        problems.extend(notes)
         for card in fetch:
             in_que = trello.find_list(lists, dailyops.IN_QUE)
             try:
                 client.move_card(str(card.get("id") or ""), str(in_que.get("id") or ""))
-                moved += 1
-            except Exception as exc:
-                problems.append(f"{card.get('name')} — {_short(exc, 160)}")
-        for card in home:
-            landing = trello.find_list(lists, dailyops.DONE)
-            if landing is None:
-                problems.append(
-                    f"{card.get('name')} — the board has no list called {dailyops.DONE!r}"
-                )
-                continue
-            try:
-                client.move_card(str(card.get("id") or ""), str(landing.get("id") or ""))
                 moved += 1
             except Exception as exc:
                 problems.append(f"{card.get('name')} — {_short(exc, 160)}")

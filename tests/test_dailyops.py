@@ -4066,8 +4066,7 @@ def _setups_from(sitting_in, *, day=date(2026, 9, 8), title=None):
         "idList": sitting_in,
     }
     board = WhereverBoard({sitting_in: [card]})
-    fetch, home, _ = jobs.setups_to_pull(board, SETUP_LISTS, day, "to_quality_check")
-    return fetch, home
+    return jobs.setups_to_pull(board, SETUP_LISTS, day, "to_quality_check")
 
 
 def _pulled_from(sitting_in, **kw):
@@ -4086,23 +4085,30 @@ def test_a_card_that_has_reached_the_days_lists_is_left_where_it_is(finished):
     assert _pulled_from(finished) == []
 
 
-def test_a_setup_card_in_the_aged_leads_list_goes_to_done():
+def test_a_setup_card_in_the_aged_leads_list_is_said_rather_than_moved():
     """The Tuesday 09/08 card was filed into Aged Leads Order Done and fetched
-    straight back into In Que the same evening. It belongs in neither: that
-    list holds Lead Order cards and the ten o'clock archive empties it, and a
-    finished setup card's home is Done."""
-    fetch, home = _setups_from(dailyops.AGED_DONE)
+    straight back into In Que the same evening. Nothing but an aged-leads order
+    belongs in that list, so a setup card in it is somebody's slip — named, and
+    left exactly where it is for them to put right."""
+    fetch, notes = _setups_from(dailyops.AGED_DONE)
     assert fetch == []
-    assert [card["name"] for card in home] == ["Agent Setup Going Live Tuesday 09/08"]
+    assert len(notes) == 1
+    assert "Agent Setup Going Live Tuesday 09/08" in notes[0]
+    assert dailyops.AGED_DONE in notes[0]
 
 
-def test_a_setup_card_whose_agents_went_live_weeks_ago_still_goes_to_done():
-    """Whatever its dates say. The list it is in is already the whole answer,
-    and the alternative is the archive taking it at ten."""
-    _fetch, home = _setups_from(
-        dailyops.AGED_DONE, title="Agent Setup Going Live Monday 08/17"
-    )
-    assert [card["name"] for card in home] == ["Agent Setup Going Live Monday 08/17"]
+def test_the_walk_takes_a_setup_card_to_quality_check_and_then_done():
+    """Its own path needs no help: Today by nine on its working day, Quality
+    Check by six, Done by half eight with everything else nobody dated."""
+    from wilbyte.bot import jobs
+
+    card = {"name": "Agent Setup Going Live Tuesday 09/08"}
+    worked = date(2026, 9, 7)
+    assert jobs.walk_to(card, "to_quality_check", worked) == dailyops.QUALITY_CHECK
+    assert jobs.walks_today(card, worked, step="to_done")
+    assert jobs.walk_to(card, "to_done", worked) == dailyops.DONE
+    # ...and the day before, when it is only waiting its turn, back to In Que.
+    assert jobs.walk_to(card, "to_quality_check", date(2026, 9, 6)) == dailyops.IN_QUE
 
 
 def test_the_aged_archive_leaves_a_setup_card_alone(monkeypatch, config):
