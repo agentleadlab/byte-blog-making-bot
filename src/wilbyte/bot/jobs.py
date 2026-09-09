@@ -2337,6 +2337,267 @@ def setups_to_pull(client, lists, day: date, step: str):
     return [card for _starts, card in found], notes
 
 
+def _people_on(cards: dict, members: list[dict], holds: dict):
+    """Board members, with which of the day's cards each keeps a checklist on.
+
+    From the cards themselves rather than from a list in the code. The board
+    says who does what - Therese has a checklist on Ops and nowhere else,
+    Nicole has one on Ads and one on General - and a rule read off the board
+    keeps being right after somebody joins.
+    """
+    from .. import tagged
+
+    people = {}
+    for member in members:
+        keeps = {}
+        for kind, card in cards.items():
+            if kind not in tagged.WORK:
+                continue
+            names = [
+                str(held.get("name") or "")
+                for held in holds.get(str(card.get("id") or "")) or []
+            ]
+            found = tagged.checklist_for(str(member.get("fullName") or ""), names)
+            if found:
+                keeps[kind] = found
+        if not keeps:
+            continue
+        people[str(member.get("username") or "").casefold()] = tagged.Person(
+            username=str(member.get("username") or ""),
+            full_name=str(member.get("fullName") or ""),
+            keeps=keeps,
+            home=tagged.home_for(keeps.values()),
+        )
+    return people
+
+
+def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
+    """The tagged comments that are not on anybody's checklist yet. (tasks, problems).
+
+    Reads only. The comments on today's four cards, every person tagged in
+    them, and where each one belongs - which is not the card it was said on,
+    see `tagged`.
+
+    One that is already filed is skipped by the comment's id, so running this
+    twice in an afternoon adds nothing the first run added.
+    """
+    from .. import dailyops, tagged, trello
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    problems = []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        cards = dailyops.cards_covering(every, day)
+        wanted = {kind: card for kind, card in cards.items() if kind in tagged.WORK}
+        if not wanted:
+            return [], [f"No General, Ops or Ads card dated {day:%m/%d/%y} on the board"]
+
+        holds = {
+            str(card.get("id") or ""): client.card_checklists(str(card.get("id") or ""))
+            for card in wanted.values()
+        }
+        members = client.board_members(config.secrets.trello_board_id)
+        people = _people_on(wanted, members, holds)
+
+        everywhere = [held for group in holds.values() for held in group]
+        wants, unknown = [], set()
+        for kind, card in wanted.items():
+            card_id = str(card.get("id") or "")
+            short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
+            for said in client.card_notes(card_id):
+                note = tagged.Note(
+                    comment_id=str(said.get("id") or ""),
+                    text=str(said.get("text") or ""),
+                    author=str(said.get("author") or ""),
+                    card_id=card_id,
+                    card_short=short or str(card.get("shortLink") or ""),
+                    card_title=str(card.get("name") or ""),
+                )
+                if tagged.everyones_job(note.text):
+                    # Every checklist on the card it was said on, and asked per
+                    # checklist: it belongs on all of them, so finding it on
+                    # Kath's is no reason to leave Nicole's without it.
+                    for held in holds.get(card_id) or []:
+                        if tagged.already_on(note, held):
+                            continue
+                        wants.append((note, None, kind, str(held.get("name") or "")))
+
+                tags = tagged.mentioned(note.text)
+                if not tags:
+                    continue
+                # Filed already, wherever somebody put it. Against every card's
+                # checklists rather than this card's: the line for a comment on
+                # General lands on Ops, so looking at General alone would file
+                # it again every afternoon.
+                if tagged.already_filed(note, everywhere):
+                    continue
+                for name in tags:
+                    if name in people:
+                        wants.append((note, people[name], "", ""))
+                    else:
+                        unknown.add(name)
+
+        if unknown:
+            problems.append(
+                "Tagged but with no checklist on today's cards, so I left them: "
+                + ", ".join(f"@{name}" for name in sorted(unknown))
+            )
+
+        return _read_the_tags(config, wants, people, wanted, problems), problems
+    finally:
+        client.close()
+
+
+def _read_the_tags(config, wants, people, cards, problems) -> list:
+    """Turn (comment, person, kind, checklist) into tasks, summarised and routed.
+
+    A person means the kind still has to be decided; a kind and checklist
+    already filled in means the comment tagged the card and there is nothing
+    to decide.
+
+    Claude writes the summary and says which kind of work it is, in one call
+    for the whole batch. When that fails - no key, a bad night at Anthropic -
+    every task is still made from the comment's own first line, because a line
+    on the wrong checklist is recoverable and a task nobody wrote down is not.
+    """
+    from .. import tagged
+
+    if not wants:
+        return []
+
+    by_id = {}
+    for note, *_rest in wants:
+        by_id.setdefault(note.comment_id, note)
+
+    written = {}
+    try:
+        written = _ask_about_tags(config, list(by_id.values()), people)
+    except Exception as exc:
+        problems.append(
+            "Couldn't have the comments read, so these are the raw first lines: "
+            f"{_short(exc, 120)}"
+        )
+
+    tasks = []
+    for note, person, told_kind, told_list in wants:
+        said = written.get(note.comment_id) or {}
+        summary = str(said.get("summary") or "").strip()
+        if not summary or tagged.brief_already(note.text):
+            summary = tagged.trim(note.text) or summary
+        if not summary:
+            continue
+
+        if person is None:
+            kind, checklist, judged, everyone = told_kind, told_list, False, True
+        else:
+            kind, judged = tagged.where(person, note, judged=str(said.get("kind") or ""))
+            if kind not in cards:
+                problems.append(
+                    f"{person.full_name or person.username} — “{summary}” is {kind} "
+                    f"work and there's no {kind} card today, so I left it"
+                )
+                continue
+            checklist, everyone = person.keeps[kind], False
+
+        card = cards.get(kind) or {}
+        tasks.append(tagged.Task(
+            note=note, person=person, kind=kind, checklist=checklist,
+            card_id=str(card.get("id") or ""),
+            card_title=str(card.get("name") or ""),
+            summary=summary, judged=judged, everyone=everyone,
+        ))
+    return tasks
+
+
+def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
+    """{comment id: {"summary": ..., "kind": ...}}, written by Claude."""
+    from anthropic import Anthropic
+
+    from .. import tagged
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=2000,
+        system=(
+            "You turn comments on a team's Trello cards into checklist lines. "
+            "Say what the tagged person has to do, in the words the comment "
+            "used. Never invent a task the comment does not ask for."
+        ),
+        tools=[{
+            "name": "lines",
+            "description": "One line per comment.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "comment_id": {"type": "string"},
+                                "summary": {"type": "string"},
+                                "kind": {"type": "string", "enum": list(tagged.WORK)},
+                            },
+                            "required": ["comment_id", "summary", "kind"],
+                        },
+                    }
+                },
+                "required": ["lines"],
+            },
+        }],
+        tool_choice={"type": "tool", "name": "lines"},
+        messages=[{"role": "user", "content": tagged.summary_prompt(notes, people)}],
+    )
+    payload = _extract_tool_input(response)
+    return {
+        str(line.get("comment_id") or ""): line
+        for line in payload.get("lines") or []
+    }
+
+
+def file_tags(config: Config, tasks: list) -> tuple[list[str], list[str]]:
+    """Write the lines. (what landed, problems).
+
+    Nothing is created that is not already there: every task names a checklist
+    that exists, because it was found by reading that card's checklists in the
+    first place.
+    """
+    client = open_trello(config)
+    landed, problems = [], []
+    held_by_card: dict[str, list] = {}
+    try:
+        for task in tasks:
+            if not task.card_id:
+                problems.append(f"{task.summary} — I lost track of which card that was")
+                continue
+            if task.card_id not in held_by_card:
+                held_by_card[task.card_id] = client.card_checklists(task.card_id)
+            found = next(
+                (one for one in held_by_card[task.card_id]
+                 if str(one.get("name") or "").strip().casefold()
+                 == task.checklist.strip().casefold()),
+                None,
+            )
+            if found is None:
+                problems.append(
+                    f"{task.summary} — no “{task.checklist}” checklist on {task.card_title}"
+                )
+                continue
+            try:
+                client.add_check_item(str(found.get("id") or ""), task.item())
+            except Exception as exc:
+                problems.append(f"{task.summary} — {_short(exc, 160)}")
+                continue
+            landed.append(f"{task.card_title} · {task.checklist} — {task.summary}")
+    finally:
+        client.close()
+    return landed, problems
+
+
 def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[str]]:
     """Put a day's setup card on that day's Ads and Ops cards. (added, problems).
 

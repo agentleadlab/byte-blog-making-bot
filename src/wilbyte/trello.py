@@ -220,6 +220,50 @@ class TrelloClient:
                 said.append(text)
         return said, copied
 
+    def card_notes(self, card_id: str) -> list[dict]:
+        """The comments on a card with their ids and who wrote them, newest first.
+
+        `card_comments` returns the words alone, which is all the agent
+        reading needs. Turning a comment into a task needs the id - it is what
+        the permalink is built from, and the permalink is how RYTE knows he
+        has already filed one.
+        """
+        actions = self._request(
+            "GET", f"/cards/{card_id}/actions",
+            params={"filter": "commentCard", "limit": 50},
+        )
+        found = []
+        for item in actions or []:
+            text = str((item.get("data") or {}).get("text") or "")
+            if not text:
+                continue
+            found.append({
+                "id": str(item.get("id") or ""),
+                "text": text,
+                "author": str((item.get("memberCreator") or {}).get("fullName") or ""),
+                "when": str(item.get("date") or ""),
+            })
+        return found
+
+    def board_members(self, board_id: str) -> list[dict]:
+        """Everybody on the board: id, username and full name.
+
+        The full name is the point. A comment tags `@nic0l3` and the checklist
+        is called Nicole, and only the member list joins those two up.
+        """
+        found = self._request(
+            "GET", f"/boards/{board_id}/members",
+            params={"fields": "username,fullName"},
+        )
+        return [
+            {
+                "id": str(one.get("id") or ""),
+                "username": str(one.get("username") or ""),
+                "fullName": str(one.get("fullName") or ""),
+            }
+            for one in found or []
+        ]
+
     # ------------------------------------------------------------- writing
 
     def move_card(self, card_id: str, list_id: str, *, position: str = "top") -> dict:

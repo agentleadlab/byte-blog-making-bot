@@ -743,6 +743,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "tags":
+                await _tagged_tasks(responder, config, request.brief or "")
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -1361,6 +1365,66 @@ async def _archive_aged(responder: Responder, config: Config) -> None:
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     await responder.send(note)
+
+
+#: How many tagged lines to print before the message stops being readable.
+TAGS_SHOWN = 25
+
+
+async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None:
+    """Comments that tagged somebody, turned into lines on their checklists.
+
+    Shows them and waits for the button. It writes onto four people's live
+    lists, and the spread - the other thing that writes checklists - put lines
+    on the wrong card before it had been watched for a week.
+    """
+    from .. import tagged
+
+    try:
+        tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the comments\n{exc}"))
+        return
+
+    if not tasks:
+        note = "Every tagged comment on today's cards is already on a checklist. 👍"
+        if problems:
+            note += "\n⚠ " + "\n⚠ ".join(problems)
+        await responder.send(note)
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add {len(tasks)} item(s)",
+        emoji="📌",
+    )
+    listed = "\n".join(f"• {tagged.describe(one)}" for one in tasks[:TAGS_SHOWN])
+    if len(tasks) > TAGS_SHOWN:
+        listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
+    note = (
+        f"📌 {len(tasks)} tagged comment(s) that aren't on a checklist yet:\n{listed}\n"
+        "Each one gets the summary and a link back to the comment."
+    )
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note, view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        landed, trouble = await asyncio.to_thread(jobs.file_tags, config, tasks)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't write them\n{exc}"))
+        return
+
+    said_back = f"📌 Added {len(landed)} item(s)."
+    if landed:
+        said_back += "\n" + "\n".join(f"• {line}" for line in landed[:TAGS_SHOWN])
+    if trouble:
+        said_back += "\n⚠ " + "\n⚠ ".join(trouble)
+    await responder.send(said_back)
 
 
 async def _board_step(bot: "WilByteBot", step: str, today) -> None:

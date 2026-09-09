@@ -122,6 +122,10 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # Comments that tagged somebody and never made it onto a checklist.
+    "tags": "tags",
+    "tagged": "tags",
+    "tasks": "tags",
     # Lead-type words RYTE was taught rather than shipped with.
     "words": "words",
     "word": "words",
@@ -448,7 +452,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
-                         "archive", "setups", "spread", "unspread")
+                         "archive", "setups", "spread", "unspread", "tags")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -558,7 +562,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words",
+        "words", "tags",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -751,6 +755,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
+> @RYTE **trello tags** — comments that tagged somebody and never made it onto
+> a checklist. Therese's work goes on Ops wherever it was said; `@card` goes to
+> everybody on that card. Shown for confirmation first
 > @RYTE **trello spread** — put the setup card's agents on the Lead Order card
 > for the day they go live, each under the lead type they bought
 > @RYTE **trello spread 08/28** — a day that was missed. The date is the day
