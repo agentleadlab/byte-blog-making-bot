@@ -168,6 +168,7 @@ class WilByteBot(discord.Client):
         self.board_task: asyncio.Task | None = None
         self.agent_task: asyncio.Task | None = None
         self.setup_task: asyncio.Task | None = None
+        self.tags_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -256,6 +257,13 @@ class WilByteBot(discord.Client):
             self.setup_task is None or self.setup_task.done()
         ):
             self.setup_task = self.loop.create_task(setup_check_loop(self))
+        # A comment is somebody handing over a job, which happens all day and
+        # on nobody's schedule. Its own switch, because it writes onto four
+        # people's live checklists rather than reporting.
+        if self.config.secrets.trello_tags_auto and (
+            self.tags_task is None or self.tags_task.done()
+        ):
+            self.tags_task = self.loop.create_task(tags_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -3220,6 +3228,70 @@ async def _report_stuck(responder: Responder, stuck) -> None:
 AGENT_CHECK_SECONDS = 20
 
 
+# A comment is somebody handing over a job, and the point of this is that they
+# do not then have to write it down - so the gap between saying it and seeing
+# it on the list is the whole experience. A tick costs one request while
+# nothing has happened (see `jobs.tags_stamp`), so a short one is cheap.
+TAG_CHECK_SECONDS = 60
+
+
+async def tags_loop(bot: "WilByteBot") -> None:
+    """Watch the day's cards for tagged comments and file them as they land.
+
+    Cheap while it is quiet: one request a minute to ask whether any of the
+    three cards has been touched at all. Everything else - the comments, the
+    checklists, having them read - only happens once one has.
+
+    The stamp is remembered before the filing rather than after, so a pass
+    that goes wrong is not retried every minute for the rest of the day.
+    Nothing is lost by that: a line is matched by the comment's id, so the
+    next real change picks up anything this pass missed.
+    """
+    seen = ""
+    while not bot.is_closed():
+        try:
+            stamp = await asyncio.to_thread(jobs.tags_stamp, bot.config)
+            if stamp and stamp != seen:
+                seen = stamp
+                responder = _board_responder(bot)
+                if responder is not None:
+                    await _file_tags_now(responder, bot.config)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Tag check failed; will try again shortly")
+        await asyncio.sleep(TAG_CHECK_SECONDS)
+
+
+async def _file_tags_now(responder: Responder, config: Config) -> None:
+    """File the tagged comments without asking, and say what landed.
+
+    Silent when there was nothing, because this runs all day: a line every
+    minute saying nothing happened is a line nobody reads, and one that
+    matters would be lost among them.
+    """
+    tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
+    if not tasks:
+        # Said out loud even with nothing filed: somebody tagged with no
+        # checklist is a person waiting on a job nobody wrote down.
+        if problems:
+            await responder.send("⚠ " + "\n⚠ ".join(problems))
+        return
+
+    landed, trouble = await asyncio.to_thread(jobs.file_tags, config, tasks)
+    note = ""
+    if landed:
+        note = f"📌 Added {len(landed)} item(s) from the comments.\n" + "\n".join(
+            f"• {line}" for line in landed[:TAGS_SHOWN]
+        )
+        if len(landed) > TAGS_SHOWN:
+            note += f"\n…and {len(landed) - TAGS_SHOWN} more."
+    for line in problems + trouble:
+        note += ("\n" if note else "") + f"⚠ {line}"
+    if note:
+        await responder.send(note)
+
+
 SETUP_CHECK_SECONDS = 600
 
 
@@ -4352,6 +4424,18 @@ def preflight(config: Config) -> list[str]:
             missing_required.append(env_name)
         else:
             log.warning("  [not set] %-20s needed to %s", env_name, purpose)
+
+    # The three watchers, said out loud because none of them has any other
+    # sign of life: each is silent until the thing it watches for happens, and
+    # "quiet morning" and "never started" look identical from the outside.
+    for on, name, what in (
+        (config.secrets.trello_auto, "TRELLO_AUTO", "walk the board on the clock"),
+        (config.secrets.trello_agents_auto, "TRELLO_AGENTS_AUTO",
+         "file new agents as they land"),
+        (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
+         "file tagged comments onto checklists as they are made"),
+    ):
+        log.info("  [%s]  %-20s %s", " on" if on else "off", name, what)
     return missing_required
 
 

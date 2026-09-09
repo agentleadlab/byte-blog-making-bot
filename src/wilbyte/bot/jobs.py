@@ -2371,6 +2371,34 @@ def _people_on(cards: dict, members: list[dict], holds: dict):
     return people
 
 
+def tags_stamp(config: Config, *, day=None) -> str:
+    """A fingerprint of when the day's three cards were last touched.
+
+    One request for the whole board, so the watcher costs one call a tick
+    while nothing is happening - which is nearly always. Reading the comments
+    and the checklists only happens once this has changed.
+
+    RYTE writing a line changes it too, so the tick after a write does one
+    more full read and finds everything already filed. That is the check
+    rather than the waste: it says the line landed.
+    """
+    from .. import dailyops, tagged
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    try:
+        cards = dailyops.cards_covering(
+            client.board_cards(config.secrets.trello_board_id), day
+        )
+        return "|".join(
+            f"{kind}:{cards[kind].get('dateLastActivity') or ''}"
+            for kind in sorted(cards)
+            if kind in tagged.WORK
+        )
+    finally:
+        client.close()
+
+
 def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
     """The tagged comments that are not on anybody's checklist yet. (tasks, problems).
 

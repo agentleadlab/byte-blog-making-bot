@@ -170,6 +170,11 @@ class Secrets:
     # board moves happen three times a day and this happens all day, so
     # wanting one is not wanting the other.
     trello_agents_auto: bool = False
+    # File a tagged comment onto the tagged person's checklist as it is made,
+    # rather than when somebody types `trello tags`. Its own switch: this one
+    # writes onto four people's lists all day and the routing is worth
+    # watching before it runs unattended.
+    trello_tags_auto: bool = False
     # Where the board's own messages go. Falls back to the posting channel.
     discord_board_channel_id: str | None = None
     # Who gets pinged when the board needs a person rather than a report.
@@ -296,6 +301,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 trello_auto=(_env("TRELLO_AUTO") or "").strip().lower()
                 in ("1", "true", "yes"),
                 trello_agents_auto=(_env("TRELLO_AGENTS_AUTO") or "").strip().lower()
+                in ("1", "true", "yes"),
+                trello_tags_auto=(_env("TRELLO_TAGS_AUTO") or "").strip().lower()
                 in ("1", "true", "yes"),
                 discord_board_channel_id=_env("DISCORD_BOARD_CHANNEL_ID"),
                 discord_notify_user_id=_env("DISCORD_NOTIFY_USER_ID"),

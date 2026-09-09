@@ -429,3 +429,86 @@ def test_the_line_written_carries_the_link_back(config, monkeypatch):
         "Add in gcalendar lunch + walk\nhttps://trello.com/c/IU4PM7wJ#comment-c1"
     )
     assert landed == ["💎 General 09/09/26 · Frank — Add in gcalendar lunch + walk"]
+
+
+# --------------------------------------------------- watching, rather than asked
+
+
+def test_the_watcher_costs_one_request_while_nothing_happens(config, monkeypatch):
+    """One call to ask whether any of the three cards was touched at all. The
+    comments and the checklists are only read once one has."""
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    asked = []
+
+    class Quiet:
+        def board_cards(self, board_id):
+            asked.append(board_id)
+            return [
+                {"id": "g", "name": "💎 General 09/09/26", "dateLastActivity": "T1"},
+                {"id": "o", "name": "💻 Ops 09/09/26", "dateLastActivity": "T2"},
+                {"id": "a", "name": "📊 Ads 09/09/26", "dateLastActivity": "T3"},
+            ]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Quiet())
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 9))
+
+    first = jobs.tags_stamp(config)
+    again = jobs.tags_stamp(config)
+
+    assert first == again
+    assert len(asked) == 2  # one apiece, and nothing else was read
+
+
+def test_a_new_comment_changes_the_stamp(config, monkeypatch):
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    when = {"g": "T1"}
+
+    class Board:
+        def board_cards(self, _board_id):
+            return [
+                {"id": "g", "name": "💎 General 09/09/26",
+                 "dateLastActivity": when["g"]},
+                {"id": "o", "name": "💻 Ops 09/09/26", "dateLastActivity": "T2"},
+            ]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 9))
+
+    before = jobs.tags_stamp(config)
+    when["g"] = "T9"
+
+    assert jobs.tags_stamp(config) != before
+
+
+def test_the_lead_order_card_is_not_watched(config, monkeypatch):
+    """Nothing gets tagged onto it — what goes on it is what agents bought."""
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    class Board:
+        def board_cards(self, _board_id):
+            return [
+                {"id": "g", "name": "💎 General 09/09/26", "dateLastActivity": "T1"},
+                {"id": "lo", "name": "Lead Order 09/09/26", "dateLastActivity": "T4"},
+            ]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 9))
+
+    assert "lead_order" not in jobs.tags_stamp(config)
