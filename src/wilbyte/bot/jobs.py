@@ -2428,6 +2428,14 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
         }
         members = client.board_members(config.secrets.trello_board_id)
         people = _people_on(wanted, members, holds)
+        # Everybody on the board, checklist or not. What is not in here was
+        # never a tag: Therese's confirmations say "@Corbin Simpson" and Faith
+        # writes "@jadon", and those are the agents being talked about rather
+        # than anybody being given a job. Trello renders them as plain text
+        # for exactly that reason.
+        on_the_board = {
+            str(one.get("username") or "").casefold() for one in members
+        } - {""}
 
         everywhere = [held for group in holds.values() for held in group]
         wants, unknown = [], set()
@@ -2452,7 +2460,10 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                             continue
                         wants.append((note, None, kind, str(held.get("name") or "")))
 
-                tags = tagged.mentioned(note.text)
+                tags = [
+                    name for name in tagged.mentioned(note.text)
+                    if name in on_the_board
+                ]
                 if not tags:
                     continue
                 # Filed already, wherever somebody put it. Against every card's
@@ -2469,8 +2480,8 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
 
         if unknown:
             problems.append(
-                "Tagged but with no checklist on today's cards, so I left them: "
-                + ", ".join(f"@{name}" for name in sorted(unknown))
+                "On the board but with no checklist on today's cards, so I left "
+                "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
             )
 
         return _read_the_tags(config, wants, people, wanted, problems), problems
@@ -2543,7 +2554,7 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
     """{comment id: {"summary": ..., "kind": ...}}, written by Claude."""
     from anthropic import Anthropic
 
-    from .. import tagged
+    from .. import copywriter, tagged
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
@@ -2580,7 +2591,7 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
         tool_choice={"type": "tool", "name": "lines"},
         messages=[{"role": "user", "content": tagged.summary_prompt(notes, people)}],
     )
-    payload = _extract_tool_input(response)
+    payload = copywriter._extract_tool_input(response)
     return {
         str(line.get("comment_id") or ""): line
         for line in payload.get("lines") or []

@@ -512,3 +512,58 @@ def test_the_lead_order_card_is_not_watched(config, monkeypatch):
     monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 9))
 
     assert "lead_order" not in jobs.tags_stamp(config)
+
+
+# ------------------------------------------------------ what a tag actually is
+
+
+AGENT_TALK = (
+    "✅ OTP VET ON DISTRO HUB setup is complete for CORBIN SIMPSON\n"
+    "✅ @Corbin Simpson\nReady to go live Thursday, Sep 10"
+)
+JUST_A_LINK = "@kathleenmarie15 https://chatgpt.com/s/m_6aa1df52eb58819191b4aee60be120ee"
+
+
+def test_an_agents_name_is_not_a_tag(config, monkeypatch):
+    """Therese's confirmations say "@Corbin Simpson" and Faith writes "@jadon".
+    Those are the agents being talked about, not somebody being given a job —
+    Trello renders them as plain text for the same reason."""
+    board = TaggedBoard({"o": [
+        {"id": "c1", "text": AGENT_TALK, "author": "Therese Guba"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    assert problems == []  # and not thirteen names nobody recognises
+
+
+def test_somebody_really_on_the_board_is_still_named(config, monkeypatch):
+    """Tre is a member. He keeps no checklist, so his line is a job nobody
+    wrote down — worth saying, unlike an agent's name."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": "@tretarpley have a look at this", "author": "Kath"},
+    ]})
+
+    _tasks, problems = planning(board, monkeypatch, config)
+
+    assert any("@tretarpley" in one for one in problems)
+
+
+def test_a_pasted_link_is_not_a_summary(config, monkeypatch):
+    """One went on as "[https://chatgpt.com/s/m_6aa1df...](https://chatgpt.com/s"
+    — Discord had made half of it a markdown link and cut the rest. The link
+    back to the comment is already on the line."""
+    assert tagged.trim(JUST_A_LINK) == ""
+
+    board = TaggedBoard({"a": [
+        {"id": "c1", "text": JUST_A_LINK, "author": "Frank"},
+    ]})
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+
+
+def test_the_words_around_a_link_still_count():
+    said = "@nic0l3 new creatives here https://drive.google.com/drive/folders/1CW"
+    assert tagged.trim(said) == "new creatives here"

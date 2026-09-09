@@ -55,6 +55,11 @@ MOST_CHARACTERS = 80
 # into something briefer is not possible and not wanted.
 ALREADY_BRIEF = 8
 
+# A pasted link is not a summary of anything. One went onto the list as
+# "[https://chatgpt.com/s/m_6aa1df...](https://chatgpt.com/s" - Discord had
+# made half of it a markdown link and cut the rest.
+A_LINK = re.compile(r"https?://\S+", re.IGNORECASE)
+
 # The day's cards a tagged item can land on, and what kind of work each holds.
 # Lead Order is not here: what goes on it is what agents bought, written by the
 # spread off the setup card, and a task is not an order.
@@ -141,8 +146,13 @@ def everyones_job(text: str) -> bool:
 
 
 def strip_mentions(text: str) -> str:
-    """The comment without its tags, which is the part that says what to do."""
-    return " ".join(MENTION.sub(" ", text or "").split())
+    """The comment without its tags or its links.
+
+    What is left is the part that says what to do. The link belongs on the
+    line - but as the link back to the comment, which is already there, not
+    as the words describing the job.
+    """
+    return " ".join(A_LINK.sub(" ", MENTION.sub(" ", text or "")).split())
 
 
 def checklist_for(full_name: str, names) -> str:
