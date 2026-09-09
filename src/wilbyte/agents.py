@@ -3,13 +3,13 @@
 A landing-page form drops a card into Tre. Faith and Casey fill in the
 details, decide the launch date, and move it to In Que. From there it is
 mechanical, and it is the mechanical part that gets done wrong at 5pm on a
-Friday: copy the lead type, copy the card link, paste both onto three
-different cards on the right date, on the right checklists.
+Friday: copy the lead type, copy the card link, paste both onto the right
+cards on the right date, on the right checklists.
 
 What happens turns on when the agent goes live, and on whether the card they
 go on exists yet:
 
-    today                       -> that day's Lead Order, Ads and Ops cards
+    today                       -> that day's Ads and Ops cards, not Lead Order
     a setup card covers the day -> that card
     no card for the day yet     -> wait in Franklin's list
 

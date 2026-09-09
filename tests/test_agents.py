@@ -435,33 +435,22 @@ Launch date is today, Tuesday, August 25
 """
 
 
-def test_a_basic_agent_lands_on_own_setup():
-    agent = read(BASIC_TODAY, title="New Agent - Vicente Mejia")
+@pytest.mark.parametrize(
+    "agent_text, title",
+    [(BASIC_TODAY, "New Agent - Vicente Mejia"), (None, None)],
+)
+def test_an_agent_going_live_today_is_not_put_on_the_lead_order_card(agent_text, title):
+    """Somebody turning up on the morning of their own launch is a card the
+    team is working now, not an order to be filed under its lead type —
+    "when we have a new agent going live same day ... dont do that anymore,
+    just add it on ops and ads". Jadon Apruzzese went on Lead Order 09/09/26
+    under OTP VET Plus on the morning he launched."""
+    agent = read(agent_text, title=title) if agent_text else read()
 
     plan = filed_today(agent, LEAD_ORDER_LISTS)
 
-    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
-    assert order.checklist == "own setup"
-    assert order.make_checklist is False
-    assert order.item.endswith("Basic Spanish IUL")
-
-
-def test_an_otp_agent_lands_on_its_own_lead_type():
-    """Gustin bought text-verified IUL. That has a checklist of its own."""
-    plan = filed_today(read(), LEAD_ORDER_LISTS)
-
-    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
-    assert order.checklist == "OTP IUL Plus"
-
-
-def test_the_line_carries_the_link_and_the_lead_type():
-    """"New Agent - Romy Soto · Done · 40 Basic Spanish IUL" - the link renders
-    the name and badge, the words say what was bought."""
-    plan = filed_today(read(), LEAD_ORDER_LISTS)
-
-    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
-    assert order.item.endswith("Text Verified IUL Plus")
-    assert order.item.startswith("https://trello.com/c/")
+    assert [s for s in plan.steps if s.card_title.startswith("Lead Order")] == []
+    assert plan.problems == []
 
 
 def test_a_self_setup_type_is_never_a_question():
@@ -474,14 +463,23 @@ def test_a_self_setup_type_is_never_a_question():
     assert plan.problems == []
 
 
-def test_own_setup_is_made_if_the_card_has_not_got_one():
-    agent = read(BASIC_TODAY, title="New Agent - Vicente Mejia")
+# The lead type still decides which checklist a line lands on — it is the
+# spread off the setup card that writes those lines now, not the day's filing.
 
-    plan = filed_today(agent, ["OTP IUL Plus"])
 
-    (order,) = [s for s in plan.steps if s.card_title.startswith("Lead Order")]
-    assert order.checklist == "own setup"
-    assert order.make_checklist is True
+def test_a_basic_agent_belongs_on_own_setup():
+    """"New Agent - Romy Soto · Done · 40 Basic Spanish IUL" — every new agent
+    on the real card is under "own setup", and the lead type is in the line
+    rather than being the checklist it sits on."""
+    assert agents.is_own_setup("Basic Spanish IUL") is True
+
+
+def test_an_otp_agent_belongs_on_its_own_lead_type():
+    """Gustin bought text-verified IUL. That has a checklist of its own."""
+    said, landed, _could = agents.best_lead_type(REAL, LEAD_ORDER_LISTS)
+
+    assert agents.is_own_setup(said) is False
+    assert landed == "OTP IUL Plus"
 
 
 def test_ads_and_ops_still_go_to_people():
@@ -1051,8 +1049,9 @@ def test_a_real_launch_date_is_not_lost_to_it():
     assert agents.find_launch(said, today=WEDNESDAY) == date(2026, 8, 27)
 
 
-def test_the_three_cards_get_the_line():
-    """The usual: that day's Lead Order, Ads and Ops, then the card to Done."""
+def test_the_days_two_cards_get_the_line():
+    """The usual: that day's Ads and Ops, then the card to Done. Not the Lead
+    Order card — an agent going live the same day goes on Ads and Ops only."""
     from wilbyte.bot import jobs
 
     agent = agents.read_agent(
@@ -1072,9 +1071,11 @@ def test_the_three_cards_get_the_line():
     assert plan.problems == []
     assert plan.move_to == agents.DONE
     assert {step.card_title for step in plan.steps} == {
-        "Lead Order 08/26/26", "📊 Ads 08/26/26", "💻 Ops 08/26/26",
+        "📊 Ads 08/26/26", "💻 Ops 08/26/26",
     }
-    assert any(step.checklist == "OTP VET Plus" for step in plan.steps)
+    assert [step.checklist for step in plan.steps] == [
+        *agents.ADS_PEOPLE, *agents.OPS_PEOPLE
+    ]
 
 
 # --------------------------------- a card corrected by pasting a block below
@@ -1729,31 +1730,14 @@ def test_one_order_is_unchanged_everywhere():
 
 
 def test_two_orders_land_on_two_lead_order_checklists():
-    """One line on the Lead Order card is half an order."""
-    from wilbyte.bot import jobs
+    """One line on the Lead Order card is half an order. Catherine bought vets
+    and FEX, so she belongs under both."""
+    names = ["OTP VETS", "OTP FEX"]
+    orders = agents.ordered_lead_types(CATHERINE)
+    hint = agents.tier_of(CATHERINE)
 
-    agent = agents.read_agent(
-        card("New Agent - Catherine Y Barney"), text=CATHERINE, today=date(2026, 8, 29)
-    )
-    held = [
-        {"id": "l0", "name": "OTP VETS", "checkItems": []},
-        {"id": "l1", "name": "OTP FEX", "checkItems": []},
-    ]
-    plan = jobs._plan_for(
-        Stub(held), agent, day=date(2026, 8, 29), tomorrow=date(2026, 8, 30),
-        dated={
-            "lead_order": {"id": "lo", "name": "Lead Order 08/29/26"},
-            "ads": {"id": "ad", "name": "📊 Ads 08/29/26"},
-            "ops": {"id": "op", "name": "💻 Ops 08/29/26"},
-        },
-        every_card=[],
-    )
+    landed = {agents.match_checklist(phrase, names, tier=hint) for phrase in orders}
 
-    assert plan.problems == []
-    landed = {
-        step.checklist for step in plan.steps
-        if step.card_title == "Lead Order 08/29/26"
-    }
     assert landed == {"OTP VETS", "OTP FEX"}
 
 
