@@ -3321,6 +3321,338 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def rebuttal_evidence(config: Config, dispute) -> "object":
+    """What the board and the sheet remember about this customer.
+
+    Reads only, and gathers nothing it cannot point at. A proof with no
+    evidence behind it comes back empty and is left out of the document -
+    writing around a gap is how a rebuttal gets taken apart.
+    """
+    from .. import agents as rules, gsheets, rebuttal as rules_doc
+
+    found = rules_doc.Gathered()
+    name = dispute.customer_name
+    if not name:
+        found.holes.append("No customer name, so I couldn't look anything up.")
+        return found
+
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = rules.named_that(name, every)
+    except Exception as exc:
+        found.holes.append(f"Couldn't read the board: {_short(exc, 120)}")
+        return found
+    finally:
+        client.close()
+
+    if not cards:
+        found.holes.append(
+            f"No New Agent card for “{name}” anywhere on the board, so the "
+            "order details and the sheet had to be left out."
+        )
+        return found
+
+    card = cards[0]
+    client = open_trello(config)
+    try:
+        detail = client.card_detail(str(card.get("id") or ""))
+        said = client.card_comments(str(card.get("id") or ""))
+    except Exception as exc:
+        found.holes.append(f"Couldn't read their card: {_short(exc, 120)}")
+        return found
+    finally:
+        client.close()
+
+    body = str(detail.get("desc") or "")
+    agent = rules.read_agent({**card, **detail}, text=body, comments=tuple(said))
+    ordered = []
+    if agent is not None:
+        if agent.stated or agent.lead_type:
+            ordered.append(f"Package: {agent.stated or agent.lead_type}")
+        if agent.launch:
+            ordered.append(f"Launch date: {agent.launch:%B %d, %Y}")
+    if body.strip():
+        ordered.append("From their onboarding card:\n" + body.strip())
+    found.invoice = "\n".join(ordered)
+
+    # The setup confirmations. Therese and Faith post these as the work is
+    # finished, with the date and the sheet on them - which is the delivery
+    # being confirmed in writing, in the words of the person who did it.
+    confirmations = [one for one in said if str(one).strip()]
+    if confirmations:
+        found.delivery = "\n\n---\n".join(confirmations[:6])
+
+    links = rules.sheet_links(said)
+    if not links:
+        found.holes.append(
+            "No sheet link on their card, so the delivered leads had to be "
+            "left out. Paste the sheet link into the command if you have it."
+        )
+    else:
+        found.sheet, trouble = _read_lead_sheet(config, links[0], gsheets)
+        if trouble:
+            found.holes.append(trouble)
+
+    found.timeline = _timeline(dispute, agent, found)
+    return found
+
+
+def _read_lead_sheet(config: Config, link: str, gsheets) -> tuple[str, str]:
+    """What the delivered sheet shows. (what it says, a problem or "").
+
+    The rows, and more to the point the client's own notes down the side of
+    them: a customer cannot log call outcomes and appointment times on leads
+    he never received.
+    """
+    import re
+
+    from .. import gsheets as sheets_mod
+
+    sheet_id = sheets_mod.sheet_id_in(link) if hasattr(sheets_mod, "sheet_id_in") else ""
+    if not sheet_id:
+        found = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", str(link or ""))
+        sheet_id = found.group(1) if found else ""
+    if not sheet_id:
+        return "", f"Couldn't read a sheet id out of {link}"
+
+    try:
+        client = sheets_mod.SheetsClient(sheets_mod.credentials(config.secrets))
+    except Exception as exc:
+        return "", f"Couldn't open Google Sheets: {_short(exc, 120)}"
+    try:
+        tabs = client.tabs(sheet_id)
+        if not tabs:
+            return "", "That sheet has no tabs I can read."
+        title = str((tabs[0] or {}).get("title") or "Sheet1")
+        rows = client.rows(sheet_id, f"{title}!A1:Z400")
+    except Exception as exc:
+        return "", f"Couldn't read the lead sheet: {_short(exc, 120)}"
+    finally:
+        client.close()
+
+    if not rows:
+        return "", "The lead sheet is empty."
+
+    heads = [str(one) for one in rows[0]]
+    body = [row for row in rows[1:] if any(str(cell).strip() for cell in row)]
+    written = [
+        f"Tab: {title}",
+        f"Columns: {', '.join(heads)}",
+        f"Leads delivered: {len(body)}",
+    ]
+    # The client's own writing, which is the part that proves they had it.
+    notes = []
+    for row in body:
+        for cell in row[len(heads) - 3:] if len(row) > 3 else []:
+            said = str(cell).strip()
+            if len(said) > 8 and not said.replace("-", "").isdigit():
+                notes.append(said)
+    if notes:
+        written.append(
+            f"Notes the client wrote on the leads ({len(notes)}):\n"
+            + "\n".join(f"- {one}" for one in notes[:25])
+        )
+    return "\n".join(written), ""
+
+
+def _timeline(dispute, agent, found) -> list:
+    """The dated spine of the document, from what was actually established."""
+    when = []
+    paid = dispute.paid()
+    if paid:
+        when.append((f"{paid:%m/%d/%Y}", f"Charged {dispute.amount}"))
+    if agent is not None and agent.launch:
+        when.append((f"{agent.launch:%m/%d/%Y}", "Launch date, leads begin delivery"))
+    disputed = dispute.disputed()
+    if disputed:
+        waited = dispute.days_waited()
+        when.append((
+            f"{disputed:%m/%d/%Y}",
+            f"Chargeback filed{f' — {waited} days later' if waited else ''}",
+        ))
+    when.sort(key=lambda one: one[0][-4:] + one[0][:5])
+    return when
+
+
+def sort_exhibits(config: Config, exhibits: list) -> list:
+    """Work out what each attached file is, by looking at it.
+
+    Rather than by asking somebody to label six screenshots. A PDF is read as
+    text; an image is looked at. Anything RYTE cannot place stays "other" and
+    goes in at the end under its own heading rather than into a proof it might
+    not belong to.
+    """
+    import base64
+    import logging
+    import re
+
+    from anthropic import Anthropic
+
+    from .. import rebuttal as rules_doc
+
+    log = logging.getLogger("wilbyte.bot")
+    for one in exhibits:
+        if one.is_pdf():
+            one.text = _pdf_text(one.data)
+            low = (one.text or "").casefold()
+            if "invoice" in low[:2000] or "amount due" in low:
+                one.kind = "invoice"
+            elif "agreement" in low[:3000] or "acuerdo" in low[:3000]:
+                one.kind = "contract"
+
+    pictures = [one for one in exhibits if one.is_image() and one.data]
+    if not pictures or not config.secrets.anthropic_api_key:
+        return exhibits
+
+    kinds = "\n".join(f"- {name}: {what}" for name, what in rules_doc.EXHIBITS.items())
+    content = []
+    for number, picture in enumerate(pictures[:12], start=1):
+        content.append({"type": "text", "text": f"Image {number}:"})
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": _media_type(picture.name),
+                "data": base64.b64encode(picture.data).decode("ascii"),
+            },
+        })
+    content.append({
+        "type": "text",
+        "text": (
+            "These are exhibits for a chargeback rebuttal. For each image say "
+            "which of these it is, and a caption of at most eight words saying "
+            f"what it shows:\n{kinds}\n\n"
+            "Answer one line per image, numbered, as `1. kind — caption`. If "
+            "you are not sure what an image is, say `other` rather than "
+            "guessing — it will be filed under its own heading instead of "
+            "under a proof it might not belong to."
+        ),
+    })
+
+    try:
+        client = Anthropic(api_key=config.secrets.anthropic_api_key)
+        response = client.messages.create(
+            model=config.copy.model,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": content}],
+        )
+        said = "".join(
+            block.text for block in response.content
+            if getattr(block, "type", None) == "text"
+        )
+    except Exception:
+        log.exception("Couldn't look at the exhibits; leaving them unsorted")
+        return exhibits
+
+    for line in said.splitlines():
+        found = re.match(r"\s*(\d+)[.)]\s*([a-z]+)\s*[—-]\s*(.+)", line.strip(), re.I)
+        if not found:
+            continue
+        number = int(found.group(1))
+        if not 1 <= number <= len(pictures):
+            continue
+        kind = found.group(2).strip().casefold()
+        picture = pictures[number - 1]
+        picture.kind = kind if kind in rules_doc.EXHIBITS else "other"
+        picture.caption = found.group(3).strip()[:80]
+    return exhibits
+
+
+def _pdf_text(data: bytes) -> str:
+    """The words out of a PDF, or "" when it can't be read."""
+    import io
+    import logging
+
+    log = logging.getLogger("wilbyte.bot")
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        log.warning("pypdf isn't installed, so attached PDFs are not read")
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages[:12])
+    except Exception:
+        log.exception("Couldn't read an attached PDF")
+        return ""
+
+
+def _media_type(name: str) -> str:
+    low = (name or "").lower()
+    if low.endswith(".png"):
+        return "image/png"
+    if low.endswith(".gif"):
+        return "image/gif"
+    if low.endswith(".webp"):
+        return "image/webp"
+    return "image/jpeg"
+
+
+def write_rebuttal(config: Config, dispute, found, exhibits, *, into) -> "object":
+    """Have it written, then build the file. Returns where the file went."""
+    from anthropic import Anthropic
+
+    from .. import rebuttal as rules_doc, rebuttaldoc
+
+    # What the attached contract and invoice actually say, so the proofs about
+    # them quote the document rather than describing it.
+    for one in exhibits:
+        if one.kind == "contract" and one.text and not found.contract:
+            found.contract = one.text[:6000]
+        if one.kind == "invoice" and one.text:
+            found.invoice = (found.invoice + "\n\n" + one.text[:3000]).strip()
+
+    written = {}
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=4000,
+        system=(
+            "You write chargeback rebuttals for a lead-generation company, to "
+            "be submitted to a card acquirer. Every sentence must trace to the "
+            "evidence you were given. Never state a fact, date or sum that is "
+            "not in it. A short true section beats a long padded one."
+        ),
+        messages=[{
+            "role": "user",
+            "content": rules_doc.writing_prompt(dispute, found, exhibits),
+        }],
+    )
+    said = "".join(
+        block.text for block in response.content
+        if getattr(block, "type", None) == "text"
+    )
+    written = _split_written(said)
+    return rebuttaldoc.build(dispute, written, found, exhibits, into=into)
+
+
+def _split_written(said: str) -> dict:
+    """Claude's answer, split by the evidence name each section was labelled
+    with. Anything unlabelled becomes the summary."""
+    import re
+
+    names = {"summary", "contract", "invoice", "delivery", "sheet", "activity", "texts"}
+    written: dict[str, list[str]] = {}
+    where = "summary"
+    for line in (said or "").splitlines():
+        bare = line.strip().strip("#*_ ").rstrip(":").casefold()
+        bare = re.sub(r"^\d+[.)]\s*", "", bare)
+        if bare in names:
+            where = bare
+            continue
+        if bare.startswith("summary") and len(bare) < 20:
+            where = "summary"
+            continue
+        written.setdefault(where, []).append(line)
+    return {
+        name: "\n".join(lines).strip()
+        for name, lines in written.items()
+        if "".join(lines).strip() and name in names or name == "summary"
+    }
+
+
 def _jot(noticed, kind: str, subject: str, *, detail: str = "") -> None:
     """Write a sighting in the notebook, and never fail because of it.
 

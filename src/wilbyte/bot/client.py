@@ -759,6 +759,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _what_i_noticed(responder, config, request.brief or "")
                 return
 
+            if request.action == "rebuttal":
+                await _rebuttal(responder, config, message, request.brief or "")
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -1381,6 +1385,98 @@ async def _archive_aged(responder: Responder, config: Config) -> None:
 
 #: How many tagged lines to print before the message stops being readable.
 TAGS_SHOWN = 25
+
+
+#: A screenshot bigger than this is somebody's whole screen, not an exhibit.
+MOST_EXHIBIT_BYTES = 20_000_000
+
+
+async def _rebuttal(responder: Responder, config: Config, message, said: str) -> None:
+    """Build a chargeback rebuttal from the dispute facts and what he can find.
+
+    Franklin pastes the block off the acquirer's notice and attaches the
+    contract, the invoice and any screenshots. RYTE reads the board, the
+    setup confirmations and the delivered lead sheet, works out what each
+    attachment is by looking at it, and writes the document with them
+    embedded under the proof each belongs to.
+
+    Nothing is invented. A proof with no evidence behind it is left out and
+    named at the top of the file as still needed, because a gap written
+    around is one that reaches the acquirer.
+    """
+    from .. import rebuttal as rules_doc
+
+    dispute = rules_doc.read_facts(said)
+    if not dispute.customer_name:
+        dispute.customer_name = rules_doc.named_in(said)
+
+    holes = dispute.missing()
+    if holes:
+        await responder.send(
+            "I need a bit more of the dispute notice — missing "
+            + ", ".join(f"**{one}**" for one in holes)
+            + ".\nPaste the block as it comes off the portal:\n"
+            "```\n@RYTE rebuttal\nMID: 510200014664\n"
+            "Dispute Date: 9/8/2026\nDispute Dollar Amount: $1,552.50\n"
+            "Acquirer's Reference Number: 2455640616780894270\n"
+            "Card Number: ending in 2610\nTransaction Date: 6/15/2026\n"
+            "Customer Name: Jose Zambrano\nCustomer Email: jose@example.com\n```"
+        )
+        return
+
+    exhibits = []
+    skipped = []
+    for attachment in getattr(message, "attachments", []) or []:
+        if attachment.size and attachment.size > MOST_EXHIBIT_BYTES:
+            skipped.append(f"{attachment.filename} (over 20MB)")
+            continue
+        try:
+            exhibits.append(rules_doc.Exhibit(
+                name=attachment.filename, data=await attachment.read()
+            ))
+        except Exception as exc:
+            skipped.append(f"{attachment.filename} ({_short(exc, 60)})")
+
+    await responder.send(
+        f"Building the rebuttal for **{dispute.customer_name}** — reading the "
+        f"board, their setup and the delivered sheet"
+        + (f", and looking at {len(exhibits)} attachment(s)" if exhibits else "")
+        + " —"
+    )
+
+    try:
+        if exhibits:
+            exhibits = await asyncio.to_thread(jobs.sort_exhibits, config, exhibits)
+        found = await asyncio.to_thread(jobs.rebuttal_evidence, config, dispute)
+        where = Path(DEFAULT_OUTPUT_DIR) / _rebuttal_name(dispute)
+        path = await asyncio.to_thread(
+            jobs.write_rebuttal, config, dispute, found, exhibits, into=where
+        )
+    except Exception as exc:
+        await responder.send(embed=embeds.error(f"Couldn't build it\n{_short(exc, 400)}"))
+        return
+
+    note = [f"📄 **{dispute.customer_name}** — chargeback rebuttal."]
+    if exhibits:
+        note.append(
+            "Attachments filed as: "
+            + ", ".join(f"{one.name} → {one.kind}" for one in exhibits)
+        )
+    still = rules_doc.what_is_missing(found, exhibits)
+    if still:
+        note.append(f"⚠ Still needed ({len(still)}) — it's listed at the top of the file.")
+    if skipped:
+        note.append("⚠ Couldn't read: " + ", ".join(skipped))
+    note.append("_Read it before it goes anywhere. Nothing in it is invented, but "
+                "nothing in it has been checked by a person either._")
+    await responder.send("\n".join(note), file=discord.File(str(path)))
+
+
+def _rebuttal_name(dispute) -> str:
+    """A filename somebody can find again: surname, and the dispute date."""
+    who = re.sub(r"[^A-Za-z0-9]+", "-", dispute.customer_name or "customer").strip("-")
+    when = dispute.disputed()
+    return f"{who}-Chargeback-Rebuttal{when and f'-{when:%Y-%m-%d}' or ''}.docx"
 
 
 _HUSH = re.compile(

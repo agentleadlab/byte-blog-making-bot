@@ -122,6 +122,13 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # A chargeback rebuttal, from the dispute notice and what the board and
+    # the delivered sheet remember. Command-position only is not needed: no
+    # copy brief says "rebuttal".
+    "rebuttal": "rebuttal",
+    "chargeback": "rebuttal",
+    "chargebacks": "rebuttal",
+    "dispute": "rebuttal",
     # What he has noticed while working, as suggestions. He never acts on
     # these - the message is the start of a conversation, not a report of one.
     "noticed": "noticed",
@@ -570,7 +577,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags", "noticed",
+        "words", "tags", "noticed", "rebuttal",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -763,6 +770,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
+> @RYTE **rebuttal** + the dispute block, with the contract, invoice and any
+> screenshots attached — a chargeback rebuttal as a .docx. I read the board,
+> the setup confirmations and the delivered lead sheet, work out what each
+> attachment is, and put them under the proof each belongs to
 > @RYTE **noticed** — what I've picked up while working, as suggestions. I
 > never act on them; `noticed all` for the raw list, `noticed forget <thing>`
 > to stop me raising one
