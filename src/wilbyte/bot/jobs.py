@@ -3777,6 +3777,12 @@ def _their_card_disagrees(client, card_id, on_setup: str):
     after the placement rather than for every agent considered. A card that
     can't be read is not a conflict - saying one because Trello had a bad
     second is how a real one stops being looked at.
+
+    A card naming several orders is checked against all of them. Bethany
+    Candace Herndon bought "15 OTP Trucker + 15 OTP Vets", was correctly given
+    a line under each, and the trucker line was then read against her vets
+    order and called a disagreement. Somebody who bought two things disagrees
+    with neither of them.
     """
     from .. import agents as rules
 
@@ -3786,7 +3792,15 @@ def _their_card_disagrees(client, card_id, on_setup: str):
         said = str(client.card_detail(card_id).get("desc") or "")
     except Exception:
         return None
-    return rules.setup_conflict(rules.stated_lead_type(said), on_setup)
+
+    orders = rules.ordered_lead_types(said)
+    if not orders:
+        return rules.setup_conflict(rules.stated_lead_type(said), on_setup)
+    if any(rules.setup_conflict(one, on_setup) is None for one in orders):
+        return None
+    # It matches none of them, so it is a real disagreement - and the whole
+    # order is what to show, not whichever half was compared last.
+    return rules.stated_orders(said), on_setup
 
 
 def _by_url(cards: list[dict]) -> dict[str, str]:

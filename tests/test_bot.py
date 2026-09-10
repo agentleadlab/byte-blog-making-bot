@@ -3246,3 +3246,67 @@ def test_an_agent_nobody_could_place_at_all_is_still_a_failure(config, monkeypat
     assert added == []
     assert any("could be" in line for line in problems)
     assert not any("already placed" in line for line in problems)
+
+
+# --------------------------- an agent who bought two things disagrees with neither
+
+
+BETHANY = """-- New Client Onboarded --
+
+First Name: Bethany Candace
+Last Name: Herndon
+Package Selected: Text Verified
+Lead Type: Text Verified Veteran Plus & Trucker IUL
+
+Bethany paid for 15 more OTP Truckers and 15 more OTP vets
+
+15 OTP Trucker
+15 OTP Vets
+
+Live Friday, September 11
+"""
+
+
+def disagrees(their_card, on_setup):
+    from wilbyte.bot import jobs
+
+    class Card:
+        def card_detail(self, _card_id):
+            return {"desc": their_card}
+
+    return jobs._their_card_disagrees(Card(), "their-card", on_setup)
+
+
+@pytest.mark.parametrize("on_setup", ["15 OTP Trucker", "15 OTP Vets"])
+def test_either_half_of_a_two_order_card_agrees_with_it(on_setup):
+    """Bethany bought "15 OTP Trucker + 15 OTP Vets" and was correctly given a
+    line under each. The trucker line was then read against her vets order and
+    called a disagreement."""
+    assert disagrees(BETHANY, on_setup) is None
+
+
+def test_something_she_did_not_buy_is_still_a_disagreement():
+    clash = disagrees(BETHANY, "25 OTP Spanish IUL")
+
+    assert clash is not None
+    ordered, on_setup = clash
+    assert on_setup == "25 OTP Spanish IUL"
+    # The whole order, not whichever half was compared last.
+    assert "Trucker" in ordered and "Vets" in ordered
+
+
+def test_a_card_naming_one_order_is_checked_the_way_it_always_was():
+    one = "Lead Type: Index Universal Life\n\n25 OTP SPANISH IUL"
+
+    assert disagrees(one, "OTP Spanish IUL") is None
+    assert disagrees(one, "OTP VETS") is not None
+
+
+def test_a_card_that_cannot_be_read_is_not_a_conflict():
+    from wilbyte.bot import jobs
+
+    class Broken:
+        def card_detail(self, _card_id):
+            raise RuntimeError("Trello had a bad second")
+
+    assert jobs._their_card_disagrees(Broken(), "x", "OTP VETS") is None
