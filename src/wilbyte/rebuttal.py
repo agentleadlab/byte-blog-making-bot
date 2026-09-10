@@ -29,7 +29,8 @@ FIELDS = (
     ("mid", r"\bmid\b|merchant\s*id"),
     ("dba", r"\bdba\b|doing\s+business"),
     ("dispute_date", r"dispute\s*date|chargeback\s*date|case\s*date"),
-    ("dispute_type", r"dispute\s*type|reason\s*(?:code)?\b"),
+    ("dispute_type", r"dispute\s*type"),
+    ("reason", r"reason\b|dispute\s*reason|reason\s*code"),
     ("amount", r"dollar\s*amount|dispute\s*amount|\bamount\b"),
     ("arn", r"\barn\b|acquirer.?s?\s*reference"),
     ("card", r"card\s*(?:number|no)|\bcard\b"),
@@ -51,6 +52,7 @@ class Dispute:
     dba: str = "AGENT LEAD LAB"
     dispute_date: str = ""
     dispute_type: str = ""
+    reason: str = ""
     amount: str = ""
     arn: str = ""
     card: str = ""
@@ -179,6 +181,20 @@ class Exhibit:
     kind: str = "other"
     caption: str = ""
     text: str = ""
+    #: "A", "B"... assigned once they are grouped, so the argument can cite
+    #: them and the reader can find them at the back.
+    letter: str = ""
+    #: Which of its kind it is: "screenshot 3 of 6".
+    number: int = 0
+    of: int = 0
+    #: What it actually says, in English. The WhatsApp is in Spanish and the
+    #: person reading this at the acquirer will not be.
+    transcript: str = ""
+
+    def label(self) -> str:
+        if self.of > 1:
+            return f"Exhibit {self.letter} — screenshot {self.number} of {self.of}"
+        return f"Exhibit {self.letter}"
 
     def is_image(self) -> bool:
         return bool(re.search(r"\.(png|jpe?g|gif|webp)$", self.name, re.IGNORECASE))
@@ -213,19 +229,73 @@ class Gathered:
     holes: list = field(default_factory=list)
 
 
+def spelled(said: str) -> str:
+    """"June 15, 2026" from "6/15/2026". A slashed date in a legal document
+    reads as a form somebody filled in; a written one reads as a statement."""
+    when = as_date(said)
+    return f"{when:%B %-d, %Y}" if when else str(said or "")
+
+
 def header(one: Dispute) -> list[tuple[str, str]]:
-    """The fact table at the top, in the order Skip Scott's rebuttal has it."""
+    """The fact table at the top."""
     rows = [
+        ("Merchant (DBA)", one.dba),
+        ("MID", one.mid),
+        ("Acquirer Reference Number", one.arn),
         ("Cardholder", f"{one.customer_name}"
-         + (f"  |  {one.customer_email}" if one.customer_email else "")),
-        ("Transaction Date", one.transaction_date),
-        ("Dispute Date", one.dispute_date),
-        ("Dispute Dollar Amount", one.amount),
-        ("Dispute Type", one.dispute_type),
-        ("Acquirer Reference Number (ARN)", one.arn),
-        ("Card Number", one.card),
+         + (f" ({one.customer_email})" if one.customer_email else "")),
+        ("Card", one.card),
+        ("Transaction Date", spelled(one.transaction_date)),
+        ("Amount", one.amount),
+        ("Dispute Date", spelled(one.dispute_date)),
+        ("Reason", one.reason or one.dispute_type),
     ]
     return [(label, value) for label, value in rows if str(value).strip()]
+
+
+def letter_them(exhibits: list) -> list:
+    """Group the attachments by kind and letter each group A, B, C...
+
+    So the argument can cite them and the reader can find them at the back.
+    In the order they are argued rather than the order they were attached:
+    the messages before the purchase come before the contract, which comes
+    before the invoice, which comes before what was delivered.
+    """
+    order = ("texts", "discord", "contract", "invoice", "sheet", "sale", "other")
+    lettered = []
+    letter = ord("A")
+    for kind in order:
+        group = [one for one in exhibits if one.kind == kind]
+        if not group:
+            continue
+        for number, one in enumerate(group, start=1):
+            one.letter = chr(letter)
+            one.number = number
+            one.of = len(group)
+            lettered.append(one)
+        letter += 1
+    return lettered
+
+
+def exhibit_groups(exhibits: list) -> list[tuple[str, str, list]]:
+    """(letter, what the group is, its files), in the order they are lettered."""
+    named = {
+        "texts": "WhatsApp / Text Conversation with the Cardholder",
+        "discord": "Support Channel",
+        "contract": "Signed Service Agreement",
+        "invoice": "Invoice and Payment",
+        "sheet": "Lead Delivery Records",
+        "sale": "Sale Posted by the Cardholder",
+        "other": "Further Supporting Material",
+    }
+    groups: dict[str, list] = {}
+    for one in exhibits:
+        if one.letter:
+            groups.setdefault(one.letter, []).append(one)
+    return [
+        (letter, named.get(group[0].kind, "Supporting Material"), group)
+        for letter, group in sorted(groups.items())
+    ]
 
 
 def waited_line(one: Dispute) -> str:
@@ -243,38 +313,66 @@ def waited_line(one: Dispute) -> str:
 
 
 def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
-    """What to ask Claude to write, given only what was actually gathered."""
+    """What to ask Claude to write, given only what was actually gathered.
+
+    Numbered arguments rather than a fixed list of proofs. A rebuttal is read
+    by somebody deciding whether the service was as described, so it has to
+    argue that - "the service was clearly described before purchase" - rather
+    than list the documents and leave the reader to join them up.
+    """
     have = [
         (name, text) for name, text in (
-            ("contract", found.contract), ("invoice", found.invoice),
-            ("delivery", found.delivery), ("sheet", found.sheet),
-            ("activity", found.activity), ("texts", found.texts),
+            ("the signed agreement", found.contract),
+            ("the order and invoice", found.invoice),
+            ("onboarding and delivery, in writing", found.delivery),
+            ("the delivered lead sheet", found.sheet),
+            ("what the cardholder did with the leads", found.activity),
+            ("the cardholder's own messages", found.texts),
         ) if str(text).strip()
     ]
     seen = "\n\n".join(f"### {name}\n{text}" for name, text in have)
-    files = "\n".join(f"- {one.name}: {one.kind}" for one in exhibits) or "- none"
+
+    said = []
+    for letter, what, group in exhibit_groups(exhibits):
+        lines = [f"EXHIBIT {letter} — {what}"]
+        for shown in group:
+            if shown.transcript:
+                lines.append(f"  {shown.label()}:\n{shown.transcript}")
+            elif shown.caption:
+                lines.append(f"  {shown.label()}: {shown.caption}")
+        said.append("\n".join(lines))
+    files = "\n\n".join(said) or "(nothing attached)"
+
     return (
         "You are writing a chargeback rebuttal for Agent Lead Lab, a "
-        "lead-generation company, to be submitted to the card acquirer.\n\n"
+        "lead-generation company, to be submitted to the card acquirer. It "
+        "will be read by somebody deciding whether the service was delivered "
+        "as described.\n\n"
         f"THE DISPUTE\nCardholder: {one.customer_name} ({one.customer_email})\n"
-        f"Amount: {one.amount}\nTransaction: {one.transaction_date}\n"
-        f"Disputed: {one.dispute_date}"
+        f"Amount: {one.amount}\nTransaction: {spelled(one.transaction_date)}\n"
+        f"Disputed: {spelled(one.dispute_date)}\n"
+        f"Reason given: {one.reason or one.dispute_type or 'not stated'}"
         + (f"\nDays waited: {one.days_waited()}" if one.days_waited() else "")
-        + f"\n\nEVIDENCE GATHERED\n{seen}\n\nFILES ATTACHED\n{files}\n\n"
-        "Write two things.\n\n"
-        "1. SUMMARY — one paragraph, 4-6 sentences, stating what the customer "
-        "bought, that it was delivered, what they did with it, and that the "
-        "dispute has no factual basis. Concrete and dated. No adjectives you "
-        "cannot support.\n\n"
-        "2. For each piece of evidence above, a short section of 2-4 "
-        "sentences that states what it proves, quoting the actual messages and "
-        "notes with their timestamps. Label each one with the evidence name it "
-        "came from, exactly, on its own line.\n\n"
-        "Rules. Cite only what is in the evidence — never infer a fact, a date "
-        "or a sum that is not written there. If a piece of evidence is thin, "
-        "say less rather than padding it. Do not write a section for evidence "
-        "that was not gathered. Quote the customer's own words verbatim where "
-        "they exist, because their own words are the strongest thing here."
+        + f"\n\nWHAT OUR RECORDS SHOW\n{seen}\n\nEXHIBITS ATTACHED\n{files}\n\n"
+        "Write:\n\n"
+        "SUMMARY\nTwo or three paragraphs. What was bought, what was "
+        "delivered, what the cardholder did with it, and why the dispute has "
+        "no basis. Concrete and dated.\n\n"
+        "Then between three and six numbered arguments. Each one:\n"
+        "  a heading that states the argument - 'The service was clearly "
+        "described before purchase', 'The cardholder used the leads' - and "
+        "names the exhibits it rests on in brackets;\n"
+        "  then two to five sentences making it, quoting the messages, the "
+        "notes and the terms with their dates.\n\n"
+        "Then CONCLUSION - one paragraph.\n\n"
+        "Rules. Cite only what is above - never a fact, date or sum that is "
+        "not written there. Cite exhibits by letter, and only ones that "
+        "exist. Where the money needs explaining, show the arithmetic. Quote "
+        "the cardholder's own words wherever they exist, because their own "
+        "words are the strongest thing here. Say less rather than padding. "
+        "Write it as the merchant: 'we', 'our records'. No markdown headings "
+        "or bold - plain lines, with each numbered argument starting with its "
+        "number and a full stop."
     )
 
 

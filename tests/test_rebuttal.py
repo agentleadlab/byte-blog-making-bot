@@ -140,15 +140,23 @@ def test_a_blank_field_is_left_out_of_the_fact_table():
     ))
     labels = [label for label, _value in rows]
 
-    assert "Acquirer Reference Number (ARN)" not in labels
-    assert "Dispute Dollar Amount" in labels
+    assert "Acquirer Reference Number" not in labels
+    assert "Amount" in labels
 
 
 def test_the_email_rides_with_the_name():
-    (label, value) = rebuttal.header(rebuttal.read_facts(JOSE))[0]
+    rows = dict(rebuttal.header(rebuttal.read_facts(JOSE)))
 
-    assert label == "Cardholder"
-    assert "Jose Zambrano" in value and "josezagent@gmail.com" in value
+    assert "Jose Zambrano" in rows["Cardholder"]
+    assert "josezagent@gmail.com" in rows["Cardholder"]
+
+
+def test_the_dates_are_written_out_rather_than_slashed():
+    """A slashed date in a legal document reads as a form somebody filled in."""
+    rows = dict(rebuttal.header(rebuttal.read_facts(JOSE)))
+
+    assert rows["Transaction Date"] == "June 15, 2026"
+    assert rows["Dispute Date"] == "September 8, 2026"
 
 
 # ------------------------------------------------------------------- exhibits
@@ -201,9 +209,9 @@ def test_the_writing_prompt_carries_only_what_was_gathered():
 
     asked = rebuttal.writing_prompt(rebuttal.read_facts(JOSE), found, [])
 
-    assert "delivery" in asked
-    assert "### sheet" not in asked
-    assert "never infer" in asked.casefold() or "never state" in asked.casefold()
+    assert "onboarding and delivery" in asked
+    assert "### the delivered lead sheet" not in asked
+    assert "cite only what is above" in asked.casefold()
 
 
 def test_the_demand_names_the_amount():
@@ -379,3 +387,65 @@ def test_the_attachments_come_from_the_message_that_had_them():
 
     assert "_replied_to" in source
     assert "message = replied" in source
+
+
+# ---------------------------------------------------------------- exhibits at the back
+
+
+def test_attachments_are_grouped_and_lettered_in_the_order_they_are_argued():
+    """The messages before the purchase come before the contract, which comes
+    before the invoice, which comes before what was delivered."""
+    ex = [
+        rebuttal.Exhibit("sheet.png", kind="sheet"),
+        rebuttal.Exhibit("chat1.png", kind="texts"),
+        rebuttal.Exhibit("deal.pdf", kind="contract"),
+        rebuttal.Exhibit("chat2.png", kind="texts"),
+    ]
+
+    lettered = rebuttal.letter_them(ex)
+
+    assert [(one.name, one.label()) for one in lettered] == [
+        ("chat1.png", "Exhibit A — screenshot 1 of 2"),
+        ("chat2.png", "Exhibit A — screenshot 2 of 2"),
+        ("deal.pdf", "Exhibit B"),
+        ("sheet.png", "Exhibit C"),
+    ]
+
+
+def test_one_of_a_kind_is_not_called_screenshot_one_of_one():
+    (one,) = rebuttal.letter_them([rebuttal.Exhibit("i.pdf", kind="invoice")])
+
+    assert one.label() == "Exhibit A"
+
+
+def test_the_groups_carry_a_name_a_reader_understands():
+    ex = rebuttal.letter_them([
+        rebuttal.Exhibit("c.png", kind="texts"),
+        rebuttal.Exhibit("d.pdf", kind="invoice"),
+    ])
+
+    assert [(letter, what) for letter, what, _group in rebuttal.exhibit_groups(ex)] == [
+        ("A", "WhatsApp / Text Conversation with the Cardholder"),
+        ("B", "Invoice and Payment"),
+    ]
+
+
+def test_nothing_attached_is_no_exhibits_rather_than_an_empty_heading():
+    assert rebuttal.exhibit_groups([]) == []
+
+
+def test_the_prompt_gives_claude_the_translations_to_argue_from():
+    """The exhibits reach the writing as what they say, not as filenames —
+    otherwise it can cite Exhibit A without knowing what is in it."""
+    ex = rebuttal.letter_them([
+        rebuttal.Exhibit(
+            "c.png", kind="texts",
+            transcript="8:37 PM Cardholder: I can pay by card, right?",
+        )
+    ])
+
+    asked = rebuttal.writing_prompt(rebuttal.read_facts(JOSE), rebuttal.Gathered(), ex)
+
+    assert "EXHIBIT A" in asked
+    assert "I can pay by card" in asked
+    assert "Cite exhibits by letter, and only ones that exist." in asked

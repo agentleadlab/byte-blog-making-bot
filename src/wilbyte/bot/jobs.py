@@ -3525,13 +3525,22 @@ def sort_exhibits(config: Config, exhibits: list) -> list:
     content.append({
         "type": "text",
         "text": (
-            "These are exhibits for a chargeback rebuttal. For each image say "
-            "which of these it is, and a caption of at most eight words saying "
-            f"what it shows:\n{kinds}\n\n"
-            "Answer one line per image, numbered, as `1. kind — caption`. If "
-            "you are not sure what an image is, say `other` rather than "
-            "guessing — it will be filed under its own heading instead of "
-            "under a proof it might not belong to."
+            "These are exhibits for a chargeback rebuttal, to be read by "
+            "somebody at a card acquirer.\n\nFor each image give me three "
+            f"things.\n\n1. kind — which of these it is:\n{kinds}\n"
+            "If you are not sure, say `other` rather than guessing.\n\n"
+            "2. caption — at most twelve words saying what it shows.\n\n"
+            "3. transcript — everything legible in the image, in English. For "
+            "a conversation: one line per message as `TIME  Speaker: what they "
+            "said`, in order, keeping the date headers. Translate anything "
+            "that is not English and translate it faithfully — the person "
+            "reading this will not speak it. Say `[voice note, 0:42]` for a "
+            "voice message rather than inventing what was in it. For a "
+            "spreadsheet or a document, describe the columns and quote the "
+            "rows that matter. Never write a word that is not in the image.\n\n"
+            "Answer as:\n\n"
+            "IMAGE 1\nkind: texts\ncaption: ...\ntranscript:\n<lines>\n\n"
+            "IMAGE 2\n...\n\nNothing else."
         ),
     })
 
@@ -3539,7 +3548,7 @@ def sort_exhibits(config: Config, exhibits: list) -> list:
         client = Anthropic(api_key=config.secrets.anthropic_api_key)
         response = client.messages.create(
             model=config.copy.model,
-            max_tokens=1000,
+            max_tokens=8000,
             messages=[{"role": "user", "content": content}],
         )
         said = "".join(
@@ -3550,18 +3559,41 @@ def sort_exhibits(config: Config, exhibits: list) -> list:
         log.exception("Couldn't look at the exhibits; leaving them unsorted")
         return exhibits
 
-    for line in said.splitlines():
-        found = re.match(r"\s*(\d+)[.)]\s*([a-z]+)\s*[—-]\s*(.+)", line.strip(), re.I)
-        if not found:
-            continue
-        number = int(found.group(1))
+    for number, block in _read_images(said).items():
         if not 1 <= number <= len(pictures):
             continue
-        kind = found.group(2).strip().casefold()
         picture = pictures[number - 1]
+        kind = str(block.get("kind") or "").strip().casefold()
         picture.kind = kind if kind in rules_doc.EXHIBITS else "other"
-        picture.caption = found.group(3).strip()[:80]
+        picture.caption = str(block.get("caption") or "").strip()[:90]
+        picture.transcript = str(block.get("transcript") or "").strip()
     return exhibits
+
+
+def _read_images(said: str) -> dict:
+    """Claude's answer about the exhibits, as {image number: {field: value}}."""
+    import re
+
+    found: dict[int, dict] = {}
+    number = 0
+    field = ""
+    for line in (said or "").splitlines():
+        heading = re.match(r"\s*IMAGE\s+(\d+)\s*$", line, re.IGNORECASE)
+        if heading:
+            number = int(heading.group(1))
+            found.setdefault(number, {})
+            field = ""
+            continue
+        if not number:
+            continue
+        named = re.match(r"\s*(kind|caption|transcript)\s*:\s*(.*)$", line, re.IGNORECASE)
+        if named:
+            field = named.group(1).casefold()
+            found[number][field] = named.group(2).strip()
+            continue
+        if field:
+            found[number][field] = (found[number].get(field, "") + "\n" + line).strip()
+    return found
 
 
 def _pdf_text(data: bytes) -> str:
@@ -3608,7 +3640,10 @@ def write_rebuttal(config: Config, dispute, found, exhibits, *, into) -> "object
         if one.kind == "invoice" and one.text:
             found.invoice = (found.invoice + "\n\n" + one.text[:3000]).strip()
 
-    written = {}
+    # Lettered before the writing, so the argument can cite Exhibit A and
+    # mean the same thing the back of the document does.
+    exhibits[:] = rules_doc.letter_them(exhibits)
+
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
     response = client.messages.create(
@@ -3634,28 +3669,15 @@ def write_rebuttal(config: Config, dispute, found, exhibits, *, into) -> "object
 
 
 def _split_written(said: str) -> dict:
-    """Claude's answer, split by the evidence name each section was labelled
-    with. Anything unlabelled becomes the summary."""
-    import re
+    """Claude's answer, kept whole.
 
-    names = {"summary", "contract", "invoice", "delivery", "sheet", "activity", "texts"}
-    written: dict[str, list[str]] = {}
-    where = "summary"
-    for line in (said or "").splitlines():
-        bare = line.strip().strip("#*_ ").rstrip(":").casefold()
-        bare = re.sub(r"^\d+[.)]\s*", "", bare)
-        if bare in names:
-            where = bare
-            continue
-        if bare.startswith("summary") and len(bare) < 20:
-            where = "summary"
-            continue
-        written.setdefault(where, []).append(line)
-    return {
-        name: "\n".join(lines).strip()
-        for name, lines in written.items()
-        if "".join(lines).strip() and name in names or name == "summary"
-    }
+    It used to be cut up by the evidence name each section was labelled with,
+    to be dropped under fixed proof headings. The document argues in its own
+    numbered sections now, so the writing is laid out as written - splitting
+    it was how "**attached files**" ended up printed with its asterisks
+    showing in the middle of a section it did not belong to.
+    """
+    return {"body": (said or "").strip()}
 
 
 def _jot(noticed, kind: str, subject: str, *, detail: str = "") -> None:

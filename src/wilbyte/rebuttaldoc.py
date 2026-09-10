@@ -5,6 +5,12 @@ proofs each with its screenshot underneath, an addendum of the cardholder's
 own texts, a proof summary and a demand. This builds that, from what
 `rebuttal` decided it says.
 
+It is read by somebody at an acquirer who has a queue of these and no reason
+to be generous, so it is set like a document rather than left in Word's
+defaults: black headings, a plain fact table, one typeface, and the evidence
+captioned under it. A rebuttal that looks thrown together invites being read
+as one.
+
 A .docx rather than a PDF because it is submitted after somebody has read it
 - a wrong date or a name spelled two ways is worth catching, and a document
 you cannot edit is one that goes out wrong.
@@ -13,15 +19,25 @@ you cannot edit is one that goes out wrong.
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 from . import rebuttal
 
-# Wide enough to read a screenshot of a phone conversation, narrow enough to
-# stay inside a letter page's margins.
-PICTURE_INCHES = 6.0
+# Wide enough to read a screenshot of a phone conversation, and inside the
+# margins below with room to spare.
+PICTURE_INCHES = 5.6
 
-# What each proof's images are captioned, when nothing better was worked out.
+# One typeface throughout. Word's default changes between versions and
+# between machines, and a document that renders differently on the sender's
+# screen and the reader's is one nobody can proofread.
+FACE = "Calibri"
+INK = (0x1A, 0x1A, 0x1A)
+QUIET = (0x66, 0x66, 0x66)
+WARN = (0xA6, 0x1B, 0x1B)
+RULE = "BFBFBF"
+
+# What each proof's images are captioned, when the reading did not work one out.
 CAPTIONS = {
     "contract": "Signed agreement",
     "invoice": "Invoice, marked paid",
@@ -32,6 +48,30 @@ CAPTIONS = {
     "other": "Supporting document",
 }
 
+# A proof whose evidence is only pictures still needs a sentence over them,
+# or the section is a heading and a pile of screenshots.
+OVER_THE_PICTURES = {
+    "contract": "The executed agreement is reproduced below.",
+    "invoice": "The invoice for this order is reproduced below.",
+    "discord": "The support channel for this client is reproduced below.",
+    "sheet": "The delivered lead sheet is reproduced below.",
+    "sale": "The sale the cardholder posted is reproduced below.",
+    "texts": (
+        "The cardholder's own messages are reproduced below, in the order they "
+        "were sent."
+    ),
+}
+
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*")
+_BULLET = re.compile(r"^\s{0,3}[-*•]\s+")
+_NUMBERED = re.compile(r"^\s{0,3}\d+[.)]\s+")
+# "1. The service was clearly described before purchase (Exhibits A and B)" is
+# an argument's heading; "1. He asked for a comparison, and got one." is a
+# sentence that happens to be numbered. A heading does not end in a full stop.
+_ARGUMENT = re.compile(r"^\s{0,3}(\d+)[.)]\s+(\S.{0,140})$")
+_SECTION = re.compile(r"^\s{0,3}(SUMMARY|CONCLUSION|TIMELINE|BACKGROUND)\s*:?\s*$", re.I)
+
 
 class DocError(RuntimeError):
     """python-docx isn't installed, or the file could not be written."""
@@ -40,6 +80,7 @@ class DocError(RuntimeError):
 def _docx():
     try:
         import docx
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Inches, Pt, RGBColor
     except ImportError as exc:  # pragma: no cover - depends on the machine
         raise DocError(
@@ -47,7 +88,7 @@ def _docx():
             "`cd ~/Desktop/byte-blog-making-bot && "
             ".venv/bin/pip install python-docx`"
         ) from exc
-    return docx, Inches, Pt, RGBColor
+    return docx, Inches, Pt, RGBColor, WD_ALIGN_PARAGRAPH
 
 
 def build(
@@ -60,135 +101,317 @@ def build(
 ) -> Path:
     """Write the file and return where it went.
 
-    `written` is what Claude wrote, keyed by the evidence name it came from,
-    plus "summary". A proof with nothing written and nothing attached is left
-    out of the document entirely rather than printed empty - a heading with no
-    evidence under it reads as evidence that does not exist.
+    Argument first, evidence at the back. The person reading it wants to know
+    what we say happened and why, and to be able to check any of it - so the
+    numbered arguments cite Exhibit A and Exhibit A is where they said it is,
+    one screenshot to a page with what it says in English underneath.
     """
-    docx, Inches, Pt, RGBColor = _docx()
+    docx, Inches, Pt, RGBColor, ALIGN = _docx()
 
     doc = docx.Document()
-    _title(doc, dispute, Pt, RGBColor)
-    _facts(doc, dispute)
+    _set_up(doc, Pt, RGBColor, Inches)
+    _title(doc, dispute, Pt, RGBColor, ALIGN)
+    _facts(doc, dispute, Pt, RGBColor)
 
     holes = rebuttal.what_is_missing(found, exhibits)
     if holes:
-        _holes(doc, holes, RGBColor)
+        _holes(doc, holes, Pt, RGBColor)
 
-    if written.get("summary"):
-        doc.add_heading("SUMMARY", level=1)
-        doc.add_paragraph(str(written["summary"]).strip())
+    body = str(written.get("body") or written.get("summary") or "").strip()
+    if body:
+        _prose(doc, body, Pt, RGBColor)
+
+    # Only when nothing was written. The number is in the prompt, so a
+    # written rebuttal makes the argument itself and better - repeating it
+    # underneath the conclusion reads like a note somebody forgot to move.
+    if not body:
         waited = rebuttal.waited_line(dispute)
         if waited:
-            doc.add_paragraph(waited.replace("**", ""))
-
-    by_kind: dict[str, list] = {}
-    for one in exhibits:
-        by_kind.setdefault(one.kind, []).append(one)
-
-    said = 0
-    for number, heading in rebuttal.PROOFS:
-        name = _evidence_for(number)
-        body = str(written.get(name) or "").strip()
-        pictures = [
-            one for one in by_kind.get(_exhibit_for(number), []) if one.is_image()
-        ]
-        if not body and not pictures:
-            continue
-        said += 1
-        doc.add_heading(f"PROOF #{said} — {heading}", level=1)
-        if body:
-            for chunk in body.split("\n\n"):
-                if chunk.strip():
-                    doc.add_paragraph(chunk.strip())
-        for picture in pictures:
-            _picture(doc, picture, Inches, Pt)
-
-    leftover = [
-        one for one in by_kind.get("other", []) if one.is_image()
-    ]
-    if leftover:
-        doc.add_heading("FURTHER SUPPORTING MATERIAL", level=1)
-        for picture in leftover:
-            _picture(doc, picture, Inches, Pt)
+            _prose(doc, waited, Pt, RGBColor)
 
     if found.timeline:
-        doc.add_heading("TIMELINE", level=1)
+        _heading(doc, "Timeline", Pt, RGBColor)
         for when, what in found.timeline:
-            doc.add_paragraph(f"{when}    {what}", style="List Bullet")
+            line = doc.add_paragraph(style="List Bullet")
+            _ink(line.add_run(f"{when}   "), Pt, RGBColor, bold=True)
+            _ink(line.add_run(what), Pt, RGBColor)
 
-    doc.add_heading("FINAL DEMAND", level=1)
-    doc.add_paragraph(rebuttal.demand(dispute))
-    doc.add_paragraph()
-    doc.add_paragraph("SUBMITTED BY")
-    doc.add_paragraph(f"{dispute.dba}")
+    groups = rebuttal.exhibit_groups(exhibits)
+    if groups:
+        _exhibits(doc, groups, Pt, RGBColor, Inches, ALIGN, docx)
 
     into.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(into))
     return into
 
 
-def _title(doc, dispute, Pt, RGBColor) -> None:
-    heading = doc.add_heading("CHARGEBACK REBUTTAL", level=0)
-    for run in heading.runs:
-        run.font.color.rgb = RGBColor(0x11, 0x11, 0x11)
+def _exhibits(doc, groups, Pt, RGBColor, Inches, ALIGN, docx) -> None:
+    """The evidence, at the back, lettered and one image to a page.
+
+    With what it says in English under it. The cardholder's WhatsApp is in
+    Spanish and the person deciding this dispute will not be reading Spanish -
+    a screenshot they cannot read is a screenshot that proves nothing.
+    """
+    from docx.enum.text import WD_BREAK
+
+    for letter, what, group in groups:
+        doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        line = doc.add_paragraph()
+        line.paragraph_format.space_after = Pt(3)
+        _ink(line.add_run(f"EXHIBIT {letter} — {what}"), Pt, RGBColor, size=13, bold=True)
+
+        first = group[0]
+        if first.caption:
+            about = doc.add_paragraph()
+            about.paragraph_format.space_after = Pt(8)
+            _ink(about.add_run(first.caption), Pt, RGBColor, size=9.5, colour=QUIET)
+            _rule(about)
+
+        for number, one in enumerate(group):
+            if number:
+                doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+            if one.of > 1:
+                head = doc.add_paragraph()
+                head.paragraph_format.space_after = Pt(4)
+                _ink(head.add_run(one.label()), Pt, RGBColor, size=10.5, bold=True)
+            if one.is_pdf():
+                _the_file(doc, one, Pt, RGBColor)
+            else:
+                _picture(doc, one, Inches, Pt, RGBColor, ALIGN)
+            if one.transcript:
+                said = doc.add_paragraph()
+                said.paragraph_format.space_before = Pt(6)
+                said.paragraph_format.space_after = Pt(2)
+                _ink(
+                    said.add_run("What it says, in English"),
+                    Pt, RGBColor, size=9.5, bold=True, colour=QUIET,
+                )
+                for row in one.transcript.splitlines():
+                    if not row.strip():
+                        continue
+                    text = doc.add_paragraph()
+                    text.paragraph_format.space_after = Pt(1)
+                    text.paragraph_format.left_indent = Inches(0.15)
+                    _ink(text.add_run(row.strip()), Pt, RGBColor, size=9)
+
+
+# ------------------------------------------------------------------ the look
+
+
+def _set_up(doc, Pt, RGBColor, Inches) -> None:
+    """One typeface, margins that fit a screenshot, and no Word blue."""
+    normal = doc.styles["Normal"]
+    normal.font.name = FACE
+    normal.font.size = Pt(10.5)
+    normal.font.color.rgb = RGBColor(*INK)
+    normal.paragraph_format.space_after = Pt(7)
+    normal.paragraph_format.line_spacing = 1.15
+
+    for name in ("List Bullet", "List Number"):
+        try:
+            style = doc.styles[name]
+        except KeyError:  # pragma: no cover - depends on the template
+            continue
+        style.font.name = FACE
+        style.font.size = Pt(10.5)
+        style.font.color.rgb = RGBColor(*INK)
+        style.paragraph_format.space_after = Pt(3)
+
+    for section in doc.sections:
+        section.top_margin = Inches(0.8)
+        section.bottom_margin = Inches(0.8)
+        section.left_margin = Inches(0.9)
+        section.right_margin = Inches(0.9)
+
+
+def _ink(run, Pt, RGBColor, *, size: float = 10.5, bold=False, italic=False,
+         colour=INK) -> None:
+    run.font.name = FACE
+    run.font.size = Pt(size)
+    run.font.color.rgb = RGBColor(*colour)
+    run.bold = bold
+    run.italic = italic
+
+
+def _title(doc, dispute, Pt, RGBColor, ALIGN) -> None:
     line = doc.add_paragraph()
-    run = line.add_run(
-        f"MID: {dispute.mid}  |  DBA: {dispute.dba}" if dispute.mid
-        else f"DBA: {dispute.dba}"
+    line.paragraph_format.space_after = Pt(1)
+    _ink(
+        line.add_run("CHARGEBACK REBUTTAL / REPRESENTMENT"),
+        Pt, RGBColor, size=17, bold=True,
     )
-    run.bold = True
-    run.font.size = Pt(10)
+    under = doc.add_paragraph()
+    under.paragraph_format.space_after = Pt(10)
+    _ink(
+        under.add_run(f"{dispute.dba} — Response to Cardholder Dispute"),
+        Pt, RGBColor, size=10.5, colour=QUIET,
+    )
+    _rule(under)
 
 
-def _facts(doc, dispute) -> None:
+def _rule(paragraph) -> None:
+    """A hairline under a paragraph, drawn as a bottom border."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    marks = paragraph._p.get_or_add_pPr()
+    borders = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "6")
+    bottom.set(qn("w:space"), "6")
+    bottom.set(qn("w:color"), RULE)
+    borders.append(bottom)
+    marks.append(borders)
+
+
+def _heading(doc, text, Pt, RGBColor) -> None:
+    """Our own, rather than Word's - theirs are blue and a size too big."""
+    line = doc.add_paragraph()
+    line.paragraph_format.space_before = Pt(14)
+    line.paragraph_format.space_after = Pt(4)
+    line.paragraph_format.keep_with_next = True
+    _ink(line.add_run(text), Pt, RGBColor, size=11.5, bold=True)
+
+
+def _facts(doc, dispute, Pt, RGBColor) -> None:
     rows = rebuttal.header(dispute)
     if not rows:
         return
     table = doc.add_table(rows=0, cols=2)
-    table.style = "Light Grid Accent 1"
+    table.style = "Table Grid"
+    table.autofit = True
     for label, value in rows:
         cells = table.add_row().cells
-        cells[0].text = label
-        cells[1].text = str(value)
-        for run in cells[0].paragraphs[0].runs:
-            run.bold = True
-    doc.add_paragraph()
+        left = cells[0].paragraphs[0]
+        left.paragraph_format.space_after = Pt(2)
+        _ink(left.add_run(label), Pt, RGBColor, size=9.5, bold=True, colour=QUIET)
+        right = cells[1].paragraphs[0]
+        right.paragraph_format.space_after = Pt(2)
+        _ink(right.add_run(str(value)), Pt, RGBColor, size=9.5)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
-def _holes(doc, holes, RGBColor) -> None:
+def _holes(doc, holes, Pt, RGBColor) -> None:
     """What is still needed, at the top where somebody reads it.
 
     Removed before this goes anywhere near an acquirer - and saying so on the
     page is what makes sure it is.
     """
-    heading = doc.add_heading("BEFORE YOU SEND THIS — still needed", level=1)
-    for run in heading.runs:
-        run.font.color.rgb = RGBColor(0xB0, 0x00, 0x00)
+    line = doc.add_paragraph()
+    line.paragraph_format.space_before = Pt(10)
+    line.paragraph_format.space_after = Pt(4)
+    _ink(
+        line.add_run("BEFORE YOU SEND THIS — still needed"),
+        Pt, RGBColor, size=11, bold=True, colour=WARN,
+    )
     for hole in holes:
-        doc.add_paragraph(hole, style="List Bullet")
+        one = doc.add_paragraph(style="List Bullet")
+        _ink(one.add_run(hole), Pt, RGBColor, size=9.5, colour=WARN)
     note = doc.add_paragraph()
-    run = note.add_run("Delete this section before submitting.")
-    run.italic = True
-    doc.add_paragraph()
+    note.paragraph_format.space_after = Pt(12)
+    _ink(
+        note.add_run("Delete this whole section before submitting."),
+        Pt, RGBColor, size=9, italic=True, colour=WARN,
+    )
+    _rule(note)
 
 
-def _picture(doc, exhibit, Inches, Pt) -> None:
+def _prose(doc, text, Pt, RGBColor) -> None:
+    """Claude's writing, as paragraphs, bullets and bold rather than markup.
+
+    It writes markdown because everything else it writes is read as markdown.
+    Word is not, so "**attached files**" printed with its asterisks showing in
+    the middle of a document going to an acquirer.
+    """
+    for block in str(text or "").split("\n"):
+        line = block.rstrip()
+        if not line.strip():
+            continue
+        if _HEADING.match(line):
+            bare = _HEADING.sub("", line).strip().strip("*")
+            if not bare:
+                continue
+            small = doc.add_paragraph()
+            small.paragraph_format.space_before = Pt(8)
+            small.paragraph_format.space_after = Pt(2)
+            _ink(small.add_run(bare), Pt, RGBColor, size=10.5, bold=True)
+            continue
+        if _SECTION.match(line):
+            _heading(doc, _SECTION.match(line).group(1).title(), Pt, RGBColor)
+            continue
+        argued = _ARGUMENT.match(line)
+        if argued and not argued.group(2).rstrip().endswith((".", "!", "?", ",", ";")):
+            _heading(doc, f"{argued.group(1)}.  {argued.group(2).strip()}", Pt, RGBColor)
+            continue
+        if _BULLET.match(line):
+            _runs(doc.add_paragraph(style="List Bullet"), _BULLET.sub("", line), Pt, RGBColor)
+            continue
+        if _NUMBERED.match(line):
+            _runs(doc.add_paragraph(style="List Number"), _NUMBERED.sub("", line), Pt, RGBColor)
+            continue
+        _runs(doc.add_paragraph(), line.strip(), Pt, RGBColor)
+
+
+def _runs(paragraph, text, Pt, RGBColor) -> None:
+    """One paragraph, with **bold** turned into bold rather than asterisks."""
+    where = 0
+    for found in _BOLD.finditer(text):
+        if found.start() > where:
+            _ink(paragraph.add_run(text[where:found.start()]), Pt, RGBColor)
+        _ink(paragraph.add_run(found.group(1)), Pt, RGBColor, bold=True)
+        where = found.end()
+    if where < len(text):
+        _ink(paragraph.add_run(text[where:]), Pt, RGBColor)
+
+
+def _picture(doc, exhibit, Inches, Pt, RGBColor, ALIGN) -> None:
+    holder = doc.add_paragraph()
+    holder.alignment = ALIGN.CENTER
+    holder.paragraph_format.space_before = Pt(8)
+    holder.paragraph_format.space_after = Pt(1)
     try:
-        doc.add_picture(io.BytesIO(exhibit.data), width=Inches(PICTURE_INCHES))
+        holder.add_run().add_picture(io.BytesIO(exhibit.data), width=Inches(PICTURE_INCHES))
     except Exception:
         # A screenshot Word will not take is not worth losing the document
         # over. Named instead, so somebody can drop it in by hand.
-        line = doc.add_paragraph()
-        run = line.add_run(f"[couldn't embed {exhibit.name} — attach it by hand]")
-        run.italic = True
+        _ink(
+            holder.add_run(f"[couldn't embed {exhibit.name} — attach it by hand]"),
+            Pt, RGBColor, size=9, italic=True, colour=WARN,
+        )
         return
     caption = doc.add_paragraph()
-    run = caption.add_run(
-        exhibit.caption or CAPTIONS.get(exhibit.kind, CAPTIONS["other"])
+    caption.alignment = ALIGN.CENTER
+    caption.paragraph_format.space_after = Pt(10)
+    _ink(
+        caption.add_run(
+            exhibit.caption or CAPTIONS.get(exhibit.kind, CAPTIONS["other"])
+        ),
+        Pt, RGBColor, size=8.5, italic=True, colour=QUIET,
     )
-    run.italic = True
-    run.font.size = Pt(9)
+
+
+def _the_file(doc, exhibit, Pt, RGBColor) -> None:
+    """A PDF exhibit, which is a file rather than a picture.
+
+    Word will not take a PDF as an image and rendering one to an image needs
+    a tool the Mac does not have. Named and described instead, and submitted
+    beside the rebuttal - which is what an acquirer's portal wants anyway: a
+    six-page agreement flattened into a screenshot is a six-page agreement
+    nobody can read.
+    """
+    line = doc.add_paragraph()
+    line.paragraph_format.space_after = Pt(3)
+    _ink(
+        line.add_run(f"Submitted as a separate file: {exhibit.name}"),
+        Pt, RGBColor, size=10, bold=True,
+    )
+    if exhibit.text:
+        said = " ".join(exhibit.text.split())
+        note = doc.add_paragraph()
+        note.paragraph_format.space_after = Pt(6)
+        _ink(note.add_run(said[:900] + ("…" if len(said) > 900 else "")),
+             Pt, RGBColor, size=9, colour=QUIET)
 
 
 def _evidence_for(number: int) -> str:
