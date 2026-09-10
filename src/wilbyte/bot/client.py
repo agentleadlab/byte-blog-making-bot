@@ -1435,7 +1435,7 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
                 name=attachment.filename, data=await attachment.read()
             ))
         except Exception as exc:
-            skipped.append(f"{attachment.filename} ({_short(exc, 60)})")
+            skipped.append(f"{attachment.filename} ({jobs._short(exc, 60)})")
 
     await responder.send(
         f"Building the rebuttal for **{dispute.customer_name}** — reading the "
@@ -1453,7 +1453,7 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
             jobs.write_rebuttal, config, dispute, found, exhibits, into=where
         )
     except Exception as exc:
-        await responder.send(embed=embeds.error(f"Couldn't build it\n{_short(exc, 400)}"))
+        await responder.send(embed=embeds.error(f"Couldn't build it\n{jobs._short(exc, 400)}"))
         return
 
     note = [f"📄 **{dispute.customer_name}** — chargeback rebuttal."]

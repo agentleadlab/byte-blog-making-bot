@@ -263,3 +263,57 @@ def test_asking_for_copy_still_writes_copy(said, expected):
 
     assert asked.action == "write"
     assert asked.format_key == expected
+
+
+# ------------------------------------------- when it goes wrong, saying so
+
+
+def test_the_evidence_gathering_reads_their_card_against_the_day_they_paid():
+    """Their launch date is months back by the time a dispute lands. Read
+    against today, "Monday" is next Monday."""
+    import inspect
+
+    from wilbyte.bot import jobs
+
+    source = inspect.getsource(jobs.rebuttal_evidence)
+
+    assert "read_agent(" in source
+    assert "today=" in source.split("read_agent(")[1][:300]
+
+
+def test_the_failure_message_can_actually_be_sent(monkeypatch):
+    """The first real run failed on a missing argument, and the handler that
+    was supposed to say so raised NameError itself — so the error nobody could
+    see was replaced by a generic one. An error path that cannot run is worse
+    than no error path."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    said = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            said.append(str(content or kwargs.get("embed") or ""))
+
+    class Message:
+        attachments: list = []
+
+    def boom(*args, **kwargs):
+        raise TypeError("read_agent() missing 1 required keyword-only argument")
+
+    monkeypatch.setattr(jobs, "rebuttal_evidence", boom)
+    monkeypatch.setattr(
+        bot_client.embeds, "error", lambda text, **kw: f"ERROR: {text}"
+    )
+
+    class Config:
+        class secrets:
+            anthropic_api_key = "x"
+
+    asyncio.run(bot_client._rebuttal(Responder(), Config(), Message(), JOSE))
+
+    assert any("read_agent" in one for one in said), said

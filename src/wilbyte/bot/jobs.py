@@ -3365,7 +3365,12 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         client.close()
 
     body = str(detail.get("desc") or "")
-    agent = rules.read_agent({**card, **detail}, text=body, comments=tuple(said))
+    agent = rules.read_agent(
+        {**card, **detail}, text=body, comments=tuple(said),
+        # Their launch date is months back. Read against the day they were
+        # charged, not today, or "Monday" reads as next Monday.
+        today=dispute.paid() or date.today(),
+    )
     ordered = []
     if agent is not None:
         if agent.stated or agent.lead_type:
