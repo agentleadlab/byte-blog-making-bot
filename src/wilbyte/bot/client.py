@@ -620,6 +620,22 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     request = mentions.parse(message.content, max_batch=config.discord.max_batch)
     responder = MessageResponder(message)
 
+    # Replying to a command and saying nothing but "@RYTE" means run that
+    # again. Somebody who pasted a dispute notice with six screenshots on it
+    # is not going to paste it a second time, and the message RYTE gets on a
+    # reply carries none of it - so the one being answered is where to look.
+    # Only for a bare mention: a reply that says something is asking for that
+    # something, not for a repeat.
+    if request.action == "help" and not mentions.said_anything(message.content):
+        replied = await _replied_to(message)
+        if replied is not None and (replied.content or "").strip():
+            again = mentions.parse(
+                replied.content, max_batch=config.discord.max_batch
+            )
+            if again.action != "help":
+                request = again
+                message = replied
+
     if request.action == "help":
         # The version goes on the help text specifically, because this is the
         # message you get when RYTE doesn't recognise a word - and "that word
@@ -1406,7 +1422,23 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     """
     from .. import rebuttal as rules_doc
 
+    # Replying to the block and saying "@RYTE" is how somebody runs it a
+    # second time - the notice was pasted once and the screenshots went with
+    # it, and nobody wants to paste either again. The message RYTE gets is
+    # bare, so the one it answers is where to look. Same as filing a recording
+    # off a reply.
     dispute = rules_doc.read_facts(said)
+    if dispute.missing():
+        replied = await _replied_to(message)
+        if replied is not None and (replied.content or "").strip():
+            older = rules_doc.read_facts(replied.content or "")
+            if len(older.missing()) < len(dispute.missing()):
+                dispute = older
+                said = replied.content or said
+                # The screenshots were attached to that message too.
+                if not getattr(message, "attachments", None):
+                    message = replied
+
     if not dispute.customer_name:
         dispute.customer_name = rules_doc.named_in(said)
 

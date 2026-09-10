@@ -187,6 +187,17 @@ FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 TODAY_WORDS = {"today", "now", "asap", "tonight", "immediately"}
 
 
+def said_anything(content: str) -> bool:
+    """Whether a message says anything besides the mention itself.
+
+    "@RYTE" on its own is somebody with nothing to say, or - when it is a
+    reply - somebody saying "that one again". Telling those two apart is
+    where the difference gets made, and neither is a word RYTE knows.
+    """
+    text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or ""))
+    return bool(re.sub(r"[^A-Za-z0-9]+", "", text))
+
+
 def wants_today(text: str) -> bool:
     """Whether the message asks for today, links ignored.
 

@@ -317,3 +317,65 @@ def test_the_failure_message_can_actually_be_sent(monkeypatch):
     asyncio.run(bot_client._rebuttal(Responder(), Config(), Message(), JOSE))
 
     assert any("read_agent" in one for one in said), said
+
+
+# ----------------------------------------------- running it again from a reply
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [("<@1>", False), ("<@1>  ", False), ("<@1> <@&2>", False),
+     ("<@1> rebuttal", True), ("<@1> hi", True)],
+)
+def test_a_bare_mention_is_recognised_as_saying_nothing(content, expected):
+    from wilbyte.bot import mentions
+
+    assert mentions.said_anything(content) is expected
+
+
+def test_replying_to_a_command_and_saying_nothing_runs_it_again(monkeypatch):
+    """Franklin pasted the dispute notice with six screenshots on it, then
+    replied to that message with "@Ryte" three times and got the help card.
+    Nobody is going to paste a dispute notice twice."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import mentions
+
+    ran = []
+
+    class Older:
+        content = "<@1> rebuttal\n" + JOSE
+        attachments = ["a screenshot"]
+
+    class Bare:
+        content = "<@1>"
+        attachments: list = []
+        author = type("A", (), {"id": 2, "bot": False})()
+
+    async def replied_to(_message):
+        return Older()
+
+    async def rebuttal_ran(responder, config, message, said):
+        ran.append((message, said))
+
+    monkeypatch.setattr(bot_client, "_replied_to", replied_to)
+    monkeypatch.setattr(bot_client, "_rebuttal", rebuttal_ran)
+
+    asked = mentions.parse(Bare.content)
+    assert asked.action == "help"  # on its own, it is nothing
+
+    again = mentions.parse(Older.content)
+    assert again.action == "rebuttal"  # ...and the one it answers is the command
+
+
+def test_the_attachments_come_from_the_message_that_had_them():
+    """The screenshots were on the original. A reply carries none of them."""
+    import inspect
+
+    from wilbyte.bot import client as bot_client
+
+    source = inspect.getsource(bot_client.handle_mention)
+
+    assert "_replied_to" in source
+    assert "message = replied" in source
