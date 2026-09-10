@@ -417,6 +417,35 @@ def test_the_plus_tier_is_ordered_and_keeps_its_own_checklist(leads):
     assert agents.is_own_setup(leads) is False
 
 
+@pytest.mark.parametrize(
+    "leads",
+    ["OTP STANDARD IUL", "OTP IUL Standard", "25 OTP SPANISH IUL",
+     "Text Verified IUL Standard", "OTP FEX"],
+)
+def test_verified_leads_are_ordered_at_every_tier(leads):
+    """Alex Yakubu bought OTP STANDARD IUL and landed on own setup while an
+    "OTP IUL Standard" checklist sat on the same card. Somebody phones those
+    leads and gets a code back, which is the opposite of an agent setting
+    themselves up — Standard is a tier of them the way it is of Phoenix."""
+    assert agents.is_own_setup(leads) is False
+
+
+def test_alex_yakubu_lands_on_the_checklist_that_was_already_there():
+    names = ["OTP IUL Standard", "OTP Spanish IUL", "own setup"]
+
+    said, landed, could = agents.best_lead_type("Lead Type: OTP STANDARD IUL", names)
+
+    assert agents.is_own_setup(said) is False
+    assert landed == "OTP IUL Standard"
+    assert could == []
+
+
+def test_basic_still_beats_a_verified_word_beside_it():
+    """Basic is the self-setup one however the card words it, and the
+    own-setup words are read before anything else."""
+    assert agents.is_own_setup("40 Basic OTP Spanish IUL") is True
+
+
 def test_basic_still_wins_over_the_line_it_is_written_beside():
     """"Basic FB Spanish IUL" is self-setup however the card words it."""
     assert agents.is_own_setup("40 Basic FB Spanish IUL") is True

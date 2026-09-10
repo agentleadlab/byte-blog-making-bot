@@ -55,6 +55,13 @@ OWN_SETUP = "own setup"
 # anyway.
 OWN_SETUP_WORDS = re.compile(r"\binstant\b|\bfb\b|\bfacebook\b|\bbasics?\b", re.IGNORECASE)
 
+# Leads somebody phoned and got a code back from. Bought, always - which is
+# the whole point of them - so no tier makes them self-setup. Kept apart from
+# PLUS, which these words also name: for the tier they mean Plus, and here
+# they mean ordered, and one pattern doing both jobs is one that gets edited
+# for the wrong reason later.
+VERIFIED = re.compile(r"\btext[\s-]*verified\b|\botp\b|\bone[\s-]*time\s*p", re.IGNORECASE)
+
 
 def is_own_setup(lead_type: str) -> bool:
     """Whether these leads belong on the own-setup checklist.
@@ -69,11 +76,17 @@ def is_own_setup(lead_type: str) -> bool:
     six Basic Spanish IUL lines, and he had bought Uprise. Basic and Standard
     reduce to one tier for comparing lead types, which is right for that job
     and is what made the two look alike here.
+
+    Verified leads are the other thing Standard does not make self-setup.
+    Alex Yakubu bought OTP STANDARD IUL and landed on own setup while an
+    "OTP IUL Standard" checklist sat on the same card - somebody phones those
+    leads and gets a code back, which is the opposite of an agent setting
+    themselves up. Standard is a tier of them the way it is a tier of Phoenix.
     """
     said = lead_type or ""
     if OWN_SETUP_WORDS.search(said):
         return True
-    if LINE.search(said):
+    if LINE.search(said) or VERIFIED.search(said):
         return False
     return tier_of(said) == "standard"
 
