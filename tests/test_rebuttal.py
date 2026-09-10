@@ -449,3 +449,56 @@ def test_the_prompt_gives_claude_the_translations_to_argue_from():
     assert "EXHIBIT A" in asked
     assert "I can pay by card" in asked
     assert "Cite exhibits by letter, and only ones that exist." in asked
+
+
+# ------------------------------------------------------- the shape of the page
+
+
+def test_a_conversation_is_put_back_into_the_order_it_happened():
+    """WhatsApp hands its screenshots over newest first, so the first one Jose
+    attached was the last thing said. The rebuttal read backwards."""
+    ex = [
+        rebuttal.Exhibit("c.png", kind="texts", transcript="— Wed, Jun 17 —\n10:40 AM"),
+        rebuttal.Exhibit("a.png", kind="texts", transcript="— Fri, Jun 12 —\n8:04 PM"),
+        rebuttal.Exhibit("b.png", kind="texts", transcript="— Sun, Jun 14 —\n3:12 PM"),
+    ]
+
+    assert [one.name for one in rebuttal.letter_them(ex)] == ["a.png", "b.png", "c.png"]
+
+
+def test_one_it_cannot_date_keeps_its_place_rather_than_being_guessed_at():
+    ex = [
+        rebuttal.Exhibit("a.png", kind="texts", transcript="— Fri, Jun 12 —"),
+        rebuttal.Exhibit("undated.png", kind="texts", transcript="no date in this one"),
+    ]
+
+    assert [one.name for one in rebuttal.letter_them(ex)] == ["a.png", "undated.png"]
+
+
+def test_only_conversations_are_reordered():
+    """Two pages of a contract are in the order they were attached, and that
+    is the order they belong in."""
+    ex = [
+        rebuttal.Exhibit("p2.png", kind="contract", transcript="— Jun 17 —"),
+        rebuttal.Exhibit("p1.png", kind="contract", transcript="— Jun 12 —"),
+    ]
+
+    assert [one.name for one in rebuttal.letter_them(ex)] == ["p2.png", "p1.png"]
+
+
+@pytest.mark.parametrize(
+    "said", ["— Wed, Jun 17 —", "Jun 17, 2026", "2026-06-17", "June 17"]
+)
+def test_a_date_is_found_however_the_transcript_writes_it(said):
+    assert rebuttal.happened_on(said)[1:] == (6, 17)
+
+
+def test_the_writing_is_asked_for_markers_rather_than_a_shape_to_guess_at():
+    """The first version guessed a heading from "a numbered line with no full
+    stop", and the writing came back numbered with full stops — so every
+    argument rendered as a bullet and the document had no structure at all."""
+    asked = rebuttal.writing_prompt(rebuttal.read_facts(JOSE), rebuttal.Gathered(), [])
+
+    assert "ARGUMENT:" in asked
+    assert "Do not number them" in asked
+    assert "no full stop at the end" in asked

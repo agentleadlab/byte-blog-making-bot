@@ -69,8 +69,14 @@ _NUMBERED = re.compile(r"^\s{0,3}\d+[.)]\s+")
 # "1. The service was clearly described before purchase (Exhibits A and B)" is
 # an argument's heading; "1. He asked for a comparison, and got one." is a
 # sentence that happens to be numbered. A heading does not end in a full stop.
-_ARGUMENT = re.compile(r"^\s{0,3}(\d+)[.)]\s+(\S.{0,140})$")
-_SECTION = re.compile(r"^\s{0,3}(SUMMARY|CONCLUSION|TIMELINE|BACKGROUND)\s*:?\s*$", re.I)
+# The labels the writing is asked for. Markers rather than shapes: the first
+# version guessed a heading from "a numbered line with no full stop", and the
+# writing came back numbered *with* full stops, so every argument in the
+# document rendered as a bullet and it had no structure at all.
+_ARGUMENT = re.compile(r"^\s{0,3}ARGUMENT\s*[:.\-—]\s*(.+?)\s*$", re.IGNORECASE)
+_SECTION = re.compile(
+    r"^\s{0,3}(SUMMARY|CONCLUSION|TIMELINE|BACKGROUND)\s*[:.]?\s*$", re.IGNORECASE
+)
 
 
 class DocError(RuntimeError):
@@ -160,12 +166,10 @@ def _exhibits(doc, groups, Pt, RGBColor, Inches, ALIGN, docx) -> None:
         line.paragraph_format.space_after = Pt(3)
         _ink(line.add_run(f"EXHIBIT {letter} — {what}"), Pt, RGBColor, size=13, bold=True)
 
-        first = group[0]
-        if first.caption:
-            about = doc.add_paragraph()
-            about.paragraph_format.space_after = Pt(8)
-            _ink(about.add_run(first.caption), Pt, RGBColor, size=9.5, colour=QUIET)
-            _rule(about)
+        about = doc.add_paragraph()
+        about.paragraph_format.space_after = Pt(8)
+        _ink(about.add_run(_about(group)), Pt, RGBColor, size=9.5, colour=QUIET)
+        _rule(about)
 
         for number, one in enumerate(group):
             if number:
@@ -186,13 +190,27 @@ def _exhibits(doc, groups, Pt, RGBColor, Inches, ALIGN, docx) -> None:
                     said.add_run("What it says, in English"),
                     Pt, RGBColor, size=9.5, bold=True, colour=QUIET,
                 )
-                for row in one.transcript.splitlines():
-                    if not row.strip():
-                        continue
-                    text = doc.add_paragraph()
-                    text.paragraph_format.space_after = Pt(1)
-                    text.paragraph_format.left_indent = Inches(0.15)
-                    _ink(text.add_run(row.strip()), Pt, RGBColor, size=9)
+                _transcript(doc, one.transcript, Pt, RGBColor, Inches)
+
+
+def _transcript(doc, transcript, Pt, RGBColor, Inches) -> None:
+    """The lines of a conversation as one block, not twenty paragraphs.
+
+    Each on its own line inside a single paragraph, so Word leads them like a
+    transcript instead of putting seven points of air between every message.
+    """
+    lines = [row.strip() for row in transcript.splitlines() if row.strip()]
+    if not lines:
+        return
+    block = doc.add_paragraph()
+    block.paragraph_format.space_after = Pt(10)
+    block.paragraph_format.left_indent = Inches(0.2)
+    block.paragraph_format.line_spacing = 1.0
+    for number, row in enumerate(lines):
+        run = block.add_run(row)
+        _ink(run, Pt, RGBColor, size=9)
+        if number < len(lines) - 1:
+            run.add_break()
 
 
 # ------------------------------------------------------------------ the look
@@ -216,6 +234,16 @@ def _set_up(doc, Pt, RGBColor, Inches) -> None:
         style.font.size = Pt(10.5)
         style.font.color.rgb = RGBColor(*INK)
         style.paragraph_format.space_after = Pt(3)
+
+    for level in (1, 2, 3):
+        try:
+            style = doc.styles[f"Heading {level}"]
+        except KeyError:  # pragma: no cover - depends on the template
+            continue
+        style.font.name = FACE
+        style.font.color.rgb = RGBColor(*INK)
+        style.font.bold = True
+        style.font.size = Pt(12 if level == 1 else 11)
 
     for section in doc.sections:
         section.top_margin = Inches(0.8)
@@ -265,13 +293,18 @@ def _rule(paragraph) -> None:
     marks.append(borders)
 
 
-def _heading(doc, text, Pt, RGBColor) -> None:
-    """Our own, rather than Word's - theirs are blue and a size too big."""
-    line = doc.add_paragraph()
-    line.paragraph_format.space_before = Pt(14)
+def _heading(doc, text, Pt, RGBColor, *, level: int = 1) -> None:
+    """A real Word heading, restyled. The style matters as much as the look:
+    it is what gives the document an outline, a navigation pane and a shape
+    somebody can skim - `Normal` text made bold is a document with no parts.
+    """
+    line = doc.add_paragraph(style=f"Heading {level}")
+    for run in list(line.runs):
+        run.text = ""
+    line.paragraph_format.space_before = Pt(15)
     line.paragraph_format.space_after = Pt(4)
     line.paragraph_format.keep_with_next = True
-    _ink(line.add_run(text), Pt, RGBColor, size=11.5, bold=True)
+    _ink(line.add_run(text), Pt, RGBColor, size=12 if level == 1 else 11, bold=True)
 
 
 def _facts(doc, dispute, Pt, RGBColor) -> None:
@@ -317,13 +350,14 @@ def _holes(doc, holes, Pt, RGBColor) -> None:
     _rule(note)
 
 
-def _prose(doc, text, Pt, RGBColor) -> None:
+def _prose(doc, text, Pt, RGBColor, numbered=None) -> None:
     """Claude's writing, as paragraphs, bullets and bold rather than markup.
 
     It writes markdown because everything else it writes is read as markdown.
     Word is not, so "**attached files**" printed with its asterisks showing in
     the middle of a document going to an acquirer.
     """
+    numbered = numbered if numbered is not None else [0]
     for block in str(text or "").split("\n"):
         line = block.rstrip()
         if not line.strip():
@@ -337,12 +371,17 @@ def _prose(doc, text, Pt, RGBColor) -> None:
             small.paragraph_format.space_after = Pt(2)
             _ink(small.add_run(bare), Pt, RGBColor, size=10.5, bold=True)
             continue
-        if _SECTION.match(line):
-            _heading(doc, _SECTION.match(line).group(1).title(), Pt, RGBColor)
+        section = _SECTION.match(line)
+        if section:
+            _heading(doc, section.group(1).title(), Pt, RGBColor)
             continue
         argued = _ARGUMENT.match(line)
-        if argued and not argued.group(2).rstrip().endswith((".", "!", "?", ",", ";")):
-            _heading(doc, f"{argued.group(1)}.  {argued.group(2).strip()}", Pt, RGBColor)
+        if argued:
+            numbered[0] += 1
+            _heading(
+                doc, f"{numbered[0]}.  {argued.group(1).strip().rstrip('.')}",
+                Pt, RGBColor,
+            )
             continue
         if _BULLET.match(line):
             _runs(doc.add_paragraph(style="List Bullet"), _BULLET.sub("", line), Pt, RGBColor)
@@ -388,6 +427,17 @@ def _picture(doc, exhibit, Inches, Pt, RGBColor, ALIGN) -> None:
             exhibit.caption or CAPTIONS.get(exhibit.kind, CAPTIONS["other"])
         ),
         Pt, RGBColor, size=8.5, italic=True, colour=QUIET,
+    )
+
+
+def _about(group) -> str:
+    """One line describing a whole exhibit, rather than repeating the first
+    screenshot's caption over the top of that same screenshot."""
+    if len(group) == 1:
+        return group[0].caption or CAPTIONS.get(group[0].kind, "")
+    return (
+        f"{len(group)} screenshots, in the order the conversation happened. "
+        "Each is followed by what it says in English."
     )
 
 

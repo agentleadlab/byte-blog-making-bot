@@ -253,6 +253,28 @@ def header(one: Dispute) -> list[tuple[str, str]]:
     return [(label, value) for label, value in rows if str(value).strip()]
 
 
+#: What a conversation screenshot is of, so a set of them can be put back in
+#: the order it happened. WhatsApp hands them over newest first, and a
+#: conversation read backwards is one nobody follows.
+_WHEN = re.compile(
+    r"\b(\d{4})-(\d{2})-(\d{2})\b"
+    r"|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+_MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+
+
+def happened_on(transcript: str) -> tuple:
+    """The earliest date a transcript mentions, for sorting. () when none."""
+    found = _WHEN.search(transcript or "")
+    if not found:
+        return ()
+    if found.group(1):
+        return (int(found.group(1)), int(found.group(2)), int(found.group(3)))
+    month = _MONTHS.index(found.group(4)[:3].casefold()) + 1
+    return (0, month, int(found.group(5)))
+
+
 def letter_them(exhibits: list) -> list:
     """Group the attachments by kind and letter each group A, B, C...
 
@@ -268,6 +290,12 @@ def letter_them(exhibits: list) -> list:
         group = [one for one in exhibits if one.kind == kind]
         if not group:
             continue
+        # Oldest first. WhatsApp hands its screenshots over newest first, so
+        # the conversation arrived backwards: the first exhibit was the last
+        # thing said. One with no date it could read keeps its place.
+        if kind in ("texts", "discord"):
+            dated = [(happened_on(one.transcript), n, one) for n, one in enumerate(group)]
+            group = [one for when, _n, one in sorted(dated, key=lambda x: (not x[0], x[0], x[1]))]
         for number, one in enumerate(group, start=1):
             one.letter = chr(letter)
             one.number = number
@@ -355,24 +383,27 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
         + (f"\nDays waited: {one.days_waited()}" if one.days_waited() else "")
         + f"\n\nWHAT OUR RECORDS SHOW\n{seen}\n\nEXHIBITS ATTACHED\n{files}\n\n"
         "Write:\n\n"
-        "SUMMARY\nTwo or three paragraphs. What was bought, what was "
+        "SUMMARY:\nTwo or three paragraphs. What was bought, what was "
         "delivered, what the cardholder did with it, and why the dispute has "
         "no basis. Concrete and dated.\n\n"
-        "Then between three and six numbered arguments. Each one:\n"
-        "  a heading that states the argument - 'The service was clearly "
-        "described before purchase', 'The cardholder used the leads' - and "
-        "names the exhibits it rests on in brackets;\n"
-        "  then two to five sentences making it, quoting the messages, the "
-        "notes and the terms with their dates.\n\n"
-        "Then CONCLUSION - one paragraph.\n\n"
+        "Then between three and six arguments. Write each one as:\n\n"
+        "ARGUMENT: The service was clearly described before purchase "
+        "(Exhibit A)\n"
+        "Then two to five sentences making it, quoting the messages, the notes "
+        "and the terms with their dates.\n\n"
+        "The line after ARGUMENT: is a heading - a short phrase naming the "
+        "argument, with the exhibits it rests on in brackets, and no full stop "
+        "at the end. Do not number them; they are numbered when the document "
+        "is set.\n\n"
+        "Then CONCLUSION: and one paragraph.\n\n"
         "Rules. Cite only what is above - never a fact, date or sum that is "
         "not written there. Cite exhibits by letter, and only ones that "
         "exist. Where the money needs explaining, show the arithmetic. Quote "
         "the cardholder's own words wherever they exist, because their own "
         "words are the strongest thing here. Say less rather than padding. "
-        "Write it as the merchant: 'we', 'our records'. No markdown headings "
-        "or bold - plain lines, with each numbered argument starting with its "
-        "number and a full stop."
+        "Write it as the merchant: 'we', 'our records'. No markdown - no "
+        "asterisks, no hashes. The only labels are SUMMARY:, ARGUMENT: and "
+        "CONCLUSION:, each on a line of its own."
     )
 
 
