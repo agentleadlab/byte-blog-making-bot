@@ -3677,7 +3677,21 @@ def _split_written(said: str) -> dict:
     it was how "**attached files**" ended up printed with its asterisks
     showing in the middle of a section it did not belong to.
     """
-    return {"body": (said or "").strip()}
+    import re
+
+    text = (said or "").strip()
+    # The message table is pulled out and set as a table; everything else is
+    # laid out as written.
+    found = re.search(
+        r"^\s*KEY\s+MESSAGES\s*[:.]?\s*$(.*?)(?=^\s*(?:CONCLUSION|ARGUMENT|SUMMARY|TIMELINE)\s*[:.]?\s*$|\Z)",
+        text, re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    if not found:
+        return {"body": text}
+    return {
+        "body": (text[:found.start()] + text[found.end():]).strip(),
+        "messages": found.group(1).strip(),
+    }
 
 
 def _jot(noticed, kind: str, subject: str, *, detail: str = "") -> None:

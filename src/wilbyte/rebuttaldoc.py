@@ -124,8 +124,20 @@ def build(
         _holes(doc, holes, Pt, RGBColor)
 
     body = str(written.get("body") or written.get("summary") or "").strip()
-    if body:
-        _prose(doc, body, Pt, RGBColor)
+    messages = str(written.get("messages") or "").strip()
+
+    # The messages go under the summary rather than after the conclusion:
+    # they are what the arguments below are about, and an acquirer who reads
+    # only the first page should be reading them.
+    opening, arguments = _split_at_first_argument(body)
+    counted = [0]
+    if opening:
+        _prose(doc, opening, Pt, RGBColor, counted)
+    if messages:
+        _heading(doc, "Key Messages", Pt, RGBColor)
+        _message_table(doc, messages, Pt, RGBColor, Inches)
+    if arguments:
+        _prose(doc, arguments, Pt, RGBColor, counted)
 
     # Only when nothing was written. The number is in the prompt, so a
     # written rebuttal makes the argument itself and better - repeating it
@@ -191,6 +203,55 @@ def _exhibits(doc, groups, Pt, RGBColor, Inches, ALIGN, docx) -> None:
                     Pt, RGBColor, size=9.5, bold=True, colour=QUIET,
                 )
                 _transcript(doc, one.transcript, Pt, RGBColor, Inches)
+
+
+def _split_at_first_argument(body: str) -> tuple[str, str]:
+    """(the summary, everything from the first argument on).
+
+    So the message table can go between them. Nothing is dropped: when there
+    are no arguments the whole thing comes back as the opening.
+    """
+    lines = str(body or "").splitlines()
+    for number, line in enumerate(lines):
+        if _ARGUMENT.match(line):
+            return "\n".join(lines[:number]).strip(), "\n".join(lines[number:]).strip()
+    return str(body or "").strip(), ""
+
+
+def _message_table(doc, messages, Pt, RGBColor, Inches) -> None:
+    """The messages that decide it, as a table of when / who / what.
+
+    Quoting them in a paragraph buries them. In a table an acquirer can read
+    the four lines that matter without reading the exhibit, and then check the
+    exhibit if they want to.
+    """
+    rows = []
+    for line in messages.splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) >= 3 and any(parts):
+            rows.append(parts[:3])
+    if not rows:
+        return
+
+    table = doc.add_table(rows=0, cols=3)
+    table.style = "Table Grid"
+    _hairlines(table)
+    head = table.add_row().cells
+    for cell, title in zip(head, ("Date / Time", "Sender", "Message")):
+        cell.paragraphs[0].paragraph_format.space_after = Pt(2)
+        _ink(cell.paragraphs[0].add_run(title), Pt, RGBColor, size=9,
+             bold=True, colour=QUIET)
+    for when, who, what in rows:
+        cells = table.add_row().cells
+        for cell, said, bold in ((cells[0], when, False), (cells[1], who, True),
+                                 (cells[2], what, False)):
+            cell.paragraphs[0].paragraph_format.space_after = Pt(2)
+            _ink(cell.paragraphs[0].add_run(said), Pt, RGBColor, size=9, bold=bold)
+    for row in table.rows:
+        row.cells[0].width = Inches(1.15)
+        row.cells[1].width = Inches(1.0)
+        row.cells[2].width = Inches(4.6)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
 def _transcript(doc, transcript, Pt, RGBColor, Inches) -> None:
@@ -277,6 +338,32 @@ def _title(doc, dispute, Pt, RGBColor, ALIGN) -> None:
     _rule(under)
 
 
+def _hairlines(table) -> None:
+    """Strip the black grid off a table and leave a rule between rows.
+
+    Word's only borderless built-in table style is not in every template, so
+    the borders are set here rather than chosen. A fact table boxed in black
+    on every cell reads as a spreadsheet somebody pasted in; the same rows
+    with a hairline between them read as a document.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    marks = table._tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideV"):
+        one = OxmlElement(f"w:{edge}")
+        one.set(qn("w:val"), "none")
+        one.set(qn("w:sz"), "0")
+        borders.append(one)
+    inside = OxmlElement("w:insideH")
+    inside.set(qn("w:val"), "single")
+    inside.set(qn("w:sz"), "4")
+    inside.set(qn("w:color"), "E0E0E0")
+    borders.append(inside)
+    marks.append(borders)
+
+
 def _rule(paragraph) -> None:
     """A hairline under a paragraph, drawn as a bottom border."""
     from docx.oxml.ns import qn
@@ -314,6 +401,7 @@ def _facts(doc, dispute, Pt, RGBColor) -> None:
     table = doc.add_table(rows=0, cols=2)
     table.style = "Table Grid"
     table.autofit = True
+    _hairlines(table)
     for label, value in rows:
         cells = table.add_row().cells
         left = cells[0].paragraphs[0]

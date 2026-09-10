@@ -502,3 +502,62 @@ def test_the_writing_is_asked_for_markers_rather_than_a_shape_to_guess_at():
     assert "ARGUMENT:" in asked
     assert "Do not number them" in asked
     assert "no full stop at the end" in asked
+
+
+# ------------------------------------------------------------- key messages
+
+
+def test_the_messages_are_pulled_out_to_be_set_as_a_table():
+    from wilbyte.bot import jobs
+
+    written = jobs._split_written(
+        "SUMMARY:\nHe bought leads.\n\n"
+        "ARGUMENT: He chose the tier in writing (Exhibit A)\nOn June 14 he said so.\n\n"
+        "KEY MESSAGES:\n"
+        'Jun 12, 8:37 PM | Cardholder | "I can pay by card, right?"\n'
+        'Jun 14, 3:12 PM | Cardholder | "To start yes, I want to try them"\n\n'
+        "CONCLUSION:\nReverse it."
+    )
+
+    assert "I can pay by card" in written["messages"]
+    assert "KEY MESSAGES" not in written["body"]
+    assert "CONCLUSION" in written["body"]
+    assert "ARGUMENT" in written["body"]
+
+
+def test_no_message_block_leaves_the_writing_alone():
+    from wilbyte.bot import jobs
+
+    said = "SUMMARY:\nHe bought leads.\n\nCONCLUSION:\nReverse it."
+
+    assert jobs._split_written(said) == {"body": said}
+
+
+def test_the_messages_sit_under_the_summary_not_after_the_conclusion():
+    """They are what the arguments are about, and an acquirer who reads only
+    the first page should be reading them."""
+    from wilbyte import rebuttaldoc
+
+    opening, arguments = rebuttaldoc._split_at_first_argument(
+        "SUMMARY:\nHe bought leads.\n\nARGUMENT: He chose it (Exhibit A)\nHe did."
+    )
+
+    assert opening.startswith("SUMMARY:")
+    assert arguments.startswith("ARGUMENT:")
+
+
+def test_a_body_with_no_arguments_is_not_cut_in_half():
+    from wilbyte import rebuttaldoc
+
+    opening, arguments = rebuttaldoc._split_at_first_argument("SUMMARY:\nJust this.")
+
+    assert opening == "SUMMARY:\nJust this."
+    assert arguments == ""
+
+
+def test_the_writing_is_asked_for_the_messages_and_told_when_to_leave_them_out():
+    asked = rebuttal.writing_prompt(rebuttal.read_facts(JOSE), rebuttal.Gathered(), [])
+
+    assert "KEY MESSAGES:" in asked
+    assert "when | who | what they said" in asked
+    assert "Leave this out entirely if there are no messages" in asked
