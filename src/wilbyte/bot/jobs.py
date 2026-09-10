@@ -2371,6 +2371,51 @@ def _people_on(cards: dict, members: list[dict], holds: dict):
     return people
 
 
+def suggestions(config: Config) -> tuple[str, list]:
+    """What the notebook adds up to. (what to say, what it was built from).
+
+    Suggests. Never acts, and nothing that calls this is allowed to either -
+    "dont make him do it just suggest then we'll brainstorm".
+
+    Claude does the reading, because the value is in seeing that four
+    separate entries are one problem. When it cannot be reached the sightings
+    are listed plainly instead: a list somebody has to think about themselves
+    beats a blank message.
+    """
+    from anthropic import Anthropic
+
+    from .. import copywriter, noticed
+
+    found = noticed.worth_saying(noticed.notes())
+    if not found:
+        return noticed.nothing_yet(), []
+
+    plain = "\n".join(f"• {noticed.describe(one)}" for one in found[:12])
+    if not config.secrets.anthropic_api_key:
+        return plain, found
+
+    try:
+        client = Anthropic(api_key=config.secrets.anthropic_api_key)
+        response = client.messages.create(
+            model=config.copy.model,
+            max_tokens=1200,
+            system=(
+                "You keep a lead-generation company's daily board. You are "
+                "telling the manager what you have noticed. Be specific and "
+                "short. Suggest; never say you have done something."
+            ),
+            messages=[{"role": "user", "content": noticed.prompt(found)}],
+        )
+        written = "".join(
+            block.text for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+    except Exception as exc:
+        return f"{plain}\n\n_(I couldn't think it through: {_short(exc, 100)})_", found
+
+    return (written or plain), found
+
+
 def tags_stamp(config: Config, *, day=None) -> str:
     """A fingerprint of when the day's three cards were last touched.
 
@@ -2409,7 +2454,7 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
     One that is already filed is skipped by the comment's id, so running this
     twice in an afternoon adds nothing the first run added.
     """
-    from .. import dailyops, tagged, trello
+    from .. import dailyops, noticed, tagged, trello
 
     day = day or board_day(config)
     client = open_trello(config)
@@ -2479,6 +2524,8 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                         unknown.add(name)
 
         if unknown:
+            for name in sorted(unknown):
+                _jot(noticed, "no_checklist", f"@{name}")
             problems.append(
                 "On the board but with no checklist on today's cards, so I left "
                 "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
@@ -3071,7 +3118,7 @@ def spread_to_lead_order(
     Runs before the cards move to Done, because a card in Done is finished and
     writing onto one after the fact is how a line gets missed.
     """
-    from .. import agents as rules, dailyops
+    from .. import agents as rules, dailyops, noticed
 
     day = day or dailyops.next_day(board_day(config))
     client = open_trello(config)
@@ -3138,6 +3185,10 @@ def spread_to_lead_order(
                     spread.label, list(by_name_shown), tier=rules.tier_of(spread.label)
                 )
                 if len(could_be) > 1:
+                    _jot(
+                        noticed, "ambiguous", spread.label,
+                        detail="could be " + " or ".join(could_be),
+                    )
                     problems.append(
                         f"{who} — “{spread.label}” could be "
                         + " or ".join(f"“{one}”" for one in could_be)
@@ -3165,6 +3216,13 @@ def spread_to_lead_order(
             clash = _their_card_disagrees(client, cards.get(spread.url), spread.label)
             if clash is not None:
                 ordered, on_setup = clash
+                # Which two wordings disagree is the thing worth counting, not
+                # which agent it happened to: the same pair coming back every
+                # week is a place the two are being written differently.
+                _jot(
+                    noticed, "conflict", f"{ordered} vs {on_setup}",
+                    detail=f"their card says “{ordered}”, the setup card “{on_setup}”",
+                )
                 conflicts.append({
                     "agent": who,
                     "url": spread.url,
@@ -3263,6 +3321,19 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def _jot(noticed, kind: str, subject: str, *, detail: str = "") -> None:
+    """Write a sighting in the notebook, and never fail because of it.
+
+    Noticing is a side effect of doing the work. A notebook that cannot be
+    written - a read-only disk, a half-written file - must not stop an agent
+    being filed, so this swallows everything.
+    """
+    try:
+        noticed.note(kind, subject, detail=detail)
+    except Exception:  # noticing is never worth breaking the work over
+        log.debug("Couldn't write %s/%s to the notebook", kind, subject, exc_info=True)
+
+
 def _teach_me(label: str) -> str:
     """" — I don't know what "STNDRD" means; …", or "" when nothing is unknown.
 
@@ -3270,12 +3341,16 @@ def _teach_me(label: str) -> str:
     and it is the only moment they are looking. Asking then costs nothing and
     means the next card with that word on it files itself.
     """
-    from .. import agents as rules
+    from .. import agents as rules, noticed
 
     unknown = rules.words_it_cannot_place(label)
     if not unknown:
         return ""
     word = unknown[0]
+    # Written down as well as said. Asking in the moment only works if
+    # somebody is looking at that moment; "PHX STNDRD" stopped him four times
+    # in a week and each fix started with a person noticing a screenshot.
+    _jot(noticed, "unplaced", word, detail=f"seen on “{label}”")
     return (
         f"\n   I don't know what “{word}” means. "
         f"`@RYTE words {word} = standard` (or plus, iul, spanish…) and I'll remember."

@@ -755,6 +755,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _tagged_tasks(responder, config, request.brief or "")
                 return
 
+            if request.action == "noticed":
+                await _what_i_noticed(responder, config, request.brief or "")
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -1377,6 +1381,64 @@ async def _archive_aged(responder: Responder, config: Config) -> None:
 
 #: How many tagged lines to print before the message stops being readable.
 TAGS_SHOWN = 25
+
+
+_HUSH = re.compile(
+    r"^\s*(?:forget|drop|hush|ignore|stop|nevermind)\s+(?P<subject>.+)$", re.IGNORECASE
+)
+
+
+async def _what_i_noticed(responder: Responder, config: Config, said: str) -> None:
+    """What RYTE has noticed while working, as suggestions.
+
+    He only ever suggests. Nothing here touches the board, and the point of
+    the message is the conversation after it rather than the message.
+    """
+    from .. import noticed
+
+    asked = re.sub(
+        r"^\s*(?:trello\s+)?(?:noticed|notice|suggest|suggestions|ideas)\b",
+        "", said or "", count=1, flags=re.IGNORECASE,
+    ).strip()
+
+    hushing = _HUSH.match(asked)
+    if hushing:
+        subject = hushing.group("subject").strip().strip("“”\"'")
+        done = await asyncio.to_thread(noticed.hush_subject, subject)
+        await responder.send(
+            f"Right — I'll stop raising “{subject}”."
+            if done else
+            f"I haven't been raising “{subject}”, so there's nothing to drop."
+        )
+        return
+
+    if asked.casefold() in ("all", "everything", "raw", "list"):
+        found = await asyncio.to_thread(noticed.notes)
+        if not found:
+            await responder.send(noticed.nothing_yet())
+            return
+        await responder.send(
+            f"📓 Everything in the notebook ({len(found)}):\n"
+            + "\n".join(f"• {noticed.describe(one)}" for one in found[:30])
+        )
+        return
+
+    await responder.send("Reading back what I've noticed —")
+    try:
+        written, found = await asyncio.to_thread(jobs.suggestions, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the notebook\n{exc}"))
+        return
+
+    if not found:
+        await responder.send(written)
+        return
+    await responder.send(
+        f"💡 **What I've noticed**\n\n{written}\n\n"
+        "_Suggestions only — I haven't done any of it. "
+        "`@RYTE noticed all` for the raw list, "
+        "`@RYTE noticed forget <thing>` to stop me raising one._"
+    )
 
 
 async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None:

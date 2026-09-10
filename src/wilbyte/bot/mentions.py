@@ -122,6 +122,13 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # What he has noticed while working, as suggestions. He never acts on
+    # these - the message is the start of a conversation, not a report of one.
+    "noticed": "noticed",
+    "notice": "noticed",
+    "suggest": "noticed",
+    "suggestions": "noticed",
+    "ideas": "noticed",
     # Comments that tagged somebody and never made it onto a checklist.
     "tags": "tags",
     "tagged": "tags",
@@ -452,7 +459,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
-                         "archive", "setups", "spread", "unspread", "tags")
+                         "archive", "setups", "spread", "unspread", "tags",
+                         "noticed")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -562,7 +570,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags",
+        "words", "tags", "noticed",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -755,6 +763,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello agents** — file the new agents waiting in In Que
 > @RYTE **trello unticked** — New Agent cards in Done nobody has marked complete
 > @RYTE **trello archive** — archive the ticked cards in Aged Leads Order Done
+> @RYTE **noticed** — what I've picked up while working, as suggestions. I
+> never act on them; `noticed all` for the raw list, `noticed forget <thing>`
+> to stop me raising one
 > @RYTE **trello tags** — comments that tagged somebody and never made it onto
 > a checklist. Therese's work goes on Ops wherever it was said; `@card` goes to
 > everybody on that card. Shown for confirmation first
