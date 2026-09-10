@@ -3310,3 +3310,84 @@ def test_a_card_that_cannot_be_read_is_not_a_conflict():
             raise RuntimeError("Trello had a bad second")
 
     assert jobs._their_card_disagrees(Broken(), "x", "OTP VETS") is None
+
+
+# ------------------- a confirmation that contradicts itself and answers itself
+
+
+def test_a_self_answering_confirmation_is_not_pinged(monkeypatch, tmp_path):
+    """Therese's on Austin Casares opened "OTP TUCKER IUL" and then gave the
+    slug austin-casares-trucker, which is what he ordered. Nothing was set up
+    wrong; the only thing wrong is a letter in a headline."""
+    import asyncio
+
+    from wilbyte import noticed
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    sent, closed = [], {"n": 0}
+
+    class Bot:
+        config = None
+
+        def is_closed(self):
+            closed["n"] += 1
+            return closed["n"] > 1
+
+    class Responder:
+        async def send(self, *args, **kwargs):
+            sent.append(kwargs.get("embed") or args)
+
+    monkeypatch.setattr(noticed, "NOTICED_PATH", tmp_path / "noticed.json")
+    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: Responder())
+    monkeypatch.setattr(bot_client, "SETUP_CHECK_SECONDS", 0)
+    monkeypatch.setattr(jobs, "wrong_setups", lambda config: ([{
+        "id": "austin", "agent": "Austin Casares",
+        "ordered": "OTP Trucker IUL lead", "setup": "OTP TUCKER IUL",
+        "also": "austin-casares-trucker", "typo": True,
+        "when": "tomorrow", "where": "Done",
+    }], []))
+
+    asyncio.run(bot_client.setup_check_loop(Bot()))
+
+    assert sent == []
+    # ...but written down, so it can be raised if it keeps happening.
+    assert any(
+        "TUCKER" in one.subject for one in noticed.notes(path=tmp_path / "noticed.json")
+    )
+
+
+def test_a_real_mismatch_is_still_pinged(monkeypatch, tmp_path):
+    import asyncio
+
+    from wilbyte import noticed, setupseen
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    sent, closed = [], {"n": 0}
+
+    class Bot:
+        config = None
+
+        def is_closed(self):
+            closed["n"] += 1
+            return closed["n"] > 1
+
+    class Responder:
+        async def send(self, *args, **kwargs):
+            sent.append(kwargs.get("embed"))
+
+    monkeypatch.setattr(noticed, "NOTICED_PATH", tmp_path / "noticed.json")
+    monkeypatch.setattr(setupseen, "SEEN_PATH", tmp_path / "seen.json")
+    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: Responder())
+    monkeypatch.setattr(bot_client, "_unmarked_ping", lambda config: "")
+    monkeypatch.setattr(bot_client, "SETUP_CHECK_SECONDS", 0)
+    monkeypatch.setattr(jobs, "wrong_setups", lambda config: ([{
+        "id": "someone", "agent": "Someone Else",
+        "ordered": "25 OTP VETS", "setup": "25 OTP FEX",
+        "also": "", "typo": False, "when": "today", "where": "Done",
+    }], []))
+
+    asyncio.run(bot_client.setup_check_loop(Bot()))
+
+    assert len(sent) == 1

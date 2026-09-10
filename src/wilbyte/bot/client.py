@@ -3491,14 +3491,33 @@ async def setup_check_loop(bot: "WilByteBot") -> None:
     Ten minutes rather than twenty seconds: the confirmation comment lands
     hours after the card is filed, so there is nothing to gain from looking
     more often, and this one reads every list on the board.
+
+    A confirmation that contradicts itself and answers itself is not raised
+    here. Therese's on Austin Casares opened "OTP TUCKER IUL" and then gave
+    the slug `austin-casares-trucker`, which is what he ordered - so nothing
+    was set up wrong and the only thing wrong is a letter in a headline.
+    Written down instead, and said if it keeps happening. `@RYTE trello
+    setups` still shows them, because that is somebody asking.
     """
-    from .. import setupseen
+    from .. import noticed, setupseen
 
     while not bot.is_closed():
         try:
             responder = _board_responder(bot)
             if responder is not None:
                 found, problems = await asyncio.to_thread(jobs.wrong_setups, bot.config)
+                for one in found:
+                    if one.get("typo"):
+                        await asyncio.to_thread(
+                            jobs._jot, noticed, "conflict",
+                            str(one.get("setup") or ""),
+                            detail=(
+                                f"the confirmation says “{one.get('setup')}” and "
+                                f"then “{one.get('also')}”, which is what they "
+                                "ordered"
+                            ),
+                        )
+                found = [one for one in found if not one.get("typo")]
                 marks = [
                     setupseen.mark(str(c.get("id") or ""), c["ordered"], c["setup"])
                     for c in found
