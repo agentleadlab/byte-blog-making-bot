@@ -3168,6 +3168,13 @@ def spread_to_lead_order(
         cards = _cards_by_url(every)
         added: list[str] = []
         conflicts: list[dict] = []
+        # Which agent each unplaceable line was about, so a line that could
+        # not be read can be told apart from an agent who never got placed.
+        # The setup card carries a line per person who worked on them, and
+        # Therese writing "OTP IUL Plus" where Nicole writes "Ascend" is one
+        # agent, done, with a second wording nobody can match.
+        stuck: list[tuple[str, str]] = []
+        placed: set[str] = set()
         for spread in spreads:
             key = " ".join(spread.checklist.split()).casefold()
             who = named.get(spread.url, spread.url)
@@ -3189,17 +3196,15 @@ def spread_to_lead_order(
                         noticed, "ambiguous", spread.label,
                         detail="could be " + " or ".join(could_be),
                     )
-                    problems.append(
+                    stuck.append((spread.url,
                         f"{who} — “{spread.label}” could be "
                         + " or ".join(f"“{one}”" for one in could_be)
-                        + f" on {order.get('name')}. It doesn't say which."
-                    )
+                        + f" on {order.get('name')}. It doesn't say which."))
                 else:
-                    problems.append(
+                    stuck.append((spread.url,
                         f"{who} — “{spread.label}” doesn't match any checklist on "
                         f"{order.get('name')}"
-                        + _teach_me(spread.label)
-                    )
+                        + _teach_me(spread.label)))
                 continue
             try:
                 client.add_check_item(
@@ -3209,6 +3214,7 @@ def spread_to_lead_order(
                 problems.append(f"{spread.label} — {_short(exc, 160)}")
                 continue
             added.append(f"{named.get(spread.url, spread.label)} — {spread.checklist}")
+            placed.add(spread.url)
 
             # Filed by the setup card's wording, which is sometimes thinner
             # than the agent's own card. Read after the write, not before: the
@@ -3234,6 +3240,22 @@ def spread_to_lead_order(
             # Name both cards. The whole failure here was a wrong pairing, and
             # a count alone would have hidden it again.
             added.insert(0, f"**{setup.get('name')}** → **{order.get('name')}**")
+        # A line nobody could place, for an agent who got placed off another
+        # line, is not something that went wrong - the agent is on the card.
+        # Said quietly, because the wording is still drifting and that is
+        # worth knowing; but not under "something went wrong", which sends
+        # somebody looking for an agent who is already there.
+        problems.extend(said for url, said in stuck if url not in placed)
+        also = [said for url, said in stuck if url in placed]
+        if also:
+            problems.append(
+                f"{len(also)} line(s) I couldn't read were for agents already "
+                "placed from another line on the setup card, so I left them: "
+                + "; ".join(
+                    said.split(" — ", 1)[-1].split(" could be")[0].strip("“”")
+                    for said in also
+                )
+            )
         return added, conflicts, problems
     finally:
         client.close()

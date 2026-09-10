@@ -3188,3 +3188,59 @@ def test_a_broken_command_says_so_rather_than_going_quiet(config, monkeypatch):
 
     assert said and "Something broke" in said[0]
     assert "terminal window" in said[0]
+
+
+# ------------------------- a line nobody could read, for an agent already placed
+
+
+class TwiceWrittenBoard(SpreadBoard):
+    """A setup card that names one agent twice, worded two ways.
+
+    Which is what it looks like on the real one: Therese writes "OTP IUL
+    Plus" on her checklist and Nicole writes "Ascend" on hers, and they are
+    the same agent and the same order.
+    """
+
+    def card_checklists(self, card_id):
+        if card_id == "setup":
+            return [
+                {"id": "s1", "name": "Therese", "checkItems": [
+                    {"name": f"{AGENT_URL} OTP IUL Plus"}
+                ]},
+                {"id": "s2", "name": "Nicole", "checkItems": [
+                    {"name": f"{AGENT_URL} Ascend"}
+                ]},
+            ]
+        return [
+            {"id": f"c{n}", "name": name, "checkItems": []}
+            for n, name in enumerate(self.checklists)
+        ]
+
+
+def test_an_agent_placed_off_one_line_is_not_reported_as_a_failure(config, monkeypatch):
+    """Nicole's spread put 22 agents on the card and then said something went
+    wrong about three of them — who were all on the card. The second line for
+    each was worded "Ascend", which names no tier and so matches both."""
+    board = TwiceWrittenBoard(
+        on_setup="OTP IUL Plus", their_card=SIONA_CARD,
+    )
+    board.checklists = ["OTP IUL Plus", "OTP IUL Standard"]
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert [line for line in added if "Siona" in line]
+    # Said, because the wording is drifting - but not as a failure.
+    assert not any("could be" in line and "went wrong" in line for line in problems)
+    assert any("already placed from another line" in line for line in problems)
+
+
+def test_an_agent_nobody_could_place_at_all_is_still_a_failure(config, monkeypatch):
+    """The quiet version is only for a line whose agent got placed anyway."""
+    board = SpreadBoard(on_setup="Ascend", their_card=SIONA_CARD)
+    board.checklists = ["OTP IUL Plus", "OTP IUL Standard"]
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert added == []
+    assert any("could be" in line for line in problems)
+    assert not any("already placed" in line for line in problems)
