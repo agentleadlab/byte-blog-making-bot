@@ -214,9 +214,31 @@ def how_many(said: str) -> int | None:
 
 
 def _words(said: str) -> set[str]:
+    """The words that say which package it is, singular forms included.
+
+    "OTP IULs" is "OTP IUL" said by somebody in a hurry, and it was answered
+    with "I don't know which package that is" beside a list containing
+    Text-Verified IUL Leads. Only "vets" worked, and only because somebody had
+    written that plural into the aliases by hand.
+
+    Both forms are kept rather than one replaced: a package whose alias really
+    does end in an s still matches, and adding a word can only find a package,
+    never lose one.
+    """
     text = re.sub(r"[^A-Za-z0-9]+", " ", said or "")
     text = _NOISE.sub(" ", text)
-    return {word.lower() for word in text.split() if word and not word.isdigit()}
+    found = set()
+    for word in text.split():
+        if not word or word.isdigit():
+            continue
+        low = word.lower()
+        found.add(low)
+        # Not "ss": "express" is not the plural of "expres". And not a count -
+        # "40s" is a quantity somebody pluralised, not a package called 40.
+        if len(low) > 2 and low.endswith("s") and not low.endswith("ss"):
+            if not low[:-1].isdigit():
+                found.add(low[:-1])
+    return found
 
 
 def matches(said: str) -> list[Product]:

@@ -88,3 +88,46 @@ def test_the_line_a_client_sees_carries_the_count():
     assert products.line_for("$621 for 40 basic Spanish Leads", found) == (
         "40 Spanish Instant IUL Leads"
     )
+
+
+# ------------------------------------------------------------------- plurals
+
+
+@pytest.mark.parametrize(
+    "said, expected",
+    [
+        ("Payment link for $900 of OTP IULs", "Text-Verified IUL Leads"),
+        ("$900 of otp iuls", "Text-Verified IUL Leads"),
+        ("40 otp fexs", "Text-Verified Final Expense Leads"),
+        ("$500 trucker iuls", "Text-Verified Trucker IUL Leads"),
+        ("$300 for mortgage protections", "Text-Verified Mortgage Protection Leads"),
+        ("$100 fb iuls", "Facebook IUL Leads"),
+        ("$200 for widows", "Text-Verified Widow Leads"),
+    ],
+)
+def test_a_package_said_in_the_plural_is_the_same_package(said, expected):
+    """Austin asked for "$900 of OTP IULs" and was told RYTE didn't know which
+    package that was, beside a list with Text-Verified IUL Leads in it. Only
+    "vets" worked, and only because that plural was in the aliases by hand."""
+    found = products.find(said)
+
+    assert found is not None
+    assert found.name == expected
+
+
+def test_the_singular_still_works():
+    assert products.find("$900 of OTP IUL").name == "Text-Verified IUL Leads"
+
+
+def test_a_word_that_merely_ends_in_s_is_not_a_plural():
+    """"express" is not the plural of "expres"."""
+    assert "expres" not in products._words("express leads")
+
+
+def test_the_plural_of_a_number_is_not_a_word():
+    assert products._words("$900 of 40s") <= {"40s"}
+
+
+def test_both_forms_are_kept_rather_than_one_replaced():
+    """So a package whose alias really does end in an s still matches."""
+    assert {"vet", "vets"} <= products._words("OTP VETS")
