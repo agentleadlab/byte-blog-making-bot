@@ -1868,6 +1868,39 @@ class Spread:
     make_checklist: bool = False
 
 
+def one_order_twice(said: str, already: str) -> bool:
+    """Whether two wordings name the same purchase rather than two of them.
+
+    The person checklists on a setup card are copies, so the same agent is
+    written three times by three people. Therese writes "Ascend Plus", Nicole
+    writes "Ascend", and keeping both made one agent into two orders - the
+    second of which names no tier and so matches nothing.
+
+    The same product where both name a tier and the tiers agree, or where one
+    of them does not name a tier at all. Two tiers that disagree are two
+    orders and stay two: somebody who bought Plus and Standard bought both.
+    """
+    if not said.strip() or not already.strip():
+        return False
+    if family_of(said) != family_of(already):
+        return False
+    if qualifiers_of(said) != qualifiers_of(already):
+        return False
+    here, there = tier_of(said), tier_of(already)
+    return here is None or there is None or here == there
+
+
+def _the_fuller(said: str, already: str) -> str:
+    """Of two wordings of one order, the one that says more.
+
+    A tier beats no tier; failing that, the longer wording. "Ascend Plus
+    $1000/week" carries what the week is worth and "Ascend" does not.
+    """
+    if (tier_of(said) is not None) != (tier_of(already) is not None):
+        return said if tier_of(said) is not None else already
+    return said if len(said) > len(already) else already
+
+
 def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
     """(card url, lead type) for every agent on a setup card, once each.
 
@@ -1897,7 +1930,16 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
                 links[key] = url
                 order.append(key)
             for part in order_parts(label):
-                if part not in labels[key]:
+                if part in labels[key]:
+                    continue
+                # The same order said again, by the next person's copy of the
+                # list. The fuller wording is kept and the thinner one dropped,
+                # rather than both being carried as two orders.
+                for number, kept in enumerate(labels[key]):
+                    if one_order_twice(part, kept):
+                        labels[key][number] = _the_fuller(part, kept)
+                        break
+                else:
                     labels[key].append(part)
     return [(links[key], ORDER_JOIN.join(labels[key])) for key in order]
 

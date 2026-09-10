@@ -3217,21 +3217,23 @@ class TwiceWrittenBoard(SpreadBoard):
         ]
 
 
-def test_an_agent_placed_off_one_line_is_not_reported_as_a_failure(config, monkeypatch):
+def test_the_same_order_written_two_ways_is_one_order(config, monkeypatch):
     """Nicole's spread put 22 agents on the card and then said something went
-    wrong about three of them — who were all on the card. The second line for
-    each was worded "Ascend", which names no tier and so matches both."""
-    board = TwiceWrittenBoard(
-        on_setup="OTP IUL Plus", their_card=SIONA_CARD,
-    )
+    wrong about three of them — who were all on the card.
+
+    The person checklists are copies, so each agent is written three times by
+    three people. Therese wrote "Ascend Plus" and Nicole wrote "Ascend", and
+    both wordings were carried as separate orders — the second naming no tier,
+    so it matched both the Plus and the Standard checklist and matched
+    neither."""
+    board = TwiceWrittenBoard(on_setup="OTP IUL Plus", their_card=SIONA_CARD)
     board.checklists = ["OTP IUL Plus", "OTP IUL Standard"]
 
     added, _conflicts, problems = spreading(board, monkeypatch, config)
 
     assert [line for line in added if "Siona" in line]
-    # Said, because the wording is drifting - but not as a failure.
-    assert not any("could be" in line and "went wrong" in line for line in problems)
-    assert any("already placed from another line" in line for line in problems)
+    assert not any("could be" in line for line in problems)
+    assert len(board.written) == 1
 
 
 def test_an_agent_nobody_could_place_at_all_is_still_a_failure(config, monkeypatch):

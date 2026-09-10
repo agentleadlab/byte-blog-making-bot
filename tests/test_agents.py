@@ -3544,3 +3544,78 @@ def test_an_unreadable_day_says_it_is_unreadable():
     assert "can't read" in said
     assert "isn't settled" not in said
     assert "week of September 14" in said
+
+
+# ------------------------- one agent, three people's copies of the same list
+
+
+def test_the_same_order_worded_two_ways_stays_one_order():
+    """The person checklists on a setup card are copies, so each agent is
+    written three times. Therese wrote "Ascend Plus" and Nicole wrote
+    "Ascend", and keeping both made one agent into two orders."""
+    held = [
+        {"name": "Therese", "checkItems": [{"name": "https://trello.com/c/xy Ascend Plus"}]},
+        {"name": "Nicole", "checkItems": [{"name": "https://trello.com/c/xy Ascend"}]},
+    ]
+
+    ((_url, label),) = agents.setup_agents(held)
+
+    assert agents.order_parts(label) == ["Ascend Plus"]
+
+
+def test_the_wording_that_says_more_is_the_one_kept():
+    """"Ascend Plus $1000/week" carries what the week is worth; "Ascend"
+    does not."""
+    held = [
+        {"name": "Nicole", "checkItems": [{"name": "https://trello.com/c/xy Ascend"}]},
+        {"name": "Therese", "checkItems": [
+            {"name": "https://trello.com/c/xy Ascend Plus $1000/week"}
+        ]},
+    ]
+
+    ((_url, label),) = agents.setup_agents(held)
+
+    assert label == "Ascend Plus $1000/week"
+
+
+def test_two_real_orders_are_still_two():
+    """Somebody who bought vets and FEX needs a line under each."""
+    held = [
+        {"name": "Therese", "checkItems": [
+            {"name": "https://trello.com/c/ab 15 OTP VETS + 15 OTP FEX"}
+        ]},
+        {"name": "Nicole", "checkItems": [{"name": "https://trello.com/c/ab OTP VETS"}]},
+    ]
+
+    ((_url, label),) = agents.setup_agents(held)
+
+    assert agents.order_parts(label) == ["15 OTP VETS", "15 OTP FEX"]
+
+
+def test_two_tiers_of_one_product_are_two_orders():
+    """Somebody who bought Plus and Standard bought both."""
+    held = [
+        {"name": "Therese", "checkItems": [
+            {"name": "https://trello.com/c/cd OTP IUL Plus + OTP IUL Standard"}
+        ]},
+    ]
+
+    ((_url, label),) = agents.setup_agents(held)
+
+    assert agents.order_parts(label) == ["OTP IUL Plus", "OTP IUL Standard"]
+
+
+@pytest.mark.parametrize(
+    "said, already, expected",
+    [
+        ("Ascend", "Ascend Plus", True),
+        ("Ascend Plus", "Ascend Plus", True),
+        ("PHNX 2.0", "PHNX Plus", True),
+        ("OTP IUL Plus", "OTP IUL Standard", False),
+        ("OTP VETS", "OTP FEX", False),
+        ("OTP Spanish IUL", "OTP IUL Plus", False),
+        ("", "Ascend Plus", False),
+    ],
+)
+def test_when_two_wordings_are_one_purchase(said, already, expected):
+    assert agents.one_order_twice(said, already) is expected
