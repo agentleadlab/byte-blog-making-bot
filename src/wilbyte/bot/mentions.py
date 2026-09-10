@@ -548,6 +548,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         # A link is optional, but with one the check can prove YouTube works.
         return MentionRequest(action="check", source=_find_source(text))
 
+    # Before the format check, and this one is not a nicety: the dispute block
+    # a rebuttal is pasted from ends "Customer Email: ...", and "email" is a
+    # format word, so every rebuttal ever asked for came back as a marketing
+    # email about a chargeback.
+    if action == "rebuttal":
+        return MentionRequest(action="rebuttal", brief=text)
+
     # A format word means "write me one of these", and wins over a link so that
     # "email about the new playlist <link>" writes an email, not a blog post.
     fmt = _first_format_word(text, find)
@@ -577,7 +584,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags", "noticed", "rebuttal",
+        "words", "tags", "noticed",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's

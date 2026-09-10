@@ -212,3 +212,54 @@ def test_the_demand_names_the_amount():
 
 def test_the_demand_still_reads_without_one():
     assert "the disputed amount" in rebuttal.demand(rebuttal.Dispute())
+
+
+# --------------------------------------------------- getting to the command
+
+
+def test_a_dispute_block_is_not_a_request_for_an_email():
+    """The block ends "Customer Email: ...", and "email" is a copy format —
+    so the first rebuttal ever asked for came back as a marketing email about
+    a chargeback."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse("<@1> " + JOSE.replace("MID:", "rebuttal\nMID:", 1))
+
+    assert asked.action == "rebuttal"
+    assert asked.format_key is None
+
+
+@pytest.mark.parametrize("word", ["rebuttal", "chargeback", "dispute"])
+def test_every_way_of_asking_reaches_it(word):
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse(f"<@1> {word} Jose Zambrano\nCustomer Email: a@b.com")
+
+    assert asked.action == "rebuttal"
+
+
+def test_the_whole_block_travels_with_it():
+    """Not the remainder — every field is needed and they are on their own
+    lines, so nothing may be stripped off the front."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse("<@1> rebuttal\n" + JOSE)
+
+    assert "24556406167808942703416" in (asked.brief or "")
+    assert "josezagent@gmail.com" in (asked.brief or "")
+
+
+@pytest.mark.parametrize(
+    "said, expected",
+    [("email about the new aged lead prices", "email"),
+     ("sms for the OTP launch", "sms"),
+     ("ad for agents stuck at 20 leads a week", "ad")],
+)
+def test_asking_for_copy_still_writes_copy(said, expected):
+    """The fix must not cost the thing it was checked before."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse(f"<@1> {said}")
+
+    assert asked.action == "write"
+    assert asked.format_key == expected
