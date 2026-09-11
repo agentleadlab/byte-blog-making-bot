@@ -648,3 +648,53 @@ def test_the_tool_is_read_by_the_name_it_was_asked_for():
         content = [Block()]
 
     assert jobs._tool_input(Answered(), "lines")["lines"][0]["summary"] == "ok"
+
+
+def test_a_named_person_is_routed_like_a_tagged_one(config, monkeypatch):
+    """Arnold writes "Jenn = FRIDAY" on the General card. Jenn does ads work,
+    so it belongs on Ads — being named rather than tagged does not put it on
+    whatever card it was written on, and does not make it everybody's."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": ARNOLD, "author": "Arnold Tarpley"},
+    ]})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert {(one.kind, one.checklist) for one in tasks} == {
+        ("ads", "Jenn"), ("ads", "Kath"),
+    }
+    assert not any(one.everyone for one in tasks)
+
+
+def test_one_comment_can_hand_work_to_two_people(config, monkeypatch):
+    """Jenn's line already being on the board is no reason to leave Kath
+    without hers."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": ARNOLD, "author": "Arnold Tarpley"},
+    ]})
+    held = board.card_checklists
+    board.card_checklists = lambda card_id: (
+        [{"id": "a-Jenn", "name": "Jenn", "checkItems": [
+            {"name": "x\nhttps://trello.com/c/IU4PM7wJ#comment-c1"}]},
+         {"id": "a-Kath", "name": "Kath", "checkItems": []},
+         {"id": "a-Nicole", "name": "Nicole", "checkItems": []}]
+        if card_id == "a" else held(card_id)
+    )
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert [one.checklist for one in tasks] == ["Kath"]
+
+
+def test_somebody_tagged_as_well_as_named_is_left_to_the_tag(config, monkeypatch):
+    """The tag carries the whole comment; the name carries one slice."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": "@jenniferhashisaki2 all of it\n\nJenn = just this bit",
+         "author": "Arnold Tarpley"},
+    ]})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    # One line, not two. The tag already carries the whole comment, so the
+    # name lower down is the same job said again.
+    assert len([task for task in tasks if task.checklist == "Jenn"]) == 1

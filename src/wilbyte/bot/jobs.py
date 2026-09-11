@@ -2515,21 +2515,32 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                 # nobody, and those were jobs handed over that nothing wrote
                 # down. Whoever was properly tagged is left to the tag, which
                 # carries the whole comment rather than one slice of it.
-                tagged_lists = {
-                    people[name].keeps.get(kind) or ""
-                    for name in tags if name in people
+                #
+                # The person goes through, not just their checklist's name, so
+                # it routes the way a tag does: Jenn's ads work belongs on Ads
+                # wherever Arnold wrote it, and being named rather than tagged
+                # does not make it everybody's.
+                by_list = {
+                    one.keeps[where]: one
+                    for one in people.values() for where in one.keeps
                 }
                 for whose, said in tagged.named_without_tagging(
-                    note.text, [one.keeps.get(kind) for one in people.values()]
+                    note.text, list(by_list)
                 ).items():
-                    if whose in tagged_lists:
+                    person = by_list.get(whose)
+                    if person is None or person.username.casefold() in tags:
                         continue
-                    for held in holds.get(card_id) or []:
-                        if str(held.get("name") or "").strip() != whose:
-                            continue
-                        if not tagged.already_on(note, held):
-                            wants.append((note, None, kind, whose, said))
-                        break
+                    # Asked against this person's own checklists rather than
+                    # against all of them: one comment can hand work to two
+                    # people, and Jenn's line already being there is no reason
+                    # to leave Kath without hers.
+                    mine = set(person.keeps.values())
+                    theirs = [
+                        held for group in holds.values() for held in group
+                        if str(held.get("name") or "").strip() in mine
+                    ]
+                    if not tagged.already_filed(note, theirs):
+                        wants.append((note, person, "", "", said))
 
                 if not tags:
                     continue
