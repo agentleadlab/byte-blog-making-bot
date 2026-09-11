@@ -2549,6 +2549,22 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                     if not tagged.already_filed(note, theirs):
                         wants.append((note, person, "", "", said))
 
+                # A lead schedule is Nicole's whether or not anybody tagged
+                # her - "if its schedule like this add to nicole on ads even
+                # if not tagged". Only when nobody was: a schedule handed to
+                # somebody by name is theirs, and the tag says so.
+                if not tags and tagged.a_lead_schedule(note.text):
+                    keeper = tagged.keeps_the_schedules(people)
+                    if keeper is None:
+                        problems.append(
+                            f"“{tagged.trim(note.text)[:40]}” looks like a lead "
+                            f"schedule and there's no {tagged.SCHEDULES} checklist "
+                            f"on today's {tagged.SCHEDULES_ON} card, so I left it"
+                        )
+                    elif not tagged.already_filed(note, everywhere):
+                        wants.append((note, keeper, "", "", ""))
+                    continue
+
                 if not tags:
                     continue
                 # Filed already, wherever somebody put it. Against every card's
@@ -2725,8 +2741,14 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
         # A slice of a comment is summarised from its own words: "Jenn =
         # FRIDAY / OTP VET removal" and "Kath = FRIDAY / MTG creatives" are
         # one comment and two different jobs.
+        schedule = tagged.a_lead_schedule(note.text)
         if just_theirs:
             summary = tagged.trim(just_theirs)
+        elif schedule:
+            # Whole, not summarised and not cut to nine words. The hours are
+            # the content: "ANTHONY SINGH (VET)- monday- saturday 9 am- 9 pm"
+            # trimmed to a line's worth loses the pm.
+            summary = tagged.strip_mentions(note.text)
         elif not summary or tagged.brief_already(note.text):
             summary = tagged.trim(note.text) or summary
         if not summary:
@@ -2735,7 +2757,15 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
         if person is None:
             kind, checklist, judged, everyone = told_kind, told_list, False, True
         else:
-            kind, judged = tagged.where(person, note, judged=str(said.get("kind") or ""))
+            # A schedule is ads work wherever it was written and whatever the
+            # reading made of it: "sending leads" is ops in the abstract and
+            # the drip windows are set on the Ads card.
+            kind, judged = (
+                (tagged.SCHEDULES_ON, False) if schedule and person.keeps.get(
+                    tagged.SCHEDULES_ON
+                ) else
+                tagged.where(person, note, judged=str(said.get("kind") or ""))
+            )
             if kind not in cards:
                 problems.append(
                     f"{person.full_name or person.username} — “{summary}” is {kind} "

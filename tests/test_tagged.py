@@ -1057,3 +1057,106 @@ def test_a_link_in_a_block_keeps_its_words():
         "- @nic0l3\n  - **Check** the [budget](https://x.test) _today_\n"
     )
     assert [one.text for one in theirs] == ["Check the budget today"]
+
+
+# --------------------------------------------------------------- lead schedules
+
+# Both real, off the Ads card. Kath posts these all day and tags nobody half
+# the time.
+ANTHONY = "ANTHONY SINGH (VET)- monday- saturday 9 am- 9 pm"
+KIMANI = "KIMANI CHAMBLISS (VET)- 8AM-8PM EST LEAD SCHED @nic0l3"
+
+
+@pytest.mark.parametrize("said", [ANTHONY, KIMANI])
+def test_a_schedule_is_read_as_one(said):
+    assert tagged.a_lead_schedule(said) is True
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # An agent line, and a real job, but not a schedule.
+        "WILL SEITZ (vet)- can i completely pause my drip for tomorrow? @nic0l3",
+        # Hours, but nobody's schedule.
+        "@franklinmaymaldonado standup moved to 9am-10am tomorrow",
+        "Add in gcalendar lunch + walk",
+        "New batch of creatives for VETS 2.0",
+    ],
+)
+def test_what_is_not_a_schedule_is_left_to_the_tags(said):
+    """Tight on purpose — without the agent line, "meeting 9am-10am" on the
+    General card becomes a lead schedule for Nicole."""
+    assert tagged.a_lead_schedule(said) is False
+
+
+def test_an_untagged_schedule_still_lands_on_nicole(config, monkeypatch):
+    """"if its schedule like this add to nicole on ads even if not tagged"."""
+    board = TaggedBoard({"a": [
+        {"id": "c1", "text": ANTHONY, "author": "Kharyl Maye Cañizares"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert problems == []
+    (one,) = tasks
+    assert (one.kind, one.checklist) == ("ads", "Nicole")
+
+
+def test_the_hours_go_on_whole(config, monkeypatch):
+    """Trimmed to a line's worth, "9 am- 9 pm" loses the pm — and the hours
+    are the whole content of a schedule."""
+    board = TaggedBoard({"a": [
+        {"id": "c1", "text": ANTHONY, "author": "Kharyl Maye Cañizares"},
+    ]})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert tasks[0].summary == ANTHONY
+
+
+def test_a_schedule_is_ads_work_whatever_the_reading_said(config, monkeypatch):
+    """"sending leads" is ops in the abstract. The drip windows are set on the
+    Ads card."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": ANTHONY, "author": "Kharyl Maye Cañizares"},
+    ]})
+
+    tasks, _problems = planning(
+        board, monkeypatch, config,
+        read=lambda *a, **k: {"c1": {"summary": "Anthony's hours", "kind": "general"}},
+    )
+
+    assert (tasks[0].kind, tasks[0].checklist) == ("ads", "Nicole")
+
+
+def test_a_schedule_already_filed_is_not_filed_again(config, monkeypatch):
+    board = TaggedBoard({"a": [
+        {"id": "c1", "text": ANTHONY, "author": "Kharyl Maye Cañizares"},
+    ]})
+    held = board.card_checklists
+
+    def with_the_line(card_id):
+        found = held(card_id)
+        for one in found:
+            if card_id == "a" and one["name"] == "Nicole":
+                one["checkItems"] = [
+                    {"name": f"{ANTHONY}\nhttps://trello.com/c/MHCAKIT1#comment-c1"}
+                ]
+        return found
+
+    board.card_checklists = with_the_line
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert (tasks, problems) == ([], [])
+
+
+def test_a_schedule_somebody_did_tag_goes_where_the_tag_says(config, monkeypatch):
+    """Only the untagged ones are claimed. A schedule handed to somebody by
+    name is theirs, and the tag says so."""
+    board = TaggedBoard({"a": [
+        {"id": "c1", "text": f"@thereseguba {ANTHONY}", "author": "Kath"},
+    ]})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert [(one.kind, one.checklist) for one in tasks] == [("ops", "Therese")]

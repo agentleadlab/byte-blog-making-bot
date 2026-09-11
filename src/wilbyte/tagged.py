@@ -408,6 +408,52 @@ def _first_line(text: str) -> str:
     return next((line for line in (text or "").splitlines() if line.strip()), "")
 
 
+# An agent's lead schedule, which is Nicole's whoever wrote it and whether or
+# not they tagged her:
+#
+#     ANTHONY SINGH (VET)- monday- saturday 9 am- 9 pm
+#     KIMANI CHAMBLISS (VET)- 8AM-8PM EST LEAD SCHED
+#
+# Kath posts these all day off the agents' replies and tags nobody half the
+# time, and the drip windows are set off them - "if its schedule like this add
+# to nicole on ads even if not tagged".
+#
+# Tight on purpose. It has to be an agent line - a name, a lead type in
+# brackets, a dash - before the hours mean anything, or "meeting 9am-10am" on
+# the General card becomes a lead schedule for Nicole.
+AGENT_LINE = re.compile(
+    r"^\s*[A-Z][A-Za-z.'\-]*(?:\s+[A-Za-z.'\-]+){0,3}\s*\([A-Za-z0-9 +/]{2,20}\)\s*[-–—:]"
+)
+A_TIME = re.compile(r"\b\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?\b", re.IGNORECASE)
+A_SCHEDULE = re.compile(r"\bsched(?:ule[sd]?|s)?\b", re.IGNORECASE)
+
+#: The checklist a lead schedule belongs on, and the card it is kept on.
+SCHEDULES = "Nicole"
+SCHEDULES_ON = "ads"
+
+
+def a_lead_schedule(text: str) -> bool:
+    """Whether this comment is an agent's lead schedule."""
+    said = strip_mentions(text)
+    first = next((line for line in (said or "").splitlines() if line.strip()), "")
+    if not AGENT_LINE.match(first):
+        return False
+    return bool(A_SCHEDULE.search(said)) or len(A_TIME.findall(said)) >= 2
+
+
+def keeps_the_schedules(people):
+    """Whoever keeps the Ads checklist the schedules go on, or None.
+
+    Read off the board rather than off a username, so it survives Nicole being
+    away and somebody else's name being on that checklist.
+    """
+    for person in (people or {}).values():
+        held = (person.keeps or {}).get(SCHEDULES_ON) or ""
+        if held.strip().casefold() == SCHEDULES.casefold():
+            return person
+    return None
+
+
 def strip_mentions(text: str) -> str:
     """The comment without its tags or its links.
 
