@@ -2581,9 +2581,95 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                 "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
             )
 
-        return _read_the_tags(config, wants, people, wanted, problems), problems
+        tasks = _read_the_tags(config, wants, people, wanted, problems)
+        tasks += _described_tasks(
+            client, wanted, holds, people, on_the_board, problems
+        )
+        return tasks, problems
     finally:
         client.close()
+
+
+def _described_tasks(client, cards, holds, people, on_the_board, problems) -> list:
+    """The jobs written into the day's card descriptions, one line each.
+
+    Not summarised. A comment gets a summary because it is somebody talking
+    and the job is somewhere inside it; a description line is already the job,
+    written short by the person handing it over. Keeping the words is also the
+    only way to know it has been filed - there is no comment id to match on, so
+    the line's own words have to be what says so.
+
+    The cost of that, said plainly rather than hidden: an edited line is a
+    different line, so it lands again and the old one stays. Rewriting the
+    description rewrites nothing that has already been filed.
+    """
+    from .. import noticed, tagged, trello
+
+    found = []
+    for kind, card in cards.items():
+        card_id = str(card.get("id") or "")
+        try:
+            desc = str(client.card_detail(card_id).get("desc") or "")
+        except Exception as exc:
+            problems.append(
+                f"Couldn't read the description on {card.get('name') or kind}: "
+                f"{_short(exc, 120)}"
+            )
+            continue
+
+        theirs, nobody = tagged.description_tasks(desc)
+        if nobody:
+            problems.append(
+                f"In the {kind} card's description with nobody tagged for them, "
+                "so I left them: " + "; ".join(said[:40] for said in nobody)
+            )
+
+        short = trello.linked_card_id(
+            str(card.get("url") or card.get("shortUrl") or "")
+        ) or str(card.get("shortLink") or "")
+        for told in theirs:
+            if told.username not in people:
+                if told.username in on_the_board:
+                    _jot(noticed, "no_checklist", f"@{told.username}")
+                    problems.append(
+                        f"@{told.username} is in the {kind} card's description "
+                        f"with no checklist on today's cards, so “{told.text[:40]}” "
+                        "is still only written there"
+                    )
+                continue
+
+            person = people[told.username]
+            where, judged = tagged.where(person, None)
+            if where not in cards:
+                problems.append(
+                    f"{person.full_name or person.username} — “{told.text[:40]}” is "
+                    f"{where} work and there's no {where} card today, so I left it"
+                )
+                continue
+
+            # Against this person's own checklists. One description hands work
+            # to five people and their lines are not each other's.
+            mine = set(person.keeps.values())
+            already = [
+                held for group in holds.values() for held in group
+                if str(held.get("name") or "").strip() in mine
+            ]
+            if tagged.already_said(told.text, already):
+                continue
+
+            lands = cards.get(where) or {}
+            found.append(tagged.Task(
+                note=tagged.Note(
+                    comment_id="", text=told.text, card_id=card_id,
+                    card_short=short, card_title=str(card.get("name") or ""),
+                    described=True,
+                ),
+                person=person, kind=where, checklist=person.keeps[where],
+                card_id=str(lands.get("id") or ""),
+                card_title=str(lands.get("name") or ""),
+                summary=told.text, judged=judged,
+            ))
+    return found
 
 
 def _read_the_tags(config, wants, people, cards, problems) -> list:

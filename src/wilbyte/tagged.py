@@ -73,7 +73,11 @@ FALLBACK = "general"
 
 @dataclass(frozen=True)
 class Note:
-    """One comment on one card, as much of it as the filing needs."""
+    """One comment on one card, as much of it as the filing needs.
+
+    Or one line of a card's description, which has no id of its own and so
+    links to the card - `described` is which of the two it is.
+    """
 
     comment_id: str
     text: str
@@ -81,9 +85,16 @@ class Note:
     card_id: str = ""
     card_short: str = ""
     card_title: str = ""
+    #: True when this came out of the card's description rather than a comment.
+    described: bool = False
 
     def link(self) -> str:
-        """The permalink to this comment, the shape Trello's own copy makes."""
+        """The permalink to this comment, the shape Trello's own copy makes.
+
+        A description line has no anchor to point at, so it points at the card.
+        """
+        if self.described or not self.comment_id:
+            return f"https://trello.com/c/{self.card_short}"
         return f"https://trello.com/c/{self.card_short}#comment-{self.comment_id}"
 
 
@@ -202,6 +213,168 @@ def an_ongoing_order(text: str) -> bool:
     return bool(ONGOING.search(text or ""))
 
 
+# A bullet, of any of the shapes Trello writes or a person pastes. The glyphs
+# are what the rendered card shows - • then ◦ then ▪ going inwards - and they
+# carry the nesting on their own when somebody copies the rendered text back in
+# with the indentation lost.
+BULLET = re.compile(r"^(\s*)(?:([-*+•◦▪‣·–—])|(\d{1,2}[.)]))\s+(.*)$")
+GLYPH_DEPTH = {"•": 0, "◦": 1, "▪": 2, "‣": 3}
+
+
+@dataclass(frozen=True)
+class Row:
+    """One line of a description, with how far in it sits."""
+
+    depth: int
+    text: str
+    tags: tuple = ()
+
+    def only_tags(self) -> bool:
+        """Whether the line is nothing but the people it names."""
+        return bool(self.tags) and not strip_mentions(self.text)
+
+
+@dataclass(frozen=True)
+class Told:
+    """One line of a description and the one person it is for."""
+
+    username: str
+    text: str
+
+
+def _rows(text: str) -> list:
+    """The description as lines, bullets stripped, nesting as a number."""
+    found = []
+    for raw in (text or "").splitlines():
+        if not raw.strip():
+            continue
+        bullet = BULLET.match(raw)
+        if bullet:
+            indent, glyph, _number, said = bullet.groups()
+            depth = len(indent.expandtabs(4)) + GLYPH_DEPTH.get(glyph or "", 0)
+        else:
+            said = raw.strip()
+            depth = len(raw[: len(raw) - len(raw.lstrip())].expandtabs(4))
+        said = said.strip()
+        if not said:
+            continue
+        found.append(Row(depth=depth, text=said, tags=tuple(mentioned(said))))
+    return found
+
+
+def description_tasks(text: str) -> tuple[list, list[str]]:
+    """The jobs written in a card's description. (theirs, nobody's).
+
+    Franklin writes the week into the description rather than the comments,
+    with a name and then what that name has to do underneath it:
+
+        @nic0l3 @faithhannahcalla @thereseguba
+
+        • @elisadeko2
+          ◦ Aged distro udpate
+          ◦ What's login for active campaign
+        • @franklinmaymaldonado
+          ◦ Continue working on Ai SEO
+
+    The indentation is the ownership. A line that is only a tag opens a block
+    and everything under it is that person's; every line in the block is its
+    own item, at whatever depth it sits - "on description just add the whole
+    thing individually". A sub-point is a job too, and folding it into the line
+    above it would lose it.
+
+    Three shapes that are not a job for the person named:
+
+    - The row of tags at the top with nothing under it. That is who the card
+      is addressed to, not work for all of them.
+    - A tag sitting *underneath* a line, like "@jenniferhashisaki2" under "If
+      we're going to turn off, turn off" - the line above is hers.
+    - A line with words as well as tags outside any block: the people it names
+      have it, the way a comment works.
+
+    Whatever is left over - a line nobody is named for, in a description that
+    names people elsewhere - comes back as the second list, to be said out
+    loud rather than dropped.
+    """
+    rows = _rows(text)
+    if not any(row.only_tags() for row in rows):
+        return [], []
+
+    deeper = [
+        number + 1 < len(rows) and rows[number + 1].depth > row.depth
+        for number, row in enumerate(rows)
+    ]
+
+    owners: list = [()] * len(rows)
+    stack: list = []
+    for number, row in enumerate(rows):
+        while stack and stack[-1][0] >= row.depth:
+            stack.pop()
+        if row.only_tags():
+            if deeper[number]:
+                stack.append((row.depth, row.tags))
+            continue
+        owners[number] = stack[-1][1] if stack else row.tags
+
+    # A tag under a line claims the line above it. Done after the walk because
+    # the line was read before its own tag was.
+    for number, row in enumerate(rows):
+        if not row.only_tags() or deeper[number]:
+            continue
+        above = next(
+            (
+                back for back in range(number - 1, -1, -1)
+                if rows[back].depth < row.depth and not rows[back].only_tags()
+            ),
+            None,
+        )
+        if above is not None:
+            owners[above] = row.tags
+
+    theirs, nobody = [], []
+    for number, row in enumerate(rows):
+        if row.only_tags():
+            continue
+        said = strip_mentions(row.text)
+        if not said:
+            continue
+        if not owners[number]:
+            nobody.append(said)
+            continue
+        for username in owners[number]:
+            theirs.append(Told(username=username, text=said))
+    return theirs, nobody
+
+
+def same_line(one: str, two: str) -> bool:
+    """Whether two checklist lines say the same thing.
+
+    Word for word, punctuation and case thrown away. A description line has no
+    id to match on the way a comment does, so its own words are what says it
+    has been filed already - which is also why they go on the checklist as
+    they were written rather than summarised: a summary would come back
+    slightly different the next afternoon and file itself twice.
+    """
+    return _bare(one) == _bare(two) and bool(_bare(one))
+
+
+def _bare(text: str) -> str:
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", (text or "").casefold()).split())
+
+
+def already_said(said: str, checklists) -> bool:
+    """Whether a line with these words is already on one of these checklists."""
+    return any(
+        same_line(said, _first_line(str(item.get("name") or "")))
+        for held in checklists or []
+        for item in (held or {}).get("checkItems") or []
+    )
+
+
+def _first_line(text: str) -> str:
+    """The words of a checklist item, without the link written under them."""
+    return next((line for line in (text or "").splitlines() if line.strip()), "")
+
+
 def strip_mentions(text: str) -> str:
     """The comment without its tags or its links.
 
@@ -273,7 +446,7 @@ def home_for(checklists) -> str:
     return ""
 
 
-def where(person: Person, note: Note, *, judged: str = "") -> tuple[str, bool]:
+def where(person: Person, note: Note | None = None, *, judged: str = "") -> tuple[str, bool]:
     """Which kind of card this task belongs on. (kind, was it my call).
 
     The work decides, not the card it was said on. Therese does Ops, so
@@ -380,7 +553,8 @@ def describe(task: Task) -> str:
         why = " *(@card)*"
     elif task.judged:
         why = " *(my call)*"
-    where = f" · [said here]({task.note.link()})" if task.note.card_short else ""
+    said = "in the description" if task.note.described else "said here"
+    where = f" · [{said}]({task.note.link()})" if task.note.card_short else ""
     return f"**{card} · {task.checklist}** — {task.summary}{why}{where}"
 
 

@@ -260,10 +260,14 @@ class TaggedBoard:
         "a": ["Jenn", "Kath", "Nicole"],
     }
 
-    def __init__(self, comments):
+    def __init__(self, comments, descs=None):
         self.comments = comments
+        self.descs = descs or {}
         self.written = []
         self.closed = False
+
+    def card_detail(self, card_id):
+        return {"id": card_id, "desc": self.descs.get(card_id, "")}
 
     def board_lists(self, _board_id):
         return [{"id": "l1", "name": "Quality Check"}]
@@ -767,3 +771,197 @@ def test_a_real_job_about_an_agent_already_on_the_board_still_counts(said):
     """Most of what gets written on these cards is about an agent already on
     it, and asking to pause a drip is work somebody has to do."""
     assert tagged.an_ongoing_order(said) is False
+
+
+# ------------------------------------------------------ jobs written in the card
+
+# Off the real General card. Trello writes the nesting as indentation; the
+# glyphs are what it renders back.
+DESCRIPTION = """@nic0l3 @faithhannahcalla @thereseguba @kathleenmarie15 @franklinmaymaldonado
+
+- @tretarpley
+  - Aged distro udpate
+  - What's login for active campaign
+    - SMS is good now?
+      - Use Ai to look up agency server/silo group to warmup
+- @franklinmaymaldonado
+  - Continue working on Ai SEO
+- @nic0l3
+  - More reminder for you, especially as within next month im going to be getting back on content heavy
+    - What can you do/learn to make the YouTube/IG crank
+- If we're going to turn off, turn off. If not duplicate bc this is only a retargeting ad rn
+  - @jenniferhashisaki2
+"""
+
+
+def told(text):
+    return tagged.description_tasks(text)[0]
+
+
+def test_a_tag_with_lines_under_it_owns_every_one_of_them():
+    """"on description just add the whole thing individually" — the sub-point
+    is a job too, and folding it into the line above would lose it."""
+    theirs = [one.text for one in told(DESCRIPTION) if one.username == "tretarpley"]
+    assert theirs == [
+        "Aged distro udpate",
+        "What's login for active campaign",
+        "SMS is good now?",
+        "Use Ai to look up agency server/silo group to warmup",
+    ]
+
+
+def test_each_block_belongs_to_the_tag_that_opened_it():
+    theirs = {one.username for one in told(DESCRIPTION)}
+    assert theirs == {
+        "tretarpley", "franklinmaymaldonado", "nic0l3", "jenniferhashisaki2",
+    }
+    frank = [one.text for one in told(DESCRIPTION)
+             if one.username == "franklinmaymaldonado"]
+    assert frank == ["Continue working on Ai SEO"]
+
+
+def test_the_row_of_tags_at_the_top_is_who_it_is_addressed_to():
+    """Five people named with nothing under them is the address on the card,
+    not one job for all five."""
+    for one in told(DESCRIPTION):
+        assert "faithhannahcalla" != one.username
+    assert not any(
+        one.text.startswith("@") for one in told(DESCRIPTION)
+    )
+
+
+def test_a_tag_underneath_a_line_claims_the_line():
+    """"@jenniferhashisaki2" sits under "If we're going to turn off" — the
+    line above it is hers."""
+    hers = [one.text for one in told(DESCRIPTION)
+            if one.username == "jenniferhashisaki2"]
+    assert hers == [
+        "If we're going to turn off, turn off. If not duplicate bc this is "
+        "only a retargeting ad rn"
+    ]
+
+
+def test_the_words_go_on_as_they_were_written():
+    """Not summarised. The line is already the job, and its own words are the
+    only thing that says later that it has been filed."""
+    long = next(one for one in told(DESCRIPTION) if one.username == "nic0l3")
+    assert long.text.startswith("More reminder for you, especially as within")
+    assert long.text.endswith("getting back on content heavy")
+
+
+def test_the_glyphs_carry_the_nesting_when_the_indentation_is_lost():
+    """Somebody copying the rendered card back in loses the spaces."""
+    theirs = told("• @nic0l3\n◦ Add YT channel\n◦ Check the budget")
+    assert [one.username for one in theirs] == ["nic0l3", "nic0l3"]
+    assert [one.text for one in theirs] == ["Add YT channel", "Check the budget"]
+
+
+def test_a_description_that_tags_nobody_is_not_a_pile_of_tasks():
+    """Most descriptions are notes. Nothing to file and nothing to complain
+    about."""
+    assert tagged.description_tasks(
+        "Lead order for the day\n- 500 VET\n- 200 FEX"
+    ) == ([], [])
+
+
+def test_a_line_nobody_is_named_for_is_said_out_loud():
+    theirs, nobody = tagged.description_tasks(
+        "- @nic0l3\n  - Add YT channel\n- Somebody has to chase the invoice"
+    )
+    assert [one.text for one in theirs] == ["Add YT channel"]
+    assert nobody == ["Somebody has to chase the invoice"]
+
+
+def test_a_line_outside_a_block_belongs_to_whoever_it_names():
+    theirs, nobody = tagged.description_tasks(
+        "- @nic0l3\n  - Add YT channel\n- @thereseguba pause the trucker distro"
+    )
+    assert nobody == []
+    assert ("thereseguba", "pause the trucker distro") in [
+        (one.username, one.text) for one in theirs
+    ]
+
+
+# ------------------------------------------- the same line, the second afternoon
+
+
+def test_a_line_already_on_the_list_is_matched_by_its_own_words():
+    """A description line has no comment id to match on."""
+    held = checklist("Aged distro udpate\nhttps://trello.com/c/IU4PM7wJ")
+    assert tagged.already_said("Aged distro udpate", [held]) is True
+    assert tagged.already_said("aged distro udpate.", [held]) is True
+    assert tagged.already_said("Aged distro update", [held]) is False
+
+
+def test_the_link_under_a_description_line_points_at_the_card():
+    one = tagged.Note(
+        comment_id="", text="Continue working on Ai SEO", card_short="IU4PM7wJ",
+        described=True,
+    )
+    assert one.link() == "https://trello.com/c/IU4PM7wJ"
+
+
+# -------------------------------------------------------------- on a whole board
+
+
+def test_description_tasks_land_on_the_card_the_work_belongs_to(config, monkeypatch):
+    """Therese's line is written on General and belongs on Ops, the same as a
+    tag in a comment."""
+    board = TaggedBoard({}, descs={"g": (
+        "- @thereseguba\n"
+        "  - Pause the trucker distro\n"
+        "  - Send Monday's leads\n"
+    )})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert problems == []
+    assert [(one.kind, one.checklist, one.summary) for one in tasks] == [
+        ("ops", "Therese", "Pause the trucker distro"),
+        ("ops", "Therese", "Send Monday's leads"),
+    ]
+    assert all(one.note.described for one in tasks)
+
+
+def test_a_description_line_says_where_it_came_from(config, monkeypatch):
+    board = TaggedBoard({}, descs={"g": "- @nic0l3\n  - Add YT channel\n"})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    said = tagged.describe(tasks[0])
+    assert "in the description" in said
+    assert "https://trello.com/c/IU4PM7wJ" in said
+
+
+def test_a_description_line_already_filed_is_not_filed_again(config, monkeypatch):
+    from wilbyte.bot import jobs
+
+    board = TaggedBoard({}, descs={"g": "- @thereseguba\n  - Pause the trucker distro\n"})
+    held = board.card_checklists
+
+    def with_the_line(card_id):
+        found = held(card_id)
+        for one in found:
+            if card_id == "o" and one["name"] == "Therese":
+                one["checkItems"] = [
+                    {"name": "Pause the trucker distro\nhttps://trello.com/c/IU4PM7wJ"}
+                ]
+        return found
+
+    board.card_checklists = with_the_line
+    monkeypatch.setattr(jobs, "_ask_about_tags", lambda *a, **k: {})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    assert problems == []
+
+
+def test_somebody_tagged_in_the_description_with_no_checklist_is_named(config, monkeypatch):
+    """Tre is on the board and keeps no checklist on any of today's cards."""
+    board = TaggedBoard({}, descs={"g": "- @tretarpley\n  - Aged distro udpate\n"})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    assert any("tretarpley" in one and "Aged distro udpate" in one for one in problems)
