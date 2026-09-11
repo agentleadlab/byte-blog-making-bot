@@ -1901,6 +1901,48 @@ def _the_fuller(said: str, already: str) -> str:
     return said if len(said) > len(already) else already
 
 
+def dated_orders(text: str, *, today: date) -> list[tuple[str, "date | None"]]:
+    """[(order, the day that order goes live)] for a card that dates its own.
+
+    Garret Sekelsky's card reads:
+
+        2 orders:
+        25 OTP Vets - live Friday, September 11
+        25 OTP FEX - live Saturday, September 12
+
+    and both orders went onto Friday's setup card, because the card was read
+    for one launch date and both orders were filed against it. They are two
+    orders on two days and belong on two setup cards.
+
+    An order whose own line carries no date takes the card's overall launch,
+    which is the ordinary case: most cards name the date once at the bottom
+    and mean it for everything above.
+    """
+    orders = ordered_lead_types(text)
+    if not orders:
+        return []
+    overall = find_launch(text, today=today)
+    lines = [" ".join(line.split()) for line in (text or "").splitlines()]
+    found = []
+    for order in orders:
+        wanted = " ".join(order.split()).casefold()
+        when = next(
+            (
+                find_launch(line, today=today) for line in lines
+                if wanted in line.casefold() and find_launch(line, today=today)
+            ),
+            None,
+        )
+        found.append((order, when or overall))
+    return found
+
+
+def on_several_days(dated) -> bool:
+    """Whether a card's orders do not all go live on the same day."""
+    days = {when for _order, when in dated or [] if when is not None}
+    return len(days) > 1
+
+
 def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
     """(card url, lead type) for every agent on a setup card, once each.
 

@@ -4201,6 +4201,43 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
             plan.problems.append(problem)
             return plan
 
+        # Two orders on two days are two setup cards. Garret Sekelsky bought
+        # "25 OTP Vets - live Friday, September 11" and "25 OTP FEX - live
+        # Saturday, September 12", and both went onto Friday's card because
+        # the card was read for one launch date and both orders filed against
+        # it. The Saturday leads would have been set up a day early.
+        dated = rules.dated_orders(agent.said, today=day)
+        if rules.on_several_days(dated):
+            waiting = []
+            for order, when in dated:
+                its_card = (
+                    card if when in (None, agent.launch)
+                    else rules.find_setup_card(every_card, when)
+                )
+                if its_card is None:
+                    waiting.append(f"{order} — live {when:%a %b %d}")
+                    continue
+                where = str(its_card.get("name", ""))
+                its_id = str(its_card.get("id") or "")
+                its_held = client.card_checklists(its_id)
+                for person in rules.SETUP_PEOPLE:
+                    plan.steps.append(_step(
+                        where, its_id, person, agent, its_held,
+                        exact=True, label=order,
+                    ))
+            if waiting:
+                # Filed what could be filed and stayed put, so the rest is
+                # picked up when its card exists. Moving to Done here would
+                # take the card away with an order still unfiled on it.
+                plan.problems.append(
+                    f"{agent.name} — no setup card yet for "
+                    + "; ".join(waiting)
+                )
+                plan.move_to = "" if parked else rules.PARKED
+            else:
+                plan.move_to = rules.DONE
+            return plan
+
         title = str(card.get("name", ""))
         card_id = str(card.get("id") or "")
         held = client.card_checklists(card_id)

@@ -3619,3 +3619,112 @@ def test_two_tiers_of_one_product_are_two_orders():
 )
 def test_when_two_wordings_are_one_purchase(said, already, expected):
     assert agents.one_order_twice(said, already) is expected
+
+
+# ------------------------------ two orders that go live on two different days
+
+
+GARRET = """-- New Client Onboarded --
+
+First Name: Garret
+Last Name: Sekelsky
+Package Selected: Text Verified
+Lead Type: Veteran Final Expense
+
+2 orders:
+25 OTP Vets - live Friday, September 11
+25 OTP FEX - live Saturday, September 12
+part of fearless
+"""
+
+
+def test_each_order_keeps_the_day_written_on_its_own_line():
+    """Garret bought vets for Friday and FEX for Saturday, and both went onto
+    Friday's setup card — so the Saturday leads would have been set up a day
+    early."""
+    dated = agents.dated_orders(GARRET, today=date(2026, 9, 10))
+
+    assert dated == [
+        ("25 OTP Vets", date(2026, 9, 11)),
+        ("25 OTP FEX", date(2026, 9, 12)),
+    ]
+    assert agents.on_several_days(dated) is True
+
+
+def test_orders_dated_once_at_the_bottom_all_take_that_day():
+    """Most cards name the date once and mean it for everything above."""
+    said = (
+        "15 OTP Trucker\n15 OTP Vets\n\nLive Friday, September 11\n"
+    )
+
+    dated = agents.dated_orders(said, today=date(2026, 9, 10))
+
+    assert {when for _order, when in dated} == {date(2026, 9, 11)}
+    assert agents.on_several_days(dated) is False
+
+
+def test_one_order_is_not_a_card_with_several_days():
+    assert agents.dated_orders(REAL, today=TUESDAY) == []
+    assert agents.on_several_days([]) is False
+
+
+def test_a_card_nobody_dated_is_not_split():
+    said = "25 OTP Vets\n25 OTP FEX\n"
+
+    assert agents.on_several_days(agents.dated_orders(said, today=TUESDAY)) is False
+
+
+def two_day_plan(*, saturday_card=True):
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent(
+        card("New Agent - Garret Sekelsky"), text=GARRET, today=date(2026, 9, 10)
+    )
+    cards = [{"id": "fri", "name": "Agent Setup Going Live Friday 09/11"}]
+    if saturday_card:
+        cards.append(
+            {"id": "sat", "name": "Agent Setup Going Live Saturday-Monday 09/12-09/14"}
+        )
+    return agents, jobs._plan_for(
+        Stub([]), agent, day=date(2026, 9, 10), tomorrow=date(2026, 9, 11),
+        dated={}, every_card=cards,
+    )
+
+
+def test_each_order_is_filed_on_the_setup_card_for_its_own_day():
+    _rules, plan = two_day_plan()
+
+    vets = {s.card_title for s in plan.steps if "Vets" in s.item}
+    fex = {s.card_title for s in plan.steps if "FEX" in s.item}
+
+    assert vets == {"Agent Setup Going Live Friday 09/11"}
+    assert fex == {"Agent Setup Going Live Saturday-Monday 09/12-09/14"}
+    assert plan.problems == []
+    assert plan.move_to == agents.DONE
+
+
+def test_every_setup_person_gets_both_orders():
+    _rules, plan = two_day_plan()
+
+    assert len(plan.steps) == 2 * len(agents.SETUP_PEOPLE)
+    assert {s.checklist for s in plan.steps} == set(agents.SETUP_PEOPLE)
+
+
+def test_the_line_says_only_the_order_that_day_is_for():
+    _rules, plan = two_day_plan()
+
+    (friday,) = {s.item for s in plan.steps if s.card_title.endswith("09/11")}
+
+    assert "25 OTP Vets" in friday
+    assert "FEX" not in friday
+
+
+def test_a_day_with_no_card_yet_waits_rather_than_being_filed_early():
+    """Filed what could be filed and stayed put. Moving to Done here would
+    take the card away with an order still unfiled on it."""
+    _rules, plan = two_day_plan(saturday_card=False)
+
+    assert {s.card_title for s in plan.steps} == {"Agent Setup Going Live Friday 09/11"}
+    assert plan.move_to == agents.PARKED
+    assert any("no setup card yet" in one for one in plan.problems)
+    assert any("OTP FEX" in one for one in plan.problems)
