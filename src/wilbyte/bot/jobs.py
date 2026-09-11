@@ -2432,14 +2432,18 @@ def tags_stamp(config: Config, *, day=None) -> str:
     day = day or board_day(config)
     client = open_trello(config)
     try:
-        cards = dailyops.cards_covering(
-            client.board_cards(config.secrets.trello_board_id), day
-        )
-        return "|".join(
-            f"{kind}:{cards[kind].get('dateLastActivity') or ''}"
-            for kind in sorted(cards)
-            if kind in tagged.WORK
-        )
+        every = client.board_cards(config.secrets.trello_board_id)
+        # Tomorrow's cards as well as today's, once they exist. A comment on
+        # the 9/12 Ads card at four in the afternoon is a comment the watcher
+        # has to wake up for, and it would not have moved today's stamp.
+        stamps = []
+        for which in days_with_cards(every, day):
+            cards = dailyops.cards_covering(every, which)
+            stamps += [
+                f"{which:%m/%d}{kind}:{cards[kind].get('dateLastActivity') or ''}"
+                for kind in sorted(cards) if kind in tagged.WORK
+            ]
+        return "|".join(stamps)
     finally:
         client.close()
 
@@ -2447,170 +2451,211 @@ def tags_stamp(config: Config, *, day=None) -> str:
 def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
     """The tagged comments that are not on anybody's checklist yet. (tasks, problems).
 
-    Reads only. The comments on today's four cards, every person tagged in
-    them, and where each one belongs - which is not the card it was said on,
-    see `tagged`.
+    Reads only. Every person tagged in a comment or written into a card's
+    description, and where each one belongs - which is not the card it was
+    said on, see `tagged`.
+
+    Today's cards and any day's after it that already exists. Tomorrow's four
+    land in In Que around eleven, so from lunchtime there are two days open at
+    once and people comment on both - "if today still theres a card for 9/12
+    and theres a comment there, it will be added to 9/12". A comment stays on
+    its own day: one on the 9/12 Ads card lands on a 9/12 checklist, never on
+    today's. Yesterday's are left alone, because a card in Done is finished.
 
     One that is already filed is skipped by the comment's id, so running this
     twice in an afternoon adds nothing the first run added.
     """
-    from .. import dailyops, noticed, tagged, trello
+    from .. import dailyops
 
     day = day or board_day(config)
     client = open_trello(config)
-    problems = []
+    problems: list[str] = []
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
-        cards = dailyops.cards_covering(every, day)
-        wanted = {kind: card for kind, card in cards.items() if kind in tagged.WORK}
-        if not wanted:
+        members = client.board_members(config.secrets.trello_board_id)
+
+        days = days_with_cards(every, day)
+        if not days:
             return [], [f"No General, Ops or Ads card dated {day:%m/%d/%y} on the board"]
 
-        holds = {
-            str(card.get("id") or ""): client.card_checklists(str(card.get("id") or ""))
-            for card in wanted.values()
-        }
-        members = client.board_members(config.secrets.trello_board_id)
-        people = _people_on(wanted, members, holds)
-        # Everybody on the board, checklist or not. What is not in here was
-        # never a tag: Therese's confirmations say "@Corbin Simpson" and Faith
-        # writes "@jadon", and those are the agents being talked about rather
-        # than anybody being given a job. Trello renders them as plain text
-        # for exactly that reason.
-        on_the_board = {
-            str(one.get("username") or "").casefold() for one in members
-        } - {""}
-
-        everywhere = [held for group in holds.values() for held in group]
-        wants, unknown, ongoing = [], set(), []
-        for kind, card in wanted.items():
-            card_id = str(card.get("id") or "")
-            short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
-            for said in client.card_notes(card_id):
-                note = tagged.Note(
-                    comment_id=str(said.get("id") or ""),
-                    text=str(said.get("text") or ""),
-                    author=str(said.get("author") or ""),
-                    card_id=card_id,
-                    card_short=short or str(card.get("shortLink") or ""),
-                    card_title=str(card.get("name") or ""),
-                )
-                # An order already running, topped up. The agent's own card is
-                # already on their list, so the line would say again what is
-                # there - "if it says ongoing order specifically, dont add".
-                if tagged.an_ongoing_order(note.text):
-                    ongoing.append(note)
-                    continue
-
-                if tagged.everyones_job(note.text):
-                    # Every checklist on the card it was said on, and asked per
-                    # checklist: it belongs on all of them, so finding it on
-                    # Kath's is no reason to leave Nicole's without it.
-                    for held in holds.get(card_id) or []:
-                        if tagged.already_on(note, held):
-                            continue
-                        wants.append((note, None, kind, str(held.get("name") or ""), ""))
-
-                tags = [
-                    name for name in tagged.mentioned(note.text)
-                    if name in on_the_board
-                ]
-
-                # Named at the start of a line, without an @. Arnold writes
-                # the week as "Jenn = FRIDAY" with the work under it and tags
-                # nobody, and those were jobs handed over that nothing wrote
-                # down. Whoever was properly tagged is left to the tag, which
-                # carries the whole comment rather than one slice of it.
-                #
-                # The person goes through, not just their checklist's name, so
-                # it routes the way a tag does: Jenn's ads work belongs on Ads
-                # wherever Arnold wrote it, and being named rather than tagged
-                # does not make it everybody's.
-                by_list = {
-                    one.keeps[where]: one
-                    for one in people.values() for where in one.keeps
-                }
-                for whose, said in tagged.named_without_tagging(
-                    note.text, list(by_list)
-                ).items():
-                    person = by_list.get(whose)
-                    if person is None or person.username.casefold() in tags:
-                        continue
-                    # Asked against this person's own checklists rather than
-                    # against all of them: one comment can hand work to two
-                    # people, and Jenn's line already being there is no reason
-                    # to leave Kath without hers.
-                    mine = set(person.keeps.values())
-                    theirs = [
-                        held for group in holds.values() for held in group
-                        if str(held.get("name") or "").strip() in mine
-                    ]
-                    if not tagged.already_filed(note, theirs):
-                        wants.append((note, person, "", "", said))
-
-                # A lead schedule is Nicole's whether or not anybody tagged
-                # her - "if its schedule like this add to nicole on ads even
-                # if not tagged". Only when nobody was: a schedule handed to
-                # somebody by name is theirs, and the tag says so.
-                if not tags and tagged.a_lead_schedule(note.text):
-                    keeper = tagged.keeps_the_schedules(people)
-                    if keeper is None:
-                        problems.append(
-                            f"“{tagged.trim(note.text)[:40]}” looks like a lead "
-                            f"schedule and there's no {tagged.SCHEDULES} checklist "
-                            f"on today's {tagged.SCHEDULES_ON} card, so I left it"
-                        )
-                    elif not tagged.already_filed(note, everywhere):
-                        wants.append((note, keeper, "", "", ""))
-                    continue
-
-                if not tags:
-                    continue
-                for name in tags:
-                    if name not in people:
-                        unknown.add(name)
-                        continue
-                    person = people[name]
-                    # Asked against this person's own checklists, on every
-                    # card rather than this one: the line for a comment on
-                    # General lands on Ops, so looking at General alone would
-                    # file it again every afternoon - and one comment can hand
-                    # different work to two people, so Faith's line already
-                    # being there is no reason to leave KC without hers.
-                    mine = set(person.keeps.values())
-                    theirs = [
-                        held for group in holds.values() for held in group
-                        if str(held.get("name") or "").strip() in mine
-                    ]
-                    if not tagged.already_filed(note, theirs):
-                        wants.append((note, person, "", "", ""))
-
-        if ongoing:
-            # Said, not swallowed. A skip nobody can see is the thing that
-            # has cost the most time on this board.
-            problems.append(
-                f"{len(ongoing)} said 'ongoing order', so the agent's own card "
-                "already covers it and I left them: "
-                + "; ".join(
-                    tagged.trim(one.text)[:40] or one.comment_id for one in ongoing
-                )
-            )
-        if unknown:
-            for name in sorted(unknown):
-                _jot(noticed, "no_checklist", f"@{name}")
-            problems.append(
-                "On the board but with no checklist on today's cards, so I left "
-                "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
-            )
-
-        tasks = _read_the_tags(config, wants, people, wanted, problems)
-        tasks += _described_tasks(
-            client, wanted, holds, people, on_the_board, problems
-        )
+        tasks = []
+        for which in days:
+            tasks += _tags_on(config, client, every, members, which, problems)
         return tasks, problems
     finally:
         client.close()
+
+
+def days_with_cards(every: list, day) -> list:
+    """Today, and any later day that already has one of the three cards.
+
+    Today first, so its list is read and shown before tomorrow's - most of
+    what is waiting is today's, and tomorrow's is usually one line somebody
+    wrote ahead.
+    """
+    from .. import dailyops, tagged
+
+    found = {
+        when for kind, when in dailyops.daily_cards(every)
+        if kind in tagged.WORK and when >= day
+    }
+    found.add(day)
+    return sorted(when for when in found if dailyops.cards_covering(
+        every, when
+    ).keys() & set(tagged.WORK))
+
+
+def _tags_on(config, client, every, members, day, problems) -> list:
+    """One day's comments and description, read and routed onto that day."""
+    from .. import dailyops, noticed, tagged, trello
+
+    cards = dailyops.cards_covering(every, day)
+    wanted = {kind: card for kind, card in cards.items() if kind in tagged.WORK}
+    if not wanted:
+        return []
+
+    holds = {
+        str(card.get("id") or ""): client.card_checklists(str(card.get("id") or ""))
+        for card in wanted.values()
+    }
+    people = _people_on(wanted, members, holds)
+    # Everybody on the board, checklist or not. What is not in here was
+    # never a tag: Therese's confirmations say "@Corbin Simpson" and Faith
+    # writes "@jadon", and those are the agents being talked about rather
+    # than anybody being given a job. Trello renders them as plain text
+    # for exactly that reason.
+    on_the_board = {
+        str(one.get("username") or "").casefold() for one in members
+    } - {""}
+
+    everywhere = [held for group in holds.values() for held in group]
+    wants, unknown, ongoing = [], set(), []
+    for kind, card in wanted.items():
+        card_id = str(card.get("id") or "")
+        short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
+        for said in client.card_notes(card_id):
+            note = tagged.Note(
+                comment_id=str(said.get("id") or ""),
+                text=str(said.get("text") or ""),
+                author=str(said.get("author") or ""),
+                card_id=card_id,
+                card_short=short or str(card.get("shortLink") or ""),
+                card_title=str(card.get("name") or ""),
+            )
+            # An order already running, topped up. The agent's own card is
+            # already on their list, so the line would say again what is
+            # there - "if it says ongoing order specifically, dont add".
+            if tagged.an_ongoing_order(note.text):
+                ongoing.append(note)
+                continue
+
+            if tagged.everyones_job(note.text):
+                # Every checklist on the card it was said on, and asked per
+                # checklist: it belongs on all of them, so finding it on
+                # Kath's is no reason to leave Nicole's without it.
+                for held in holds.get(card_id) or []:
+                    if tagged.already_on(note, held):
+                        continue
+                    wants.append((note, None, kind, str(held.get("name") or ""), ""))
+
+            tags = [
+                name for name in tagged.mentioned(note.text)
+                if name in on_the_board
+            ]
+
+            # Named at the start of a line, without an @. Arnold writes
+            # the week as "Jenn = FRIDAY" with the work under it and tags
+            # nobody, and those were jobs handed over that nothing wrote
+            # down. Whoever was properly tagged is left to the tag, which
+            # carries the whole comment rather than one slice of it.
+            #
+            # The person goes through, not just their checklist's name, so
+            # it routes the way a tag does: Jenn's ads work belongs on Ads
+            # wherever Arnold wrote it, and being named rather than tagged
+            # does not make it everybody's.
+            by_list = {
+                one.keeps[where]: one
+                for one in people.values() for where in one.keeps
+            }
+            for whose, said in tagged.named_without_tagging(
+                note.text, list(by_list)
+            ).items():
+                person = by_list.get(whose)
+                if person is None or person.username.casefold() in tags:
+                    continue
+                # Asked against this person's own checklists rather than
+                # against all of them: one comment can hand work to two
+                # people, and Jenn's line already being there is no reason
+                # to leave Kath without hers.
+                mine = set(person.keeps.values())
+                theirs = [
+                    held for group in holds.values() for held in group
+                    if str(held.get("name") or "").strip() in mine
+                ]
+                if not tagged.already_filed(note, theirs):
+                    wants.append((note, person, "", "", said))
+
+            # A lead schedule is Nicole's whether or not anybody tagged
+            # her - "if its schedule like this add to nicole on ads even
+            # if not tagged". Only when nobody was: a schedule handed to
+            # somebody by name is theirs, and the tag says so.
+            if not tags and tagged.a_lead_schedule(note.text):
+                keeper = tagged.keeps_the_schedules(people)
+                if keeper is None:
+                    problems.append(
+                        f"“{tagged.trim(note.text)[:40]}” looks like a lead "
+                        f"schedule and there's no {tagged.SCHEDULES} checklist "
+                        f"on today's {tagged.SCHEDULES_ON} card, so I left it"
+                    )
+                elif not tagged.already_filed(note, everywhere):
+                    wants.append((note, keeper, "", "", ""))
+                continue
+
+            if not tags:
+                continue
+            for name in tags:
+                if name not in people:
+                    unknown.add(name)
+                    continue
+                person = people[name]
+                # Asked against this person's own checklists, on every
+                # card rather than this one: the line for a comment on
+                # General lands on Ops, so looking at General alone would
+                # file it again every afternoon - and one comment can hand
+                # different work to two people, so Faith's line already
+                # being there is no reason to leave KC without hers.
+                mine = set(person.keeps.values())
+                theirs = [
+                    held for group in holds.values() for held in group
+                    if str(held.get("name") or "").strip() in mine
+                ]
+                if not tagged.already_filed(note, theirs):
+                    wants.append((note, person, "", "", ""))
+
+    if ongoing:
+        # Said, not swallowed. A skip nobody can see is the thing that
+        # has cost the most time on this board.
+        problems.append(
+            f"{len(ongoing)} said 'ongoing order', so the agent's own card "
+            "already covers it and I left them: "
+            + "; ".join(
+                tagged.trim(one.text)[:40] or one.comment_id for one in ongoing
+            )
+        )
+    if unknown:
+        for name in sorted(unknown):
+            _jot(noticed, "no_checklist", f"@{name}")
+        problems.append(
+            "On the board but with no checklist on today's cards, so I left "
+            "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
+        )
+
+    tasks = _read_the_tags(config, wants, people, wanted, problems)
+    tasks += _described_tasks(
+        client, wanted, holds, people, on_the_board, problems
+    )
+    return tasks
 
 
 def _described_tasks(client, cards, holds, people, on_the_board, problems) -> list:

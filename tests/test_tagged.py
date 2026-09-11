@@ -1262,3 +1262,85 @@ def test_one_job_for_both_still_goes_to_both(config, monkeypatch):
     assert [one.summary for one in tasks] == [
         "Chase the Everlife discount", "Chase the Everlife discount",
     ]
+
+
+# ------------------------------------------------------ a comment stays on its day
+
+TWO_DAYS = {
+    "general": {"id": "g", "name": "💎 General 09/09/26", "url": "https://trello.com/c/IU4PM7wJ/x"},
+    "ops": {"id": "o", "name": "💻 Ops 09/09/26", "url": "https://trello.com/c/45pN1ggL/x"},
+    "ads": {"id": "a", "name": "📊 Ads 09/09/26", "url": "https://trello.com/c/MHCAKIT1/x"},
+    "general2": {"id": "g2", "name": "💎 General 09/10/26", "url": "https://trello.com/c/AAAA1111/x"},
+    "ops2": {"id": "o2", "name": "💻 Ops 09/10/26", "url": "https://trello.com/c/BBBB2222/x"},
+    "ads2": {"id": "a2", "name": "📊 Ads 09/10/26", "url": "https://trello.com/c/CCCC3333/x"},
+}
+
+
+class Tomorrow(TaggedBoard):
+    """Today's three cards and tomorrow's, both open at once."""
+
+    CARDS = TWO_DAYS
+    HOLDS = {
+        "g": ["Therese", "Faith", "Nicole", "Frank", "Kath"],
+        "o": ["Therese", "Nicole"],
+        "a": ["Jenn", "Kath", "Nicole"],
+        "g2": ["Therese", "Faith", "Nicole", "Frank", "Kath"],
+        "o2": ["Therese", "Nicole"],
+        "a2": ["Jenn", "Kath", "Nicole"],
+    }
+
+
+def test_a_comment_on_tomorrows_card_lands_on_tomorrows_checklist(config, monkeypatch):
+    """"if today still theres a card for 9/12 and theres a comment there, it
+    will be added to 9/12"."""
+    board = Tomorrow({"g2": [
+        {"id": "c9", "text": "@thereseguba pause the trucker distro", "author": "Frank"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert problems == []
+    (one,) = tasks
+    assert one.card_title == "💻 Ops 09/10/26"
+
+
+def test_todays_comment_does_not_wander_onto_tomorrow(config, monkeypatch):
+    board = Tomorrow({"g": [
+        {"id": "c1", "text": "@thereseguba pause the trucker distro", "author": "Frank"},
+    ]})
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert [one.card_title for one in tasks] == ["💻 Ops 09/09/26"]
+
+
+def test_both_days_come_back_together_today_first(config, monkeypatch):
+    board = Tomorrow({
+        "g": [{"id": "c1", "text": "@nic0l3 Add YT channel", "author": "Frank"}],
+        "g2": [{"id": "c9", "text": "@nic0l3 Check the budget", "author": "Frank"}],
+    })
+
+    tasks, _problems = planning(board, monkeypatch, config)
+
+    assert [one.card_title for one in tasks] == [
+        "📊 Ads 09/09/26", "📊 Ads 09/10/26",
+    ]
+
+
+def test_yesterdays_card_is_finished_and_left_alone(config, monkeypatch):
+    """A card in Done is done. Reading its comments would file work onto a
+    checklist nobody is going to look at again."""
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    board = Tomorrow({"g": [
+        {"id": "c1", "text": "@nic0l3 Add YT channel", "author": "Frank"},
+    ]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 10))
+    monkeypatch.setattr(jobs, "_ask_about_tags", lambda *a, **k: {})
+
+    tasks, _problems = jobs.tags_to_file(config)
+
+    assert tasks == []
