@@ -643,12 +643,18 @@ def summary_prompt(notes: list[Note], people: dict) -> str:
     A batch rather than one at a time: the comments on a card are about each
     other, and reading them together is how "same with trucker lp" means
     anything at all.
+
+    One line per tagged person rather than one per comment. Faith and KC were
+    tagged in the same sentence - "KC tell them about the Everlife aged lead
+    discount; Faith text Wolfpack agents" - and both of them got the same
+    summary of the whole thing, which on the second run had shortened to
+    Faith's half and was telling KC to do Faith's job.
     """
     kinds = "\n".join(f"- {kind}: {what}" for kind, what in WORK.items())
     lines = []
     for note in notes:
         who = ", ".join(
-            people[name].full_name or name
+            f"{people[name].full_name or name} [{name}]"
             for name in mentioned(note.text) if name in people
         )
         lines.append(
@@ -659,10 +665,17 @@ def summary_prompt(notes: list[Note], people: dict) -> str:
     return (
         "These are comments on a lead-generation team's daily Trello cards. "
         "Somebody was tagged in each one, which means it is a job for them.\n\n"
-        "For each comment give me two things:\n"
-        "1. summary — what the tagged person has to do, in their own words "
-        f"where possible. At most {MOST_WORDS} words. No trailing full stop. "
-        "If the comment is already short, use it as it is.\n"
-        "2. kind — which of these the work belongs to:\n" + kinds + "\n\n"
+        "Give me one entry per tagged person per comment:\n"
+        "1. comment_id — in the brackets before the comment.\n"
+        "2. person — the tag in the brackets after their name, without the @. "
+        'Empty if the comment tagged nobody.\n'
+        "3. summary — what that person in particular has to do, in the "
+        f"comment's own words where possible. At most {MOST_WORDS} words. No "
+        "trailing full stop. If the comment is already short, use it as it "
+        "is.\n"
+        "4. kind — which of these that work belongs to:\n" + kinds + "\n\n"
+        "When a comment hands different jobs to the people it tags, each "
+        "entry says only that person's part and nobody else's. When it is one "
+        "job for all of them, give them all the same summary.\n\n"
         "Comments:\n\n" + "\n\n".join(lines)
     )

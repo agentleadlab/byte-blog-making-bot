@@ -329,7 +329,7 @@ def test_nicole_goes_to_ads_when_the_work_is_ads(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {"c1": {"summary": "Blue collar agents go live", "kind": "ads"}},
+        read=lambda *a, **k: {("c1", ""): {"summary": "Blue collar agents go live", "kind": "ads"}},
     )
 
     (one,) = tasks
@@ -343,7 +343,7 @@ def test_nicole_stays_on_general_when_the_work_is_admin(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {"c1": {"summary": "Add YT channel", "kind": "general"}},
+        read=lambda *a, **k: {("c1", ""): {"summary": "Add YT channel", "kind": "general"}},
     )
 
     (one,) = tasks
@@ -1123,7 +1123,7 @@ def test_a_schedule_is_ads_work_whatever_the_reading_said(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {"c1": {"summary": "Anthony's hours", "kind": "general"}},
+        read=lambda *a, **k: {("c1", ""): {"summary": "Anthony's hours", "kind": "general"}},
     )
 
     assert (tasks[0].kind, tasks[0].checklist) == ("ads", "Nicole")
@@ -1160,3 +1160,105 @@ def test_a_schedule_somebody_did_tag_goes_where_the_tag_says(config, monkeypatch
     tasks, _problems = planning(board, monkeypatch, config)
 
     assert [(one.kind, one.checklist) for one in tasks] == [("ops", "Therese")]
+
+
+# ------------------------------------------- one comment, two people, two jobs
+
+SHARED = (
+    "@kharylmaye KC tell them about the Everlife aged lead discount; "
+    "@faithhannahcalla Faith text Wolfpack agents"
+)
+
+
+def _both(_config, notes, _people):
+    """Claude, told to write one line per tagged person, doing so."""
+    said = notes[0].comment_id
+    return {
+        (said, "kharylmaye"): {
+            "comment_id": said, "person": "kharylmaye",
+            "summary": "Tell them about the Everlife aged lead discount",
+            "kind": "general",
+        },
+        (said, "faithhannahcalla"): {
+            "comment_id": said, "person": "faithhannahcalla",
+            "summary": "Text Wolfpack agents", "kind": "general",
+        },
+        (said, ""): {
+            "comment_id": said, "person": "kharylmaye",
+            "summary": "Tell them about the Everlife aged lead discount",
+            "kind": "general",
+        },
+    }
+
+
+SHARERS = [
+    {"username": "kharylmaye", "fullName": "Kharyl Maye Cañizares"},
+    {"username": "faithhannahcalla", "fullName": "Faith Hannah Calla"},
+]
+
+
+def _sharing():
+    board = TaggedBoard({"g": [{"id": "c1", "text": SHARED, "author": "Frank"}]})
+    board.HOLDS = dict(TaggedBoard.HOLDS, g=[*TaggedBoard.HOLDS["g"], "KC"])
+    return board
+
+
+def test_two_people_in_one_comment_get_their_own_half(config, monkeypatch):
+    """Both got the whole comment, and on the second run the summary had
+    shortened to Faith's half — which told KC to text the Wolfpack agents."""
+    board = _sharing()
+    monkeypatch.setattr(
+        board, "board_members",
+        lambda _b: [*BOARD, *SHARERS],
+    )
+
+    tasks, _problems = planning(board, monkeypatch, config, read=_both)
+
+    assert {one.checklist: one.summary for one in tasks} == {
+        "KC": "Tell them about the Everlife aged lead discount",
+        "Faith": "Text Wolfpack agents",
+    }
+
+
+def test_one_of_the_two_already_filed_does_not_cost_the_other_hers(config, monkeypatch):
+    """Faith's line being there is no reason to leave KC without hers."""
+    board = _sharing()
+    monkeypatch.setattr(
+        board, "board_members",
+        lambda _b: [*BOARD, *SHARERS],
+    )
+    held = board.card_checklists
+
+    def with_faiths(card_id):
+        found = held(card_id)
+        for one in found:
+            if card_id == "g" and one["name"] == "Faith":
+                one["checkItems"] = [
+                    {"name": "Text Wolfpack agents\n"
+                             "https://trello.com/c/IU4PM7wJ#comment-c1"}
+                ]
+        return found
+
+    board.card_checklists = with_faiths
+
+    tasks, _problems = planning(board, monkeypatch, config, read=_both)
+
+    assert [one.checklist for one in tasks] == ["KC"]
+
+
+def test_one_job_for_both_still_goes_to_both(config, monkeypatch):
+    """"@card"-style work handed to two people is not two different jobs."""
+    board = _sharing()
+    monkeypatch.setattr(
+        board, "board_members",
+        lambda _b: [*BOARD, *SHARERS],
+    )
+    same = {
+        ("c1", ""): {"summary": "Chase the Everlife discount", "kind": "general"},
+    }
+
+    tasks, _problems = planning(board, monkeypatch, config, read=lambda *a, **k: same)
+
+    assert [one.summary for one in tasks] == [
+        "Chase the Everlife discount", "Chase the Everlife discount",
+    ]

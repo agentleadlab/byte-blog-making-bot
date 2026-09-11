@@ -2567,17 +2567,24 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
 
                 if not tags:
                     continue
-                # Filed already, wherever somebody put it. Against every card's
-                # checklists rather than this card's: the line for a comment on
-                # General lands on Ops, so looking at General alone would file
-                # it again every afternoon.
-                if tagged.already_filed(note, everywhere):
-                    continue
                 for name in tags:
-                    if name in people:
-                        wants.append((note, people[name], "", "", ""))
-                    else:
+                    if name not in people:
                         unknown.add(name)
+                        continue
+                    person = people[name]
+                    # Asked against this person's own checklists, on every
+                    # card rather than this one: the line for a comment on
+                    # General lands on Ops, so looking at General alone would
+                    # file it again every afternoon - and one comment can hand
+                    # different work to two people, so Faith's line already
+                    # being there is no reason to leave KC without hers.
+                    mine = set(person.keeps.values())
+                    theirs = [
+                        held for group in holds.values() for held in group
+                        if str(held.get("name") or "").strip() in mine
+                    ]
+                    if not tagged.already_filed(note, theirs):
+                        wants.append((note, person, "", "", ""))
 
         if ongoing:
             # Said, not swallowed. A skip nobody can see is the thing that
@@ -2736,7 +2743,7 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
 
     tasks = []
     for note, person, told_kind, told_list, just_theirs in wants:
-        said = written.get(note.comment_id) or {}
+        said = _written_for(written, note.comment_id, person)
         summary = str(said.get("summary") or "").strip()
         # A slice of a comment is summarised from its own words: "Jenn =
         # FRIDAY / OTP VET removal" and "Kath = FRIDAY / MTG creatives" are
@@ -2798,11 +2805,12 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
         system=(
             "You turn comments on a team's Trello cards into checklist lines. "
             "Say what the tagged person has to do, in the words the comment "
-            "used. Never invent a task the comment does not ask for."
+            "used. Never invent a task the comment does not ask for, and never "
+            "give somebody a line about work the comment gave to somebody else."
         ),
         tools=[{
             "name": "lines",
-            "description": "One line per comment.",
+            "description": "One line per tagged person per comment.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -2812,10 +2820,11 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
                             "type": "object",
                             "properties": {
                                 "comment_id": {"type": "string"},
+                                "person": {"type": "string"},
                                 "summary": {"type": "string"},
                                 "kind": {"type": "string", "enum": list(tagged.WORK)},
                             },
-                            "required": ["comment_id", "summary", "kind"],
+                            "required": ["comment_id", "person", "summary", "kind"],
                         },
                     }
                 },
@@ -2831,10 +2840,24 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
     # back to the comment's own first words - which is why a summary came out
     # as "CONNOR SWARTZ has an ongoing order that still need".
     payload = _tool_input(response, "lines")
-    return {
-        str(line.get("comment_id") or ""): line
-        for line in payload.get("lines") or []
-    }
+    # Keyed by the comment and the person both, with a bare-comment key kept
+    # as the fallback for a tag nobody wrote a line for.
+    written: dict = {}
+    for line in payload.get("lines") or []:
+        said = str(line.get("comment_id") or "")
+        written.setdefault((said, ""), line)
+        written[(said, str(line.get("person") or "").casefold())] = line
+    return written
+
+
+def _written_for(written: dict, comment_id: str, person) -> dict:
+    """The line Claude wrote for this person on this comment, or any of it."""
+    username = (getattr(person, "username", "") or "").casefold()
+    return (
+        written.get((comment_id, username))
+        or written.get((comment_id, ""))
+        or {}
+    )
 
 
 def _tool_input(response, name: str) -> dict:
