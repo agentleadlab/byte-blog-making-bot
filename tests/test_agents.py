@@ -3728,3 +3728,59 @@ def test_a_day_with_no_card_yet_waits_rather_than_being_filed_early():
     assert plan.move_to == agents.PARKED
     assert any("no setup card yet" in one for one in plan.problems)
     assert any("OTP FEX" in one for one in plan.problems)
+
+
+# ------------------------- the card's checklists decide, own setup is the rest
+
+
+BOARD = ["OTP MTG Standard", "OTP MTG Plus", "OTP IUL Standard", "own setup"]
+
+
+def spread_onto(line, have=None):
+    setup = [{"name": "Therese", "checkItems": [
+        {"name": f"https://trello.com/c/xy {line}"}
+    ]}]
+    order = [{"name": name, "checkItems": []} for name in (have or BOARD)]
+    spreads, _problems = agents.plan_spread(setup, order)
+    return [one.checklist for one in spreads]
+
+
+def test_a_checklist_that_exists_beats_the_standard_tier_guess():
+    """Daxton Egan and Alex Brown bought "50 MTG STANDARD" and went to own
+    setup, past an empty "OTP MTG Standard" checklist on the same card."""
+    assert spread_onto("50 MTG STANDARD") == ["OTP MTG Standard"]
+
+
+def test_basic_and_friends_are_self_setup_by_name_whatever_the_board_has():
+    """"40 Basic FB Spanish IUL" belongs on own setup however the card is
+    laid out — that is a fact about the product, not a guess from the tier."""
+    assert spread_onto("40 Basic FB Spanish IUL") == ["own setup"]
+    assert spread_onto("Basic Spanish IUL", have=["OTP IUL Standard", "own setup"]) == [
+        "own setup"
+    ]
+
+
+def test_the_standard_tier_still_catches_what_nothing_matches():
+    """Only once the card has been asked. Something at the standard tier with
+    no checklist of its own is the self-setup half after all."""
+    assert spread_onto("25 Widow Standard", have=["OTP MTG Plus", "own setup"]) == [
+        "own setup"
+    ]
+
+
+def test_a_line_product_with_no_checklist_is_still_not_own_setup():
+    """Uprise and Phoenix are ordered. One with nowhere to go is somebody's
+    to place, not a line quietly dropped onto own setup."""
+    landed = spread_onto("Phoenix Standard", have=["OTP MTG Plus", "own setup"])
+
+    assert landed == ["Phoenix Standard"]  # made as its own, reported by the spread
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [("50 MTG STANDARD", "OTP MTG Standard"),
+     ("50 OTP MTG PLUS", "OTP MTG Plus"),
+     ("OTP STANDARD IUL", "OTP IUL Standard")],
+)
+def test_the_real_lines_off_fridays_card(line, expected):
+    assert spread_onto(line) == [expected]

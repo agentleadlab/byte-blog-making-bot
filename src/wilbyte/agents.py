@@ -63,6 +63,16 @@ OWN_SETUP_WORDS = re.compile(r"\binstant\b|\bfb\b|\bfacebook\b|\bbasics?\b", re.
 VERIFIED = re.compile(r"\btext[\s-]*verified\b|\botp\b|\bone[\s-]*time\s*p", re.IGNORECASE)
 
 
+def own_setup_outright(lead_type: str) -> bool:
+    """Whether these leads are self-setup by name, whatever the board has.
+
+    Basic, Instant and FB are the self-setup products, and that is a fact
+    about the product rather than a guess from the tier. Everything else that
+    ends up on own setup gets there because nothing on the card matched.
+    """
+    return bool(OWN_SETUP_WORDS.search(lead_type or ""))
+
+
 def is_own_setup(lead_type: str) -> bool:
     """Whether these leads belong on the own-setup checklist.
 
@@ -2036,9 +2046,21 @@ def plan_spread(
             continue
 
         for part in parts:
-            landed = OWN_SETUP if is_own_setup(part) else match_checklist(
-                part, have, tier=tier_of(part)
-            )
+            # The card's own checklists decide, and own setup is what is left
+            # over. It used to be the other way round, and the standard-tier
+            # guess inside `is_own_setup` then overrode a checklist that was
+            # sitting right there: Daxton Egan and Alex Brown bought "50 MTG
+            # STANDARD" and went to own setup past an empty "OTP MTG Standard".
+            #
+            # Basic, Instant and FB still win outright. Those are self-setup by
+            # name rather than by tier, so "40 Basic FB Spanish IUL" belongs on
+            # own setup however the card is laid out.
+            if own_setup_outright(part):
+                landed = OWN_SETUP
+            else:
+                landed = match_checklist(part, have, tier=tier_of(part))
+                if landed is None and is_own_setup(part):
+                    landed = OWN_SETUP
             checklist = landed or part
             where = " ".join(checklist.split()).casefold()
             if (key, where) in on_checklist:
