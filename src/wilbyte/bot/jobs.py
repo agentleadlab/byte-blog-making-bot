@@ -2503,12 +2503,34 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                     for held in holds.get(card_id) or []:
                         if tagged.already_on(note, held):
                             continue
-                        wants.append((note, None, kind, str(held.get("name") or "")))
+                        wants.append((note, None, kind, str(held.get("name") or ""), ""))
 
                 tags = [
                     name for name in tagged.mentioned(note.text)
                     if name in on_the_board
                 ]
+
+                # Named at the start of a line, without an @. Arnold writes
+                # the week as "Jenn = FRIDAY" with the work under it and tags
+                # nobody, and those were jobs handed over that nothing wrote
+                # down. Whoever was properly tagged is left to the tag, which
+                # carries the whole comment rather than one slice of it.
+                tagged_lists = {
+                    people[name].keeps.get(kind) or ""
+                    for name in tags if name in people
+                }
+                for whose, said in tagged.named_without_tagging(
+                    note.text, [one.keeps.get(kind) for one in people.values()]
+                ).items():
+                    if whose in tagged_lists:
+                        continue
+                    for held in holds.get(card_id) or []:
+                        if str(held.get("name") or "").strip() != whose:
+                            continue
+                        if not tagged.already_on(note, held):
+                            wants.append((note, None, kind, whose, said))
+                        break
+
                 if not tags:
                     continue
                 # Filed already, wherever somebody put it. Against every card's
@@ -2519,7 +2541,7 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                     continue
                 for name in tags:
                     if name in people:
-                        wants.append((note, people[name], "", ""))
+                        wants.append((note, people[name], "", "", ""))
                     else:
                         unknown.add(name)
 
@@ -2567,10 +2589,15 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
         )
 
     tasks = []
-    for note, person, told_kind, told_list in wants:
+    for note, person, told_kind, told_list, just_theirs in wants:
         said = written.get(note.comment_id) or {}
         summary = str(said.get("summary") or "").strip()
-        if not summary or tagged.brief_already(note.text):
+        # A slice of a comment is summarised from its own words: "Jenn =
+        # FRIDAY / OTP VET removal" and "Kath = FRIDAY / MTG creatives" are
+        # one comment and two different jobs.
+        if just_theirs:
+            summary = tagged.trim(just_theirs)
+        elif not summary or tagged.brief_already(note.text):
             summary = tagged.trim(note.text) or summary
         if not summary:
             continue
@@ -2601,7 +2628,7 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
     """{comment id: {"summary": ..., "kind": ...}}, written by Claude."""
     from anthropic import Anthropic
 
-    from .. import copywriter, tagged
+    from .. import tagged
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
@@ -2638,11 +2665,31 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
         tool_choice={"type": "tool", "name": "lines"},
         messages=[{"role": "user", "content": tagged.summary_prompt(notes, people)}],
     )
-    payload = copywriter._extract_tool_input(response)
+    # Read by the name we asked for. `copywriter._extract_tool_input` looks
+    # for "emit_blog_package" and nothing else, so borrowing it meant every
+    # batch raised "Model did not call emit_blog_package" and every line fell
+    # back to the comment's own first words - which is why a summary came out
+    # as "CONNOR SWARTZ has an ongoing order that still need".
+    payload = _tool_input(response, "lines")
     return {
         str(line.get("comment_id") or ""): line
         for line in payload.get("lines") or []
     }
+
+
+def _tool_input(response, name: str) -> dict:
+    """What the model passed to the tool it was told to call."""
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(
+            f"The model ran out of room before finishing {name}."
+        )
+    for block in response.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == name:
+            return dict(block.input)
+    raise RuntimeError(
+        f"The model didn't call {name} (stop reason: "
+        f"{getattr(response, 'stop_reason', 'unknown')})"
+    )
 
 
 def file_tags(config: Config, tasks: list) -> tuple[list[str], list[str]]:

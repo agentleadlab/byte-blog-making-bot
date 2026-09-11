@@ -145,6 +145,47 @@ def everyones_job(text: str) -> bool:
     return any(name.casefold() == EVERYONE for name in MENTION.findall(text or ""))
 
 
+# Somebody named at the start of a line, with what follows theirs to do:
+#
+#     Jenn = FRIDAY
+#     • OTP VET removal and consolidation
+#     Kath = FRIDAY
+#     • MTG creatives and setting up individual ad sets
+#
+# Arnold writes the week like this and tags nobody. Only at the start of a
+# line and only with a colon, an equals or a dash after it: "ask Nicole about
+# the budget" names her in passing and is not a job being handed over.
+NAMED = re.compile(r"^\s*([A-Za-z][A-Za-z.'\- ]{1,24}?)\s*[:=–—-]\s*(?=\S)", re.MULTILINE)
+
+
+def named_without_tagging(text: str, checklists) -> dict:
+    """{checklist: what follows their name}, for people named but not tagged.
+
+    The lines under a name are theirs until the next name. Somebody who was
+    also properly tagged is left to the tag, which carries the whole comment
+    rather than one slice of it.
+    """
+    known = {
+        " ".join(str(name).split()).casefold(): " ".join(str(name).split())
+        for name in checklists or [] if str(name).strip()
+    }
+    if not known:
+        return {}
+
+    marks = [
+        (found.start(), found.end(), known[found.group(1).strip().casefold()])
+        for found in NAMED.finditer(text or "")
+        if found.group(1).strip().casefold() in known
+    ]
+    found: dict[str, str] = {}
+    for number, (_start, ends, who) in enumerate(marks):
+        until = marks[number + 1][0] if number + 1 < len(marks) else len(text or "")
+        said = " ".join((text or "")[ends:until].split())
+        if said and who not in found:
+            found[who] = said
+    return found
+
+
 def strip_mentions(text: str) -> str:
     """The comment without its tags or its links.
 
@@ -164,16 +205,38 @@ def checklist_for(full_name: str, names) -> str:
     person's first name is theirs. The longest such name wins, so a board with
     both "Kath" and "Kathleen" on it picks the one that was meant.
     """
-    first = (full_name or "").split()
-    if not first:
+    words = (full_name or "").split()
+    if not words:
         return ""
-    lead = first[0].casefold()
+    lead = words[0].casefold()
     fits = [
         name for name in names
         if name and (lead.startswith(name.strip().casefold())
                      or name.strip().casefold().startswith(lead))
     ]
-    return max(fits, key=len) if fits else ""
+    if fits:
+        return max(fits, key=len)
+    # Or their initials. Kharyl Maye Cañizares keeps a checklist called "KC",
+    # which is not the start of her first name and is still hers.
+    letters = initials(words)
+    return next(
+        (name for name in names if name.strip().casefold() in letters), ""
+    )
+
+
+def initials(words) -> set:
+    """The short forms of a name somebody might label a checklist with.
+
+    "Kharyl Maye Cañizares" gives kmc and kc - every letter, and the first
+    and last. Two letters at least, so a single initial never claims a
+    checklist called "K".
+    """
+    letters = [word[0].casefold() for word in words if word]
+    if len(letters) < 2:
+        return set()
+    found = {"".join(letters)}
+    found.add(letters[0] + letters[-1])
+    return found
 
 
 def home_for(checklists) -> str:

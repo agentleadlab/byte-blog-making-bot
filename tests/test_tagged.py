@@ -567,3 +567,84 @@ def test_a_pasted_link_is_not_a_summary(config, monkeypatch):
 def test_the_words_around_a_link_still_count():
     said = "@nic0l3 new creatives here https://drive.google.com/drive/folders/1CW"
     assert tagged.trim(said) == "new creatives here"
+
+
+# ------------------------------------ named without being tagged, and initials
+
+
+ARNOLD = """Jenn = FRIDAY
+- OTP VET removal and consolidation and swapping out content with creatives
+Kath = FRIDAY
+- MTG creatives and setting up individual ad sets for weekend launch
+"""
+
+
+def test_a_name_at_the_start_of_a_line_hands_the_work_over():
+    """Arnold writes the week as "Jenn = FRIDAY" with the work under it and
+    tags nobody. Those were jobs handed over that nothing wrote down."""
+    found = tagged.named_without_tagging(ARNOLD, ["Jenn", "Kath", "Nicole"])
+
+    assert set(found) == {"Jenn", "Kath"}
+    assert "OTP VET removal" in found["Jenn"]
+    assert "MTG creatives" in found["Kath"]
+
+
+def test_the_lines_under_a_name_are_theirs_until_the_next_name():
+    found = tagged.named_without_tagging(ARNOLD, ["Jenn", "Kath"])
+
+    assert "MTG creatives" not in found["Jenn"]
+
+
+def test_a_name_in_passing_is_not_a_job():
+    """"ask Nicole about the budget" names her and hands her nothing."""
+    assert tagged.named_without_tagging("ask Nicole about the budget", ["Nicole"]) == {}
+
+
+def test_a_name_with_nothing_after_it_is_not_a_job():
+    assert tagged.named_without_tagging("Jenn =", ["Jenn"]) == {}
+
+
+def test_somebody_who_keeps_no_checklist_is_not_matched():
+    assert tagged.named_without_tagging("Bob = FRIDAY\ndo it", ["Jenn"]) == {}
+
+
+@pytest.mark.parametrize(
+    "who, expected",
+    [("Kharyl Maye Cañizares", "KC"), ("Kathleen Rabaya", "Kath"),
+     ("Jennifer Hashisaki", "Jenn"), ("Nicole Sarmiento", "Nicole")],
+)
+def test_a_checklist_named_by_initials_is_still_theirs(who, expected):
+    """Kharyl keeps one called "KC", which is not the start of her first name
+    and is still hers."""
+    board = ["Frank", "Kath", "Jenn", "Nicole", "Therese", "Faith", "KC"]
+
+    assert tagged.checklist_for(who, board) == expected
+
+
+def test_a_one_word_name_has_no_initials_to_match_on():
+    """"K" is not enough to say whose list it is."""
+    assert tagged.initials(["Kharyl"]) == set()
+
+
+def test_only_the_short_forms_somebody_would_actually_write():
+    """Every letter, and the first and last. Not the first two, which would
+    give Kharyl a claim on a checklist called "KM"."""
+    assert tagged.initials("Kharyl Maye Cañizares".split()) == {"kmc", "kc"}
+    assert tagged.checklist_for("Kharyl Maye Cañizares", ["KM", "Frank"]) == ""
+
+
+def test_the_tool_is_read_by_the_name_it_was_asked_for():
+    """Borrowing the blog's reader meant every batch raised "Model did not
+    call emit_blog_package", so every summary fell back to raw first words."""
+    from wilbyte.bot import jobs
+
+    class Block:
+        type = "tool_use"
+        name = "lines"
+        input = {"lines": [{"comment_id": "c1", "summary": "ok", "kind": "ads"}]}
+
+    class Answered:
+        stop_reason = "tool_use"
+        content = [Block()]
+
+    assert jobs._tool_input(Answered(), "lines")["lines"][0]["summary"] == "ok"
