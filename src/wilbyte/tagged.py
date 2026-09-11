@@ -349,7 +349,13 @@ def brief_already(text: str) -> bool:
 
 
 def describe(task: Task) -> str:
-    """One line for the message that asks whether to write these."""
+    """One line for the message that asks whether to write these.
+
+    With a link to the comment it came from. A summary is RYTE's words about
+    somebody else's, and "where did you get this" is a fair question to want
+    answered before pressing a button rather than after - the filed line
+    carries the link and the thing asking permission did not.
+    """
     from . import dailyops
 
     card = dailyops.CARD_KINDS.get(task.kind, task.kind)
@@ -358,7 +364,8 @@ def describe(task: Task) -> str:
         why = " *(@card)*"
     elif task.judged:
         why = " *(my call)*"
-    return f"**{card} · {task.checklist}** — {task.summary}{why}"
+    where = f" · [said here]({task.note.link()})" if task.note.card_short else ""
+    return f"**{card} · {task.checklist}** — {task.summary}{why}{where}"
 
 
 def summary_prompt(notes: list[Note], people: dict) -> str:

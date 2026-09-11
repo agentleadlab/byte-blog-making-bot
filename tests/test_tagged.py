@@ -698,3 +698,27 @@ def test_somebody_tagged_as_well_as_named_is_left_to_the_tag(config, monkeypatch
     # One line, not two. The tag already carries the whole comment, so the
     # name lower down is the same job said again.
     assert len([task for task in tasks if task.checklist == "Jenn"]) == 1
+
+
+def test_the_preview_says_where_each_line_came_from():
+    """"where did ryte get this" is a fair question to want answered before
+    pressing the button rather than after."""
+    task = tagged.Task(
+        note=note("@nic0l3 Bump # of leads", comment_id="abc", short="MHCAKIT1"),
+        kind="ads", checklist="Nicole", card_id="a", card_title="📊 Ads",
+        summary="Bump # of leads to Connor Swartz's current setup",
+    )
+
+    said = tagged.describe(task)
+
+    assert "https://trello.com/c/MHCAKIT1#comment-abc" in said
+    assert "said here" in said
+
+
+def test_a_line_with_no_card_to_link_to_still_reads():
+    task = tagged.Task(
+        note=tagged.Note(comment_id="abc", text="x"), kind="ads",
+        checklist="Nicole", card_id="a", card_title="📊 Ads", summary="do it",
+    )
+
+    assert tagged.describe(task).endswith("do it")
