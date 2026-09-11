@@ -965,3 +965,47 @@ def test_somebody_tagged_in_the_description_with_no_checklist_is_named(config, m
 
     assert tasks == []
     assert any("tretarpley" in one and "Aged distro udpate" in one for one in problems)
+
+
+# ------------------------------------------------------------------------ Elisa
+
+ELISA = """- @elisadeko2
+  - Aged distro udpate
+  - What's login for active campaign
+    - SMS is good now?
+      - Use Ai to look up agency server/silo group to warmup
+"""
+
+
+def test_elisas_block_lands_on_general_once_she_keeps_a_checklist(config, monkeypatch):
+    """"this is for Elisa / her checklist will be added on the general card
+    going forward" — nothing to configure, the board says so."""
+    board = TaggedBoard({}, descs={"g": ELISA})
+    board.HOLDS = dict(TaggedBoard.HOLDS, g=[*TaggedBoard.HOLDS["g"], "Elisa"])
+    monkeypatch.setattr(
+        board, "board_members",
+        lambda _b: [*BOARD, {"username": "elisadeko2", "fullName": "Elisa Deko"}],
+    )
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert problems == []
+    assert [(one.kind, one.checklist, one.summary) for one in tasks] == [
+        ("general", "Elisa", "Aged distro udpate"),
+        ("general", "Elisa", "What's login for active campaign"),
+        ("general", "Elisa", "SMS is good now?"),
+        ("general", "Elisa", "Use Ai to look up agency server/silo group to warmup"),
+    ]
+
+
+def test_until_then_her_four_lines_are_named_not_dropped(config, monkeypatch):
+    """A tag in a description was typed to hand work over. Whether the reason
+    is no checklist or not on the board, the work is still sitting there."""
+    board = TaggedBoard({}, descs={"g": ELISA})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    assert len(problems) == 4
+    assert all("@elisadeko2" in one for one in problems)
+    assert any("Aged distro udpate" in one for one in problems)

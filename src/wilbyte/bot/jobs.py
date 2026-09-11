@@ -2629,13 +2629,20 @@ def _described_tasks(client, cards, holds, people, on_the_board, problems) -> li
         ) or str(card.get("shortLink") or "")
         for told in theirs:
             if told.username not in people:
-                if told.username in on_the_board:
-                    _jot(noticed, "no_checklist", f"@{told.username}")
-                    problems.append(
-                        f"@{told.username} is in the {kind} card's description "
-                        f"with no checklist on today's cards, so “{told.text[:40]}” "
-                        "is still only written there"
-                    )
+                # Both of these are said rather than swallowed. A comment can
+                # say "@jadon" about an agent and mean nobody, but a tag in a
+                # description was typed to hand work over, and the work is
+                # still sitting there unfiled either way.
+                _jot(noticed, "no_checklist", f"@{told.username}")
+                missing = (
+                    "no checklist on today's cards"
+                    if told.username in on_the_board else
+                    "not on the board"
+                )
+                problems.append(
+                    f"@{told.username} is in the {kind} card's description with "
+                    f"{missing}, so “{told.text[:40]}” is still only written there"
+                )
                 continue
 
             person = people[told.username]
