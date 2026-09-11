@@ -1639,15 +1639,6 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # Silent when one already existed. Most mornings it makes one, and
             # a line every day saying nothing happened is a line nobody reads.
             note = f"📋 {dailyops.said_at(step)} — made `{title}`." if title else ""
-            # And on a Friday, the Lead Order card the weekend's setup card
-            # spreads onto. The two have to cover the same days or the spread
-            # has nowhere to write on the Saturday morning.
-            weekend, trouble = await asyncio.to_thread(
-                jobs.weekend_order_card, bot.config
-            )
-            problems += trouble
-            if weekend:
-                note += ("\n" if note else "") + f"📋 Weekend Lead Order — {weekend}."
         elif step in dailyops.UNMARKED:
             found, problems = await asyncio.to_thread(jobs.unmarked_agents, bot.config)
             # Nothing outstanding says nothing at all. A card every afternoon
@@ -1727,6 +1718,22 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     # Marked before the message, because the step happened whether or not
     # Discord hears about it, and doing it twice is the worse mistake.
     await asyncio.to_thread(boardclock.mark, step, today)
+
+    # On a Friday, the Lead Order card the weekend's setup card spreads onto.
+    # Checked at every step rather than once in the morning: the day's cards
+    # land in In Que around eleven, so the one that needs widening is often
+    # not there yet at six - and by the evening the spread needs it. It does
+    # nothing at all on the other six days, and nothing twice on a Friday.
+    try:
+        weekend, trouble = await asyncio.to_thread(
+            jobs.weekend_order_card, bot.config
+        )
+    except PIPELINE_ERRORS as exc:
+        weekend, trouble = "", [f"Couldn't check the weekend Lead Order card: {exc}"]
+    problems = list(problems) + trouble
+    if weekend:
+        note = (note + "\n" if note else "") + f"📋 Weekend Lead Order — {weekend}."
+
     if problems:
         note = (note + "\n⚠ " + "\n⚠ ".join(problems)).lstrip("\n")
     # Each branch leaves both empty when its step had nothing to say. A line

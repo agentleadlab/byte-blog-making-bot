@@ -3346,78 +3346,94 @@ def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
 
 
 def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
-    """On a Friday, make the weekend's Lead Order card cover Saturday to Monday.
+    """On a Friday, widen the weekend's Lead Order card to the setup card's days.
 
     (what changed, problems). "" when there was nothing to do, which is every
     day but Friday.
 
-    The setup card has run Saturday to Monday for months - the agents going
-    live on the Sunday are set up on the Friday with the Saturday's - and its
-    Lead Order card is titled the same way: "Lead Order 09/12/26-09/14/26".
-    Nothing made that card, so somebody made it by hand on a Friday evening
-    and on the Friday nobody did, the spread had nowhere to write and eight
-    agents sat where nobody was going to look for them.
+    The setup card runs Saturday to Monday - the agents going live on the
+    Sunday are set up on the Friday with the Saturday's - and the card they
+    are spread onto has to cover the same days. One Friday it did not: the
+    only Lead Order card there was said "09/14/26", the spread asked for a
+    card covering the Saturday, and there wasn't one. Eight agents and nowhere
+    to write them.
 
-    Three shapes it can find, and it is safe to run on all of them:
+    So the span comes off the setup card rather than being worked out here.
+    Whatever days that card's agents go live on are the days its Lead Order
+    card is retitled to cover, and the two cannot drift apart.
 
-    - a card already covering the weekend: nothing.
-    - a card dated the Saturday alone: retitled to the span. This is the one
-      that matters, because a Saturday-only card silently loses the Sunday's
-      and Monday's agents rather than failing.
-    - no card at all: one made, beside the other cards for that Saturday if
-      they exist, and in In Que if they do not.
+    It only ever retitles, and only a card that is already there:
+
+    - a card already covering the setup card's days: nothing.
+    - a card dated one day of them - the Saturday, or the Monday, or any of
+      them: retitled to the whole span. This is the one that matters, because
+      a card covering only part of the weekend does not fail. It takes the
+      agents for the days it covers and silently loses the rest.
+    - no Lead Order card anywhere near the weekend: said out loud, not made.
+      A second card beside one that arrives later is worse than a message.
+    - more than one across the weekend: left alone and said out loud. Which of
+      them is the weekend's is not something to decide from here.
 
     Nothing on a card is touched but its title. The checklists, the members
     and whatever somebody has already written on it stay exactly as they are.
     """
-    from .. import agents, dailyops, trello
+    from .. import agents, dailyops
 
     day = day or board_day(config)
     saturday = day + timedelta(days=1)
     if saturday.weekday() != agents.SATURDAY:
         return "", []
-    monday = saturday + timedelta(days=2)
-    title = (
-        f"{dailyops.CARD_KINDS['lead_order']} "
-        f"{saturday:%m/%d/%y}-{monday:%m/%d/%y}"
-    )
 
     client = open_trello(config)
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
 
-        found = dailyops.cards_covering(every, saturday).get("lead_order")
-        if found is not None:
-            days = dailyops.card_days(str(found.get("name") or ""))
-            if monday in days:
-                return "", []
-            try:
-                client.rename_card(str(found.get("id") or ""), title)
-            except Exception as exc:
-                return "", [
-                    f"Couldn't retitle {found.get('name')!r} to {title!r} — "
-                    f"{_short(exc, 160)}"
-                ]
-            return f"{found.get('name')} → {title}", []
-
-        # Beside the weekend's other cards when they exist: a Lead Order card
-        # on its own in a list nobody is looking at is the same problem in a
-        # different place.
-        beside = [
-            str(card.get("idList") or "")
-            for card in dailyops.cards_covering(every, saturday).values()
+        setup = agents.find_setup_card(every, saturday)
+        if setup is None:
+            return "", []
+        last = agents.setup_ends(str(setup.get("name") or ""), saturday)
+        if last is None or last <= saturday:
+            return "", []
+        span = [
+            saturday + timedelta(days=step)
+            for step in range((last - saturday).days + 1)
         ]
-        home = next(
-            (bl for bl in lists if str(bl.get("id") or "") in beside), None
-        ) or trello.find_list(lists, dailyops.IN_QUE)
-        if home is None:
-            return "", [f"The board has no list called {dailyops.IN_QUE!r}"]
+        title = (
+            f"{dailyops.CARD_KINDS['lead_order']} "
+            f"{saturday:%m/%d/%y}-{last:%m/%d/%y}"
+        )
+
+        found: dict[str, dict] = {}
+        for when in span:
+            card = dailyops.cards_covering(every, when).get("lead_order")
+            if card is not None:
+                found[str(card.get("id") or "")] = card
+
+        if not found:
+            return "", [
+                f"No Lead Order card anywhere across {saturday:%m/%d}-{last:%m/%d}, "
+                f"and `{setup.get('name')}` spreads onto one. Make it and I'll "
+                "leave the title alone."
+            ]
+        if len(found) > 1:
+            return "", [
+                "More than one Lead Order card across "
+                f"{saturday:%m/%d}-{last:%m/%d}, so I left them: "
+                + "; ".join(str(one.get("name") or "") for one in found.values())
+            ]
+
+        one = next(iter(found.values()))
+        was = str(one.get("name") or "")
+        if set(span) <= set(dailyops.card_days(was)):
+            return "", []
         try:
-            client.create_card(str(home.get("id") or ""), title)
+            client.rename_card(str(one.get("id") or ""), title)
         except Exception as exc:
-            return "", [f"Couldn't make {title!r} — {_short(exc, 160)}"]
-        return f"made {title}", []
+            return "", [
+                f"Couldn't retitle {was!r} to {title!r} — {_short(exc, 160)}"
+            ]
+        return f"{was} → {title}", []
     finally:
         client.close()
 

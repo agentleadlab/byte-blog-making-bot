@@ -1831,6 +1831,24 @@ def setup_starts(title: str, near: date) -> date | None:
     return _near(int(found[0][0]), int(found[0][1]), near)
 
 
+def setup_ends(title: str, near: date) -> date | None:
+    """The last day a setup card's agents go live.
+
+    The same as `setup_starts` on a weekday card. On the Friday card it is the
+    Monday, and it is the day the Lead Order card has to reach: the setup card
+    and the card its agents are spread onto have to cover the same days, or
+    the ones on the end of the span have nowhere to be written.
+    """
+    found = _SETUP_DATE.findall(title or "")
+    if not found:
+        return None
+    starts = _near(int(found[0][0]), int(found[0][1]), near)
+    ends = _near(int(found[-1][0]), int(found[-1][1]), near)
+    if starts is None or ends is None or ends < starts:
+        return starts
+    return ends
+
+
 def setup_worked_on(title: str, near: date) -> date | None:
     """The day the card is worked, which is the day before its agents go live.
 
