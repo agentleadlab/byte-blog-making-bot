@@ -1006,6 +1006,54 @@ def test_until_then_her_four_lines_are_named_not_dropped(config, monkeypatch):
     tasks, problems = planning(board, monkeypatch, config)
 
     assert tasks == []
-    assert len(problems) == 4
-    assert all("@elisadeko2" in one for one in problems)
-    assert any("Aged distro udpate" in one for one in problems)
+    # One line, not four. Four copies of the same sentence is four lines
+    # nobody reads to the end of.
+    (said,) = problems
+    assert "@elisadeko2" in said
+    assert "4 line(s)" in said
+    assert "Aged distro udpate" in said
+
+
+# --------------------------------------------- markdown a description came with
+
+
+@pytest.mark.parametrize(
+    "written, expected",
+    [
+        # Both real, off the General card. Trello's editor wrote them.
+        (
+            '[If we\'re going to turn off, turn off. If not duplicate bc this is '
+            'only a retargeting ad rn]( "")',
+            "If we're going to turn off, turn off. If not duplicate bc this is "
+            "only a retargeting ad rn",
+        ),
+        ("_Use Ai to look up agency server/silo group to warmup_",
+         "Use Ai to look up agency server/silo group to warmup"),
+        ("**Aged distro udpate**", "Aged distro udpate"),
+        ("`What's login for active campaign`", "What's login for active campaign"),
+        ("[the sheet](https://docs.google.com/x)", "the sheet"),
+        ("## SMS is good now?", "SMS is good now?"),
+        # Left alone: not emphasis, just how somebody writes.
+        ("OTP VET + removal 5*4 and lead_type stays", "OTP VET + removal 5*4 and lead_type stays"),
+    ],
+)
+def test_the_line_goes_on_as_it_looks_on_the_card(written, expected):
+    """Brackets and underscores nobody typed have no business on a checklist."""
+    assert tagged.plain(written) == expected
+
+
+def test_a_rule_across_the_page_is_not_a_job():
+    """"⚠ …with nobody tagged for them, so I left them:" and then nothing —
+    that was a line of markdown warning about itself."""
+    theirs, nobody = tagged.description_tasks(
+        "- @nic0l3\n  - Add YT channel\n\n***\n___\n"
+    )
+    assert [one.text for one in theirs] == ["Add YT channel"]
+    assert nobody == []
+
+
+def test_a_link_in_a_block_keeps_its_words():
+    theirs, _nobody = tagged.description_tasks(
+        "- @nic0l3\n  - **Check** the [budget](https://x.test) _today_\n"
+    )
+    assert [one.text for one in theirs] == ["Check the budget today"]

@@ -2620,29 +2620,26 @@ def _described_tasks(client, cards, holds, people, on_the_board, problems) -> li
         theirs, nobody = tagged.description_tasks(desc)
         if nobody:
             problems.append(
-                f"In the {kind} card's description with nobody tagged for them, "
-                "so I left them: " + "; ".join(said[:40] for said in nobody)
+                f"{len(nobody)} line(s) in the {kind} card's description with "
+                "nobody tagged for them, so I left them: "
+                + "; ".join(_short(said, 40) for said in nobody)
             )
 
         short = trello.linked_card_id(
             str(card.get("url") or card.get("shortUrl") or "")
         ) or str(card.get("shortLink") or "")
+        waiting: dict = {}
         for told in theirs:
             if told.username not in people:
-                # Both of these are said rather than swallowed. A comment can
-                # say "@jadon" about an agent and mean nobody, but a tag in a
-                # description was typed to hand work over, and the work is
-                # still sitting there unfiled either way.
-                _jot(noticed, "no_checklist", f"@{told.username}")
-                missing = (
-                    "no checklist on today's cards"
-                    if told.username in on_the_board else
-                    "not on the board"
-                )
-                problems.append(
-                    f"@{told.username} is in the {kind} card's description with "
-                    f"{missing}, so “{told.text[:40]}” is still only written there"
-                )
+                # Said rather than swallowed. A comment can say "@jadon" about
+                # an agent and mean nobody, but a tag in a description was
+                # typed to hand work over, and the work is still sitting there
+                # unfiled either way.
+                #
+                # One line per person, not per job: Elisa's block is four jobs
+                # and four copies of the same sentence is four lines nobody
+                # reads to the end of.
+                waiting.setdefault(told.username, []).append(told.text)
                 continue
 
             person = people[told.username]
@@ -2676,6 +2673,18 @@ def _described_tasks(client, cards, holds, people, on_the_board, problems) -> li
                 card_title=str(lands.get("name") or ""),
                 summary=told.text, judged=judged,
             ))
+
+        for username, lines in waiting.items():
+            _jot(noticed, "no_checklist", f"@{username}")
+            missing = (
+                "no checklist on today's cards" if username in on_the_board
+                else "not on the board"
+            )
+            problems.append(
+                f"@{username} is in the {kind} card's description with {missing}, "
+                f"so {len(lines)} line(s) are still only written there: "
+                + "; ".join(_short(said, 40) for said in lines)
+            )
     return found
 
 

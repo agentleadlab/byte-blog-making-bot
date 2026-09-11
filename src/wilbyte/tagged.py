@@ -221,6 +221,36 @@ BULLET = re.compile(r"^(\s*)(?:([-*+•◦▪‣·–—])|(\d{1,2}[.)]))\s+(.*)
 GLYPH_DEPTH = {"•": 0, "◦": 1, "▪": 2, "‣": 3}
 
 
+# Markdown, which a description is written in and a comment is not. Trello's
+# editor puts it in without being asked: a line typed into the description came
+# out as `[If we're going to turn off, turn off...]( "")`, a link with nothing
+# on the other end of it, and another as `_Use Ai to look up agency server_`.
+# On the checklist those are brackets and underscores nobody typed.
+MARKDOWN = (
+    (re.compile(r"!?\[([^\]]*)\]\([^)]*\)"), r"\1"),   # [label](wherever)
+    (re.compile(r"`+([^`]+)`+"), r"\1"),               # `code`
+    (re.compile(r"\*\*\*(.+?)\*\*\*", re.S), r"\1"),
+    (re.compile(r"\*\*(.+?)\*\*", re.S), r"\1"),
+    (re.compile(r"~~(.+?)~~", re.S), r"\1"),
+    (re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", re.S), r"\1"),
+    (re.compile(r"(?<![\w_])__(?!\s)(.+?)(?<!\s)__(?![\w_])", re.S), r"\1"),
+    (re.compile(r"(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])", re.S), r"\1"),
+    (re.compile(r"^\s*#{1,6}\s+"), ""),                # a heading is still a line
+)
+
+# Something in it a person could read. A rule across the page - "---", "***",
+# "___" - is a line in the description and is not a job for anybody.
+SOMETHING = re.compile(r"[0-9A-Za-z]")
+
+
+def plain(text: str) -> str:
+    """A description line with its markdown taken off, as it looks on the card."""
+    said = text or ""
+    for pattern, into in MARKDOWN:
+        said = pattern.sub(into, said)
+    return " ".join(said.split())
+
+
 @dataclass(frozen=True)
 class Row:
     """One line of a description, with how far in it sits."""
@@ -255,8 +285,11 @@ def _rows(text: str) -> list:
         else:
             said = raw.strip()
             depth = len(raw[: len(raw) - len(raw.lstrip())].expandtabs(4))
-        said = said.strip()
-        if not said:
+        said = plain(said)
+        # A rule across the page, or a line of markdown that was only ever
+        # decoration. Dropped here rather than further down, so it does not
+        # sit in the middle of a block and break what is under what.
+        if not said or (not SOMETHING.search(said) and not mentioned(said)):
             continue
         found.append(Row(depth=depth, text=said, tags=tuple(mentioned(said))))
     return found
