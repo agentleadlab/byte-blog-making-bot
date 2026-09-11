@@ -722,3 +722,48 @@ def test_a_line_with_no_card_to_link_to_still_reads():
     )
 
     assert tagged.describe(task).endswith("do it")
+
+
+# ----------------------------------------------------- an order already running
+
+
+ONGOING = (
+    "CONNOR SWARTZ has an ongoing order that still need to get fulfilled.\n\n"
+    "@nic0l3 kindly bump # of leads to his current setup. thank you!"
+)
+
+
+def test_an_ongoing_order_is_left_alone(config, monkeypatch):
+    """Connor's own card is already on Nicole's checklist — "if it says
+    ongoing order specifically, dont add"."""
+    board = TaggedBoard({"o": [
+        {"id": "c1", "text": ONGOING, "author": "Therese Guba"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    # Said, not swallowed. A skip nobody can see is what has cost the most
+    # time on this board.
+    assert any("ongoing order" in one for one in problems)
+
+
+@pytest.mark.parametrize(
+    "said", ["ongoing order", "ongoing orders", "on-going order", "On Going Order"]
+)
+def test_the_words_themselves_however_they_are_written(said):
+    assert tagged.an_ongoing_order(f"CONNOR has an {said} @nic0l3") is True
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "WILL SEITZ (vet)- can i completely pause my drip for tomorrow? @nic0l3",
+        "KIMANI CHAMBLISS (VET)- 8AM-8PM EST LEAD SCHED @nic0l3",
+        "the order is ongoing in a sense @nic0l3",
+    ],
+)
+def test_a_real_job_about_an_agent_already_on_the_board_still_counts(said):
+    """Most of what gets written on these cards is about an agent already on
+    it, and asking to pause a drip is work somebody has to do."""
+    assert tagged.an_ongoing_order(said) is False

@@ -186,6 +186,22 @@ def named_without_tagging(text: str, checklists) -> dict:
     return found
 
 
+# An order already running, being topped up. Therese writes "CONNOR SWARTZ
+# has an ongoing order that still need to get fulfilled. @nic0l3 kindly bump
+# # of leads to his current setup", and the agent's own card is already on
+# Nicole's checklist - "if it says ongoing order specifically, dont add".
+#
+# The words themselves, not the idea: a comment about an agent already on the
+# board is most of what gets written on these cards, and the ones asking to
+# pause a drip or fix a schedule are real jobs.
+ONGOING = re.compile(r"\bon[\s-]?going\s+orders?\b", re.IGNORECASE)
+
+
+def an_ongoing_order(text: str) -> bool:
+    """Whether the comment says in so many words that the order is ongoing."""
+    return bool(ONGOING.search(text or ""))
+
+
 def strip_mentions(text: str) -> str:
     """The comment without its tags or its links.
 

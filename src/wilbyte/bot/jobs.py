@@ -2483,7 +2483,7 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
         } - {""}
 
         everywhere = [held for group in holds.values() for held in group]
-        wants, unknown = [], set()
+        wants, unknown, ongoing = [], set(), []
         for kind, card in wanted.items():
             card_id = str(card.get("id") or "")
             short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
@@ -2496,6 +2496,13 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                     card_short=short or str(card.get("shortLink") or ""),
                     card_title=str(card.get("name") or ""),
                 )
+                # An order already running, topped up. The agent's own card is
+                # already on their list, so the line would say again what is
+                # there - "if it says ongoing order specifically, dont add".
+                if tagged.an_ongoing_order(note.text):
+                    ongoing.append(note)
+                    continue
+
                 if tagged.everyones_job(note.text):
                     # Every checklist on the card it was said on, and asked per
                     # checklist: it belongs on all of them, so finding it on
@@ -2556,6 +2563,16 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
                     else:
                         unknown.add(name)
 
+        if ongoing:
+            # Said, not swallowed. A skip nobody can see is the thing that
+            # has cost the most time on this board.
+            problems.append(
+                f"{len(ongoing)} said 'ongoing order', so the agent's own card "
+                "already covers it and I left them: "
+                + "; ".join(
+                    tagged.trim(one.text)[:40] or one.comment_id for one in ongoing
+                )
+            )
         if unknown:
             for name in sorted(unknown):
                 _jot(noticed, "no_checklist", f"@{name}")
