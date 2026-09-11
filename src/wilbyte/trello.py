@@ -300,6 +300,10 @@ class TrelloClient:
             "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
         )
 
+    def rename_card(self, card_id: str, name: str) -> dict:
+        """Retitle a card, leaving everything else on it alone."""
+        return self._request("PUT", f"/cards/{card_id}", params={"name": name})
+
     def create_checklist(self, card_id: str, name: str) -> dict:
         return self._request("POST", "/checklists", params={"idCard": card_id, "name": name})
 

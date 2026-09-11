@@ -3345,6 +3345,83 @@ def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
         client.close()
 
 
+def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
+    """On a Friday, make the weekend's Lead Order card cover Saturday to Monday.
+
+    (what changed, problems). "" when there was nothing to do, which is every
+    day but Friday.
+
+    The setup card has run Saturday to Monday for months - the agents going
+    live on the Sunday are set up on the Friday with the Saturday's - and its
+    Lead Order card is titled the same way: "Lead Order 09/12/26-09/14/26".
+    Nothing made that card, so somebody made it by hand on a Friday evening
+    and on the Friday nobody did, the spread had nowhere to write and eight
+    agents sat where nobody was going to look for them.
+
+    Three shapes it can find, and it is safe to run on all of them:
+
+    - a card already covering the weekend: nothing.
+    - a card dated the Saturday alone: retitled to the span. This is the one
+      that matters, because a Saturday-only card silently loses the Sunday's
+      and Monday's agents rather than failing.
+    - no card at all: one made, beside the other cards for that Saturday if
+      they exist, and in In Que if they do not.
+
+    Nothing on a card is touched but its title. The checklists, the members
+    and whatever somebody has already written on it stay exactly as they are.
+    """
+    from .. import agents, dailyops, trello
+
+    day = day or board_day(config)
+    saturday = day + timedelta(days=1)
+    if saturday.weekday() != agents.SATURDAY:
+        return "", []
+    monday = saturday + timedelta(days=2)
+    title = (
+        f"{dailyops.CARD_KINDS['lead_order']} "
+        f"{saturday:%m/%d/%y}-{monday:%m/%d/%y}"
+    )
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+
+        found = dailyops.cards_covering(every, saturday).get("lead_order")
+        if found is not None:
+            days = dailyops.card_days(str(found.get("name") or ""))
+            if monday in days:
+                return "", []
+            try:
+                client.rename_card(str(found.get("id") or ""), title)
+            except Exception as exc:
+                return "", [
+                    f"Couldn't retitle {found.get('name')!r} to {title!r} — "
+                    f"{_short(exc, 160)}"
+                ]
+            return f"{found.get('name')} → {title}", []
+
+        # Beside the weekend's other cards when they exist: a Lead Order card
+        # on its own in a list nobody is looking at is the same problem in a
+        # different place.
+        beside = [
+            str(card.get("idList") or "")
+            for card in dailyops.cards_covering(every, saturday).values()
+        ]
+        home = next(
+            (bl for bl in lists if str(bl.get("id") or "") in beside), None
+        ) or trello.find_list(lists, dailyops.IN_QUE)
+        if home is None:
+            return "", [f"The board has no list called {dailyops.IN_QUE!r}"]
+        try:
+            client.create_card(str(home.get("id") or ""), title)
+        except Exception as exc:
+            return "", [f"Couldn't make {title!r} — {_short(exc, 160)}"]
+        return f"made {title}", []
+    finally:
+        client.close()
+
+
 def comment_on_daily(
     config: Config, *, kind: str, day: date, text: str
 ) -> tuple[str, str, list[str]]:

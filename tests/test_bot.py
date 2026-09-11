@@ -3533,3 +3533,95 @@ def test_a_lead_order_card_nobody_has_made_yet_says_so(config, monkeypatch):
     _added, _conflicts, problems = _no_order(board, monkeypatch, config)
 
     assert "nothing dated after today" in problems[0]
+
+
+# -------------------------------------------- the weekend's Lead Order card
+
+
+class WeekendBoard:
+    """A board on a Friday, with whatever Lead Order cards are given."""
+
+    def __init__(self, cards=()):
+        self.cards = list(cards)
+        self.made = []
+        self.renamed = []
+        self.closed = False
+
+    def board_lists(self, _board_id):
+        return [{"id": "que", "name": "In Que"}, {"id": "today", "name": "Today"}]
+
+    def list_cards(self, list_id):
+        return [one for one in self.cards if one.get("idList") == list_id]
+
+    def create_card(self, list_id, name, **kwargs):
+        self.made.append((list_id, name))
+        return {"id": "new"}
+
+    def rename_card(self, card_id, name):
+        self.renamed.append((card_id, name))
+        return {"id": card_id}
+
+    def close(self):
+        self.closed = True
+
+
+def _friday(board, monkeypatch, config, *, day=date(2026, 9, 11)):
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: day)
+    return jobs.weekend_order_card(config)
+
+
+def test_a_saturday_only_card_is_retitled_through_monday(config, monkeypatch):
+    """A Saturday-only card does not fail — it silently takes the Saturday's
+    agents and loses the Sunday's and Monday's."""
+    board = WeekendBoard([
+        {"id": "lo", "idList": "que", "name": "Lead Order 09/12/26"},
+    ])
+
+    what, problems = _friday(board, monkeypatch, config)
+
+    assert problems == []
+    assert board.renamed == [("lo", "Lead Order 09/12/26-09/14/26")]
+    assert "→ Lead Order 09/12/26-09/14/26" in what
+
+
+def test_no_card_at_all_gets_one_made(config, monkeypatch):
+    """Friday evening, eight agents to spread, nowhere to write."""
+    board = WeekendBoard()
+
+    what, problems = _friday(board, monkeypatch, config)
+
+    assert problems == []
+    assert board.made == [("que", "Lead Order 09/12/26-09/14/26")]
+    assert what.startswith("made ")
+
+
+def test_it_is_made_beside_the_weekends_other_cards(config, monkeypatch):
+    """A Lead Order card alone in a list nobody looks at is the same problem
+    somewhere else."""
+    board = WeekendBoard([
+        {"id": "ads", "idList": "today", "name": "📊 Ads 09/12/26"},
+    ])
+
+    _what, _problems = _friday(board, monkeypatch, config)
+
+    assert board.made == [("today", "Lead Order 09/12/26-09/14/26")]
+
+
+def test_a_card_that_already_covers_the_weekend_is_left_alone(config, monkeypatch):
+    board = WeekendBoard([
+        {"id": "lo", "idList": "que", "name": "Lead Order 09/12/26-09/14/26"},
+    ])
+
+    what, problems = _friday(board, monkeypatch, config)
+
+    assert (what, problems, board.renamed, board.made) == ("", [], [], [])
+
+
+@pytest.mark.parametrize("when", [date(2026, 9, 9), date(2026, 9, 12), date(2026, 9, 14)])
+def test_every_other_day_it_does_nothing_at_all(config, monkeypatch, when):
+    board = WeekendBoard()
+
+    what, problems = _friday(board, monkeypatch, config, day=when)
+
+    assert (what, problems, board.made) == ("", [], [])

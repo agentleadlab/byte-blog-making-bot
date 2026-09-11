@@ -1639,6 +1639,15 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             # Silent when one already existed. Most mornings it makes one, and
             # a line every day saying nothing happened is a line nobody reads.
             note = f"📋 {dailyops.said_at(step)} — made `{title}`." if title else ""
+            # And on a Friday, the Lead Order card the weekend's setup card
+            # spreads onto. The two have to cover the same days or the spread
+            # has nowhere to write on the Saturday morning.
+            weekend, trouble = await asyncio.to_thread(
+                jobs.weekend_order_card, bot.config
+            )
+            problems += trouble
+            if weekend:
+                note += ("\n" if note else "") + f"📋 Weekend Lead Order — {weekend}."
         elif step in dailyops.UNMARKED:
             found, problems = await asyncio.to_thread(jobs.unmarked_agents, bot.config)
             # Nothing outstanding says nothing at all. A card every afternoon
