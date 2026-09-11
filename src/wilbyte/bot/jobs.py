@@ -3423,8 +3423,14 @@ def spread_to_lead_order(
         if order is None and starts is not None and starts != day:
             order = dailyops.cards_covering(every, starts).get("lead_order")
         if order is None:
+            # What else is there, not just what isn't. "No Lead Order card
+            # dated 09/12/26" is true and useless when the card is sitting in
+            # In Que with the wrong year on it, or when the weekend one simply
+            # has not been made yet and the answer is to make it.
             return [], [], [
-                f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board."
+                f"No Lead Order card dated {day:%m/%d/%y} anywhere on the board — "
+                + dailyops.why_missing(every, "lead_order", day)
+                + "."
             ]
 
         order_id = str(order.get("id") or "")

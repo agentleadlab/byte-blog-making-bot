@@ -3492,3 +3492,44 @@ def test_a_quiet_tick_says_nothing_at_all(monkeypatch):
     filed, said = _watching(monkeypatch, tasks=[])
 
     assert (filed, said) == ([], [])
+
+
+# --------------------------------- a Lead Order card that is missing, and why
+
+
+class NoOrderCard(SpreadBoard):
+    """The setup card for tomorrow exists; the Lead Order card does not."""
+
+    def __init__(self, *, others=()):
+        super().__init__(on_setup="OTP IUL", their_card=SIONA_CARD)
+        self.others = list(others)
+
+    def list_cards(self, _list_id):
+        return [
+            {"id": "setup", "name": "Agent Setup Going Live Saturday-Monday 09/12-09/14"},
+            *self.others,
+        ]
+
+
+def _no_order(board, monkeypatch, config):
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 11))
+    return jobs.spread_to_lead_order(config)
+
+
+def test_a_missing_lead_order_card_says_what_is_there_instead(config, monkeypatch):
+    """"No Lead Order card dated 09/12/26" is true and useless when the card
+    is sitting in In Que with the wrong year on it."""
+    board = NoOrderCard(others=[{"id": "o", "name": "Lead Order 09/12/25"}])
+
+    _added, _conflicts, problems = _no_order(board, monkeypatch, config)
+
+    assert "the year on it is wrong" in problems[0]
+
+
+def test_a_lead_order_card_nobody_has_made_yet_says_so(config, monkeypatch):
+    board = NoOrderCard()
+
+    _added, _conflicts, problems = _no_order(board, monkeypatch, config)
+
+    assert "nothing dated after today" in problems[0]
