@@ -3391,3 +3391,104 @@ def test_a_real_mismatch_is_still_pinged(monkeypatch, tmp_path):
     asyncio.run(bot_client.setup_check_loop(Bot()))
 
     assert len(sent) == 1
+
+
+# ------------------------------------------- the tag watcher asks, never writes
+
+
+class Button:
+    """A stubbed ConfirmView. `press` is what the button does when shown."""
+
+    press = True
+    answered = True
+
+    def __init__(self, **kw):
+        self.confirmed = type(self).press
+        self.answered = type(self).answered
+        self.label = kw.get("label", "")
+
+    async def wait(self):
+        return None
+
+
+def _watching(monkeypatch, *, tasks, press=True, answered=True):
+    """One tick of what the watcher shows, with the board and button stubbed."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    filed = []
+
+    class Pressed(Button):
+        pass
+
+    Pressed.press, Pressed.answered = press, answered
+
+    monkeypatch.setattr(
+        bot_client.jobs, "tags_to_file", lambda config, **kw: (list(tasks), [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "file_tags",
+        lambda config, these: (
+            filed.extend(these), ([one.summary for one in these], [])
+        )[1],
+    )
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+
+    heard = Asked()
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(bot_client._offer_tags_now(heard, config))
+    return filed, heard.messages
+
+
+def _a_task():
+    from wilbyte import tagged
+
+    return tagged.Task(
+        note=tagged.Note(comment_id="c1", text="Add YT channel", card_short="IU4PM7wJ"),
+        kind="ads", checklist="Nicole", card_id="a", card_title="📊 Ads 09/09/26",
+        summary="Add YT channel",
+    )
+
+
+def test_the_watcher_asks_before_it_writes(monkeypatch):
+    """"from now i dont want it being added automatically but a button"."""
+    filed, said = _watching(monkeypatch, tasks=[_a_task()], press=False)
+
+    assert filed == []
+    assert "not on a checklist yet" in said[0]
+
+
+def test_nothing_lands_until_somebody_presses_it(monkeypatch):
+    filed, said = _watching(monkeypatch, tasks=[_a_task()], press=True)
+
+    assert [one.summary for one in filed] == ["Add YT channel"]
+    assert "Added 1 item(s)" in said[-1]
+
+
+def test_a_list_nobody_pressed_says_so(monkeypatch):
+    """A list that timed out is a list nobody saw, and the work is still only
+    written where it was written."""
+    _filed, said = _watching(
+        monkeypatch, tasks=[_a_task()], press=False, answered=False
+    )
+
+    assert "Nobody pressed it" in said[-1]
+    assert "trello tags" in said[-1]
+
+
+def test_leaving_it_needs_nothing_more_said(monkeypatch):
+    _filed, said = _watching(
+        monkeypatch, tasks=[_a_task()], press=False, answered=True
+    )
+
+    assert len(said) == 1
+
+
+def test_a_quiet_tick_says_nothing_at_all(monkeypatch):
+    """It runs all day. A line every minute saying nothing happened is a line
+    nobody reads."""
+    filed, said = _watching(monkeypatch, tasks=[])
+
+    assert (filed, said) == ([], [])

@@ -143,6 +143,10 @@ class ConfirmView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.requester_id = requester_id
         self.confirmed = False
+        #: Whether somebody actually pressed one of the two. A list that timed
+        #: out is a list nobody saw, and that is worth saying; "leave it" has
+        #: already been answered and is not.
+        self.answered = False
         self._go.label = label
         self._go.emoji = emoji
 
@@ -165,6 +169,7 @@ class ConfirmView(discord.ui.View):
         await self._close(interaction, "✖ Left alone — nothing changed.")
 
     async def _close(self, interaction: discord.Interaction, note: str) -> None:
+        self.answered = True
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(content=note, view=self)

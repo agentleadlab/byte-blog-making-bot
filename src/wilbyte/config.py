@@ -170,10 +170,10 @@ class Secrets:
     # board moves happen three times a day and this happens all day, so
     # wanting one is not wanting the other.
     trello_agents_auto: bool = False
-    # File a tagged comment onto the tagged person's checklist as it is made,
-    # rather than when somebody types `trello tags`. Its own switch: this one
-    # writes onto four people's lists all day and the routing is worth
-    # watching before it runs unattended.
+    # Watch the day's cards and offer what was tagged - in a comment or in a
+    # description - as it is written, rather than waiting for somebody to type
+    # `trello tags`. It never writes on its own either way: the list comes with
+    # the same button, and nothing lands until somebody presses it.
     trello_tags_auto: bool = False
     # Where the board's own messages go. Falls back to the posting channel.
     discord_board_channel_id: str | None = None

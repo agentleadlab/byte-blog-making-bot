@@ -1570,9 +1570,10 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
 
 
 async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None:
-    """Comments that tagged somebody, turned into lines on their checklists.
+    """Comments and descriptions that tagged somebody, turned into checklist lines.
 
-    Shows them and waits for the button. It writes onto four people's live
+    Shows them and waits for the button, always - "from now i dont want it
+    being added automatically but a button". It writes onto four people's live
     lists, and the spread - the other thing that writes checklists - put lines
     on the wrong card before it had been watched for a week.
     """
@@ -1601,8 +1602,9 @@ async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None
     if len(tasks) > TAGS_SHOWN:
         listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
     note = (
-        f"📌 {len(tasks)} tagged comment(s) that aren't on a checklist yet:\n{listed}\n"
-        "Each one gets the summary and a link back to the comment."
+        f"📌 {len(tasks)} tagged item(s) that aren't on a checklist yet:\n{listed}\n"
+        "A comment gets a summary; a description line goes on as written. "
+        "Both carry a link back to where they were said."
     )
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
@@ -3426,16 +3428,22 @@ TAG_CHECK_SECONDS = 60
 
 
 async def tags_loop(bot: "WilByteBot") -> None:
-    """Watch the day's cards for tagged comments and file them as they land.
+    """Watch the day's cards and offer what was tagged, as it lands.
+
+    Watching, never writing - "from now i dont want it being added
+    automatically but a button". The tick brings the work to the button
+    instead of the button having to be gone and fetched: every comment and
+    every line added to a description shows up here within the minute, and
+    stays where it was written until somebody presses it.
 
     Cheap while it is quiet: one request a minute to ask whether any of the
     three cards has been touched at all. Everything else - the comments, the
-    checklists, having them read - only happens once one has.
+    descriptions, the checklists, having them read - only happens once one has.
 
-    The stamp is remembered before the filing rather than after, so a pass
-    that goes wrong is not retried every minute for the rest of the day.
-    Nothing is lost by that: a line is matched by the comment's id, so the
-    next real change picks up anything this pass missed.
+    The stamp is remembered before the asking rather than after, so a pass
+    that goes wrong is not retried every minute for the rest of the day, and
+    the loop waits on the button rather than stacking a second list on top of
+    a first nobody has looked at yet.
     """
     seen = ""
     while not bot.is_closed():
@@ -3445,7 +3453,7 @@ async def tags_loop(bot: "WilByteBot") -> None:
                 seen = stamp
                 responder = _board_responder(bot)
                 if responder is not None:
-                    await _file_tags_now(responder, bot.config)
+                    await _offer_tags_now(responder, bot.config)
         except asyncio.CancelledError:
             raise
         except Exception:  # a bad tick must not take the loop down for good
@@ -3453,33 +3461,61 @@ async def tags_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(TAG_CHECK_SECONDS)
 
 
-async def _file_tags_now(responder: Responder, config: Config) -> None:
-    """File the tagged comments without asking, and say what landed.
+async def _offer_tags_now(responder: Responder, config: Config) -> None:
+    """Show what was tagged and wait for the button. Writes nothing on its own.
 
     Silent when there was nothing, because this runs all day: a line every
     minute saying nothing happened is a line nobody reads, and one that
     matters would be lost among them.
+
+    Anybody on the team can press it. Nobody asked for this one - it came off
+    the board rather than out of a message - so there is no "the person who
+    asked" to hold it for.
     """
+    from .. import tagged
+
     tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
     if not tasks:
-        # Said out loud even with nothing filed: somebody tagged with no
+        # Said out loud even with nothing to file: somebody tagged with no
         # checklist is a person waiting on a job nobody wrote down.
         if problems:
             await responder.send("⚠ " + "\n⚠ ".join(problems))
         return
 
+    view = views.ConfirmView(
+        requester_id=None,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add {len(tasks)} item(s)",
+        emoji="📌",
+    )
+    listed = "\n".join(f"• {tagged.describe(one)}" for one in tasks[:TAGS_SHOWN])
+    if len(tasks) > TAGS_SHOWN:
+        listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
+    note = f"📌 {len(tasks)} new item(s) on today's cards, not on a checklist yet:\n{listed}"
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note, view=view)
+    await view.wait()
+    if not view.confirmed:
+        # A list that timed out is a list nobody saw, and the work is still
+        # only written where it was written. "Leave it" has been answered
+        # already and needs nothing more said about it.
+        if not view.answered:
+            await responder.send(
+                "⏳ Nobody pressed it, so nothing was added — "
+                "`@RYTE trello tags` brings the same list back."
+            )
+        return
+
     landed, trouble = await asyncio.to_thread(jobs.file_tags, config, tasks)
-    note = ""
+    said_back = f"📌 Added {len(landed)} item(s)."
     if landed:
-        note = f"📌 Added {len(landed)} item(s) from the comments.\n" + "\n".join(
-            f"• {line}" for line in landed[:TAGS_SHOWN]
-        )
+        said_back += "\n" + "\n".join(f"• {line}" for line in landed[:TAGS_SHOWN])
         if len(landed) > TAGS_SHOWN:
-            note += f"\n…and {len(landed) - TAGS_SHOWN} more."
-    for line in problems + trouble:
-        note += ("\n" if note else "") + f"⚠ {line}"
-    if note:
-        await responder.send(note)
+            said_back += f"\n…and {len(landed) - TAGS_SHOWN} more."
+    if trouble:
+        said_back += "\n⚠ " + "\n⚠ ".join(trouble)
+    await responder.send(said_back)
 
 
 SETUP_CHECK_SECONDS = 600
@@ -4642,7 +4678,7 @@ def preflight(config: Config) -> list[str]:
         (config.secrets.trello_agents_auto, "TRELLO_AGENTS_AUTO",
          "file new agents as they land"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
-         "file tagged comments onto checklists as they are made"),
+         "offer new comments and description lines as they are written"),
     ):
         log.info("  [%s]  %-20s %s", " on" if on else "off", name, what)
     return missing_required
