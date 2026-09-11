@@ -1344,3 +1344,29 @@ def test_yesterdays_card_is_finished_and_left_alone(config, monkeypatch):
     tasks, _problems = jobs.tags_to_file(config)
 
     assert tasks == []
+
+
+def test_a_week_written_by_name_goes_to_each_persons_own_card(config, monkeypatch):
+    """Arnold hands Jenn "OTP VET removal" and Kath "MTG creatives" in one
+    comment that tags nobody, and one kind read off the whole of it put both
+    of them on General as a judgement call — when their work is ads work and
+    their own card was never in doubt."""
+    board = TaggedBoard({"g": [{
+        "id": "c1", "author": "Arnold",
+        "text": (
+            "Jenn = FRIDAY\n"
+            "- OTP VET + removal and consolidation\n"
+            "Kath = FRIDAY\n"
+            "- MTG creatives and setting up individual ad sets\n"
+        ),
+    }]})
+
+    tasks, _problems = planning(
+        board, monkeypatch, config,
+        read=lambda *a, **k: {("c1", ""): {"summary": "the week", "kind": "general"}},
+    )
+
+    assert {one.checklist: (one.kind, one.judged) for one in tasks} == {
+        "Jenn": ("ads", False),
+        "Kath": ("ads", False),
+    }

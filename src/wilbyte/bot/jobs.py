@@ -2812,11 +2812,18 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
             # A schedule is ads work wherever it was written and whatever the
             # reading made of it: "sending leads" is ops in the abstract and
             # the drip windows are set on the Ads card.
+            # What the reading made of the comment is only about the comment.
+            # Arnold's week hands Jenn "OTP VET removal" and Kath "MTG
+            # creatives" in one comment that tags nobody, and one kind read off
+            # the whole of it put both of them on General as a judgement call -
+            # when their work is ads work and their own card was never in
+            # doubt. A slice takes no kind from the reading.
+            told = "" if just_theirs else str(said.get("kind") or "")
             kind, judged = (
                 (tagged.SCHEDULES_ON, False) if schedule and person.keeps.get(
                     tagged.SCHEDULES_ON
                 ) else
-                tagged.where(person, note, judged=str(said.get("kind") or ""))
+                tagged.where(person, note, judged=told)
             )
             if kind not in cards:
                 problems.append(
