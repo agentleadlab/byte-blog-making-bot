@@ -3509,8 +3509,22 @@ async def tags_loop(bot: "WilByteBot") -> None:
 
 
 def _already_said(task) -> str:
-    """What makes one offered line the same line as another."""
-    return f"{task.note.comment_id}|{task.kind}|{task.checklist}|{task.summary}"
+    """What makes one offered line the same line as another.
+
+    The comment it came from and whose list it is going on - never the
+    summary. The summary is written fresh every run and comes back reworded:
+    the same comment gave "Let them know Everlife aged lead 20% off, code
+    everlife20" one minute and the same sentence without the comma the next,
+    and a comma was enough to make it a line nobody had seen before. Pressing
+    "leave it" then meant nothing.
+
+    A description line has no comment to be identified by, so there its own
+    words do the job - which is safe, because those go on as they were written
+    rather than being summarised.
+    """
+    if task.note.comment_id:
+        return f"{task.note.comment_id}|{task.kind}|{task.checklist}"
+    return f"description|{task.kind}|{task.checklist}|{task.summary}"
 
 
 async def _offer_tags_now(

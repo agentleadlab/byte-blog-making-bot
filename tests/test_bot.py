@@ -4127,3 +4127,54 @@ def test_only_the_last_two_days_are_kept(monkeypatch):
         alreadysaid.remember(date(2026, 9, day), [f"line {day}"])
 
     assert sorted(alreadysaid.load()) == ["2026-09-11", "2026-09-12"]
+
+
+def test_a_reworded_summary_is_still_the_same_line(monkeypatch):
+    """"even if i said leave it, its sending the same thing" — the summary is
+    written fresh every run, and a comma was enough to make it new."""
+    from wilbyte import tagged
+
+    def everlife(summary):
+        return tagged.Task(
+            note=tagged.Note(comment_id="c9", text="…", card_short="IU4PM7wJ"),
+            kind="general", checklist="KC", card_id="g",
+            card_title="💎 General 09/11/26", summary=summary,
+        )
+
+    _filed, first = _watching(
+        monkeypatch, press=False, remember=True,
+        tasks=[everlife("Let them know Everlife aged lead 20% off, code everlife20")],
+    )
+    _filed, again = _watching(
+        monkeypatch, press=False, remember=True,
+        tasks=[everlife("Let them know Everlife aged lead 20% off code everlife20")],
+    )
+
+    assert len(first) == 1
+    assert again == []
+
+
+def test_a_description_line_is_still_told_apart_by_its_words(monkeypatch):
+    """It has no comment to be identified by, and its words go on as written
+    rather than being summarised."""
+    from wilbyte import tagged
+
+    def described(summary):
+        return tagged.Task(
+            note=tagged.Note(comment_id="", text=summary, card_short="IU4PM7wJ",
+                             described=True),
+            kind="ads", checklist="Nicole", card_id="a",
+            card_title="📊 Ads 09/11/26", summary=summary,
+        )
+
+    _filed, first = _watching(
+        monkeypatch, press=False, remember=True, tasks=[described("Add YT channel")],
+    )
+    _filed, again = _watching(
+        monkeypatch, press=False, remember=True,
+        tasks=[described("Add YT channel"), described("Check the budget")],
+    )
+
+    assert len(first) == 1
+    assert "Check the budget" in again[0]
+    assert "Add YT channel" not in again[0]
