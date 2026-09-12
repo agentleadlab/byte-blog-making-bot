@@ -4178,3 +4178,66 @@ def test_a_description_line_is_still_told_apart_by_its_words(monkeypatch):
     assert len(first) == 1
     assert "Check the budget" in again[0]
     assert "Add YT channel" not in again[0]
+
+
+# ------------------------------- the watcher for lines on the wrong day
+
+
+@pytest.mark.parametrize(
+    "when, expected",
+    [
+        # Friday reaches through the weekend: Saturday, Sunday and Monday are
+        # set up together and spread onto one card.
+        (date(2026, 9, 11), ["09/11", "09/12", "09/13", "09/14"]),
+        (date(2026, 9, 12), ["09/12", "09/13"]),
+        (date(2026, 9, 14), ["09/14", "09/15"]),
+        (date(2026, 9, 17), ["09/17", "09/18"]),
+    ],
+)
+def test_which_days_the_watcher_looks_at(when, expected):
+    assert [one.strftime("%m/%d") for one in jobs.days_watched(when)] == expected
+
+
+def test_the_watcher_looks_at_those_days_only(config, monkeypatch):
+    """Not the fortnight — that is somebody typing `trello daycheck`."""
+    board = SweepBoard(["Lead Order 09/11/26", "Lead Order 09/05/26-09/07/26"])
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 11))
+
+    findings, problems = jobs.wrong_day_lines(
+        config, only=jobs.days_watched(date(2026, 9, 11)),
+    )
+
+    assert problems == []
+    assert {one["card"] for one in findings} == {"Lead Order 09/11/26"}
+
+
+def test_a_watched_day_with_no_cards_says_nothing(config, monkeypatch):
+    """It runs every quarter of an hour. "No Lead Order cards" every time is
+    a line nobody reads."""
+    board = SweepBoard([])
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 11))
+
+    findings, problems = jobs.wrong_day_lines(
+        config, only=jobs.days_watched(date(2026, 9, 11)),
+    )
+
+    assert (findings, problems) == ([], [])
+
+
+def test_a_wrong_day_line_is_told_apart_without_the_model(config):
+    """Nothing in the key is written by a model, so it is the same line on the
+    next tick and on the next restart."""
+    from wilbyte.bot import client as bot_client
+
+    one = {
+        "card": "Lead Order 09/11/26", "checklist": "OTP FEX",
+        "agent": "New Agent - Garret  Sekelsky", "label": "25 OTP FEX unsigned",
+        "live": date(2026, 9, 12), "ticked": False,
+    }
+
+    assert bot_client._wrong_day_key(one) == bot_client._wrong_day_key(dict(one))
+    assert bot_client._wrong_day_key(one) != bot_client._wrong_day_key(
+        dict(one, label="25 OTP FEX")
+    )

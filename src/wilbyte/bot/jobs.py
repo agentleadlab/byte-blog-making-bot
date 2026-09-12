@@ -4182,7 +4182,27 @@ def _cards_by_url(cards: list[dict]) -> dict[str, str]:
 WRONG_DAY_BACK = 14
 
 
-def wrong_day_lines(config: Config, *, day=None, back: int = WRONG_DAY_BACK):
+#: Monday is 0, so Friday is 4. Named rather than written as a number in the
+#: middle of a list comprehension.
+FRIDAY = 4
+
+
+def days_watched(day) -> list:
+    """The days whose Lead Order cards are worth watching from `day`.
+
+    Today and tomorrow, because both are open at once from mid-morning and a
+    line written onto either is wrong the moment it lands. And on a Friday the
+    weekend as well - "do the same day lead order, and next day, and next
+    following days whenever its friday" - because Saturday, Sunday and Monday
+    are all set up on the Friday and all spread onto one card.
+    """
+    ahead = 3 if day.weekday() == FRIDAY else 1
+    return [day + timedelta(days=step) for step in range(ahead + 1)]
+
+
+def wrong_day_lines(
+    config: Config, *, day=None, back: int = WRONG_DAY_BACK, only=None
+):
     """Lines sitting on a Lead Order card for a day the agent isn't live.
 
     (findings, problems). Reads only - nothing is moved, ticked or removed.
@@ -4215,16 +4235,26 @@ def wrong_day_lines(config: Config, *, day=None, back: int = WRONG_DAY_BACK):
         named = _by_url(every)
         said_on: dict[str, str] = {}
 
+        wanted = set(only) if only else None
         orders = []
         for card in every:
             found = dailyops.parse_card_title(str(card.get("name") or ""))
             if not found or found[0] != "lead_order":
                 continue
-            covers = dailyops.card_days(str(card.get("name") or ""))
-            if covers and max(covers) >= day - timedelta(days=back):
-                orders.append((card, set(covers)))
+            covers = set(dailyops.card_days(str(card.get("name") or "")))
+            if not covers:
+                continue
+            # `only` is the watcher, looking at the days still to be worked.
+            # Without it this is the sweep, looking back over the fortnight.
+            if wanted is not None:
+                if covers & wanted:
+                    orders.append((card, covers))
+            elif max(covers) >= day - timedelta(days=back):
+                orders.append((card, covers))
 
         if not orders:
+            if wanted is not None:
+                return [], []
             return [], [f"No Lead Order cards in the last {back} days on the board"]
 
         for card, covers in sorted(

@@ -168,6 +168,7 @@ class WilByteBot(discord.Client):
         self.board_task: asyncio.Task | None = None
         self.agent_task: asyncio.Task | None = None
         self.setup_task: asyncio.Task | None = None
+        self.day_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
@@ -257,6 +258,13 @@ class WilByteBot(discord.Client):
             self.setup_task is None or self.setup_task.done()
         ):
             self.setup_task = self.loop.create_task(setup_check_loop(self))
+        # And the same switch again for lines on a Lead Order card for a day
+        # the agent is not live: it is the same question asked of the other
+        # end of the same journey, and it only ever reports.
+        if self.config.secrets.trello_agents_auto and (
+            self.day_task is None or self.day_task.done()
+        ):
+            self.day_task = self.loop.create_task(day_check_loop(self))
         # A comment is somebody handing over a job, which happens all day and
         # on nobody's schedule. Its own switch, because it writes onto four
         # people's live checklists rather than reporting.
@@ -3667,6 +3675,68 @@ async def setup_check_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(SETUP_CHECK_SECONDS)
 
 
+# Fifteen minutes. A line lands on a Lead Order card when somebody runs the
+# spread or writes one by hand, and neither happens on a schedule - but neither
+# happens every minute either, and this reads every list on the board.
+DAY_CHECK_SECONDS = 900
+
+
+def _wrong_day_key(one: dict) -> str:
+    """What makes one wrong-day line the same one as before.
+
+    The card, the checklist and the agent's line. Nothing here is written by
+    a model, so it stays the same between runs.
+    """
+    return "|".join((
+        "wrongday", str(one.get("card") or ""), str(one.get("checklist") or ""),
+        str(one.get("agent") or ""), str(one.get("label") or ""),
+    ))
+
+
+async def day_check_loop(bot: "WilByteBot") -> None:
+    """Watch for lines on a Lead Order card for a day the agent isn't live.
+
+    The same thing the setup check does for leads somebody didn't order:
+    nobody has to ask, and it says each one once - "this should automatically
+    notify me like when the agent setup doesnt match on what they want and
+    what got set up... without repeating what was said".
+
+    Today's card and tomorrow's, and on a Friday the weekend's as well, since
+    Saturday, Sunday and Monday are set up together and spread onto one card.
+    Not the fortnight: that is `@RYTE trello daycheck`, which is somebody
+    asking and wants everything.
+
+    Reads only. It names the lines; moving them is somebody's decision.
+    """
+    from .. import alreadysaid
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            if responder is not None:
+                day = await asyncio.to_thread(jobs.board_day, bot.config)
+                findings, problems = await asyncio.to_thread(
+                    jobs.wrong_day_lines, bot.config, only=jobs.days_watched(day),
+                )
+                said = await asyncio.to_thread(alreadysaid.said_on, day)
+                fresh = [
+                    one for one in findings if _wrong_day_key(one) not in said
+                ]
+                if fresh:
+                    await responder.send(jobs.describe_wrong_days(fresh))
+                    await asyncio.to_thread(
+                        alreadysaid.remember, day,
+                        [_wrong_day_key(one) for one in fresh],
+                    )
+                if problems:
+                    log.warning("Day check: %s", "; ".join(problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Day check failed; will try again shortly")
+        await asyncio.sleep(DAY_CHECK_SECONDS)
+
+
 async def agent_loop(bot: "WilByteBot") -> None:
     """Watch In Que for new agents, all day.
 
@@ -4768,7 +4838,7 @@ def preflight(config: Config) -> list[str]:
     for on, name, what in (
         (config.secrets.trello_auto, "TRELLO_AUTO", "walk the board on the clock"),
         (config.secrets.trello_agents_auto, "TRELLO_AGENTS_AUTO",
-         "file new agents as they land"),
+         "file new agents, and watch for wrong leads and wrong days"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
          "offer new comments and description lines as they are written"),
     ):
