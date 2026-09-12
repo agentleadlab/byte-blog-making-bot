@@ -1150,6 +1150,16 @@ def checklist_item(url: str, lead_type: str, *, day: str = "") -> str:
     return f"{said} {day}".strip() if day else said
 
 
+def item_lead_type(name: str) -> str:
+    """What a Lead Order line says the agent bought, without the link.
+
+    The other half of `checklist_item`: the line is the card's URL and then
+    the wording, so taking the URL out leaves what was ordered.
+    """
+    said = re.sub(r"https?://\S*trello\.com/c/\S+", " ", name or "")
+    return " ".join(said.split())
+
+
 def spans_days(title: str) -> bool:
     """Whether a setup card covers more than one launch day."""
     return len(set(_SETUP_DATE.findall(title or ""))) > 1

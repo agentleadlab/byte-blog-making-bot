@@ -767,6 +767,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "daycheck":
+                await _wrong_days(responder, config)
+                return
+
             if request.action == "tags":
                 await _tagged_tasks(responder, config, request.brief or "")
                 return
@@ -1567,6 +1571,25 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
         "`@RYTE noticed all` for the raw list, "
         "`@RYTE noticed forget <thing>` to stop me raising one._"
     )
+
+
+async def _wrong_days(responder: Responder, config: Config) -> None:
+    """Every Lead Order line sitting on a day its agent is not live on.
+
+    Reads only, and says so. The spread refuses to write these now; the ones
+    written before it started asking are still there, and each one is leads
+    ordered for the wrong day.
+    """
+    try:
+        findings, problems = await asyncio.to_thread(jobs.wrong_day_lines, config)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't check the days\n{exc}"))
+        return
+
+    note = jobs.describe_wrong_days(findings)
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note)
 
 
 async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None:

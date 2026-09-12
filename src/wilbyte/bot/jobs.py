@@ -4171,6 +4171,112 @@ def _cards_by_url(cards: list[dict]) -> dict[str, str]:
     return found
 
 
+# How far back to look for lines on the wrong day. A Lead Order card older
+# than this is long finished and its leads are long delivered, so what it says
+# is history rather than something to fix.
+WRONG_DAY_BACK = 14
+
+
+def wrong_day_lines(config: Config, *, day=None, back: int = WRONG_DAY_BACK):
+    """Lines sitting on a Lead Order card for a day the agent isn't live.
+
+    (findings, problems). Reads only - nothing is moved, ticked or removed.
+
+    The spread refuses to write these now, but the ones written before it
+    started asking are still sitting there, and every one of them is an order
+    of leads on the wrong day. This is the sweep for those: every Lead Order
+    card of the last fortnight, every linked line on it, each agent's own card
+    read for the day that order goes live.
+
+    An agent card that names no day is not a finding. Most say when once and
+    plenty say nothing, and a line is only wrong when the card it is on and
+    the card it is about disagree.
+    """
+    from .. import agents as rules
+    from .. import dailyops, trello
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    findings, problems = [], []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        cards = _cards_by_url(every)
+        named = _by_url(every)
+        said_on: dict[str, str] = {}
+
+        orders = []
+        for card in every:
+            found = dailyops.parse_card_title(str(card.get("name") or ""))
+            if not found or found[0] != "lead_order":
+                continue
+            covers = dailyops.card_days(str(card.get("name") or ""))
+            if covers and max(covers) >= day - timedelta(days=back):
+                orders.append((card, set(covers)))
+
+        if not orders:
+            return [], [f"No Lead Order cards in the last {back} days on the board"]
+
+        for card, covers in sorted(
+            orders, key=lambda pair: min(pair[1]), reverse=True
+        ):
+            try:
+                held = client.card_checklists(str(card.get("id") or ""))
+            except Exception as exc:
+                problems.append(
+                    f"Couldn't read {card.get('name')}: {_short(exc, 120)}"
+                )
+                continue
+            for checklist in held:
+                for item in checklist.get("checkItems") or []:
+                    line = str(item.get("name") or "")
+                    short = trello.linked_card_id(line)
+                    if not short:
+                        continue
+                    url = next(
+                        (one for one in cards if short in one), ""
+                    )
+                    if not url:
+                        continue
+                    label = rules.item_lead_type(line)
+                    goes = rules.launch_for(
+                        _card_said(client, cards.get(url), said_on),
+                        label, today=min(covers),
+                    )
+                    if goes is None or goes in covers:
+                        continue
+                    findings.append({
+                        "card": str(card.get("name") or ""),
+                        "checklist": str(checklist.get("name") or ""),
+                        "agent": named.get(url, url),
+                        "label": label,
+                        "live": goes,
+                        "ticked": str(item.get("state") or "") == "complete",
+                    })
+        return findings, problems
+    finally:
+        client.close()
+
+
+def describe_wrong_days(findings, *, most: int = 20) -> str:
+    """What the sweep found, as one message."""
+    if not findings:
+        return "📅 Every line on the Lead Order cards is on a day its agent goes live. 👍"
+    lines = [
+        f"• **{one['card']} · {one['checklist']}** — {one['agent']} "
+        f"“{one['label']}” is live {one['live']:%a %b %d}"
+        + (" *(ticked)*" if one["ticked"] else "")
+        for one in findings[:most]
+    ]
+    if len(findings) > most:
+        lines.append(f"…and {len(findings) - most} more.")
+    return (
+        f"📅 {len(findings)} line(s) on a Lead Order card for a day the agent "
+        "isn't live:\n" + "\n".join(lines)
+        + "\nNothing moved — these are for somebody to move."
+    )
+
+
 def _card_said(client, card_id, cache: dict) -> str:
     """An agent card's description, read once however many lines they have.
 

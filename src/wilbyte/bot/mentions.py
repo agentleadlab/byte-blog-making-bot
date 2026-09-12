@@ -122,6 +122,10 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # Every Lead Order line sitting on a day its agent is not live on.
+    "daycheck": "daycheck",
+    "wrongday": "daycheck",
+    "days": "daycheck",
     # A chargeback rebuttal, from the dispute notice and what the board and
     # the delivered sheet remember. Command-position only is not needed: no
     # copy brief says "rebuttal".
@@ -478,7 +482,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
                          "archive", "setups", "spread", "unspread", "tags",
-                         "noticed")
+                         "noticed", "daycheck")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -595,7 +599,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags", "noticed",
+        "words", "tags", "noticed", "daycheck",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -804,6 +808,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > the agents **go live**, the one on both cards
 > @RYTE **trello unspread 08/28** — list what a spread put on that day's Lead
 > Order card; add **confirm** to take those lines back off
+> @RYTE **trello daycheck** — every line on a Lead Order card for a day its
+> agent is not live on, read off the agents' own cards. Reads only; nothing
+> is moved
 > @RYTE **comment on monday general card** Spanish lead discount 15% off
 > — or **add on trello**, **remind on trello**, or the card said last:
 > **comment** leads went out late **on monday general**. All the same thing.

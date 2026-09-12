@@ -3926,3 +3926,138 @@ def test_a_monday_agent_still_goes_on_mondays_card(config, monkeypatch):
 
     assert problems == []
     assert len(board.written) == 1
+
+
+# ------------------------------ the sweep for lines already on the wrong day
+
+
+class SweepBoard:
+    """Lead Order cards with linked lines, and the agents they link to."""
+
+    AGENTS = {
+        "https://trello.com/c/alexb": ("NEW AGENT- Alex Brown", ALEX_CARD),
+        "https://trello.com/c/garret": ("New Agent - Garret Sekelsky", GARRET_CARD),
+        "https://trello.com/c/quiet": (
+            "New Agent - No Date",
+            "-- New Client Onboarded --\n\n50 MTG STANDARD\n",
+        ),
+    }
+
+    def __init__(self, cards):
+        self.cards = cards
+        self.detail_reads = []
+
+    def board_lists(self, _board_id):
+        return [{"id": "L"}]
+
+    def list_cards(self, _list_id):
+        found = [
+            {"id": f"a{n}", "name": name, "url": url, "shortUrl": url}
+            for n, (url, (name, _desc)) in enumerate(self.AGENTS.items())
+        ]
+        return found + [
+            {"id": f"o{n}", "name": title} for n, title in enumerate(self.cards)
+        ]
+
+    def card_checklists(self, card_id):
+        if not card_id.startswith("o"):
+            return []
+        title = self.cards[int(card_id[1:])]
+        return [{
+            "id": f"{card_id}-c", "name": "OTP MTG Standard",
+            "checkItems": [
+                {"name": f"{url} {label}", "state": state}
+                for url, label, state in LINES.get(title, [])
+            ],
+        }]
+
+    def card_detail(self, card_id):
+        self.detail_reads.append(card_id)
+        found = list(self.AGENTS.values())[int(card_id[1:])]
+        return {"id": card_id, "desc": found[1]}
+
+    def close(self):
+        pass
+
+
+LINES = {
+    "Lead Order 09/11/26": [
+        ("https://trello.com/c/alexb", "50 MTG STANDARD sat", "incomplete"),
+        ("https://trello.com/c/garret", "25 OTP FEX", "complete"),
+        ("https://trello.com/c/quiet", "50 MTG STANDARD", "incomplete"),
+    ],
+    "Lead Order 09/12/26-09/14/26": [
+        ("https://trello.com/c/alexb", "50 MTG STANDARD", "incomplete"),
+    ],
+}
+
+
+def _sweeping(board, monkeypatch, config, *, today=date(2026, 9, 12)):
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: today)
+    return jobs.wrong_day_lines(config)
+
+
+def test_the_sweep_finds_what_the_spread_already_wrote(config, monkeypatch):
+    """Alex Brown is live Saturday and sitting on Friday's card; Garret's FEX
+    is Saturday's and sitting on Friday's, ticked."""
+    board = SweepBoard(["Lead Order 09/11/26", "Lead Order 09/12/26-09/14/26"])
+
+    findings, problems = _sweeping(board, monkeypatch, config)
+
+    assert problems == []
+    assert [(one["agent"], one["live"], one["ticked"]) for one in findings] == [
+        ("NEW AGENT- Alex Brown", date(2026, 9, 12), False),
+        ("New Agent - Garret Sekelsky", date(2026, 9, 12), True),
+    ]
+
+
+def test_a_line_on_the_right_card_is_not_a_finding(config, monkeypatch):
+    board = SweepBoard(["Lead Order 09/12/26-09/14/26"])
+
+    findings, _problems = _sweeping(board, monkeypatch, config)
+
+    assert findings == []
+
+
+def test_an_agent_who_names_no_day_is_not_a_finding(config, monkeypatch):
+    """Most cards say when once and plenty say nothing. A line is wrong only
+    when the two cards disagree."""
+    board = SweepBoard(["Lead Order 09/11/26"])
+
+    findings, _problems = _sweeping(board, monkeypatch, config)
+
+    assert "No Date" not in [one["agent"] for one in findings]
+
+
+def test_each_agent_card_is_read_once_however_many_lines(config, monkeypatch):
+    board = SweepBoard(["Lead Order 09/11/26", "Lead Order 09/12/26-09/14/26"])
+
+    _findings, _problems = _sweeping(board, monkeypatch, config)
+
+    assert len(board.detail_reads) == len(set(board.detail_reads))
+
+
+def test_cards_older_than_a_fortnight_are_history(config, monkeypatch):
+    """Their leads are long delivered. What that card says is not something
+    to fix."""
+    board = SweepBoard(["Lead Order 09/11/26"])
+
+    findings, problems = _sweeping(board, monkeypatch, config, today=date(2026, 10, 30))
+
+    assert findings == []
+    assert "No Lead Order cards in the last 14 days" in problems[0]
+
+
+def test_it_says_plainly_that_it_moved_nothing(config, monkeypatch):
+    board = SweepBoard(["Lead Order 09/11/26"])
+
+    findings, _problems = _sweeping(board, monkeypatch, config)
+    said = jobs.describe_wrong_days(findings)
+
+    assert "Nothing moved" in said
+    assert "Alex Brown" in said
+
+
+def test_a_clean_board_says_so(config):
+    assert "👍" in jobs.describe_wrong_days([])
