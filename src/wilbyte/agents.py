@@ -1965,6 +1965,26 @@ def dated_orders(text: str, *, today: date) -> list[tuple[str, "date | None"]]:
     return found
 
 
+def launch_for(text: str, label: str, *, today: date) -> "date | None":
+    """The day one particular order goes live, off the agent's own card.
+
+    Garret Sekelsky bought two things on two days. Asked when *he* goes live
+    the card has to answer with one date, and the honest answer depends on
+    which order is being asked about: his OTP Vets are Friday's and his OTP
+    FEX is Saturday's. So the order's own line is looked at first, and the
+    card's overall launch is the fallback - which is the ordinary case, where
+    the date is written once at the bottom and meant for everything above it.
+    """
+    dated = dated_orders(text, today=today)
+    wanted = " ".join((label or "").split()).casefold()
+    if dated and wanted:
+        for order, when in dated:
+            said = " ".join(str(order).split()).casefold()
+            if said and (wanted in said or said in wanted):
+                return when
+    return find_launch(text, today=today)
+
+
 def on_several_days(dated) -> bool:
     """Whether a card's orders do not all go live on the same day."""
     days = {when for _order, when in dated or [] if when is not None}

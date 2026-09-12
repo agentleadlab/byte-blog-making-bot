@@ -3728,3 +3728,151 @@ def test_asking_by_hand_still_shows_everything(monkeypatch):
     _filed, by_hand = _watching(monkeypatch, tasks=[one], press=False, said=None)
 
     assert len(by_hand) == 1
+
+
+# ------------------------------- an agent whose own card says a different day
+
+ALEX_CARD = """-- New Client Onboarded --
+
+First Name: ALEX
+Last Name: BROWN
+Package Selected: Text Verified
+Lead Type: MTG STANDARD
+
+50 MTG STANDARD
+
+EVERLIFE LEADS
+Live sat, sept 12
+"""
+
+GARRET_CARD = """-- New Client Onboarded --
+
+First Name: Garret
+Last Name: Sekelsky
+Package Selected: Text Verified
+Lead Type: Veteran Final Expense
+
+2 orders:
+25 OTP Vets - live Friday, September 11
+25 OTP FEX - live Saturday, September 12
+part of fearless
+"""
+
+
+class DayBoard:
+    """A Friday Lead Order card and a setup card carrying one agent."""
+
+    def __init__(self, *, on_setup, their_card, order="Lead Order 09/11/26",
+                 setup="Agent Setup Going Live Friday 09/11"):
+        self.on_setup = on_setup
+        self.their_card = their_card
+        self.order_title = order
+        self.setup_title = setup
+        self.written = []
+
+    def board_lists(self, _board_id):
+        return [{"id": "L"}]
+
+    def list_cards(self, _list_id):
+        return [
+            {"id": "setup", "name": self.setup_title},
+            {"id": "order", "name": self.order_title},
+            {"id": "agent", "name": "NEW AGENT- Alex Brown",
+             "url": AGENT_URL, "shortUrl": AGENT_URL},
+        ]
+
+    def card_checklists(self, card_id):
+        if card_id == "setup":
+            return [{"id": "s1", "name": "Therese", "checkItems": [
+                {"name": f"{AGENT_URL} {self.on_setup}"}
+            ]}]
+        return [
+            {"id": "c0", "name": "OTP MTG Standard", "checkItems": []},
+            {"id": "c1", "name": "OTP FEX", "checkItems": []},
+            {"id": "c2", "name": "OTP VETS", "checkItems": []},
+        ]
+
+    def card_detail(self, card_id):
+        return {"id": card_id, "desc": self.their_card}
+
+    def add_check_item(self, checklist_id, name, **kwargs):
+        self.written.append((checklist_id, name))
+        return {"id": "i1"}
+
+    def close(self):
+        pass
+
+
+def _spread_on_friday(board, monkeypatch, config, *, today=date(2026, 9, 10)):
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: today)
+    return jobs.spread_to_lead_order(config)
+
+
+def test_a_saturday_agent_is_left_off_fridays_lead_order_card(config, monkeypatch):
+    """"THIS ARE SATURDAY LIVE? YOU PUT THEM FRIDAY, THEY GOT PRODUCTS
+    WRONGLY". Alex Brown's own card says live Saturday."""
+    board = DayBoard(on_setup="50 MTG STANDARD", their_card=ALEX_CARD)
+
+    added, _conflicts, problems = _spread_on_friday(board, monkeypatch, config)
+
+    assert board.written == []
+    assert added == []
+    assert "live Sat Sep 12" in problems[0]
+    assert "Lead Order 09/11/26 doesn't cover it" in problems[0]
+
+
+def test_the_same_agent_goes_on_the_card_that_does_cover_the_day(config, monkeypatch):
+    board = DayBoard(
+        on_setup="50 MTG STANDARD", their_card=ALEX_CARD,
+        order="Lead Order 09/12/26-09/14/26",
+        setup="Agent Setup Going Live Saturday-Monday 09/12-09/14",
+    )
+
+    added, _conflicts, problems = _spread_on_friday(
+        board, monkeypatch, config, today=date(2026, 9, 11),
+    )
+
+    assert problems == []
+    assert [one for one in board.written] == [
+        ("c0", jobs_checklist_item()),
+    ]
+    assert len(added) == 2  # the header line, then the agent
+
+
+def jobs_checklist_item():
+    from wilbyte import agents as rules
+
+    return rules.checklist_item(AGENT_URL, "50 MTG STANDARD")
+
+
+def test_one_order_of_two_can_be_this_cards_and_the_other_not(config, monkeypatch):
+    """Garret's OTP Vets are Friday's and his OTP FEX is Saturday's. Asked
+    about Friday, one goes on and one is named."""
+    board = DayBoard(on_setup="25 OTP Vets", their_card=GARRET_CARD)
+
+    _added, _conflicts, problems = _spread_on_friday(board, monkeypatch, config)
+
+    assert problems == []
+    assert len(board.written) == 1
+
+    board = DayBoard(on_setup="25 OTP FEX", their_card=GARRET_CARD)
+
+    _added, _conflicts, problems = _spread_on_friday(board, monkeypatch, config)
+
+    assert board.written == []
+    assert "live Sat Sep 12" in problems[0]
+
+
+def test_a_card_that_names_no_day_is_placed_as_before(config, monkeypatch):
+    """Most cards say when once and some say nothing. Nothing is not a
+    disagreement."""
+    board = DayBoard(
+        on_setup="50 MTG STANDARD",
+        their_card="-- New Client Onboarded --\n\n50 MTG STANDARD\n",
+    )
+
+    _added, _conflicts, problems = _spread_on_friday(board, monkeypatch, config)
+
+    assert problems == []
+    assert len(board.written) == 1

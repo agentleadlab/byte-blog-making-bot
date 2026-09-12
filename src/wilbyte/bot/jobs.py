@@ -3556,9 +3556,29 @@ def spread_to_lead_order(
         # agent, done, with a second wording nobody can match.
         stuck: list[tuple[str, str]] = []
         placed: set[str] = set()
+        # The days this Lead Order card is for. An agent whose own card names a
+        # different day does not belong on it, whichever setup card they were
+        # written on - "THIS ARE SATURDAY LIVE? YOU PUT THEM FRIDAY".
+        covers = set(dailyops.card_days(str(order.get("name") or ""))) or {day}
+        said_on: dict[str, str] = {}
         for spread in spreads:
             key = " ".join(spread.checklist.split()).casefold()
             who = named.get(spread.url, spread.url)
+
+            # Read before the write, unlike the lead-type check: a line on the
+            # wrong day is wrong the moment it is written, and the agent is not
+            # lost by leaving it off - the spread for their own day picks them
+            # up, and they are named here either way.
+            goes = rules.launch_for(
+                _card_said(client, cards.get(spread.url), said_on),
+                spread.label, today=day,
+            )
+            if goes is not None and goes not in covers:
+                stuck.append((spread.url, (
+                    f"{who} — their card says live {goes:%a %b %d} and "
+                    f"{order.get('name')} doesn't cover it, so I left it off"
+                )))
+                continue
             if key not in by_name:
                 # Never invent one. The checklists on a Lead Order card are the
                 # lead types that exist, put there by hand, and a spread that
@@ -4149,6 +4169,23 @@ def _cards_by_url(cards: list[dict]) -> dict[str, str]:
             if where:
                 found[where] = card_id
     return found
+
+
+def _card_said(client, card_id, cache: dict) -> str:
+    """An agent card's description, read once however many lines they have.
+
+    A card that can't be read comes back empty rather than raising: the spread
+    is the thing that matters and Trello having a bad second is not a reason
+    to stop it.
+    """
+    if not card_id:
+        return ""
+    if card_id not in cache:
+        try:
+            cache[card_id] = str(client.card_detail(card_id).get("desc") or "")
+        except Exception:
+            cache[card_id] = ""
+    return cache[card_id]
 
 
 def _their_card_disagrees(client, card_id, on_setup: str):
