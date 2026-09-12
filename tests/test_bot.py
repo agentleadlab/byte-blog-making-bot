@@ -3411,7 +3411,8 @@ class Button:
         return None
 
 
-def _watching(monkeypatch, *, tasks, press=True, answered=True):
+def _watching(monkeypatch, *, tasks, press=True, answered=True, said=None,
+              problems=()):
     """One tick of what the watcher shows, with the board and button stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -3426,7 +3427,8 @@ def _watching(monkeypatch, *, tasks, press=True, answered=True):
     Pressed.press, Pressed.answered = press, answered
 
     monkeypatch.setattr(
-        bot_client.jobs, "tags_to_file", lambda config, **kw: (list(tasks), [])
+        bot_client.jobs, "tags_to_file",
+        lambda config, **kw: (list(tasks), list(problems)),
     )
     monkeypatch.setattr(
         bot_client.jobs, "file_tags",
@@ -3438,7 +3440,7 @@ def _watching(monkeypatch, *, tasks, press=True, answered=True):
 
     heard = Asked()
     config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
-    asyncio.run(bot_client._offer_tags_now(heard, config))
+    asyncio.run(bot_client._offer_tags_now(heard, config, said))
     return filed, heard.messages
 
 
@@ -3668,3 +3670,61 @@ def test_every_other_day_it_does_nothing_at_all(config, monkeypatch, when):
     what, problems = _friday(board, monkeypatch, config, day=when)
 
     assert (what, problems, board.renamed) == ("", [], [])
+
+
+def test_a_list_already_shown_is_not_shown_again(monkeypatch):
+    """"if you already said it dont add it to the next update i already said
+    leave it" — the stamp moves for all sorts of reasons and every one of them
+    was re-posting the same twelve lines."""
+    said: set = set()
+    one = _a_task()
+
+    _filed, first = _watching(monkeypatch, tasks=[one], press=False, said=said)
+    _filed, again = _watching(monkeypatch, tasks=[one], press=False, said=said)
+
+    assert len(first) == 1
+    assert again == []
+
+
+def test_only_the_new_line_goes_in_the_next_message(monkeypatch):
+    """Not the old work again with one line added."""
+    from wilbyte import tagged
+
+    said: set = set()
+    old = _a_task()
+    new = tagged.Task(
+        note=tagged.Note(comment_id="c2", text="Check the budget", card_short="IU4PM7wJ"),
+        kind="ads", checklist="Kath", card_id="a", card_title="📊 Ads 09/09/26",
+        summary="Check the budget",
+    )
+
+    _watching(monkeypatch, tasks=[old], press=False, said=said)
+    _filed, second = _watching(monkeypatch, tasks=[old, new], press=False, said=said)
+
+    assert "1 new item(s)" in second[0]
+    assert "Check the budget" in second[0]
+    assert "Add YT channel" not in second[0]
+
+
+def test_the_same_warning_is_not_repeated_every_tick(monkeypatch):
+    """"@tretarpley has no checklist" is worth saying once a day, not once a
+    minute."""
+    said: set = set()
+    warn = "On the board but with no checklist on today's cards: @tretarpley"
+
+    _filed, first = _watching(monkeypatch, tasks=[], said=said, problems=[warn])
+    _filed, again = _watching(monkeypatch, tasks=[], said=said, problems=[warn])
+
+    assert first == ["⚠ " + warn]
+    assert again == []
+
+
+def test_asking_by_hand_still_shows_everything(monkeypatch):
+    """Somebody who typed the command is looking, and wants the whole list."""
+    one = _a_task()
+    said: set = set()
+
+    _watching(monkeypatch, tasks=[one], press=False, said=said)
+    _filed, by_hand = _watching(monkeypatch, tasks=[one], press=False, said=None)
+
+    assert len(by_hand) == 1

@@ -3460,8 +3460,16 @@ async def tags_loop(bot: "WilByteBot") -> None:
     that goes wrong is not retried every minute for the rest of the day, and
     the loop waits on the button rather than stacking a second list on top of
     a first nobody has looked at yet.
+
+    `said` is everything already put in front of somebody today. The stamp
+    moves for all sorts of reasons - a card walking to the next list, the
+    rollover writing onto tomorrow's, somebody ticking a box - and every one
+    of those was re-posting the same twelve lines and the same three warnings:
+    "if you already said it dont add it to the next update i already said
+    leave it".
     """
     seen = ""
+    said: set = set()
     while not bot.is_closed():
         try:
             stamp = await asyncio.to_thread(jobs.tags_stamp, bot.config)
@@ -3469,7 +3477,7 @@ async def tags_loop(bot: "WilByteBot") -> None:
                 seen = stamp
                 responder = _board_responder(bot)
                 if responder is not None:
-                    await _offer_tags_now(responder, bot.config)
+                    await _offer_tags_now(responder, bot.config, said)
         except asyncio.CancelledError:
             raise
         except Exception:  # a bad tick must not take the loop down for good
@@ -3477,12 +3485,26 @@ async def tags_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(TAG_CHECK_SECONDS)
 
 
-async def _offer_tags_now(responder: Responder, config: Config) -> None:
-    """Show what was tagged and wait for the button. Writes nothing on its own.
+def _already_said(task) -> str:
+    """What makes one offered line the same line as another."""
+    return f"{task.note.comment_id}|{task.kind}|{task.checklist}|{task.summary}"
+
+
+async def _offer_tags_now(
+    responder: Responder, config: Config, said: set | None = None
+) -> None:
+    """Show what is new and wait for the button. Writes nothing on its own.
 
     Silent when there was nothing, because this runs all day: a line every
     minute saying nothing happened is a line nobody reads, and one that
     matters would be lost among them.
+
+    `said` is what has already been put in front of somebody. Only what is not
+    in it gets posted, and everything posted goes into it - so a list that was
+    left alone stays left alone, and the next message is the new work rather
+    than the old work again with one line added. The warnings are held the
+    same way: "@tretarpley has no checklist" is worth saying once a day, not
+    once a minute.
 
     Anybody on the team can press it. Nobody asked for this one - it came off
     the board rather than out of a message - so there is no "the person who
@@ -3491,11 +3513,16 @@ async def _offer_tags_now(responder: Responder, config: Config) -> None:
     from .. import tagged
 
     tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
+    if said is not None:
+        tasks = [one for one in tasks if _already_said(one) not in said]
+        problems = [one for one in problems if one not in said]
     if not tasks:
         # Said out loud even with nothing to file: somebody tagged with no
         # checklist is a person waiting on a job nobody wrote down.
         if problems:
             await responder.send("⚠ " + "\n⚠ ".join(problems))
+            if said is not None:
+                said.update(problems)
         return
 
     view = views.ConfirmView(
@@ -3511,6 +3538,11 @@ async def _offer_tags_now(responder: Responder, config: Config) -> None:
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     await responder.send(note, view=view)
+    # Remembered as it is posted rather than after the button, so a tick while
+    # somebody is still looking at it does not post the same list underneath.
+    if said is not None:
+        said.update(_already_said(one) for one in tasks)
+        said.update(problems)
     await view.wait()
     if not view.confirmed:
         # A list that timed out is a list nobody saw, and the work is still
