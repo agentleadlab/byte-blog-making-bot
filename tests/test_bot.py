@@ -3411,7 +3411,7 @@ class Button:
         return None
 
 
-def _watching(monkeypatch, *, tasks, press=True, answered=True, said=None,
+def _watching(monkeypatch, *, tasks, press=True, answered=True, remember=False,
               problems=()):
     """One tick of what the watcher shows, with the board and button stubbed."""
     import asyncio
@@ -3440,7 +3440,8 @@ def _watching(monkeypatch, *, tasks, press=True, answered=True, said=None,
 
     heard = Asked()
     config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
-    asyncio.run(bot_client._offer_tags_now(heard, config, said))
+    monkeypatch.setattr(bot_client.jobs, "board_day", lambda cfg: date(2026, 9, 11))
+    asyncio.run(bot_client._offer_tags_now(heard, config, remember=remember))
     return filed, heard.messages
 
 
@@ -3676,11 +3677,10 @@ def test_a_list_already_shown_is_not_shown_again(monkeypatch):
     """"if you already said it dont add it to the next update i already said
     leave it" — the stamp moves for all sorts of reasons and every one of them
     was re-posting the same twelve lines."""
-    said: set = set()
     one = _a_task()
 
-    _filed, first = _watching(monkeypatch, tasks=[one], press=False, said=said)
-    _filed, again = _watching(monkeypatch, tasks=[one], press=False, said=said)
+    _filed, first = _watching(monkeypatch, tasks=[one], press=False, remember=True)
+    _filed, again = _watching(monkeypatch, tasks=[one], press=False, remember=True)
 
     assert len(first) == 1
     assert again == []
@@ -3690,7 +3690,6 @@ def test_only_the_new_line_goes_in_the_next_message(monkeypatch):
     """Not the old work again with one line added."""
     from wilbyte import tagged
 
-    said: set = set()
     old = _a_task()
     new = tagged.Task(
         note=tagged.Note(comment_id="c2", text="Check the budget", card_short="IU4PM7wJ"),
@@ -3698,8 +3697,8 @@ def test_only_the_new_line_goes_in_the_next_message(monkeypatch):
         summary="Check the budget",
     )
 
-    _watching(monkeypatch, tasks=[old], press=False, said=said)
-    _filed, second = _watching(monkeypatch, tasks=[old, new], press=False, said=said)
+    _watching(monkeypatch, tasks=[old], press=False, remember=True)
+    _filed, second = _watching(monkeypatch, tasks=[old, new], press=False, remember=True)
 
     assert "1 new item(s)" in second[0]
     assert "Check the budget" in second[0]
@@ -3709,11 +3708,10 @@ def test_only_the_new_line_goes_in_the_next_message(monkeypatch):
 def test_the_same_warning_is_not_repeated_every_tick(monkeypatch):
     """"@tretarpley has no checklist" is worth saying once a day, not once a
     minute."""
-    said: set = set()
     warn = "On the board but with no checklist on today's cards: @tretarpley"
 
-    _filed, first = _watching(monkeypatch, tasks=[], said=said, problems=[warn])
-    _filed, again = _watching(monkeypatch, tasks=[], said=said, problems=[warn])
+    _filed, first = _watching(monkeypatch, tasks=[], remember=True, problems=[warn])
+    _filed, again = _watching(monkeypatch, tasks=[], remember=True, problems=[warn])
 
     assert first == ["⚠ " + warn]
     assert again == []
@@ -3722,10 +3720,9 @@ def test_the_same_warning_is_not_repeated_every_tick(monkeypatch):
 def test_asking_by_hand_still_shows_everything(monkeypatch):
     """Somebody who typed the command is looking, and wants the whole list."""
     one = _a_task()
-    said: set = set()
 
-    _watching(monkeypatch, tasks=[one], press=False, said=said)
-    _filed, by_hand = _watching(monkeypatch, tasks=[one], press=False, said=None)
+    _watching(monkeypatch, tasks=[one], press=False, remember=True)
+    _filed, by_hand = _watching(monkeypatch, tasks=[one], press=False, remember=False)
 
     assert len(by_hand) == 1
 
@@ -4094,3 +4091,39 @@ def test_it_says_plainly_that_it_moved_nothing(config, monkeypatch):
 
 def test_a_clean_board_says_so(config):
     assert "👍" in jobs.describe_wrong_days([])
+
+
+def test_a_restart_does_not_bring_the_same_list_back(monkeypatch):
+    """RYTE is restarted several times on a busy evening and every one of them
+    was re-posting the same twelve lines."""
+    one = _a_task()
+
+    _filed, first = _watching(monkeypatch, tasks=[one], press=False, remember=True)
+    # A new process: nothing in memory, the same board.
+    _filed, after = _watching(monkeypatch, tasks=[one], press=False, remember=True)
+
+    assert len(first) == 1
+    assert after == []
+
+
+def test_yesterdays_list_is_not_todays(monkeypatch):
+    """The comments are on yesterday's cards; a file that grows all week is
+    one nobody looks at."""
+    from wilbyte import alreadysaid
+
+    alreadysaid.remember(date(2026, 9, 10), ["something said yesterday"])
+    alreadysaid.remember(date(2026, 9, 11), ["something said today"])
+
+    assert alreadysaid.said_on(date(2026, 9, 11)) == {"something said today"}
+    assert alreadysaid.said_on(date(2026, 9, 12)) == set()
+
+
+def test_only_the_last_two_days_are_kept(monkeypatch):
+    """Two, so a restart just after midnight still knows what last night's
+    shift was shown."""
+    from wilbyte import alreadysaid
+
+    for day in range(8, 13):
+        alreadysaid.remember(date(2026, 9, day), [f"line {day}"])
+
+    assert sorted(alreadysaid.load()) == ["2026-09-11", "2026-09-12"]

@@ -4,6 +4,14 @@ from wilbyte.config import load_config
 from wilbyte.models import CopyPackage, Headline
 
 
+@pytest.fixture(autouse=True)
+def _said_nothing_yet(tmp_path, monkeypatch):
+    """Each test starts having said nothing, and writes nowhere real."""
+    from wilbyte import alreadysaid
+
+    monkeypatch.setattr(alreadysaid, "SAID_PATH", tmp_path / "already-said.json")
+
+
 @pytest.fixture
 def config():
     # load_env=False so a developer's real .env never leaks into a test run.
