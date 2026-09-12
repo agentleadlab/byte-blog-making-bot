@@ -3876,3 +3876,53 @@ def test_a_card_that_names_no_day_is_placed_as_before(config, monkeypatch):
 
     assert problems == []
     assert len(board.written) == 1
+
+
+@pytest.mark.parametrize(
+    "setup, order, when, live",
+    [
+        # Every day, not just the weekend. "it should do that to all days, not
+        # to add tuesday live on monday stuff like that".
+        ("Agent Setup Going Live Monday 09/14", "Lead Order 09/14/26",
+         date(2026, 9, 13), "Live tuesday, sept 15"),
+        ("Agent Setup Going Live Tuesday 09/15", "Lead Order 09/15/26",
+         date(2026, 9, 14), "Live wednesday, sept 16"),
+        ("Agent Setup Going Live Wednesday 09/16", "Lead Order 09/16/26",
+         date(2026, 9, 15), "Live thursday, sept 17"),
+        # And a day already gone by, which is the same mistake backwards.
+        ("Agent Setup Going Live Thursday 09/17", "Lead Order 09/17/26",
+         date(2026, 9, 16), "Live tuesday, sept 15"),
+    ],
+)
+def test_the_day_has_to_match_whatever_day_it_is(
+    config, monkeypatch, setup, order, when, live
+):
+    board = DayBoard(
+        on_setup="50 MTG STANDARD",
+        their_card=f"-- New Client Onboarded --\n\n50 MTG STANDARD\n\n{live}\n",
+        order=order, setup=setup,
+    )
+
+    added, _conflicts, problems = _spread_on_friday(
+        board, monkeypatch, config, today=when,
+    )
+
+    assert board.written == []
+    assert added == []
+    assert f"{order} doesn't cover it" in problems[0]
+
+
+def test_a_monday_agent_still_goes_on_mondays_card(config, monkeypatch):
+    """The check is the day matching, not the day being refused."""
+    board = DayBoard(
+        on_setup="50 MTG STANDARD",
+        their_card="-- New Client Onboarded --\n\n50 MTG STANDARD\n\nLive monday, sept 14\n",
+        order="Lead Order 09/14/26", setup="Agent Setup Going Live Monday 09/14",
+    )
+
+    _added, _conflicts, problems = _spread_on_friday(
+        board, monkeypatch, config, today=date(2026, 9, 13),
+    )
+
+    assert problems == []
+    assert len(board.written) == 1
