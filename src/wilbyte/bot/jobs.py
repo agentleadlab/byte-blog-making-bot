@@ -3573,10 +3573,15 @@ def spread_to_lead_order(
                 _card_said(client, cards.get(spread.url), said_on),
                 spread.label, today=day,
             )
-            if goes is not None and goes not in covers:
+            # Only a day still to come. A date *earlier* than this card is
+            # almost always the agent's old launch still written on their card
+            # - a top-up, a re-order, a second product bought weeks later -
+            # and refusing those would leave agents with no leads at all,
+            # which is worse than the thing this is here to stop.
+            if goes is not None and goes > max(covers):
                 stuck.append((spread.url, (
                     f"{who} — their card says live {goes:%a %b %d} and "
-                    f"{order.get('name')} doesn't cover it, so I left it off"
+                    f"{order.get('name')} doesn't reach it, so I left it off"
                 )))
                 continue
             if key not in by_name:
@@ -4188,9 +4193,14 @@ def wrong_day_lines(config: Config, *, day=None, back: int = WRONG_DAY_BACK):
     card of the last fortnight, every linked line on it, each agent's own card
     read for the day that order goes live.
 
-    An agent card that names no day is not a finding. Most say when once and
-    plenty say nothing, and a line is only wrong when the card it is on and
-    the card it is about disagree.
+    Only a launch still ahead of the card counts. The first run of this found
+    twenty-nine lines and twenty-five of them were an agent's old launch date
+    still sitting on their card - a top-up, a re-order, a product bought weeks
+    after the first one. "45 more OTP vets" is not an agent going live; the
+    date on that card is the day they went live in the first place.
+
+    An agent card that names no day is not a finding either. Most say when
+    once and plenty say nothing.
     """
     from .. import agents as rules
     from .. import dailyops, trello
@@ -4243,7 +4253,7 @@ def wrong_day_lines(config: Config, *, day=None, back: int = WRONG_DAY_BACK):
                         _card_said(client, cards.get(url), said_on),
                         label, today=min(covers),
                     )
-                    if goes is None or goes in covers:
+                    if goes is None or goes <= max(covers):
                         continue
                     findings.append({
                         "card": str(card.get("name") or ""),

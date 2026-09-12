@@ -3819,7 +3819,7 @@ def test_a_saturday_agent_is_left_off_fridays_lead_order_card(config, monkeypatc
     assert board.written == []
     assert added == []
     assert "live Sat Sep 12" in problems[0]
-    assert "Lead Order 09/11/26 doesn't cover it" in problems[0]
+    assert "Lead Order 09/11/26 doesn't reach it" in problems[0]
 
 
 def test_the_same_agent_goes_on_the_card_that_does_cover_the_day(config, monkeypatch):
@@ -3889,9 +3889,6 @@ def test_a_card_that_names_no_day_is_placed_as_before(config, monkeypatch):
          date(2026, 9, 14), "Live wednesday, sept 16"),
         ("Agent Setup Going Live Wednesday 09/16", "Lead Order 09/16/26",
          date(2026, 9, 15), "Live thursday, sept 17"),
-        # And a day already gone by, which is the same mistake backwards.
-        ("Agent Setup Going Live Thursday 09/17", "Lead Order 09/17/26",
-         date(2026, 9, 16), "Live tuesday, sept 15"),
     ],
 )
 def test_the_day_has_to_match_whatever_day_it_is(
@@ -3909,7 +3906,26 @@ def test_the_day_has_to_match_whatever_day_it_is(
 
     assert board.written == []
     assert added == []
-    assert f"{order} doesn't cover it" in problems[0]
+    assert f"{order} doesn't reach it" in problems[0]
+
+
+def test_a_day_already_gone_by_is_not_refused(config, monkeypatch):
+    """The first sweep found twenty-nine lines and twenty-five of them were an
+    agent's old launch still written on their card. "45 more OTP vets" is not
+    an agent going live, and refusing those leaves them with no leads at all."""
+    board = DayBoard(
+        on_setup="45 more OTP vets",
+        their_card=(
+            "-- New Client Onboarded --\n\n45 more OTP vets\n\n"
+            "Live tuesday, sept 08\n"
+        ),
+        order="Lead Order 09/11/26",
+    )
+
+    _added, _conflicts, problems = _spread_on_friday(board, monkeypatch, config)
+
+    assert problems == []
+    assert len(board.written) == 1
 
 
 def test_a_monday_agent_still_goes_on_mondays_card(config, monkeypatch):
@@ -4018,6 +4034,23 @@ def test_a_line_on_the_right_card_is_not_a_finding(config, monkeypatch):
     findings, _problems = _sweeping(board, monkeypatch, config)
 
     assert findings == []
+
+
+def test_an_old_launch_date_on_a_top_up_is_not_a_finding(config, monkeypatch):
+    """Twenty-five of the first twenty-nine. The date on a top-up card is the
+    day they went live in the first place."""
+    board = SweepBoard(["Lead Order 09/11/26"])
+    board.AGENTS = dict(
+        SweepBoard.AGENTS,
+        **{"https://trello.com/c/alexb": (
+            "New Agent - Chris Lotruglio",
+            "-- New Client Onboarded --\n\n45 more OTP vets\n\nLive tue, sept 8\n",
+        )},
+    )
+
+    findings, _problems = _sweeping(board, monkeypatch, config)
+
+    assert "New Agent - Chris Lotruglio" not in [one["agent"] for one in findings]
 
 
 def test_an_agent_who_names_no_day_is_not_a_finding(config, monkeypatch):
