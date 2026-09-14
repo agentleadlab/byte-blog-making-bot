@@ -1,10 +1,15 @@
-"""The invoice, fetched from the inbox it was emailed to.
+"""The payment confirmation, fetched from the inbox it was emailed to.
 
 Summit Pay - Payra - has no API worth the name: "we cant get direct api here,,
-but the invoices get emailed to me so we can use that way". So the invoice for
+but the invoices get emailed to me so we can use that way". So the receipt for
 a disputed transaction is found where it actually is, rather than somebody
 saving it out of Gmail and dragging it into Discord in the middle of writing a
 rebuttal.
+
+The receipt is the email. Payra's confirmation has no attachment on it - the
+reference, the day it was paid, the customer, the card and the total are a
+table in the body, and the invoice number is a link to a page rather than a
+file. So the body is the exhibit and an attachment is a bonus.
 
 Read-only, and narrow by construction. Every search is pinned to one sender -
 the address the invoices come from, set in .env - so there is no call here
@@ -35,9 +40,14 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 #: old - Jose Zambrano's was June, disputed in September - so this is wide.
 LOOK_BACK_DAYS = 400
 
-#: Attachments worth taking. An invoice is a PDF and a receipt is sometimes a
-#: screenshot; nothing else on one of these emails is evidence.
+#: Attachments worth taking, on the emails that have any. Payra's confirmation
+#: does not: the receipt is the email itself, and the invoice number in it is a
+#: link to a page rather than a file. So an attachment is a bonus here and the
+#: body is the evidence.
 KEEPS = re.compile(r"\.(pdf|png|jpe?g)$", re.IGNORECASE)
+
+_TAGS = re.compile(r"<(script|style)[^>]*>.*?</\1>|<[^>]+>", re.IGNORECASE | re.DOTALL)
+_SPACES = re.compile(r"[ \t]*\n[ \t]*")
 
 
 class GmailError(RuntimeError):
@@ -51,6 +61,9 @@ class Found:
     message_id: str
     subject: str = ""
     when: str = ""
+    #: The receipt itself. Payra's confirmation is a table in the body - the
+    #: reference, who paid, the card, the total - and that is the exhibit.
+    body: str = ""
     files: list = field(default_factory=list)
 
 
@@ -141,7 +154,10 @@ class GmailClient:
         The sender is not a term - it is the whole search's boundary, and it
         is put there here rather than passed in, so no caller can widen it.
         """
-        wanted = [f"from:{self._sender}", "has:attachment"]
+        # No "has:attachment". Payra's confirmation carries none, and asking
+        # for one found nothing at all - which is the whole of what is being
+        # looked for.
+        wanted = [f"from:{self._sender}"]
         for term in terms:
             said = " ".join(str(term or "").split())
             if said:
@@ -169,7 +185,9 @@ class GmailClient:
             subject=headers.get("subject", ""),
             when=headers.get("date", ""),
         )
-        found.files = _attachments_in(got.get("payload") or {})
+        payload = got.get("payload") or {}
+        found.body = _body_of(payload)
+        found.files = _attachments_in(payload)
         return found
 
     def download(self, message_id: str, attachment_id: str) -> bytes:
@@ -181,6 +199,45 @@ class GmailClient:
         if not raw:
             return b""
         return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+
+
+def _body_of(part: dict) -> str:
+    """The email as readable text. Plain if it has any, else the HTML undone.
+
+    Payra sends both, and the plain part is the one written for a person -
+    but the receipt table only exists in the HTML on some of them, so the
+    markup is stripped rather than the email given up on.
+    """
+    plain = _first_part(part, "text/plain")
+    if plain.strip():
+        return _tidy(plain)
+    return _tidy(_TAGS.sub(" ", _first_part(part, "text/html")))
+
+
+def _first_part(part: dict, kind: str) -> str:
+    """The first body of this type anywhere in the email."""
+    if str(part.get("mimeType") or "") == kind:
+        raw = str((part.get("body") or {}).get("data") or "")
+        if raw:
+            return base64.urlsafe_b64decode(
+                raw + "=" * (-len(raw) % 4)
+            ).decode("utf-8", "replace")
+    for inside in part.get("parts") or []:
+        found = _first_part(inside, kind)
+        if found:
+            return found
+    return ""
+
+
+def _tidy(text: str) -> str:
+    """Readable: no runs of blank lines, no trailing spaces, no &amp;."""
+    import html
+
+    said = html.unescape(text or "")
+    said = _SPACES.sub("\n", said)
+    while "\n\n\n" in said:
+        said = said.replace("\n\n\n", "\n\n")
+    return said.strip()
 
 
 def _attachments_in(part: dict) -> list:

@@ -52,6 +52,20 @@ class FakeGmail:
                     ],
                 },
             })
+        if url.endswith("/messages/payra"):
+            return SimpleNamespace(status_code=200, json=lambda: {
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": PAYRA_SUBJECT},
+                        {"name": "Date", "value": "Mon, 14 Sep 2026 19:06:00 -0400"},
+                    ],
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {"mimeType": "text/plain", "body": {"data": _packed("")}},
+                        {"mimeType": "text/html", "body": {"data": _packed(PAYRA_HTML)}},
+                    ],
+                },
+            })
         return SimpleNamespace(status_code=200, json=lambda: {
             "data": base64.urlsafe_b64encode(self.INVOICE).decode().rstrip("="),
         })
@@ -60,7 +74,27 @@ class FakeGmail:
         pass
 
 
-def client(monkeypatch, *, sender="no-reply@summitpay.co"):
+# The real one, off the inbox. There is no attachment: the receipt is the
+# email, and the invoice number in it is a link to a page rather than a file.
+PAYRA_SUBJECT = (
+    "Agent Lead Lab | Payment confirmation [Invoice #INV-18490] - Jay Rodriguez"
+)
+PAYRA_HTML = """<html><body><h1>You Just Got Paid!</h1>
+<table>
+<tr><td>Reference #</td><td>FJZ3FXTG3C2U-PNJ2</td></tr>
+<tr><td>Paid</td><td>September 14, 2026</td></tr>
+<tr><td>Customer</td><td>Jay Rodriguez</td></tr>
+<tr><td>Payment Method</td><td>Mastercard **** 1096</td></tr>
+<tr><td>Invoice #</td><td><a href="https://payra.com/i/18490">INV-18490</a></td></tr>
+<tr><td>Total Paid</td><td>$983.25</td></tr>
+</table></body></html>"""
+
+
+def _packed(text):
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def client(monkeypatch, *, sender="AgentLeadLab@payra.com"):
     fake = FakeGmail()
     monkeypatch.setattr(gmail.httpx, "Client", lambda **kw: fake)
     creds = gmail.Credentials("id", "secret", "refresh")
@@ -74,7 +108,7 @@ def test_every_search_is_pinned_to_the_one_sender(monkeypatch):
     one.invoices_for("Jose Zambrano")
 
     query = fake.asked[0][1]["q"]
-    assert "from:no-reply@summitpay.co" in query
+    assert "from:AgentLeadLab@payra.com" in query
     assert '"Jose Zambrano"' in query
 
 
@@ -185,3 +219,48 @@ def test_one_address_for_everything_needs_no_second_token(monkeypatch):
     one.invoices_for("Jose")
 
     assert used["refresh_token"] == "the-sheets-one"
+
+
+def test_an_invoice_with_no_attachment_is_still_found(monkeypatch):
+    """Payra's confirmation carries none, and asking for one found nothing at
+    all — which is the whole of what is being looked for."""
+    one, fake = client(monkeypatch)
+
+    one.invoices_for("Jay Rodriguez")
+
+    assert "has:attachment" not in fake.asked[0][1]["q"]
+
+
+def test_the_receipt_is_the_email_itself(monkeypatch):
+    """The reference, who paid, the card and the total are a table in the
+    body. That is the exhibit."""
+    one, fake = client(monkeypatch)
+    fake.get = lambda url, params=None, headers=None: (
+        SimpleNamespace(status_code=200, json=lambda: {"messages": [{"id": "payra"}]})
+        if url.endswith("/messages")
+        else FakeGmail.get(fake, url, params, headers)
+    )
+
+    (found,) = one.invoices_for("Jay Rodriguez")
+
+    assert "Jay Rodriguez" in found.subject
+    assert "FJZ3FXTG3C2U-PNJ2" in found.body
+    assert "$983.25" in found.body
+    assert "Mastercard **** 1096" in found.body
+    # And no markup left in it.
+    assert "<td>" not in found.body
+    assert "<a href" not in found.body
+
+
+def test_the_plain_part_wins_when_there_is_one(monkeypatch):
+    from wilbyte.gmail import _body_of
+
+    said = _body_of({
+        "mimeType": "multipart/alternative",
+        "parts": [
+            {"mimeType": "text/plain", "body": {"data": _packed("the plain one")}},
+            {"mimeType": "text/html", "body": {"data": _packed("<p>the html</p>")}},
+        ],
+    })
+
+    assert said == "the plain one"
