@@ -4264,7 +4264,11 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
     """
     from .. import rebuttal as rules_doc
 
-    said = (message.content or "").strip()
+    # The notification is an embed - the content of the message itself is
+    # "@here" and nothing else - so the whole thing is read, title, description
+    # and fields alike. Which part carries them is up to whoever built the
+    # automation, and it is the same reason the payments watcher reads it all.
+    said = _all_text(message).strip()
     if not said:
         return
 

@@ -43,6 +43,17 @@ _MONEY = re.compile(r"\$?\s*([\d,]+(?:\.\d{1,2})?)")
 _DATE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b")
 _LINE = re.compile(r"^\s*(?P<label>[^:]{2,60}?)\s*:\s*(?P<value>.+?)\s*$")
 
+# The notification arrives as a Discord embed with its labels in bold, so the
+# line is "**ARN:** 2455640616780894270" - the label match stops at the first
+# colon and the closing asterisks stay on the front of the value. Every field
+# came out as "** Jose Zambrano".
+_EMPHASIS = re.compile(r"\*\*|__|^\s*[*_]+|[*_]+\s*$", re.MULTILINE)
+
+
+def _unbolded(line: str) -> str:
+    """One line with its markdown emphasis taken off."""
+    return _EMPHASIS.sub("", line or "").strip()
+
 
 @dataclass
 class Dispute:
@@ -125,7 +136,7 @@ def read_facts(text: str) -> Dispute:
     found = Dispute()
     seen = set()
     for line in (text or "").splitlines():
-        matched = _LINE.match(line)
+        matched = _LINE.match(_unbolded(line))
         if not matched:
             continue
         label = matched.group("label").strip().casefold()

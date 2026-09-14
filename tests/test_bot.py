@@ -4664,3 +4664,85 @@ def test_a_card_that_could_not_be_asked_about_still_says_so(config, monkeypatch)
 
     assert url == "https://trello.com/c/abc"
     assert "couldn't ask for the image" in problems[0]
+
+
+# The real one, off the LeadLab bot in #disputed-payments. The fields are in
+# the embed; the message itself says "@here" and nothing else.
+class Embedded:
+    def __init__(self, title="", description="", fields=()):
+        self.title = title
+        self.description = description
+        self.fields = [SimpleNamespace(name=n, value=v) for n, v in fields]
+        self.footer = None
+
+
+DISPUTE_EMBED = (
+    "**ARN:** 24556406167808942703416\n"
+    "**Customer Name:** Jose Zambrano\n"
+    "**Customer Email:** josezagent@gmail.com\n"
+    "**Card Number (Last 4):** 2610\n"
+    "**Transaction Date:** 6/15/2026\n"
+    "**Dispute Amount:** $ 1,552.50"
+)
+
+
+def _noticing_embed(said_content, embed):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    replies = []
+    told = Said(said_content)
+    told.embeds = [embed]
+
+    async def reply(content=None, *, embed=None, view=None, mention_author=True):
+        replies.append(content or "")
+
+    told.reply = reply
+    asyncio.run(bot_client.handle_dispute(SimpleNamespace(config=None), told))
+    return replies
+
+
+def test_the_notification_is_read_out_of_the_embed():
+    """The message itself is "@here" — every field is in the embed."""
+    (said,) = _noticing_embed("@here", Embedded(
+        title="Disputed Payment | Elevateqs ❌", description=DISPUTE_EMBED,
+    ))
+
+    assert "Jose Zambrano" in said
+    assert "$1,552.50" in said
+    assert "24556406167808942703416" in said
+    assert "Still needed" not in said
+
+
+def test_bold_labels_do_not_end_up_in_the_values():
+    """"**ARN:** 2455…" — the label match stops at the first colon, so the
+    closing asterisks were staying on the front of every value."""
+    from wilbyte import rebuttal
+
+    found = rebuttal.read_facts(DISPUTE_EMBED)
+
+    assert found.arn == "24556406167808942703416"
+    assert found.customer_name == "Jose Zambrano"
+    assert found.card == "2610"
+    assert not any(
+        "*" in getattr(found, name)
+        for name in ("arn", "customer_name", "customer_email", "card")
+    )
+
+
+def test_the_fields_can_be_embed_fields_instead():
+    """Which part of an embed carries them is up to whoever built it."""
+    (said,) = _noticing_embed("@here", Embedded(fields=(
+        ("ARN", "7230762615780886427262"),
+        ("Customer Name", "Skip Scott"),
+        ("Transaction Date", "6/5/2026"),
+        ("Dispute Amount", "$ 745.20"),
+    )))
+
+    assert "Skip Scott" in said
+    assert "$745.20" in said
+
+
+def test_an_embed_with_nothing_in_it_is_not_a_chargeback():
+    assert _noticing_embed("@here", Embedded(description="have a look")) == []
