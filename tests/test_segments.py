@@ -587,3 +587,35 @@ def test_zoom_speaker_labels_survive_into_the_cues():
     assert cues[0].text == "Tre: So walk me through how you got started"
     assert cues[0].start == pytest.approx(4.32)
     assert cues[1].text.startswith("Jonny:")
+
+
+def test_a_topic_that_leads_with_the_meeting_word_keeps_the_name():
+    """Fathom named the call "Interview with Leonardo Lopez" and the card came
+    out "Interview with Leonardo Lopez Interview" — the strip only ever ran
+    from the meeting word to the end of the line, which here was all of it."""
+    assert segments.card_title("Interview with Leonardo Lopez") == (
+        "Leonardo Lopez Interview"
+    )
+
+
+@pytest.mark.parametrize(
+    "topic, expected",
+    [
+        ("interview w/ Leo Lopez", "Leo Lopez Interview"),
+        ("Call with Jose Zambrano", "Jose Zambrano Interview"),
+        ("Zoom Meeting with Tre", "Tre Interview"),
+        ("Interview: Leonardo Lopez", "Leonardo Lopez Interview"),
+        # And the shapes that already worked, which must go on working.
+        ("Maddy Grundig", "Maddy Grundig Interview"),
+        ("Leo Lopez Interview", "Leo Lopez Interview"),
+        ("Strategy Session - Maddy Grundig", "Maddy Grundig Interview"),
+    ],
+)
+def test_the_meeting_word_comes_off_whichever_end_it_is_on(topic, expected):
+    assert segments.card_title(topic) == expected
+
+
+def test_a_topic_with_no_name_in_it_still_names_something():
+    """Trimming is never allowed to leave nothing behind."""
+    assert segments.card_title("Interview") == "Interview"
+    assert segments.card_title("Strategy Session") == "Strategy Session Interview"

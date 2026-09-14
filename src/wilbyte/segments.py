@@ -481,6 +481,18 @@ _MEETING_WORDS = re.compile(
 )
 
 
+# The same words at the *front*, with the name after them. "Interview with
+# Leonardo Lopez" filed as "Interview with Leonardo Lopez Interview", because
+# stripping meeting words only ever ran from the word to the end of the line -
+# which on this topic is the whole thing, so nothing was stripped at all and
+# the name kept its second Interview.
+_STARTS_WITH_MEETING = re.compile(
+    r"^(?:zoom\s+)?(?:meeting|call|interview|strategy\s+session|session)\b"
+    r"\s*(?:with|w/|w\.|for)?\s*[-–—:|,]?\s*",
+    re.IGNORECASE,
+)
+
+
 def _says_nothing(part: str) -> bool:
     """Whether a piece of a topic is only meeting words - "Strategy Session"."""
     return not _MEETING_WORDS.sub("", part).strip(" -–—|,")
@@ -510,15 +522,28 @@ def client_name(topic: str) -> str:
     elif parts:
         text = parts[0]
 
+    # The front first, then the tail. A topic that leads with the meeting word
+    # keeps the name after it; one that trails it keeps the name before it;
+    # and trimming is never allowed to leave nothing behind either way.
+    lead = _STARTS_WITH_MEETING.sub("", text).strip(" -–—|,")
+    if lead:
+        text = lead
     return _MEETING_WORDS.sub("", text).strip(" -–—|,") or text
 
 
+_SAYS_INTERVIEW = re.compile(r"\binterviews?\b", re.IGNORECASE)
+
+
 def card_title(topic: str) -> str:
-    """"Maddy Grundig" -> "Maddy Grundig Interview"."""
+    """"Maddy Grundig" -> "Maddy Grundig Interview".
+
+    And "Interview with Leonardo Lopez" -> "Leonardo Lopez Interview", rather
+    than the same sentence with a second Interview welded to the end of it.
+    """
     name = client_name(topic)
     if not name:
         return "Interview"
-    return name if name.casefold().endswith("interview") else f"{name} Interview"
+    return name if _SAYS_INTERVIEW.search(name) else f"{name} Interview"
 
 
 def wants_a_passcode(link: str, passcode: str = "") -> bool:
