@@ -4522,3 +4522,84 @@ def test_nothing_above_it_means_nothing_to_offer(monkeypatch):
     posted, replies = _telling_the_room(monkeypatch)
 
     assert (posted, replies) == ({}, [])
+
+
+# ------------------------------- a chargeback notification, read and flagged
+
+NOTICE = """MID: 510200014664
+DBA Name: AGENT LEAD LAB
+Dispute Date: 9/8/2026
+Dispute Type: Debited
+Dispute Dollar Amount: $1,552.50
+Acquirer's Reference Number: 24556406167808942703416
+Card Number: ending in 2610
+Transaction Date: 6/15/2026
+Customer Name: Jose Zambrano
+Customer Email: josezagent@gmail.com
+"""
+
+
+def _noticing(monkeypatch, said):
+    """One message in the dispute channel."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    replies = []
+    told = Said(said)
+
+    async def reply(content=None, *, embed=None, view=None, mention_author=True):
+        replies.append(content or "")
+
+    told.reply = reply
+    bot = SimpleNamespace(config=SimpleNamespace())
+    asyncio.run(bot_client.handle_dispute(bot, told))
+    return replies
+
+
+def test_a_notification_is_read_and_flagged(monkeypatch):
+    (said,) = _noticing(monkeypatch, NOTICE)
+
+    assert "Jose Zambrano" in said
+    assert "$1,552.50" in said
+    assert "24556406167808942703416" in said
+    assert "Still needed" not in said
+
+
+def test_what_is_missing_is_named(monkeypatch):
+    (said,) = _noticing(
+        monkeypatch,
+        "MID: 510200014664\nAcquirer's Reference Number: 2455640616780\n"
+        "Customer Name: Jose Zambrano\n",
+    )
+
+    assert "Still needed" in said
+    assert "Dispute Dollar Amount" in said
+
+
+def test_somebody_talking_in_the_channel_is_not_a_chargeback(monkeypatch):
+    """A flag on every message is a flag nobody reads."""
+    assert _noticing(monkeypatch, "anyone seen the one from yesterday?") == []
+    assert _noticing(monkeypatch, "") == []
+
+
+def test_it_says_what_is_still_a_persons_job(monkeypatch):
+    """Uploading to ElevateQS has no API, so it stays with somebody."""
+    (said,) = _noticing(monkeypatch, NOTICE)
+
+    assert "ElevateQS" in said
+    assert "@RYTE rebuttal" in said
+
+
+def test_the_channel_is_the_one_that_was_configured():
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    config = NS(secrets=NS(discord_dispute_channel_id="123"))
+    here = NS(channel=NS(id=123))
+    elsewhere = NS(channel=NS(id=456))
+
+    assert bot_client.is_dispute(here, config) is True
+    assert bot_client.is_dispute(elsewhere, config) is False
+    assert bot_client.is_dispute(here, NS(secrets=NS(discord_dispute_channel_id=None))) is False

@@ -323,6 +323,9 @@ class WilByteBot(discord.Client):
             except Exception:
                 log.exception("Couldn't offer to put that on the board")
             return
+        if is_dispute(message, self.config):
+            await handle_dispute(self, message)
+            return
         if is_payment(message, self.config):
             await handle_payment(self, message)
             return
@@ -371,6 +374,18 @@ def is_payment(message, config: Config) -> bool:
     exactly this.
     """
     where = config.secrets.discord_payment_channel_id
+    channel = getattr(message, "channel", None)
+    return bool(where) and str(getattr(channel, "id", "")) == str(where)
+
+
+def is_dispute(message, config: Config) -> bool:
+    """True for a message in the channel chargeback notifications land in.
+
+    Not filtered by author, the same as the payments channel: the acquirer's
+    notices arrive through something else's account, and somebody chose that
+    channel for exactly this.
+    """
+    where = config.secrets.discord_dispute_channel_id
     channel = getattr(message, "channel", None)
     return bool(where) and str(getattr(channel, "id", "")) == str(where)
 
@@ -4232,6 +4247,62 @@ async def _levinson_members(bot: "WilByteBot") -> tuple[list, list[str]]:
     return members, notes
 
 
+async def handle_dispute(bot: "WilByteBot", message) -> None:
+    """One chargeback notification, read and flagged. Nothing is sent.
+
+    The first step of a longer job: a dispute lands, somebody has to notice
+    it, gather the agent's sheet and invoice and contract and conversation,
+    and write the rebuttal. Until now noticing it meant reading the channel,
+    and starting meant pasting the notice back to RYTE by hand.
+
+    So he reads what he can off the notice itself and says what is still
+    missing, with the button that writes the document. He answers every
+    message in that channel, because the channel is for this - but he only
+    ever posts a flag. Nothing is uploaded, nobody is removed, and no
+    chargeback is answered without somebody pressing something.
+    """
+    from .. import rebuttal as rules_doc
+
+    said = (message.content or "").strip()
+    if not said:
+        return
+
+    # Read off the labels only. `named_in` is for a command line and would
+    # take the first four words of the notice as somebody's name.
+    found = rules_doc.read_facts(said)
+
+    # Nothing that looks like a dispute at all. Somebody talking in the
+    # channel is not a chargeback, and a flag on every message is a flag
+    # nobody reads.
+    holes = found.missing()
+    if len(holes) >= 3 and not found.arn and not found.mid:
+        return
+
+    lines = [
+        f"**{label}** — {value}"
+        for label, value in (
+            ("Customer", found.customer_name),
+            ("Amount", found.amount),
+            ("Transaction", found.transaction_date),
+            ("Dispute date", found.dispute_date),
+            ("Reason", found.reason),
+            ("ARN", found.arn),
+        ) if value
+    ]
+    note = "⚖️ **Chargeback**\n" + "\n".join(f"• {one}" for one in lines)
+    if holes:
+        note += "\n⚠ Still needed: " + ", ".join(f"**{one}**" for one in holes)
+    note += (
+        "\n-# Reply to the notice with `@RYTE rebuttal` and the screenshots, "
+        "sheet and invoice attached, and I'll write the response. "
+        "Uploading it to ElevateQS is still yours."
+    )
+    try:
+        await message.reply(note, mention_author=False)
+    except Exception:
+        log.exception("Couldn't flag that chargeback")
+
+
 async def handle_payment(bot: "WilByteBot", message) -> None:
     """One Payra notification, onto the Levinson tracker if it is theirs.
 
@@ -4993,6 +5064,8 @@ def preflight(config: Config) -> list[str]:
         (config.secrets.trello_auto, "TRELLO_AUTO", "walk the board on the clock"),
         (config.secrets.trello_agents_auto, "TRELLO_AGENTS_AUTO",
          "file new agents, and watch for wrong leads and wrong days"),
+        (config.secrets.discord_dispute_channel_id, "DISCORD_DISPUTE_CHANNEL_ID",
+         "read and flag chargeback notifications as they land"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
          "offer new comments and description lines as they are written"),
     ):
