@@ -4322,9 +4322,10 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
     if where:
         note += f"\n[The notice]({where})"
     note += (
-        "\n-# Reply to it with `@RYTE rebuttal` and the screenshots, sheet "
-        "and invoice attached, and I'll write the response. Uploading it to "
-        "ElevateQS is still yours."
+        "\n-# Reply to it with `@RYTE rebuttal` and the text screenshots "
+        "attached. Their card, what they ordered, the setup confirmations and "
+        "the delivered lead sheet I find myself. Uploading it to ElevateQS is "
+        "still yours."
     )
 
     responder = _chargeback_responder(bot)

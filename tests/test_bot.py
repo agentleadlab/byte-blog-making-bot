@@ -4586,11 +4586,15 @@ def test_somebody_talking_in_the_channel_is_not_a_chargeback(monkeypatch):
 
 
 def test_it_says_what_is_still_a_persons_job(monkeypatch):
-    """Uploading to ElevateQS has no API, so it stays with somebody."""
+    """Uploading to ElevateQS has no API, so it stays with somebody. The sheet
+    does not: RYTE finds their card by name, reads the setup confirmations and
+    pulls the sheet link out of them."""
     (said,) = _noticing(monkeypatch, NOTICE)
 
     assert "ElevateQS" in said
     assert "@RYTE rebuttal" in said
+    assert "I find myself" in said
+    assert "sheet attached" not in said
 
 
 def test_the_channel_is_the_one_that_was_configured():
