@@ -4282,3 +4282,105 @@ def test_a_fourth_job_on_the_same_comment_is_still_new(monkeypatch):
     )
 
     assert "1 new item(s)" in again[0]
+
+
+# ------------------------- a message in the channel, put on the board
+
+
+class Said:
+    """One Discord message, and optionally the one it answers."""
+
+    def __init__(self, content, *, author="Franklin", answering=None):
+        self.content = content
+        self.author = SimpleNamespace(display_name=author, name=author)
+        self.reference = (
+            SimpleNamespace(resolved=answering, message_id=1) if answering else None
+        )
+        self.attachments = []
+
+
+def _putting(monkeypatch, said, *, answering=None):
+    """`@RYTE put on trello`, with the board stubbed."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    posted = {}
+
+    def comment(config, *, kind, day, text):
+        posted.update({"kind": kind, "day": day, "text": text})
+        return f"💎 General {day:%m/%d/%y}", "https://trello.com/c/AAA", []
+
+    monkeypatch.setattr(bot_client.jobs, "comment_on_daily", comment)
+    monkeypatch.setattr(
+        bot_client, "_today", lambda cfg: date(2026, 9, 14),
+    )
+
+    heard = Asked()
+    config = SimpleNamespace(
+        discord=SimpleNamespace(approval_timeout_seconds=1),
+        schedule=SimpleNamespace(timezone="America/New_York"),
+    )
+    asyncio.run(
+        bot_client._comment_on_card(
+            heard, config, said, Said("put on trello", answering=answering),
+        )
+    )
+    return posted, heard.messages
+
+
+THERESE = "get Ryan hernandez truckers live... hold off on blue collar till EOD"
+
+
+def test_a_reply_puts_that_message_on_the_board(monkeypatch):
+    """A decision gets made in the channel and then has to be copied onto the
+    board by hand — "Put on trello"."""
+    posted, said = _putting(
+        monkeypatch, "", answering=Said(THERESE, author="Therese"),
+    )
+
+    assert posted["text"] == f"Therese: {THERESE}"
+    assert "Said it on" in said[0]
+
+
+def test_whoever_said_it_is_said_too(monkeypatch):
+    """Every comment RYTE writes is signed by RYTE's own account, so without
+    the name the board says he decided to hold off on blue collar."""
+    posted, _said = _putting(
+        monkeypatch, "", answering=Said("do the thing", author="Tre Tarpley"),
+    )
+
+    assert posted["text"].startswith("Tre Tarpley: ")
+
+
+def test_the_card_can_be_named_in_the_same_breath(monkeypatch):
+    posted, said = _putting(
+        monkeypatch, "on ops", answering=Said(THERESE, author="Therese"),
+    )
+
+    assert posted["kind"] == "ops"
+    assert "Nobody said which card" not in said[0]
+
+
+def test_no_card_named_lands_on_general_and_says_so(monkeypatch):
+    """Said rather than refused — and the message names the card it landed
+    on, so a wrong one is one line away from being right."""
+    posted, said = _putting(
+        monkeypatch, "", answering=Said(THERESE, author="Therese"),
+    )
+
+    assert posted["kind"] == "general"
+    assert "Nobody said which card" in said[0]
+
+
+def test_nothing_to_say_and_nothing_answered_asks_for_words(monkeypatch):
+    posted, said = _putting(monkeypatch, "on ops")
+
+    assert posted == {}
+    assert "reply to the message" in said[0]
+
+
+def test_typing_it_out_still_works_the_way_it_did(monkeypatch):
+    posted, _said = _putting(monkeypatch, "on ops card leads went out late")
+
+    assert (posted["kind"], posted["text"]) == ("ops", "leads went out late")

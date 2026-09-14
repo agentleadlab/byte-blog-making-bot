@@ -811,6 +811,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello daycheck** — every line on a Lead Order card for a day its
 > agent is not live on, read off the agents' own cards. Reads only; nothing
 > is moved
+> @RYTE **put on trello** — as a *reply* to somebody's message, puts that
+> message on the board with their name in front of it. `on ops`, `on ads` or
+> `on lead order` picks the card; otherwise it's General
 > @RYTE **comment on monday general card** Spanish lead discount 15% off
 > — or **add on trello**, **remind on trello**, or the card said last:
 > **comment** leads went out late **on monday general**. All the same thing.

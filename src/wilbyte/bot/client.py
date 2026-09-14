@@ -764,7 +764,9 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "comment":
-                await _comment_on_card(responder, config, request.brief or "")
+                await _comment_on_card(
+                    responder, config, request.brief or "", message,
+                )
                 return
 
             if request.action == "unspread":
@@ -1246,11 +1248,36 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
     await responder.send(embed=_unmarked_card(found, days=covers))
 
 
-async def _comment_on_card(responder: Responder, config: Config, said: str) -> None:
-    """Say something on one of the day's four cards."""
+async def _comment_on_card(
+    responder: Responder, config: Config, said: str, message=None
+) -> None:
+    """Say something on one of the day's four cards.
+
+    Or say what somebody else said. A decision gets made in the channel and
+    then has to be copied onto the board by hand - "@Therese get Ryan
+    hernandez truckers live... hold off on blue collar till EOD / Put on
+    trello" - so replying to that message with `@RYTE put on trello` posts
+    the message itself, with whoever said it in front of it. The board is
+    read by people who were not in the channel, and "Therese said" is half
+    of what the line means.
+    """
     from .. import dailyops
 
     text, kind, day = dailyops.comment_target(said, today=_today(config))
+
+    # Nothing to say, but a message being answered. That is the one being
+    # put on the board - the reply RYTE receives carries none of its words.
+    guessed = False
+    if not text and message is not None:
+        replied = await _replied_to(message)
+        if replied is not None and (replied.content or "").strip():
+            text = _as_somebody_said(replied)
+            if not kind:
+                # Said rather than refused. General is where anything that is
+                # not ops or ads work lives, and the message names the card it
+                # landed on, so a wrong one is one line away from being right.
+                kind, guessed = dailyops.FALLBACK_CARD, True
+
     if not kind:
         await responder.send(
             "Say which card and I'll post it — `@RYTE comment on monday "
@@ -1260,7 +1287,10 @@ async def _comment_on_card(responder: Responder, config: Config, said: str) -> N
         )
         return
     if not text:
-        await responder.send("Give me something to say on it.")
+        await responder.send(
+            "Give me something to say on it — or reply to the message you "
+            "want on the board and say `@RYTE put on trello`."
+        )
         return
 
     try:
@@ -1274,7 +1304,27 @@ async def _comment_on_card(responder: Responder, config: Config, said: str) -> N
     if problems:
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
-    await responder.send(f"Said it on **{title}** — <{url}>")
+    note = f"Said it on **{title}** — <{url}>"
+    if guessed:
+        note += "\n-# Nobody said which card. `on ops`, `on ads` or `on lead order` puts it there instead."
+    await responder.send(note)
+
+
+def _as_somebody_said(message) -> str:
+    """One person's Discord message, ready to be a Trello comment.
+
+    With their name in front of it. Every comment RYTE writes is signed by
+    RYTE's own account, so without this the board says he decided to hold off
+    on blue collar till EOD.
+    """
+    author = getattr(message, "author", None)
+    who = (
+        getattr(author, "display_name", None)
+        or getattr(author, "name", "")
+        or ""
+    ).strip()
+    said = " ".join((message.content or "").split())
+    return f"{who}: {said}" if who else said
 
 
 async def _unspread(responder: Responder, config: Config, said: str) -> None:

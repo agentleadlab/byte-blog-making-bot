@@ -29,6 +29,12 @@ CARD_KINDS = {
     "lead_order": "Lead Order",
 }
 
+# Where a comment goes when nobody said which card. General is the one that
+# holds "anything that is not ops or ads work", so it is the one that is wrong
+# in the smallest way - and the card it landed on is named in the reply either
+# way, so a wrong guess is one line away from being right.
+FALLBACK_CARD = "general"
+
 # The day, as three moves and a carry-over. From how it is actually run:
 # "from In Que, by 9am the cards are moved to Today; Today by 6pm the cards are
 # moved to Quality Check; by 8:30pm all checklist items that aren't checked are
