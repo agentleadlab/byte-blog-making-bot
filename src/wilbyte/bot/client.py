@@ -4257,10 +4257,14 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
     and starting meant pasting the notice back to RYTE by hand.
 
     So he reads what he can off the notice itself and says what is still
-    missing, with the button that writes the document. He answers every
-    message in that channel, because the channel is for this - but he only
-    ever posts a flag. Nothing is uploaded, nobody is removed, and no
-    chargeback is answered without somebody pressing something.
+    missing, with the link back to it. Nothing is uploaded, nobody is removed,
+    and no chargeback is answered without somebody doing it.
+
+    The flag goes to the board channel rather than under the notice. The
+    dispute channel is the acquirer's record of what happened, read by people
+    who are not doing anything about it, and a reply under every notice turns
+    it into a conversation - "i dont want it responding on the dispute
+    channel".
     """
     from .. import rebuttal as rules_doc
 
@@ -4294,16 +4298,24 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
             ("ARN", found.arn),
         ) if value
     ]
+    where = getattr(message, "jump_url", "")
     note = "⚖️ **Chargeback**\n" + "\n".join(f"• {one}" for one in lines)
     if holes:
         note += "\n⚠ Still needed: " + ", ".join(f"**{one}**" for one in holes)
+    if where:
+        note += f"\n[The notice]({where})"
     note += (
-        "\n-# Reply to the notice with `@RYTE rebuttal` and the screenshots, "
-        "sheet and invoice attached, and I'll write the response. "
-        "Uploading it to ElevateQS is still yours."
+        "\n-# Reply to it with `@RYTE rebuttal` and the screenshots, sheet "
+        "and invoice attached, and I'll write the response. Uploading it to "
+        "ElevateQS is still yours."
     )
+
+    responder = _board_responder(bot)
+    if responder is None:
+        log.warning("A chargeback landed and there is no board channel to say so in")
+        return
     try:
-        await message.reply(note, mention_author=False)
+        await responder.send(note)
     except Exception:
         log.exception("Couldn't flag that chargeback")
 

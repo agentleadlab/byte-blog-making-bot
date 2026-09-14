@@ -4540,21 +4540,23 @@ Customer Email: josezagent@gmail.com
 
 
 def _noticing(monkeypatch, said):
-    """One message in the dispute channel."""
+    """One message in the dispute channel, and what RYTE says elsewhere."""
     import asyncio
 
     from wilbyte.bot import client as bot_client
 
-    replies = []
     told = Said(said)
+    told.jump_url = "https://discord.com/channels/1/2/3"
 
-    async def reply(content=None, *, embed=None, view=None, mention_author=True):
-        replies.append(content or "")
+    async def refuse(*a, **k):
+        raise AssertionError("RYTE replied in the dispute channel")
 
-    told.reply = reply
+    told.reply = refuse
+    heard = Asked()
+    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: heard)
     bot = SimpleNamespace(config=SimpleNamespace())
     asyncio.run(bot_client.handle_dispute(bot, told))
-    return replies
+    return heard.messages
 
 
 def test_a_notification_is_read_and_flagged(monkeypatch):
@@ -4686,21 +4688,18 @@ DISPUTE_EMBED = (
 )
 
 
-def _noticing_embed(said_content, embed):
+def _noticing_embed(said_content, embed, monkeypatch=None):
     import asyncio
 
     from wilbyte.bot import client as bot_client
 
-    replies = []
     told = Said(said_content)
     told.embeds = [embed]
-
-    async def reply(content=None, *, embed=None, view=None, mention_author=True):
-        replies.append(content or "")
-
-    told.reply = reply
+    told.jump_url = "https://discord.com/channels/1/2/3"
+    heard = Asked()
+    bot_client._board_responder = lambda bot: heard
     asyncio.run(bot_client.handle_dispute(SimpleNamespace(config=None), told))
-    return replies
+    return heard.messages
 
 
 def test_the_notification_is_read_out_of_the_embed():
@@ -4746,3 +4745,27 @@ def test_the_fields_can_be_embed_fields_instead():
 
 def test_an_embed_with_nothing_in_it_is_not_a_chargeback():
     assert _noticing_embed("@here", Embedded(description="have a look")) == []
+
+
+def test_the_flag_goes_to_the_board_channel_not_the_dispute_one(monkeypatch):
+    """"i dont want it responding on the dispute channel" — that channel is
+    the acquirer's record, read by people who are not acting on it."""
+    (said,) = _noticing(monkeypatch, NOTICE)
+
+    assert "Jose Zambrano" in said
+    assert "https://discord.com/channels/1/2/3" in said
+
+
+def test_a_chargeback_with_nowhere_to_say_it_says_nothing(monkeypatch):
+    from wilbyte.bot import client as bot_client
+
+    told = Said(NOTICE)
+
+    async def refuse(*a, **k):
+        raise AssertionError("RYTE replied in the dispute channel")
+
+    told.reply = refuse
+    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: None)
+
+    import asyncio
+    asyncio.run(bot_client.handle_dispute(SimpleNamespace(config=None), told))
