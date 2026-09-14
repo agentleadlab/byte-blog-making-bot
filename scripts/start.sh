@@ -36,6 +36,23 @@ trap 'printf "\n\033[1mStopped.\033[0m\n"; exit 0' INT
 # work. Non-fatal by design: a failed update still starts the copy you have.
 bash scripts/update.sh
 
+# The package itself, not just the folder. A venv can lose it - macOS moves
+# Python out from under it on an update, and the editable link points at
+# nothing - and the only sign is "ModuleNotFoundError: No module named
+# 'wilbyte'" at the moment somebody is trying to start work. Putting it back
+# is one command, so do it rather than print it.
+if ! ./.venv/bin/python -c "import wilbyte" >/dev/null 2>&1; then
+  printf '\n\033[1mPutting RYTE back into the environment\033[0m — one moment.\n'
+  if ! ./.venv/bin/pip install --quiet -e . >/dev/null 2>&1 \
+     || ! ./.venv/bin/python -c "import wilbyte" >/dev/null 2>&1; then
+    printf '\n\033[31m✗ The environment is broken. This rebuilds it:\033[0m\n\n' >&2
+    printf '    rm -rf .venv && bash scripts/setup.sh\n\n' >&2
+    printf 'Your .env and its keys are left alone.\n\n' >&2
+    exit 1
+  fi
+  printf '\033[32m✓ Back.\033[0m\n'
+fi
+
 printf '\n\033[1mStarting RYTE\033[0m — leave this window open. Ctrl-C to stop.\n\n'
 
 while true; do
