@@ -136,7 +136,7 @@ python3 -m venv .venv
 .venv/bin/playwright install chromium     # skip if Chromium is already provisioned
 
 cp .env.example .env                       # then fill it in
-.venv/bin/wilbyte doctor                   # verify config + credentials + GHL access
+.venv/bin/python -m wilbyte doctor          # verify config + credentials + GHL access
 ```
 
 `.env` needs a Discord bot token (see below), an Anthropic API key, and a GHL **Private Integration** token for the

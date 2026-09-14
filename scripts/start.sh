@@ -36,28 +36,42 @@ trap 'printf "\n\033[1mStopped.\033[0m\n"; exit 0' INT
 # work. Non-fatal by design: a failed update still starts the copy you have.
 bash scripts/update.sh
 
-# The package itself, not just the folder. A venv can lose it - macOS moves
-# Python out from under it on an update, and the editable link points at
-# nothing - and the only sign is "ModuleNotFoundError: No module named
-# 'wilbyte'" at the moment somebody is trying to start work. Putting it back
-# is one command, so do it rather than print it.
-if ! ./.venv/bin/python -c "import wilbyte" >/dev/null 2>&1; then
-  printf '\n\033[1mPutting RYTE back into the environment\033[0m — one moment.\n'
-  if ! ./.venv/bin/pip install --quiet -e . >/dev/null 2>&1 \
-     || ! ./.venv/bin/python -c "import wilbyte" >/dev/null 2>&1; then
-    printf '\n\033[31m✗ The environment is broken. This rebuilds it:\033[0m\n\n' >&2
+# The code is in src/, and that is where RYTE is run from - not through the
+# `wilbyte` command pip writes into .venv/bin, and not through the editable
+# install pip links alongside it. Both of those are pointers rather than the
+# thing itself, and on the morning of the 14th they pointed at nothing: the
+# code freshly pulled, and "ModuleNotFoundError: No module named 'wilbyte'".
+# Nothing here can come unstuck that way again, because there is no pointer
+# left to come unstuck.
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# The venv's own Python is the one piece that has to work, and a Python that
+# has moved out from under a venv is not something a script should paper over.
+if ! ./.venv/bin/python -c "" >/dev/null 2>&1; then
+  printf '\n\033[31m✗ The virtual environment has lost its Python.\033[0m\n\n' >&2
+  printf 'This rebuilds it:\n\n    rm -rf .venv && bash scripts/setup.sh\n\n' >&2
+  printf 'Your .env and its keys are left alone.\n\n' >&2
+  exit 1
+fi
+
+# The libraries, which are installed rather than linked and so go wrong far
+# less often - but a half-finished install is still worth putting right here
+# rather than as a traceback.
+if ! ./.venv/bin/python -c "import discord, anthropic" >/dev/null 2>&1; then
+  printf '\n\033[1mInstalling what RYTE needs\033[0m — one moment.\n'
+  if ! ./.venv/bin/pip install --quiet -e . >/dev/null 2>&1; then
+    printf '\n\033[31m✗ That did not work. This rebuilds it:\033[0m\n\n' >&2
     printf '    rm -rf .venv && bash scripts/setup.sh\n\n' >&2
-    printf 'Your .env and its keys are left alone.\n\n' >&2
     exit 1
   fi
-  printf '\033[32m✓ Back.\033[0m\n'
+  printf '\033[32m✓ Ready.\033[0m\n'
 fi
 
 printf '\n\033[1mStarting RYTE\033[0m — leave this window open. Ctrl-C to stop.\n\n'
 
 while true; do
   set +e
-  ./.venv/bin/wilbyte bot
+  ./.venv/bin/python -m wilbyte bot
   code=$?
   set -e
 
