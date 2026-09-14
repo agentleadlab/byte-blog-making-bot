@@ -2540,7 +2540,7 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             if str(one.get("name") or "").strip() in mine
         ]
 
-    wants, unknown, ongoing, nothing_said = [], set(), [], []
+    wants, unknown, nothing_said = [], set(), []
     for kind, card in wanted.items():
         card_id = str(card.get("id") or "")
         short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
@@ -2557,7 +2557,6 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             # already on their list, so the line would say again what is
             # there - "if it says ongoing order specifically, dont add".
             if tagged.an_ongoing_order(note.text):
-                ongoing.append(note)
                 continue
 
             # A screenshot and a tag. Trello writes the attachment into the
@@ -2644,16 +2643,12 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                     filed=tagged.how_many_filed(note, held_by(person)),
                 ))
 
-    if ongoing:
-        # Said, not swallowed. A skip nobody can see is the thing that
-        # has cost the most time on this board.
-        problems.append(
-            f"{len(ongoing)} said 'ongoing order', so the agent's own card "
-            "already covers it and I left them: "
-            + "; ".join(
-                tagged.trim(one.text)[:40] or one.comment_id for one in ongoing
-            )
-        )
+    # An ongoing order is not reported. A skip nobody can see is usually the
+    # bug, and this one is the exception: it is a rule that was set - "if it
+    # says ongoing order specifically, dont add" - rather than something RYTE
+    # decided, and the agent's own card is already on the list. Saying it
+    # every run is a warning about nothing, and warnings about nothing are how
+    # the one that matters stops being read.
     if unknown:
         for name in sorted(unknown):
             _jot(noticed, "no_checklist", f"@{name}")

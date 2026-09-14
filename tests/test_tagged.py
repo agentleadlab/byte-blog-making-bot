@@ -747,9 +747,9 @@ def test_an_ongoing_order_is_left_alone(config, monkeypatch):
     tasks, problems = planning(board, monkeypatch, config)
 
     assert tasks == []
-    # Said, not swallowed. A skip nobody can see is what has cost the most
-    # time on this board.
-    assert any("ongoing order" in one for one in problems)
+    # And not reported. It is a rule that was set rather than something RYTE
+    # decided, so saying it every run is a warning about nothing.
+    assert problems == []
 
 
 @pytest.mark.parametrize(
