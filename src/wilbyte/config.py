@@ -243,6 +243,12 @@ class Secrets:
     # minted while signed in as whoever gets the invoices. Left blank, Gmail
     # uses the same token as everything else.
     gmail_refresh_token: str | None = None
+    # And its own OAuth client, when the token was minted against a different
+    # one. The project has several - Ryte, Ryte Leads - and a token belongs to
+    # the client it was minted under as much as to the account. Blank, and
+    # Gmail uses the client everything else does.
+    gmail_client_id: str | None = None
+    gmail_client_secret: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -343,6 +349,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_chargeback_channel_id=_env("DISCORD_CHARGEBACK_CHANNEL_ID"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
+                gmail_client_id=_env("GMAIL_CLIENT_ID"),
+                gmail_client_secret=_env("GMAIL_CLIENT_SECRET"),
             ),
             path=config_path,
         )

@@ -273,5 +273,15 @@ def open_gmail(secrets) -> GmailClient:
         raise GmailError(str(exc).replace("Google Sheets", "Gmail")) from exc
     instead = (getattr(secrets, "gmail_refresh_token", "") or "").strip()
     if instead:
-        creds = Credentials(creds.client_id, creds.client_secret, instead)
+        # And its own client when it has one. A refresh token belongs to the
+        # OAuth client it was minted under as much as to the person, and this
+        # project has several - so a token minted against "Ryte" is refused by
+        # "Ryte Leads" with "unauthorized_client" and nothing else to go on.
+        creds = Credentials(
+            (getattr(secrets, "gmail_client_id", "") or "").strip()
+            or creds.client_id,
+            (getattr(secrets, "gmail_client_secret", "") or "").strip()
+            or creds.client_secret,
+            instead,
+        )
     return GmailClient(creds, sender=getattr(secrets, "gmail_invoice_sender", ""))

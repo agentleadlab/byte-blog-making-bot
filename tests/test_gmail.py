@@ -264,3 +264,57 @@ def test_the_plain_part_wins_when_there_is_one(monkeypatch):
     })
 
     assert said == "the plain one"
+
+
+def test_gmail_can_have_its_own_oauth_client(monkeypatch):
+    """A refresh token belongs to the client it was minted under as much as to
+    the person, and this project has several — so "unauthorized_client" with
+    nothing else to go on."""
+    used = {}
+
+    class Tokens(FakeGmail):
+        def post(self, url, data=None, **kwargs):
+            used.update(data or {})
+            return super().post(url, data=data, **kwargs)
+
+    fake = Tokens()
+    monkeypatch.setattr(gmail.httpx, "Client", lambda **kw: fake)
+    one = gmail.open_gmail(SimpleNamespace(
+        google_client_id="935508900085-sheets",
+        google_client_secret="sheets-secret",
+        google_refresh_token="the-sheets-one",
+        gmail_client_id="965472774442-gmail",
+        gmail_client_secret="gmail-secret",
+        gmail_refresh_token="the-invoice-one",
+        gmail_invoice_sender="AgentLeadLab@payra.com",
+    ))
+    one.invoices_for("Jay")
+
+    assert used["client_id"] == "965472774442-gmail"
+    assert used["client_secret"] == "gmail-secret"
+    assert used["refresh_token"] == "the-invoice-one"
+
+
+def test_one_client_for_everything_still_needs_nothing_extra(monkeypatch):
+    used = {}
+
+    class Tokens(FakeGmail):
+        def post(self, url, data=None, **kwargs):
+            used.update(data or {})
+            return super().post(url, data=data, **kwargs)
+
+    fake = Tokens()
+    monkeypatch.setattr(gmail.httpx, "Client", lambda **kw: fake)
+    one = gmail.open_gmail(SimpleNamespace(
+        google_client_id="935508900085-sheets",
+        google_client_secret="sheets-secret",
+        google_refresh_token="the-sheets-one",
+        gmail_client_id="",
+        gmail_client_secret="",
+        gmail_refresh_token="the-invoice-one",
+        gmail_invoice_sender="AgentLeadLab@payra.com",
+    ))
+    one.invoices_for("Jay")
+
+    assert used["client_id"] == "935508900085-sheets"
+    assert used["refresh_token"] == "the-invoice-one"
