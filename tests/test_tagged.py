@@ -1473,3 +1473,44 @@ def test_a_comment_that_is_only_a_screenshot_is_left(config, monkeypatch):
 
     assert tasks == []
     assert any("attached to them" in one for one in problems)
+
+
+# ---------------------------------- a line with words as well as a tag
+
+DEV = """- @elisadeko2
+  - SMS Active Campaign
+  - Aged Lead Distro
+- Refund/Resend Parker - Everlife
+- Dev Dayalal @tretarpley
+  - Talking over weekend to buy leads, hit up. Deciding between Vets + MP
+- @jenniferhashisaki2 @kathleenmarie15
+  - Call with Tyson today @ 12EST
+"""
+
+
+def test_a_line_with_words_and_a_tag_owns_what_is_under_it():
+    """"Dev Dayalal @tretarpley" with "Talking over weekend to buy leads"
+    under it is one job of Tre's written on two lines, and the second was
+    landing on nobody."""
+    theirs, _nobody = tagged.description_tasks(DEV)
+
+    assert [one.text for one in theirs if one.username == "tretarpley"] == [
+        "Dev Dayalal",
+        "Talking over weekend to buy leads, hit up. Deciding between Vets + MP",
+    ]
+
+
+def test_a_line_nobody_is_named_on_is_nobodys():
+    """"who are you tagging Refund/Resend Parker - Everlife if i ask you" —
+    nobody, and it says so rather than guessing."""
+    _theirs, nobody = tagged.description_tasks(DEV)
+
+    assert nobody == ["Refund/Resend Parker - Everlife"]
+
+
+def test_two_tags_on_one_block_is_a_job_for_both():
+    theirs, _nobody = tagged.description_tasks(DEV)
+
+    assert [
+        one.username for one in theirs if one.text.startswith("Call with Tyson")
+    ] == ["jenniferhashisaki2", "kathleenmarie15"]

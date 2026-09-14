@@ -347,6 +347,12 @@ def description_tasks(text: str) -> tuple[list, list[str]]:
                 stack.append((row.depth, row.tags))
             continue
         owners[number] = stack[-1][1] if stack else row.tags
+        # A line with words *and* a tag opens a block too. "Dev Dayalal
+        # @tretarpley" with "Talking over weekend to buy leads" under it is
+        # one job of Tre's written on two lines, and the second was landing
+        # on nobody.
+        if row.tags and deeper[number]:
+            stack.append((row.depth, row.tags))
 
     # A tag under a line claims the line above it. Done after the walk because
     # the line was read before its own tag was.
