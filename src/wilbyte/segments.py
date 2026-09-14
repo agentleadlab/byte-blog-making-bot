@@ -299,20 +299,35 @@ COLD_OPEN_SECONDS = 60
 
 
 def _trim_cold_open(keep: list[Segment]) -> None:
-    """Start the full interview where the first clip does, not at 00:00:00.
+    """Make the full interview cover the clips cut out of it.
 
-    The first clip is placed at a boundary the model judged worth starting on,
-    so the seconds before it are the greetings and the mic check. Only a short
-    gap is trimmed: a first clip that starts ten minutes in means the opening
-    was interview, just not clippable, and the full upload should keep it.
+    The start: where the first clip does, not at 00:00:00. The first clip is
+    placed at a boundary the model judged worth starting on, so the seconds
+    before it are the greetings and the mic check. Only a short gap is
+    trimmed - a first clip that starts ten minutes in means the opening was
+    interview, just not clippable, and the full upload should keep it.
+
+    The end: wherever the last clip ends, always. Leo Lopez's came back as a
+    full interview of 00:03:14-00:31:51 with a fifth segment running to
+    00:34:03, so the full upload stopped two minutes into its own last clip.
+    There is no judgement to make there: a clip the model cut is content, and
+    a full interview that does not reach the end of it is not full.
+
+    What comes after the last clip is left out, which is right. The tail of
+    Leo's was 2:58 of goodbyes, dropped for being under four minutes, and
+    nothing is served by putting it back.
     """
     clips = [segment for segment in keep if not segment.long_form]
     if not clips:
         return
     opens = min(clip.start for clip in clips)
+    closes = max(clip.end for clip in clips)
     for segment in keep:
-        if segment.long_form and 0 <= opens - segment.start <= COLD_OPEN_SECONDS:
+        if not segment.long_form:
+            continue
+        if 0 <= opens - segment.start <= COLD_OPEN_SECONDS:
             segment.start = opens
+        segment.end = max(segment.end, closes)
 
 
 def _one_segment(raw: dict) -> Segment:

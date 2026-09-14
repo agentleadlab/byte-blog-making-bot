@@ -619,3 +619,49 @@ def test_a_topic_with_no_name_in_it_still_names_something():
     """Trimming is never allowed to leave nothing behind."""
     assert segments.card_title("Interview") == "Interview"
     assert segments.card_title("Strategy Session") == "Strategy Session Interview"
+
+
+def _clip(start, end, *, long_form=False, title="x"):
+    return segments.Segment(
+        start=start, end=end, yt_title=title,
+        website_section=segments.SECTIONS[0], hook="h",
+        bullets=["a", "b", "c"], long_form=long_form,
+    )
+
+
+def test_the_full_interview_reaches_the_end_of_its_last_clip():
+    """Leo Lopez's came back as 00:03:14–00:31:51 with a fifth segment running
+    to 00:34:03, so the full upload stopped two minutes into its own clip."""
+    keep = [
+        _clip(194, 1911, long_form=True),   # 03:14–31:51
+        _clip(194, 435),                    # 03:14–07:15
+        _clip(1794, 2043),                  # 29:54–34:03
+    ]
+
+    segments._trim_cold_open(keep)
+
+    assert keep[0].end == 2043
+    assert keep[0].range == "00:03:14–00:34:03"
+
+
+def test_it_never_pulls_the_ending_in():
+    """A full interview that runs past its last clip is somebody's judgement,
+    not an error."""
+    keep = [_clip(0, 3000, long_form=True), _clip(60, 400)]
+
+    segments._trim_cold_open(keep)
+
+    assert keep[0].end == 3000
+
+
+def test_the_cold_open_rule_is_unchanged():
+    keep = [_clip(0, 1000, long_form=True), _clip(30, 400)]
+
+    segments._trim_cold_open(keep)
+
+    assert keep[0].start == 30
+
+    # Ten minutes in is the interview starting, not a mic check.
+    keep = [_clip(0, 3000, long_form=True), _clip(600, 1200)]
+    segments._trim_cold_open(keep)
+    assert keep[0].start == 0
