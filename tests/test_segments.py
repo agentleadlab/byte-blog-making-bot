@@ -665,3 +665,22 @@ def test_the_cold_open_rule_is_unchanged():
     keep = [_clip(0, 3000, long_form=True), _clip(600, 1200)]
     segments._trim_cold_open(keep)
     assert keep[0].start == 0
+
+
+def test_every_interview_card_asks_for_its_image():
+    """"also, always comment this / Tag @faithhannahcalla need agent name
+    image" — every card wants a thumbnail and asking was something somebody
+    had to remember."""
+    assert segments.needs_an_image("Interview with Leonardo Lopez") == (
+        "@faithhannahcalla needs Leonardo Lopez image"
+    )
+
+
+def test_the_ask_uses_the_same_name_the_card_does():
+    for topic in ("Maddy Grundig", "Strategy Session - Maddy Grundig",
+                  "Zoom Meeting with Tre"):
+        who = segments.client_name(topic)
+        assert segments.needs_an_image(topic) == (
+            f"@{segments.THUMBNAIL_FROM} needs {who} image"
+        )
+        assert segments.card_title(topic).startswith(who)

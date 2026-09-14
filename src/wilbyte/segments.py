@@ -546,6 +546,17 @@ def client_name(topic: str) -> str:
     return _MEETING_WORDS.sub("", text).strip(" -–—|,") or text
 
 
+#: Who makes the thumbnail, and what they need to make it. Every interview
+#: card wants one and asking was a thing somebody remembered to do.
+THUMBNAIL_FROM = "faithhannahcalla"
+
+
+def needs_an_image(topic: str) -> str:
+    """The comment that goes on every interview card, asking for the image."""
+    name = client_name(topic) or "the guest"
+    return f"@{THUMBNAIL_FROM} needs {name} image"
+
+
 _SAYS_INTERVIEW = re.compile(r"\binterviews?\b", re.IGNORECASE)
 
 

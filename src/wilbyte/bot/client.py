@@ -2629,7 +2629,8 @@ async def _file_interview(
 
     try:
         url, problems = await asyncio.to_thread(
-            jobs.file_interview, config, name=name, description=description
+            jobs.file_interview, config, name=name, description=description,
+            ask=segmenting.needs_an_image(topic),
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't make the board card: {exc}"))

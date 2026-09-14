@@ -4603,3 +4603,64 @@ def test_the_channel_is_the_one_that_was_configured():
     assert bot_client.is_dispute(here, config) is True
     assert bot_client.is_dispute(elsewhere, config) is False
     assert bot_client.is_dispute(here, NS(secrets=NS(discord_dispute_channel_id=None))) is False
+
+
+def test_the_interview_card_is_made_then_asked_about(config, monkeypatch):
+    """The comment is its own request, so it fails on its own and says so."""
+    done = []
+
+    class Board:
+        def board_lists(self, _board_id):
+            return [{"id": "L", "name": "Marketing Department"}]
+
+        def create_card(self, list_id, name, **kwargs):
+            done.append(("card", name))
+            return {"id": "c", "url": "https://trello.com/c/abc"}
+
+        def set_description(self, card_id, text):
+            done.append(("description", text[:20]))
+
+        def add_comment(self, card_id, text):
+            done.append(("comment", text))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+
+    url, problems = jobs.file_interview(
+        config, name="Leonardo Lopez Interview", description="the index",
+        ask="@faithhannahcalla needs Leonardo Lopez image",
+    )
+
+    assert problems == []
+    assert url == "https://trello.com/c/abc"
+    assert done[0][0] == "card"
+    assert done[-1] == ("comment", "@faithhannahcalla needs Leonardo Lopez image")
+
+
+def test_a_card_that_could_not_be_asked_about_still_says_so(config, monkeypatch):
+    class Board:
+        def board_lists(self, _board_id):
+            return [{"id": "L", "name": "Marketing Department"}]
+
+        def create_card(self, list_id, name, **kwargs):
+            return {"id": "c", "url": "https://trello.com/c/abc"}
+
+        def set_description(self, card_id, text):
+            pass
+
+        def add_comment(self, card_id, text):
+            raise RuntimeError("Trello said no")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+
+    url, problems = jobs.file_interview(
+        config, name="x", description="y", ask="@faithhannahcalla needs x image",
+    )
+
+    assert url == "https://trello.com/c/abc"
+    assert "couldn't ask for the image" in problems[0]

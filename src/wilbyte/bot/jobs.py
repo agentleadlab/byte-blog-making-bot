@@ -1008,7 +1008,9 @@ def timed_call_transcript(config: Config, rec) -> tuple[list, str, str, str]:
     )
 
 
-def file_interview(config: Config, *, name: str, description: str) -> tuple[str, list[str]]:
+def file_interview(
+    config: Config, *, name: str, description: str, ask: str = ""
+) -> tuple[str, list[str]]:
     """Put a cut-up interview on the board. (card url, problems).
 
     A new card every time, never an edit of one already there: two interviews
@@ -1036,6 +1038,16 @@ def file_interview(config: Config, *, name: str, description: str) -> tuple[str,
             client.set_description(str(card.get("id") or ""), description)
         except Exception as exc:
             problems.append(f"Made the card but couldn't write its description — {_short(exc, 160)}")
+
+        # Every interview card needs a thumbnail and somebody had to remember
+        # to ask for one. Its own request, so it fails on its own and says so.
+        if ask:
+            try:
+                client.add_comment(str(card.get("id") or ""), ask)
+            except Exception as exc:
+                problems.append(
+                    f"Made the card but couldn't ask for the image — {_short(exc, 160)}"
+                )
         return str(card.get("url") or ""), problems
     finally:
         client.close()

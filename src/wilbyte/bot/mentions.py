@@ -796,7 +796,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Works on a Zoom, Fathom or YouTube link, or reply to the message with it
 > @RYTE **segment Antonio Bohorquez** — by who's on it. Zoom hands out a
 > different share token than its API returns, so the name is what matches
-> Each one also gets a card in **Marketing Department** — the client's name,
+> Each one also gets a card in **Marketing Department** with a comment asking
+> Faith for the thumbnail — the client's name,
 > every stamp and title, and the recording link with its passcode
 > @RYTE **calls** — which Zoom and Fathom recordings I can actually read
 > @RYTE **fields** — what GHL is really storing on each post
