@@ -1942,6 +1942,23 @@ def _board_responder(bot: "WilByteBot"):
     channel = bot.get_channel(int(configured)) if configured else _post_channel(bot)
     return ChannelResponder(channel) if channel is not None else None
 
+
+def _chargeback_responder(bot: "WilByteBot"):
+    """Where a chargeback is said. Its own channel, or the board's.
+
+    Its own, because a dispute is money and is nobody's daily routine: on the
+    board channel it arrives between a rollover and a list of tagged comments
+    and is scrolled past with them.
+    """
+    configured = getattr(
+        bot.config.secrets, "discord_chargeback_channel_id", None
+    )
+    if configured:
+        channel = bot.get_channel(int(configured))
+        if channel is not None:
+            return ChannelResponder(channel)
+    return _board_responder(bot)
+
 # Terminal colour codes out of a subprocess's error output. yt-dlp writes them
 # even when nothing is a terminal, and they arrive in Discord as "[0;31mERROR"
 # in the middle of the sentence somebody is trying to read.
@@ -4310,9 +4327,9 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
         "ElevateQS is still yours."
     )
 
-    responder = _board_responder(bot)
+    responder = _chargeback_responder(bot)
     if responder is None:
-        log.warning("A chargeback landed and there is no board channel to say so in")
+        log.warning("A chargeback landed and there is no channel to say so in")
         return
     try:
         await responder.send(note)
@@ -5083,6 +5100,8 @@ def preflight(config: Config) -> list[str]:
          "file new agents, and watch for wrong leads and wrong days"),
         (config.secrets.discord_dispute_channel_id, "DISCORD_DISPUTE_CHANNEL_ID",
          "read and flag chargeback notifications as they land"),
+        (config.secrets.discord_chargeback_channel_id, "DISCORD_CHARGEBACK_CHANNEL_ID",
+         "say them in their own channel rather than with the board"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
          "offer new comments and description lines as they are written"),
     ):

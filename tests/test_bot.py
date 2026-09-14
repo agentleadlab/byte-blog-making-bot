@@ -4553,7 +4553,7 @@ def _noticing(monkeypatch, said):
 
     told.reply = refuse
     heard = Asked()
-    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: heard)
+    monkeypatch.setattr(bot_client, "_chargeback_responder", lambda bot: heard)
     bot = SimpleNamespace(config=SimpleNamespace())
     asyncio.run(bot_client.handle_dispute(bot, told))
     return heard.messages
@@ -4688,7 +4688,7 @@ DISPUTE_EMBED = (
 )
 
 
-def _noticing_embed(said_content, embed, monkeypatch=None):
+def _noticing_embed(monkeypatch, said_content, embed):
     import asyncio
 
     from wilbyte.bot import client as bot_client
@@ -4696,15 +4696,20 @@ def _noticing_embed(said_content, embed, monkeypatch=None):
     told = Said(said_content)
     told.embeds = [embed]
     told.jump_url = "https://discord.com/channels/1/2/3"
+
+    async def refuse(*a, **k):
+        raise AssertionError("RYTE replied in the dispute channel")
+
+    told.reply = refuse
     heard = Asked()
-    bot_client._board_responder = lambda bot: heard
+    monkeypatch.setattr(bot_client, "_chargeback_responder", lambda bot: heard)
     asyncio.run(bot_client.handle_dispute(SimpleNamespace(config=None), told))
     return heard.messages
 
 
-def test_the_notification_is_read_out_of_the_embed():
+def test_the_notification_is_read_out_of_the_embed(monkeypatch):
     """The message itself is "@here" — every field is in the embed."""
-    (said,) = _noticing_embed("@here", Embedded(
+    (said,) = _noticing_embed(monkeypatch, "@here", Embedded(
         title="Disputed Payment | Elevateqs ❌", description=DISPUTE_EMBED,
     ))
 
@@ -4730,9 +4735,9 @@ def test_bold_labels_do_not_end_up_in_the_values():
     )
 
 
-def test_the_fields_can_be_embed_fields_instead():
+def test_the_fields_can_be_embed_fields_instead(monkeypatch):
     """Which part of an embed carries them is up to whoever built it."""
-    (said,) = _noticing_embed("@here", Embedded(fields=(
+    (said,) = _noticing_embed(monkeypatch, "@here", Embedded(fields=(
         ("ARN", "7230762615780886427262"),
         ("Customer Name", "Skip Scott"),
         ("Transaction Date", "6/5/2026"),
@@ -4743,11 +4748,13 @@ def test_the_fields_can_be_embed_fields_instead():
     assert "$745.20" in said
 
 
-def test_an_embed_with_nothing_in_it_is_not_a_chargeback():
-    assert _noticing_embed("@here", Embedded(description="have a look")) == []
+def test_an_embed_with_nothing_in_it_is_not_a_chargeback(monkeypatch):
+    assert _noticing_embed(
+        monkeypatch, "@here", Embedded(description="have a look"),
+    ) == []
 
 
-def test_the_flag_goes_to_the_board_channel_not_the_dispute_one(monkeypatch):
+def test_the_flag_never_goes_in_the_dispute_channel(monkeypatch):
     """"i dont want it responding on the dispute channel" — that channel is
     the acquirer's record, read by people who are not acting on it."""
     (said,) = _noticing(monkeypatch, NOTICE)
@@ -4765,7 +4772,55 @@ def test_a_chargeback_with_nowhere_to_say_it_says_nothing(monkeypatch):
         raise AssertionError("RYTE replied in the dispute channel")
 
     told.reply = refuse
-    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: None)
+    monkeypatch.setattr(bot_client, "_chargeback_responder", lambda bot: None)
 
     import asyncio
     asyncio.run(bot_client.handle_dispute(SimpleNamespace(config=None), told))
+
+
+def test_a_chargeback_goes_to_its_own_channel_when_there_is_one():
+    """"yes make it its own channel for chargebacks" — a dispute is money and
+    is nobody's daily routine."""
+    from wilbyte.bot import client as bot_client
+
+    chargebacks, board = object(), object()
+    bot = SimpleNamespace(
+        config=SimpleNamespace(secrets=SimpleNamespace(
+            discord_chargeback_channel_id="1549160193353322607",
+            discord_board_channel_id="999",
+        )),
+        get_channel=lambda one: chargebacks if one == 1549160193353322607 else board,
+    )
+
+    assert bot_client._chargeback_responder(bot).channel is chargebacks
+
+
+def test_without_one_it_falls_back_to_the_board():
+    from wilbyte.bot import client as bot_client
+
+    board = object()
+    bot = SimpleNamespace(
+        config=SimpleNamespace(secrets=SimpleNamespace(
+            discord_chargeback_channel_id="",
+            discord_board_channel_id="999",
+        )),
+        get_channel=lambda one: board,
+    )
+
+    assert bot_client._chargeback_responder(bot).channel is board
+
+
+def test_a_channel_id_that_names_nothing_falls_back_too():
+    """A channel RYTE cannot see is not a reason to say nothing about money."""
+    from wilbyte.bot import client as bot_client
+
+    board = object()
+    bot = SimpleNamespace(
+        config=SimpleNamespace(secrets=SimpleNamespace(
+            discord_chargeback_channel_id="123",
+            discord_board_channel_id="999",
+        )),
+        get_channel=lambda one: None if one == 123 else board,
+    )
+
+    assert bot_client._chargeback_responder(bot).channel is board
