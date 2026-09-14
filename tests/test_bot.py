@@ -4828,3 +4828,164 @@ def test_a_channel_id_that_names_nothing_falls_back_too():
     )
 
     assert bot_client._chargeback_responder(bot).channel is board
+
+
+# --------------------------- the payment confirmation, into the rebuttal
+
+
+PAYRA_BODY = """You Just Got Paid!
+Reference # FJZ3FXTG3C2U-PNJ2
+Paid September 14, 2026
+Customer Jay Rodriguez
+Payment Method Mastercard **** 1096
+Total Paid $983.25"""
+
+
+class Inbox:
+    """A stubbed Gmail, with whatever emails are handed to it."""
+
+    def __init__(self, emails):
+        self.emails = emails
+        self.asked = []
+
+    def invoices_for(self, *terms, **kwargs):
+        self.asked.append(terms)
+        return list(self.emails)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return None
+
+
+def _mail(subject, body=PAYRA_BODY, when="Mon, 14 Sep 2026 23:06:47 +0000"):
+    return SimpleNamespace(subject=subject, body=body, when=when, files=[])
+
+
+# His three, off the real inbox. Same customer, same amount, three months.
+SEP_14 = """You Just Got Paid! Reference # FJZ3FXTG3C2U-PNJ2 Paid September 14, 2026
+Customer Jay Rodriguez Payment Method Mastercard **** 1096 Invoice # INV-18490
+Subtotal $950.00 Other Fees $33.25 Total Paid $983.25"""
+SEP_3 = """You Just Got Paid! Reference # FJZ3FM2ZQZJ5-P3MH Paid September 3, 2026
+Customer Jay Rodriguez Payment Method Visa **** 2997 Invoice # INV-18047
+Subtotal $950.00 Other Fees $33.25 Total Paid $983.25"""
+JUL_29 = """YOU JUST GOT PAID! $ 1,035.00 Invoice # H16686 Customer Jay Rodriguez
+Payment Method Visa **** 9491 Subtotal $1,000.00 Automatic Dual Pricing $35.00
+Total Paid $1,035.00 Reference # FJZ3FA3THX29-PTKM Paid July 29, 2026"""
+
+
+def _disputing(amount, when):
+    return SimpleNamespace(
+        customer_name="Jay Rodriguez", amount=amount, transaction_date=when,
+        paid=lambda: __import__("wilbyte.rebuttal", fromlist=["as_date"]).as_date(when),
+    )
+
+
+def _receipt(monkeypatch, config, emails, *, name="Jay Rodriguez", sender="a@payra.com"):
+    from wilbyte import gmail as inbox_mod
+
+    box = Inbox(emails)
+    monkeypatch.setattr(inbox_mod, "open_gmail", lambda secrets: box)
+    monkeypatch.setattr(config.secrets, "gmail_invoice_sender", sender, raising=False)
+    dispute = SimpleNamespace(
+        customer_name=name, amount="", transaction_date="", paid=lambda: None,
+    )
+    return jobs._payment_receipt(config, dispute), box
+
+
+def test_the_receipt_goes_in_as_evidence(config, monkeypatch):
+    """Payra has no API, so the emailed confirmation is the receipt."""
+    (said, trouble), box = _receipt(monkeypatch, config, [
+        _mail("Agent Lead Lab | Payment confirmation [Invoice #INV-18490] - Jay Rodriguez"),
+    ])
+
+    # One confirmation and nothing to tell it apart from, so it goes in with
+    # a line saying to check it is the right charge.
+    assert "FJZ3FXTG3C2U-PNJ2" in said
+    assert "$983.25" in said
+    assert box.asked == [("Jay Rodriguez",)]
+    assert "check it is the right charge" in trouble
+
+
+def test_a_payment_error_is_not_proof_of_anything(config, monkeypatch):
+    """"Payment Error" and "Invoice Request" come from the same address."""
+    (said, trouble), _box = _receipt(monkeypatch, config, [
+        _mail("Agent Lead Lab | Payment Error [Invoice #INV-18487]"),
+        _mail("Agent Lead Lab | Invoice Request"),
+    ])
+
+    assert said == ""
+    assert "No Payra payment confirmation" in trouble
+
+
+def test_gmail_not_set_up_is_not_a_hole_in_the_rebuttal(config, monkeypatch):
+    """The rebuttal stood without it before there was an inbox to read, and a
+    hole about RYTE is not a hole about the dispute."""
+    (said, trouble), _box = _receipt(monkeypatch, config, [], sender="")
+
+    assert (said, trouble) == ("", "")
+
+
+def test_an_inbox_that_will_not_open_is_said_not_swallowed(config, monkeypatch):
+    from wilbyte import gmail as inbox_mod
+
+    def refuse(secrets):
+        raise inbox_mod.GmailError("the token was minted for another client")
+
+    monkeypatch.setattr(inbox_mod, "open_gmail", refuse)
+    monkeypatch.setattr(config.secrets, "gmail_invoice_sender", "a@payra.com", raising=False)
+
+    said, trouble = jobs._payment_receipt(
+        config, SimpleNamespace(customer_name="Jay Rodriguez"),
+    )
+
+    assert said == ""
+    assert "minted for another client" in trouble
+
+
+def _three():
+    return [
+        _mail("Agent Lead Lab | Payment confirmation [Invoice #INV-18490] - Jay Rodriguez", SEP_14),
+        _mail("Agent Lead Lab | Payment confirmation [Invoice #INV-18047] - Jay Rodriguez", SEP_3),
+        _mail("Agent Lead Lab | Payment confirmation [Invoice #H16686] - Jay Rodriguez", JUL_29),
+    ]
+
+
+def test_the_receipt_is_for_the_charge_being_disputed():
+    """Jay Rodriguez has three. Handing the acquirer a receipt for a charge
+    nobody is arguing about is worse than handing them none."""
+    one, sure = jobs._the_disputed_one(_three(), _disputing("$1,035.00", "7/29/2026"))
+
+    assert "H16686" in one.subject
+    assert sure is True
+
+
+def test_the_date_tells_two_identical_amounts_apart():
+    """September 3rd and September 14th are both $983.25."""
+    one, sure = jobs._the_disputed_one(_three(), _disputing("$983.25", "9/3/2026"))
+
+    assert "INV-18047" in one.subject
+    assert sure is True
+
+
+def test_the_amount_is_enough_on_its_own():
+    """A date that reads differently on the two systems still has an amount."""
+    one, sure = jobs._the_disputed_one(_three(), _disputing("$1,035.00", ""))
+
+    assert "H16686" in one.subject
+    assert sure is True
+
+
+def test_when_nothing_matches_it_says_so_rather_than_guessing_quietly(config, monkeypatch):
+    from wilbyte import gmail as inbox_mod
+
+    box = Inbox(_three())
+    monkeypatch.setattr(inbox_mod, "open_gmail", lambda secrets: box)
+    monkeypatch.setattr(config.secrets, "gmail_invoice_sender", "a@payra.com", raising=False)
+
+    said, trouble = jobs._payment_receipt(config, _disputing("$77.00", "1/2/2026"))
+
+    assert "INV-18490" in said          # the most recent, so there is something
+    assert "3 payment confirmations" in trouble
+    assert "check it is the right charge" in trouble

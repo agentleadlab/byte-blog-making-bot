@@ -3984,8 +3984,92 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         if trouble:
             found.holes.append(trouble)
 
+    # The payment confirmation, out of the inbox it was emailed to. Payra has
+    # no API, so this is the receipt: the reference, the day it was paid, the
+    # card it was paid with and the total. The customer's own name is in the
+    # subject line of it, which is what makes it findable.
+    receipt, trouble = _payment_receipt(config, dispute)
+    if receipt:
+        found.invoice = (found.invoice + "\n\n" if found.invoice else "") + receipt
+    elif trouble:
+        found.holes.append(trouble)
+
     found.timeline = _timeline(dispute, agent, found)
     return found
+
+
+def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
+    """Payra's confirmation for this customer. (what it says, a problem or "").
+
+    Not set up is not a problem worth putting in the document: the rebuttal
+    stood without it before there was an inbox to read, and a hole that says
+    "nobody configured Gmail" is a hole about RYTE rather than about the
+    dispute.
+    """
+    from .. import gmail as inbox
+
+    if not (getattr(config.secrets, "gmail_invoice_sender", "") or "").strip():
+        return "", ""
+    try:
+        with inbox.open_gmail(config.secrets) as reading:
+            found = reading.invoices_for(dispute.customer_name)
+    except inbox.GmailError as exc:
+        return "", f"Couldn't read the payment confirmation: {_short(exc, 140)}"
+    except Exception as exc:
+        return "", f"Couldn't read the payment confirmation: {_short(exc, 140)}"
+
+    # The confirmation, not the failures. "Payment Error", "Invoice Request",
+    # "Payment request" and "Payments Summary" all come from the same address
+    # and none of them is proof that anybody paid anything.
+    paid = [one for one in found if "payment confirmation" in one.subject.casefold()]
+    if not paid:
+        return "", (
+            f"No Payra payment confirmation for “{dispute.customer_name}” in the "
+            "inbox, so the receipt had to be left out."
+        )
+
+    # The one being disputed, not the most recent. Jay Rodriguez has three -
+    # July, September 3rd and September 14th - and handing the acquirer a
+    # receipt for a charge nobody is arguing about is worse than handing them
+    # none: it is the wrong document under a heading that says it is the right
+    # one.
+    one, sure = _the_disputed_one(paid, dispute)
+    said = f"{one.subject}\n{one.when}\n\n{one.body}".strip()
+    if sure:
+        return said, ""
+    return said, (
+        f"“{dispute.customer_name}” has {len(paid)} payment confirmations and "
+        f"none of them matches {dispute.amount or 'the disputed amount'} on "
+        f"{dispute.transaction_date or 'the transaction date'}. The most "
+        "recent one is in the document - check it is the right charge."
+    )
+
+
+def _the_disputed_one(paid: list, dispute):
+    """The confirmation for the charge being disputed. (email, certain?).
+
+    Matched on what the acquirer's notice actually carries: the amount, and
+    the day it was paid. Either one alone is enough - a customer who pays the
+    same amount monthly is told apart by the date, and one whose date reads
+    differently on the two systems is told apart by the amount.
+    """
+    from .. import rebuttal as rules_doc
+
+    digits = "".join(ch for ch in str(dispute.amount or "") if ch.isdigit() or ch == ".")
+    when = dispute.paid()
+    spelled = f"{when:%B %-d, %Y}" if when else ""
+
+    for one in paid:
+        body = one.body or ""
+        by_money = bool(digits) and digits in body.replace(",", "")
+        by_day = bool(spelled) and spelled in body
+        if by_money and by_day:
+            return one, True
+    for one in paid:
+        body = one.body or ""
+        if (digits and digits in body.replace(",", "")) or (spelled and spelled in body):
+            return one, True
+    return paid[0], False
 
 
 def _read_lead_sheet(config: Config, link: str, gsheets) -> tuple[str, str]:
