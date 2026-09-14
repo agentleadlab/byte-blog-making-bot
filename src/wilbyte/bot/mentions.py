@@ -253,6 +253,38 @@ TRELLO_ASK = re.compile(
     re.IGNORECASE,
 )
 
+# Somebody telling the room to put what was just said on the board, without
+# telling RYTE. "Put on trello" and "CC on trello" are how the two of them
+# already write it, and the message they mean is the one above.
+#
+# The whole message and nothing else, so "I'll put it on trello later" and
+# "did you put that on trello" go by. An instruction is short and is the only
+# thing in the message; anything with a sentence around it is conversation.
+PUT_ON_BOARD = re.compile(
+    r"^\s*(?:pls\s+|please\s+)?"
+    r"(?:cc|add|put|note|log|copy|drop)\s+"
+    r"(?:it\s+|this\s+|that\s+|these\s+|them\s+)?"
+    r"(?:on|to|in|onto|into)\s+(?:the\s+)?trello"
+    r"(?:\s+(?:card|board))?"
+    r"(?P<where>(?:\s+(?:on\s+)?(?:general|ops|ads|lead\s*order)(?:\s+card)?)?)"
+    r"(?:\s+(?:please|pls|thanks|thank\s+you|ty))?"
+    r"\s*[.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def put_on_board(text: str):
+    """Which card somebody meant, for a message telling the room to file it.
+
+    Returns "" when they named no card, and None when the message is not that
+    instruction at all - which is most messages.
+    """
+    found = PUT_ON_BOARD.match(text or "")
+    if not found:
+        return None
+    return " ".join((found.group("where") or "").split())
+
+
 # After the word "trello" the verb no longer has to name the board, because the
 # message already did.
 TRELLO_COMMENT_WORDS = COMMENT_WORDS + ("add", "remind", "put", "log", "say")
@@ -811,6 +843,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello daycheck** — every line on a Lead Order card for a day its
 > agent is not live on, read off the agents' own cards. Reads only; nothing
 > is moved
+> **Put on trello** — on its own line, with no @RYTE at all. He offers to put
+> the message above it on the board and waits for the button. Also **CC on
+> trello**; add `on ops` for a different card
 > @RYTE **put on trello** — as a *reply* to somebody's message, puts that
 > message on the board with their name in front of it. `on ops`, `on ads` or
 > `on lead order` picks the card; otherwise it's General

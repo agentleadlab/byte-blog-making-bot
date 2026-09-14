@@ -4384,3 +4384,141 @@ def test_typing_it_out_still_works_the_way_it_did(monkeypatch):
     posted, _said = _putting(monkeypatch, "on ops card leads went out late")
 
     assert (posted["kind"], posted["text"]) == ("ops", "leads went out late")
+
+
+# --------------------- "put on trello" said to the room, not to RYTE
+
+
+@pytest.mark.parametrize(
+    "said, where",
+    [
+        ("Put on trello", ""),
+        ("CC on trello", ""),
+        ("put it on trello on ops", "on ops"),
+        ("pls add to trello card", ""),
+        ("copy to trello lead order", "lead order"),
+        ("put on trello please", ""),
+    ],
+)
+def test_the_instruction_is_recognised(said, where):
+    from wilbyte.bot import mentions
+
+    assert mentions.put_on_board(said) == where
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # Conversation about the board, not an instruction to file anything.
+        "I'll put it on trello later",
+        "did you put that on trello?",
+        "trello",
+        "can you put this on trello when you get a sec",
+        "",
+    ],
+)
+def test_conversation_about_trello_is_left_alone(said):
+    """An instruction is short and is the only thing in the message; anything
+    with a sentence around it is people talking."""
+    from wilbyte.bot import mentions
+
+    assert mentions.put_on_board(said) is None
+
+
+def _telling_the_room(monkeypatch, *, where="", answering=None, before=None,
+                      press=True):
+    """One "put on trello" in a channel, with the board and button stubbed."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    posted = {}
+
+    def comment(config, *, kind, day, text):
+        posted.update({"kind": kind, "day": day, "text": text})
+        return "💻 Ops 09/14/26", "https://trello.com/c/AAA", []
+
+    class Pressed:
+        def __init__(self, **kw):
+            self.confirmed = press
+            self.answered = True
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.jobs, "comment_on_daily", comment)
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 9, 14))
+
+    replies = []
+
+    class Channel:
+        def history(self, **kwargs):
+            async def walk():
+                for one in [before] if before else []:
+                    yield one
+            return walk()
+
+    told = Said("Put on trello", answering=answering)
+    told.channel = Channel()
+    told.author = SimpleNamespace(display_name="Franklin", name="Franklin", id=7)
+
+    async def reply(content=None, *, embed=None, view=None, mention_author=True):
+        replies.append(content or "")
+
+    told.reply = reply
+    bot = SimpleNamespace(config=SimpleNamespace(
+        discord=SimpleNamespace(approval_timeout_seconds=1),
+        schedule=SimpleNamespace(timezone="America/New_York"),
+    ))
+    asyncio.run(bot_client._offer_to_file_it(bot, told, where))
+    return posted, replies
+
+
+def _somebody(content, author="Therese"):
+    one = Said(content, author=author)
+    one.author = SimpleNamespace(display_name=author, name=author, bot=False, id=9)
+    return one
+
+
+def test_it_offers_the_message_above(monkeypatch):
+    """"Put on trello" on its own line is about what was said a moment ago,
+    and on a busy morning that is not always a reply."""
+    posted, replies = _telling_the_room(monkeypatch, before=_somebody(THERESE))
+
+    assert f"Therese: {THERESE}" == posted["text"]
+    assert "On **💎 General 09/14/26**?" in replies[0]
+
+
+def test_it_offers_the_message_it_answers_when_it_is_a_reply(monkeypatch):
+    posted, _replies = _telling_the_room(
+        monkeypatch, answering=_somebody("do the thing", author="Tre"),
+    )
+
+    assert posted["text"] == "Tre: do the thing"
+
+
+def test_nothing_is_written_without_the_button(monkeypatch):
+    """Nobody addressed RYTE. Writing to the board off a conversation he was
+    not in is not something to do without a button."""
+    posted, replies = _telling_the_room(
+        monkeypatch, before=_somebody(THERESE), press=False,
+    )
+
+    assert posted == {}
+    assert len(replies) == 1
+
+
+def test_the_card_can_be_named_in_the_instruction(monkeypatch):
+    posted, replies = _telling_the_room(
+        monkeypatch, where="on ops", before=_somebody(THERESE),
+    )
+
+    assert posted["kind"] == "ops"
+    assert "for a different card" not in replies[0]
+
+
+def test_nothing_above_it_means_nothing_to_offer(monkeypatch):
+    posted, replies = _telling_the_room(monkeypatch)
+
+    assert (posted, replies) == ({}, [])

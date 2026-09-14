@@ -312,6 +312,17 @@ class WilByteBot(discord.Client):
                 except Exception:  # Discord unreachable as well; the log has it
                     log.exception("...and I couldn't say so either")
             return
+        # Somebody telling the room to file what was just said, without
+        # telling RYTE. He offers; he never files it on his own - nobody
+        # addressed him, and writing to the board off a conversation he was
+        # not in is not something to do without a button.
+        where = mentions.put_on_board(message.content or "")
+        if where is not None:
+            try:
+                await _offer_to_file_it(self, message, where)
+            except Exception:
+                log.exception("Couldn't offer to put that on the board")
+            return
         if is_payment(message, self.config):
             await handle_payment(self, message)
             return
@@ -1246,6 +1257,82 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
         return
     # No ping: somebody just asked, so they are already looking at it.
     await responder.send(embed=_unmarked_card(found, days=covers))
+
+
+async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
+    """Offer to put the message above onto the board. Never does it unasked.
+
+    "@Therese get Ryan hernandez truckers live... hold off on blue collar till
+    EOD / Put on trello" - the instruction is to the room rather than to RYTE,
+    and until now somebody then copied it across by hand.
+
+    The one being filed is the message that instruction answers, or the one
+    before it when it answers nothing. That is what "put on trello" means when
+    it arrives on its own line.
+    """
+    from .. import dailyops
+
+    said = await _replied_to(message) or await _the_one_before(message)
+    if said is None or not (said.content or "").strip():
+        return
+
+    config = bot.config
+    text = _as_somebody_said(said)
+    kind = (dailyops.kinds_named(where) or [dailyops.FALLBACK_CARD])[0]
+    day = _today(config)
+
+    view = views.ConfirmView(
+        requester_id=message.author.id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Put it on the board",
+        emoji="📋",
+    )
+    shown = text if len(text) <= 300 else text[:300].rsplit(" ", 1)[0] + "…"
+    note = (
+        f"📋 On **{dailyops.CARD_KINDS.get(kind, kind)} {day:%m/%d/%y}**?\n> {shown}"
+    )
+    if not where:
+        note += "\n-# Say `on ops`, `on ads` or `on lead order` for a different card."
+    await message.reply(note, view=view, mention_author=False)
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        title, url, problems = await asyncio.to_thread(
+            jobs.comment_on_daily, config, kind=kind, day=day, text=text
+        )
+    except PIPELINE_ERRORS as exc:
+        await message.reply(
+            embed=embeds.error(f"Couldn't reach the board\n{exc}"),
+            mention_author=False,
+        )
+        return
+    if problems:
+        await message.reply(
+            embed=embeds.error("\n".join(problems)), mention_author=False,
+        )
+        return
+    await message.reply(f"Said it on **{title}** — <{url}>", mention_author=False)
+
+
+async def _the_one_before(message):
+    """The message just above this one, from anybody but RYTE.
+
+    "Put on trello" on its own line is about what was said a moment ago, and
+    on a busy morning that is not always a reply.
+    """
+    try:
+        async for older in message.channel.history(limit=6, before=message):
+            if getattr(older, "author", None) is not None and getattr(
+                older.author, "bot", False
+            ):
+                continue
+            if (older.content or "").strip():
+                return older
+    except Exception:  # no history permission, or Discord having a moment
+        return None
+    return None
 
 
 async def _comment_on_card(
