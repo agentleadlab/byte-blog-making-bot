@@ -7,6 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -2530,7 +2531,16 @@ def _tags_on(config, client, every, members, day, problems) -> list:
     } - {""}
 
     everywhere = [held for group in holds.values() for held in group]
-    wants, unknown, ongoing = [], set(), []
+
+    def held_by(person) -> list:
+        """This person's checklists, on every one of the day's cards."""
+        mine = set((person.keeps or {}).values())
+        return [
+            one for group in holds.values() for one in group
+            if str(one.get("name") or "").strip() in mine
+        ]
+
+    wants, unknown, ongoing, nothing_said = [], set(), [], []
     for kind, card in wanted.items():
         card_id = str(card.get("id") or "")
         short = trello.linked_card_id(str(card.get("url") or card.get("shortUrl") or ""))
@@ -2550,6 +2560,13 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                 ongoing.append(note)
                 continue
 
+            # A screenshot and a tag. Trello writes the attachment into the
+            # comment as a link to it, so all the words say is "image.png",
+            # which went onto KC's list looking exactly like that.
+            if tagged.only_a_file(note.text):
+                nothing_said.append(note)
+                continue
+
             if tagged.everyones_job(note.text):
                 # Every checklist on the card it was said on, and asked per
                 # checklist: it belongs on all of them, so finding it on
@@ -2557,7 +2574,7 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                 for held in holds.get(card_id) or []:
                     if tagged.already_on(note, held):
                         continue
-                    wants.append((note, None, kind, str(held.get("name") or ""), ""))
+                    wants.append(Want(note, None, kind, str(held.get("name") or "")))
 
             tags = [
                 name for name in tagged.mentioned(note.text)
@@ -2588,13 +2605,10 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                 # against all of them: one comment can hand work to two
                 # people, and Jenn's line already being there is no reason
                 # to leave Kath without hers.
-                mine = set(person.keeps.values())
-                theirs = [
-                    held for group in holds.values() for held in group
-                    if str(held.get("name") or "").strip() in mine
-                ]
-                if not tagged.already_filed(note, theirs):
-                    wants.append((note, person, "", "", said))
+                wants.append(Want(
+                    note, person, slice=said,
+                    filed=tagged.how_many_filed(note, held_by(person)),
+                ))
 
             # A lead schedule is Nicole's whether or not anybody tagged
             # her - "if its schedule like this add to nicole on ads even
@@ -2609,7 +2623,7 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                         f"on today's {tagged.SCHEDULES_ON} card, so I left it"
                     )
                 elif not tagged.already_filed(note, everywhere):
-                    wants.append((note, keeper, "", "", ""))
+                    wants.append(Want(note, keeper, schedule=True))
                 continue
 
             if not tags:
@@ -2619,19 +2633,16 @@ def _tags_on(config, client, every, members, day, problems) -> list:
                     unknown.add(name)
                     continue
                 person = people[name]
-                # Asked against this person's own checklists, on every
+                # Counted against this person's own checklists, on every
                 # card rather than this one: the line for a comment on
                 # General lands on Ops, so looking at General alone would
-                # file it again every afternoon - and one comment can hand
-                # different work to two people, so Faith's line already
-                # being there is no reason to leave KC without hers.
-                mine = set(person.keeps.values())
-                theirs = [
-                    held for group in holds.values() for held in group
-                    if str(held.get("name") or "").strip() in mine
-                ]
-                if not tagged.already_filed(note, theirs):
-                    wants.append((note, person, "", "", ""))
+                # file it again every afternoon. Counted rather than asked
+                # yes or no, because one comment can be three jobs and the
+                # first line filed would otherwise stop the other two.
+                wants.append(Want(
+                    note, person,
+                    filed=tagged.how_many_filed(note, held_by(person)),
+                ))
 
     if ongoing:
         # Said, not swallowed. A skip nobody can see is the thing that
@@ -2651,7 +2662,16 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
         )
 
-    tasks = _read_the_tags(config, wants, people, wanted, problems)
+    if nothing_said:
+        problems.append(
+            f"{len(nothing_said)} said nothing but the name of what was "
+            "attached to them, so I left them: "
+            + "; ".join(tagged.trim(one.text)[:30] for one in nothing_said)
+        )
+
+    tasks = _read_the_tags(
+        config, wants, people, wanted, problems, held_by=held_by,
+    )
     tasks += _described_tasks(
         client, wanted, holds, people, on_the_board, problems
     )
@@ -2756,17 +2776,39 @@ def _described_tasks(client, cards, holds, people, on_the_board, problems) -> li
     return found
 
 
-def _read_the_tags(config, wants, people, cards, problems) -> list:
-    """Turn (comment, person, kind, checklist) into tasks, summarised and routed.
+@dataclass
+class Want:
+    """One comment and one person it might be a job for, before it is read."""
+
+    note: "object"
+    person: "object" = None
+    #: Filled in only for `@card`, where the card it was said on is the card.
+    kind: str = ""
+    checklist: str = ""
+    #: The part of the comment that is theirs, when they were named not tagged.
+    slice: str = ""
+    #: True for a lead schedule, which goes on whole and always onto Ads.
+    schedule: bool = False
+    #: How many lines from this comment are already on their checklists.
+    filed: int = 0
+
+
+def _read_the_tags(config, wants, people, cards, problems, held_by=None) -> list:
+    """Turn wants into tasks, summarised and routed.
 
     A person means the kind still has to be decided; a kind and checklist
     already filled in means the comment tagged the card and there is nothing
     to decide.
 
-    Claude writes the summary and says which kind of work it is, in one call
-    for the whole batch. When that fails - no key, a bad night at Anthropic -
-    every task is still made from the comment's own first line, because a line
-    on the wrong checklist is recoverable and a task nobody wrote down is not.
+    Claude reads the batch and answers with one entry per job per person -
+    several for one comment when it holds several, which is the ordinary case
+    on the General card. Tre's says what the money moved to, asks Kath and
+    Jenn to set up a call, and gives Kath a list of scene changes: three jobs
+    in one comment, and until now one line each for the people it tagged.
+
+    When the reading fails - no key, a bad night at Anthropic - every task is
+    still made from the comment's own first line, because a line on the wrong
+    checklist is recoverable and a task nobody wrote down is not.
     """
     from .. import tagged
 
@@ -2774,8 +2816,8 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
         return []
 
     by_id = {}
-    for note, *_rest in wants:
-        by_id.setdefault(note.comment_id, note)
+    for want in wants:
+        by_id.setdefault(want.note.comment_id, want.note)
 
     written = {}
     try:
@@ -2787,64 +2829,186 @@ def _read_the_tags(config, wants, people, cards, problems) -> list:
         )
 
     tasks = []
-    for note, person, told_kind, told_list, just_theirs in wants:
-        said = _written_for(written, note.comment_id, person)
-        summary = str(said.get("summary") or "").strip()
-        # A slice of a comment is summarised from its own words: "Jenn =
-        # FRIDAY / OTP VET removal" and "Kath = FRIDAY / MTG creatives" are
-        # one comment and two different jobs.
-        schedule = tagged.a_lead_schedule(note.text)
-        if just_theirs:
-            summary = tagged.trim(just_theirs)
-        elif schedule:
-            # Whole, not summarised and not cut to nine words. The hours are
-            # the content: "ANTHONY SINGH (VET)- monday- saturday 9 am- 9 pm"
-            # trimmed to a line's worth loses the pm.
-            summary = tagged.strip_mentions(note.text)
-        elif not summary or tagged.brief_already(note.text):
-            summary = tagged.trim(note.text) or summary
-        if not summary:
+    claimed: set = set()
+    for want in wants:
+        note, person = want.note, want.person
+        told_kind, told_list = want.kind, want.checklist
+        just_theirs, schedule = want.slice, want.schedule
+
+        # Every job the reading gave this person out of this comment. More
+        # than one is normal; none means it fell back to the comment itself.
+        mine = _their_jobs(written, note.comment_id, person, people)
+        for one in mine:
+            claimed.add(id(one))
+        for made in _lines_from(
+            want, mine, people, cards, problems, schedule=schedule,
+            just_theirs=just_theirs, told_kind=told_kind, told_list=told_list,
+        ):
+            tasks.append(made)
+
+    # Somebody the comment hands work to and nobody tagged. "Mandatory entire
+    # amount needs moved over Kath and Jenn setup a discord call" is a job for
+    # both of them and tags neither, and only a reading can tell that from
+    # "ask Nicole about the budget".
+    for comment_id, entries in (written or {}).items():
+        note = by_id.get(comment_id)
+        if note is None:
             continue
-
-        if person is None:
-            kind, checklist, judged, everyone = told_kind, told_list, False, True
-        else:
-            # A schedule is ads work wherever it was written and whatever the
-            # reading made of it: "sending leads" is ops in the abstract and
-            # the drip windows are set on the Ads card.
-            # What the reading made of the comment is only about the comment.
-            # Arnold's week hands Jenn "OTP VET removal" and Kath "MTG
-            # creatives" in one comment that tags nobody, and one kind read off
-            # the whole of it put both of them on General as a judgement call -
-            # when their work is ads work and their own card was never in
-            # doubt. A slice takes no kind from the reading.
-            told = "" if just_theirs else str(said.get("kind") or "")
-            kind, judged = (
-                (tagged.SCHEDULES_ON, False) if schedule and person.keeps.get(
-                    tagged.SCHEDULES_ON
-                ) else
-                tagged.where(person, note, judged=told)
-            )
-            if kind not in cards:
-                problems.append(
-                    f"{person.full_name or person.username} — “{summary}” is {kind} "
-                    f"work and there's no {kind} card today, so I left it"
-                )
+        for entry in entries:
+            if id(entry) in claimed:
                 continue
-            checklist, everyone = person.keeps[kind], False
-
-        card = cards.get(kind) or {}
-        tasks.append(tagged.Task(
-            note=note, person=person, kind=kind, checklist=checklist,
-            card_id=str(card.get("id") or ""),
-            card_title=str(card.get("name") or ""),
-            summary=summary, judged=judged, everyone=everyone,
-        ))
+            person = tagged.person_named(str(entry.get("person") or ""), people)
+            if person is None or not person.keeps:
+                continue
+            already = tagged.how_many_filed(
+                note, held_by(person) if held_by else []
+            )
+            same = [
+                one for one in (written.get(comment_id) or [])
+                if tagged.person_named(str(one.get("person") or ""), people)
+                is person
+            ]
+            if same.index(entry) < already:
+                continue
+            made = _one_line(note, person, entry, cards, problems)
+            if made is not None:
+                tasks.append(made)
     return tasks
 
 
+def _their_jobs(written: dict, comment_id: str, person, people) -> list:
+    """The reading's entries for this person on this comment, in order."""
+    from .. import tagged
+
+    entries = (written or {}).get(comment_id) or []
+    if person is None:
+        return entries[:1]
+    found = [
+        one for one in entries
+        if str(one.get("person") or "").casefold() == (person.username or "").casefold()
+    ]
+    if found:
+        return found
+    return [
+        one for one in entries
+        if tagged.person_named(str(one.get("person") or ""), people) is person
+    ]
+
+
+def _one_line(note, person, entry: dict, cards, problems, *, own_card=False):
+    """One task for one person from one of the reading's entries, or None.
+
+    `own_card` throws away what the reading made of the kind. It is for work
+    the reading was not asked to place - somebody named at the start of a line
+    with their week under it - where the person's own card is the answer and
+    a kind read off the whole comment put both of them on General.
+    """
+    from .. import tagged
+
+    summary = " ".join(str(entry.get("summary") or "").split())
+    if not summary:
+        return None
+    kind, judged = tagged.where(
+        person, note, judged="" if own_card else str(entry.get("kind") or ""),
+    )
+    if kind not in cards:
+        problems.append(
+            f"{person.full_name or person.username} — “{summary}” is {kind} "
+            f"work and there's no {kind} card today, so I left it"
+        )
+        return None
+    card = cards.get(kind) or {}
+    return tagged.Task(
+        note=note, person=person, kind=kind, checklist=person.keeps[kind],
+        card_id=str(card.get("id") or ""), card_title=str(card.get("name") or ""),
+        summary=summary, judged=judged,
+    )
+
+
+def _lines_from(
+    want, mine, people, cards, problems, *, schedule, just_theirs,
+    told_kind, told_list,
+) -> list:
+    """Every task one want turns into. Usually one; sometimes three."""
+    from .. import tagged
+
+    note, person = want.note, want.person
+
+    # `@card`: the card it was said on is the card, and every checklist on it
+    # gets the same line.
+    if person is None:
+        said = mine[0] if mine else {}
+        summary = str(said.get("summary") or "").strip()
+        if not summary or tagged.brief_already(note.text):
+            summary = tagged.trim(note.text) or summary
+        if not summary:
+            return []
+        card = cards.get(told_kind) or {}
+        return [tagged.Task(
+            note=note, person=None, kind=told_kind, checklist=told_list,
+            card_id=str(card.get("id") or ""),
+            card_title=str(card.get("name") or ""),
+            summary=summary, everyone=True,
+        )]
+
+    # A lead schedule goes on whole and always onto Ads. Not summarised and
+    # not cut to nine words: "ANTHONY SINGH (VET)- monday- saturday 9 am- 9
+    # pm" trimmed to a line's worth loses the pm, and the hours are the
+    # content. "sending leads" is ops in the abstract, and the drip windows
+    # are set on the Ads card.
+    if schedule:
+        summary = tagged.strip_mentions(note.text)
+        if not summary:
+            return []
+        kind, judged = (
+            (tagged.SCHEDULES_ON, False) if person.keeps.get(tagged.SCHEDULES_ON)
+            else tagged.where(person, note)
+        )
+        if kind not in cards:
+            problems.append(
+                f"{person.full_name or person.username} — “{summary}” is {kind} "
+                f"work and there's no {kind} card today, so I left it"
+            )
+            return []
+        card = cards.get(kind) or {}
+        return [tagged.Task(
+            note=note, person=person, kind=kind, checklist=person.keeps[kind],
+            card_id=str(card.get("id") or ""),
+            card_title=str(card.get("name") or ""),
+            summary=summary, judged=judged,
+        )]
+
+    # Every job the reading gave this person, minus however many lines from
+    # this comment are already on their list. Counted rather than asked yes or
+    # no: one comment can be three jobs and they all carry the same link, so
+    # the first line filed would otherwise stop the other two.
+    if mine:
+        found = []
+        for entry in mine[want.filed:]:
+            made = _one_line(
+                note, person, entry, cards, problems, own_card=bool(just_theirs),
+            )
+            if made is not None:
+                found.append(made)
+        return found
+
+    # Nothing read it. The comment's own first words, or - for somebody named
+    # at the start of a line - the words that follow their name.
+    if want.filed:
+        return []
+    summary = tagged.trim(just_theirs) if just_theirs else tagged.trim(note.text)
+    made = _one_line(
+        note, person, {"summary": summary}, cards, problems, own_card=True,
+    )
+    return [made] if made is not None else []
+
+
 def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
-    """{comment id: {"summary": ..., "kind": ...}}, written by Claude."""
+    """{comment id: [{"person", "summary", "kind"}, ...]}, written by Claude.
+
+    A list rather than one entry, because one comment is often several jobs
+    for several people.
+    """
     from anthropic import Anthropic
 
     from .. import tagged
@@ -2862,7 +3026,7 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
         ),
         tools=[{
             "name": "lines",
-            "description": "One line per tagged person per comment.",
+            "description": "One line per job per person per comment.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -2892,24 +3056,10 @@ def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
     # back to the comment's own first words - which is why a summary came out
     # as "CONNOR SWARTZ has an ongoing order that still need".
     payload = _tool_input(response, "lines")
-    # Keyed by the comment and the person both, with a bare-comment key kept
-    # as the fallback for a tag nobody wrote a line for.
     written: dict = {}
     for line in payload.get("lines") or []:
-        said = str(line.get("comment_id") or "")
-        written.setdefault((said, ""), line)
-        written[(said, str(line.get("person") or "").casefold())] = line
+        written.setdefault(str(line.get("comment_id") or ""), []).append(line)
     return written
-
-
-def _written_for(written: dict, comment_id: str, person) -> dict:
-    """The line Claude wrote for this person on this comment, or any of it."""
-    username = (getattr(person, "username", "") or "").casefold()
-    return (
-        written.get((comment_id, username))
-        or written.get((comment_id, ""))
-        or {}
-    )
 
 
 def _tool_input(response, name: str) -> dict:

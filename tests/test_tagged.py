@@ -329,7 +329,7 @@ def test_nicole_goes_to_ads_when_the_work_is_ads(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {("c1", ""): {"summary": "Blue collar agents go live", "kind": "ads"}},
+        read=lambda *a, **k: {"c1": [{"summary": "Blue collar agents go live", "kind": "ads", "person": "nic0l3"}]},
     )
 
     (one,) = tasks
@@ -343,7 +343,7 @@ def test_nicole_stays_on_general_when_the_work_is_admin(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {("c1", ""): {"summary": "Add YT channel", "kind": "general"}},
+        read=lambda *a, **k: {"c1": [{"summary": "Add YT channel", "kind": "general", "person": "nic0l3"}]},
     )
 
     (one,) = tasks
@@ -1123,7 +1123,7 @@ def test_a_schedule_is_ads_work_whatever_the_reading_said(config, monkeypatch):
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {("c1", ""): {"summary": "Anthony's hours", "kind": "general"}},
+        read=lambda *a, **k: {"c1": [{"summary": "Anthony's hours", "kind": "general", "person": "nic0l3"}]},
     )
 
     assert (tasks[0].kind, tasks[0].checklist) == ("ads", "Nicole")
@@ -1173,22 +1173,17 @@ SHARED = (
 def _both(_config, notes, _people):
     """Claude, told to write one line per tagged person, doing so."""
     said = notes[0].comment_id
-    return {
-        (said, "kharylmaye"): {
+    return {said: [
+        {
             "comment_id": said, "person": "kharylmaye",
             "summary": "Tell them about the Everlife aged lead discount",
             "kind": "general",
         },
-        (said, "faithhannahcalla"): {
+        {
             "comment_id": said, "person": "faithhannahcalla",
             "summary": "Text Wolfpack agents", "kind": "general",
         },
-        (said, ""): {
-            "comment_id": said, "person": "kharylmaye",
-            "summary": "Tell them about the Everlife aged lead discount",
-            "kind": "general",
-        },
-    }
+    ]}
 
 
 SHARERS = [
@@ -1253,9 +1248,12 @@ def test_one_job_for_both_still_goes_to_both(config, monkeypatch):
         board, "board_members",
         lambda _b: [*BOARD, *SHARERS],
     )
-    same = {
-        ("c1", ""): {"summary": "Chase the Everlife discount", "kind": "general"},
-    }
+    same = {"c1": [
+        {"person": "kharylmaye", "summary": "Chase the Everlife discount",
+         "kind": "general"},
+        {"person": "faithhannahcalla", "summary": "Chase the Everlife discount",
+         "kind": "general"},
+    ]}
 
     tasks, _problems = planning(board, monkeypatch, config, read=lambda *a, **k: same)
 
@@ -1363,10 +1361,115 @@ def test_a_week_written_by_name_goes_to_each_persons_own_card(config, monkeypatc
 
     tasks, _problems = planning(
         board, monkeypatch, config,
-        read=lambda *a, **k: {("c1", ""): {"summary": "the week", "kind": "general"}},
+        read=lambda *a, **k: {"c1": [{"summary": "the week", "kind": "general", "person": "Jenn"}]},
     )
 
     assert {one.checklist: (one.kind, one.judged) for one in tasks} == {
         "Jenn": ("ads", False),
         "Kath": ("ads", False),
     }
+
+
+# ------------------------------------------ three jobs in one comment
+
+# Tre's, off the General 09/14/26 card, shortened but in his shape.
+TRES = """$1775
+added to OTP VET + and
+Vet 2.0 ad sets shut off
+Mandatory entire amount needs moved over Kath and Jenn setup a discord call
+for the gameplan start migration right after call
+Kath = we gotta shock the system
+- Scene changes
+  - walking on treadmill selfie
+  - riding on jetski selfie
+"""
+
+
+def _three(_config, notes, _people):
+    """The reading, told one entry per job per person, doing so."""
+    said = notes[0].comment_id
+    return {said: [
+        {"comment_id": said, "person": "Kath",
+         "summary": "Move the entire VET 2.0 amount over", "kind": "ads"},
+        {"comment_id": said, "person": "Kath",
+         "summary": "Set up a discord call for the gameplan", "kind": "ads"},
+        {"comment_id": said, "person": "Jenn",
+         "summary": "Set up a discord call for the gameplan", "kind": "ads"},
+        {"comment_id": said, "person": "Kath",
+         "summary": "Scene changes for the new creatives", "kind": "ads"},
+    ]}
+
+
+def test_one_comment_can_be_three_jobs(config, monkeypatch):
+    """"basically thats three tasks in one trello comment link right" — and
+    until now one comment was one line for each person it named."""
+    board = TaggedBoard({"g": [{"id": "c1", "text": TRES, "author": "Tre Tarpley"}]})
+
+    tasks, _problems = planning(board, monkeypatch, config, read=_three)
+
+    assert [(one.checklist, one.summary) for one in tasks] == [
+        ("Kath", "Move the entire VET 2.0 amount over"),
+        ("Kath", "Set up a discord call for the gameplan"),
+        ("Kath", "Scene changes for the new creatives"),
+        ("Jenn", "Set up a discord call for the gameplan"),
+    ]
+
+
+def test_all_three_carry_the_same_comment_link(config, monkeypatch):
+    board = TaggedBoard({"g": [{"id": "c1", "text": TRES, "author": "Tre Tarpley"}]})
+
+    tasks, _problems = planning(board, monkeypatch, config, read=_three)
+
+    assert {one.note.link() for one in tasks} == {
+        "https://trello.com/c/IU4PM7wJ#comment-c1"
+    }
+
+
+def test_somebody_the_comment_names_and_nobody_tagged(config, monkeypatch):
+    """"it missed jenn". Nobody tagged her — "Kath and Jenn setup a discord
+    call" is a job for both of them and tags neither."""
+    board = TaggedBoard({"g": [{"id": "c1", "text": TRES, "author": "Tre"}]})
+
+    tasks, _problems = planning(board, monkeypatch, config, read=_three)
+
+    assert "Jenn" in [one.checklist for one in tasks]
+
+
+def test_the_ones_already_filed_are_counted_not_asked(config, monkeypatch):
+    """Three lines carry the same link, so "is it filed" cannot be yes or no —
+    the first one filed would stop the other two ever being written."""
+    board = TaggedBoard({"g": [{"id": "c1", "text": TRES, "author": "Tre"}]})
+    held = board.card_checklists
+
+    def with_two_of_kaths(card_id):
+        found = held(card_id)
+        for one in found:
+            if card_id == "a" and one["name"] == "Kath":
+                one["checkItems"] = [
+                    {"name": f"something\nhttps://trello.com/c/IU4PM7wJ#comment-c1"},
+                    {"name": f"another\nhttps://trello.com/c/IU4PM7wJ#comment-c1"},
+                ]
+        return found
+
+    board.card_checklists = with_two_of_kaths
+    tasks, _problems = planning(board, monkeypatch, config, read=_three)
+
+    # Two of Kath's three are there, so only her third is left, and Jenn's
+    # line is untouched by any of it.
+    assert [(one.checklist, one.summary) for one in tasks] == [
+        ("Kath", "Scene changes for the new creatives"),
+        ("Jenn", "Set up a discord call for the gameplan"),
+    ]
+
+
+def test_a_comment_that_is_only_a_screenshot_is_left(config, monkeypatch):
+    """Trello writes the attachment into the comment as a link to it, so all
+    the words say is "image.png" — which went onto KC's list as exactly that."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "text": '@nic0l3 [image.png]( "")', "author": "Tre"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == []
+    assert any("attached to them" in one for one in problems)

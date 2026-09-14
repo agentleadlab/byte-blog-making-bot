@@ -4241,3 +4241,44 @@ def test_a_wrong_day_line_is_told_apart_without_the_model(config):
     assert bot_client._wrong_day_key(one) != bot_client._wrong_day_key(
         dict(one, label="25 OTP FEX")
     )
+
+
+def test_three_jobs_from_one_comment_are_three_lines_to_remember(monkeypatch):
+    """Without a number all three are the same key, so showing the first
+    would silence the other two for the rest of the day."""
+    from wilbyte import tagged
+
+    def kaths(summary):
+        return tagged.Task(
+            note=tagged.Note(comment_id="c1", text="…", card_short="IU4PM7wJ"),
+            kind="ads", checklist="Kath", card_id="a",
+            card_title="📊 Ads 09/14/26", summary=summary,
+        )
+
+    three = [kaths("move the amount"), kaths("discord call"), kaths("scenes")]
+
+    _filed, first = _watching(monkeypatch, tasks=three, press=False, remember=True)
+    _filed, again = _watching(monkeypatch, tasks=three, press=False, remember=True)
+
+    assert "3 new item(s)" in first[0]
+    assert again == []
+
+
+def test_a_fourth_job_on_the_same_comment_is_still_new(monkeypatch):
+    from wilbyte import tagged
+
+    def kaths(summary):
+        return tagged.Task(
+            note=tagged.Note(comment_id="c1", text="…", card_short="IU4PM7wJ"),
+            kind="ads", checklist="Kath", card_id="a",
+            card_title="📊 Ads 09/14/26", summary=summary,
+        )
+
+    three = [kaths("one"), kaths("two"), kaths("three")]
+
+    _watching(monkeypatch, tasks=three, press=False, remember=True)
+    _filed, again = _watching(
+        monkeypatch, tasks=three + [kaths("four")], press=False, remember=True,
+    )
+
+    assert "1 new item(s)" in again[0]

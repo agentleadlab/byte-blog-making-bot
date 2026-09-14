@@ -3535,6 +3535,22 @@ def _already_said(task) -> str:
     return f"description|{task.kind}|{task.checklist}|{task.summary}"
 
 
+def _said_keys(tasks) -> list:
+    """One key per task, numbered where a comment gives somebody several.
+
+    Tre's comment is three jobs for Kath. Without the number all three are the
+    same key, so showing the first would silence the other two for the rest of
+    the day.
+    """
+    counted: dict = {}
+    found = []
+    for one in tasks:
+        base = _already_said(one)
+        counted[base] = counted.get(base, 0) + 1
+        found.append(f"{base}#{counted[base]}")
+    return found
+
+
 async def _offer_tags_now(
     responder: Responder, config: Config, *, remember: bool = False
 ) -> None:
@@ -3563,7 +3579,9 @@ async def _offer_tags_now(
     tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
     if remember:
         said = await asyncio.to_thread(alreadysaid.said_on, day)
-        tasks = [one for one in tasks if _already_said(one) not in said]
+        tasks = [
+            one for one, key in zip(tasks, _said_keys(tasks)) if key not in said
+        ]
         problems = [one for one in problems if one not in said]
     if not tasks:
         # Said out loud even with nothing to file: somebody tagged with no
@@ -3592,8 +3610,7 @@ async def _offer_tags_now(
     # underneath, and neither does a restart.
     if remember:
         await asyncio.to_thread(
-            alreadysaid.remember, day,
-            [_already_said(one) for one in tasks] + list(problems),
+            alreadysaid.remember, day, _said_keys(tasks) + list(problems),
         )
     await view.wait()
     if not view.confirmed:

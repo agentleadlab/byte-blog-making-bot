@@ -455,13 +455,58 @@ def keeps_the_schedules(people):
 
 
 def strip_mentions(text: str) -> str:
-    """The comment without its tags or its links.
+    """The comment without its markdown, its tags or its links.
 
     What is left is the part that says what to do. The link belongs on the
     line - but as the link back to the comment, which is already there, not
     as the words describing the job.
+
+    Markdown comes off a comment the same as a description. An attachment in
+    a comment is written `[image.png]( "")` and went onto a checklist looking
+    exactly like that.
     """
-    return " ".join(A_LINK.sub(" ", MENTION.sub(" ", text or "")).split())
+    return " ".join(A_LINK.sub(" ", MENTION.sub(" ", plain(text))).split())
+
+
+# A filename and nothing else. Trello writes an attachment into the comment
+# as a link to it, so a comment that is a screenshot and a tag reduces to
+# "image.png" - which is not a job, and is not worth a line on anybody's list.
+JUST_A_FILE = re.compile(
+    r"^[\w .\-]+\.(png|jpe?g|gif|webp|heic|pdf|mov|mp4|csv|xlsx?|docx?)$",
+    re.IGNORECASE,
+)
+
+
+def only_a_file(text: str) -> bool:
+    """Whether all a comment says is the name of what was attached to it."""
+    return bool(JUST_A_FILE.match(strip_mentions(text).strip()))
+
+
+def person_named(name: str, people: dict):
+    """The board member somebody called `name`, or None.
+
+    The reading answers with a name rather than a username when nobody was
+    tagged - "Kath and Jenn setup a discord call" names two people and tags
+    neither - so it has to be matched back to a person the way a checklist is:
+    by their username, their full name, their first name, or the name of a
+    checklist they keep.
+    """
+    wanted = " ".join((name or "").split()).casefold()
+    if not wanted:
+        return None
+    for person in (people or {}).values():
+        if wanted == (person.username or "").casefold():
+            return person
+        if wanted == (person.full_name or "").casefold():
+            return person
+        if wanted == person.first_name().casefold():
+            return person
+        if any(
+            wanted == str(held).strip().casefold()
+            for held in (person.keeps or {}).values()
+        ):
+            return person
+    return None
 
 
 def checklist_for(full_name: str, names) -> str:
@@ -580,6 +625,26 @@ def already_on(note: Note, checklist) -> bool:
     )
 
 
+def how_many_filed(note: Note, checklists) -> int:
+    """How many lines on these checklists came from this comment.
+
+    One comment is not one job. Tre's on the General card says what the money
+    moved to, then asks Kath and Jenn to set up a call, then gives Kath a list
+    of scene changes - three jobs, one comment, and every line RYTE writes for
+    them carries the same link. So "has it been filed" cannot be a yes or a
+    no: it has to be a count, or the first line filed stops the other two ever
+    being written.
+    """
+    if not note.comment_id:
+        return 0
+    return sum(
+        1
+        for held in checklists or []
+        for item in (held or {}).get("checkItems") or []
+        if note.comment_id in str(item.get("name") or "")
+    )
+
+
 def already_filed(note: Note, checklists) -> bool:
     """Whether it is on any of these checklists.
 
@@ -665,7 +730,7 @@ def summary_prompt(notes: list[Note], people: dict) -> str:
     return (
         "These are comments on a lead-generation team's daily Trello cards. "
         "Somebody was tagged in each one, which means it is a job for them.\n\n"
-        "Give me one entry per tagged person per comment:\n"
+        "Give me one entry per job per person:\n"
         "1. comment_id — in the brackets before the comment.\n"
         "2. person — the tag in the brackets after their name, without the @. "
         'Empty if the comment tagged nobody.\n'
@@ -674,8 +739,16 @@ def summary_prompt(notes: list[Note], people: dict) -> str:
         "trailing full stop. If the comment is already short, use it as it "
         "is.\n"
         "4. kind — which of these that work belongs to:\n" + kinds + "\n\n"
-        "When a comment hands different jobs to the people it tags, each "
-        "entry says only that person's part and nobody else's. When it is one "
-        "job for all of them, give them all the same summary.\n\n"
+        "One comment is often more than one job. Tre's says what the money "
+        "moved to, asks two people to set up a call, and then gives one of "
+        "them a list of scene changes: that is three entries, not one. Give "
+        "each job its own entry, and each entry only the part that is that "
+        "person's. When one job is for several people, give each of them the "
+        "same summary.\n\n"
+        "Include somebody the comment gives work to even when nobody tagged "
+        "them: \"Kath and Jenn setup a discord call\" is a job for both of "
+        "them. Name them as the comment does. Somebody merely mentioned - "
+        "\"ask Nicole about the budget\" - is not being given work and gets "
+        "no entry.\n\n"
         "Comments:\n\n" + "\n\n".join(lines)
     )
