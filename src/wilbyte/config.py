@@ -229,6 +229,10 @@ class Secrets:
     # Where the acquirer's chargeback notifications land. RYTE reads what he
     # can off each one and flags it; nothing else happens without a button.
     discord_dispute_channel_id: str | None = None
+    # The address Summit Pay's invoices arrive from. Every Gmail search RYTE
+    # makes is pinned to it, so it is the boundary of what he can read rather
+    # than a convenience.
+    gmail_invoice_sender: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -326,6 +330,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 levinson_tag=_env("LEVINSON_TAG") or "levison leads",
                 discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),
                 discord_dispute_channel_id=_env("DISCORD_DISPUTE_CHANNEL_ID"),
+                gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
             ),
             path=config_path,
         )

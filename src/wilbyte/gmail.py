@@ -1,0 +1,206 @@
+"""The invoice, fetched from the inbox it was emailed to.
+
+Summit Pay - Payra - has no API worth the name: "we cant get direct api here,,
+but the invoices get emailed to me so we can use that way". So the invoice for
+a disputed transaction is found where it actually is, rather than somebody
+saving it out of Gmail and dragging it into Discord in the middle of writing a
+rebuttal.
+
+Read-only, and narrow by construction. Every search is pinned to one sender -
+the address the invoices come from, set in .env - so there is no call here
+that can read anything else in the inbox, whatever it is asked for. The one
+thing RYTE takes out is an attachment on a message from that address.
+
+Signing in is the same refresh token Sheets uses, with Gmail's read scope
+added to it. One token, one consent, several scopes.
+"""
+
+from __future__ import annotations
+
+import base64
+import re
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+import httpx
+
+from .gsheets import Credentials, SheetsError, credentials, explain_token
+
+API = "https://gmail.googleapis.com/gmail/v1/users/me"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+#: How far back to look for an invoice. A disputed transaction can be months
+#: old - Jose Zambrano's was June, disputed in September - so this is wide.
+LOOK_BACK_DAYS = 400
+
+#: Attachments worth taking. An invoice is a PDF and a receipt is sometimes a
+#: screenshot; nothing else on one of these emails is evidence.
+KEEPS = re.compile(r"\.(pdf|png|jpe?g)$", re.IGNORECASE)
+
+
+class GmailError(RuntimeError):
+    """Anything that stopped a search or a download, said in English."""
+
+
+@dataclass
+class Found:
+    """One email, and the files on it."""
+
+    message_id: str
+    subject: str = ""
+    when: str = ""
+    files: list = field(default_factory=list)
+
+
+@dataclass
+class Attached:
+    """One file off an email, already downloaded."""
+
+    name: str
+    data: bytes
+
+
+class GmailClient:
+    """One signed-in session. Searches one sender, reads, downloads. No more."""
+
+    def __init__(self, creds: Credentials, *, sender: str, timeout: float = 30.0):
+        if not (sender or "").strip():
+            raise GmailError(
+                "No invoice sender set. GMAIL_INVOICE_SENDER in .env is the "
+                "address Summit Pay's invoices arrive from, and every search "
+                "is pinned to it - without one there is nothing to search."
+            )
+        self._creds = creds
+        self._sender = sender.strip()
+        self._client = httpx.Client(timeout=timeout)
+        self._token = ""
+        self._token_until = 0.0
+
+    def __enter__(self) -> "GmailClient":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._client.close()
+
+    def _access_token(self) -> str:
+        import time
+
+        if self._token and time.time() < self._token_until:
+            return self._token
+        try:
+            reply = self._client.post(
+                TOKEN_URL,
+                data={
+                    "client_id": self._creds.client_id,
+                    "client_secret": self._creds.client_secret,
+                    "refresh_token": self._creds.refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise GmailError(f"Couldn't reach Google to sign in: {exc}") from exc
+        if reply.status_code >= 400:
+            raise GmailError(explain_token(reply.status_code, reply.text))
+        got = reply.json()
+        self._token = str(got.get("access_token") or "")
+        self._token_until = time.time() + float(got.get("expires_in") or 3600) - 60
+        if not self._token:
+            raise GmailError("Google signed us in but sent no access token back.")
+        return self._token
+
+    def _get(self, path: str, **params) -> dict:
+        try:
+            reply = self._client.get(
+                f"{API}{path}",
+                params=params or None,
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+            )
+        except httpx.HTTPError as exc:
+            raise GmailError(f"Couldn't reach Gmail: {exc}") from exc
+        if reply.status_code == 403:
+            raise GmailError(
+                "Gmail refused that. The refresh token in .env was minted "
+                "without the Gmail read scope - mint a new one with "
+                "https://www.googleapis.com/auth/gmail.readonly ticked "
+                "alongside the ones already there."
+            )
+        if reply.status_code >= 400:
+            raise GmailError(f"Gmail said {reply.status_code}: {reply.text[:200]}")
+        return reply.json()
+
+    # ------------------------------------------------------------- searching
+
+    def invoices_for(self, *terms: str, since: date | None = None) -> list[Found]:
+        """Emails from the invoice sender that mention all of `terms`.
+
+        The sender is not a term - it is the whole search's boundary, and it
+        is put there here rather than passed in, so no caller can widen it.
+        """
+        wanted = [f"from:{self._sender}", "has:attachment"]
+        for term in terms:
+            said = " ".join(str(term or "").split())
+            if said:
+                wanted.append(f'"{said}"')
+        start = since or (date.today() - timedelta(days=LOOK_BACK_DAYS))
+        wanted.append(f"after:{start:%Y/%m/%d}")
+
+        got = self._get("/messages", q=" ".join(wanted), maxResults=10)
+        found = []
+        for one in got.get("messages") or []:
+            message_id = str(one.get("id") or "")
+            if message_id:
+                found.append(self.read(message_id))
+        return found
+
+    def read(self, message_id: str) -> Found:
+        """One email's subject, date and what is attached to it."""
+        got = self._get(f"/messages/{message_id}", format="full")
+        headers = {
+            str(one.get("name") or "").casefold(): str(one.get("value") or "")
+            for one in ((got.get("payload") or {}).get("headers") or [])
+        }
+        found = Found(
+            message_id=message_id,
+            subject=headers.get("subject", ""),
+            when=headers.get("date", ""),
+        )
+        found.files = _attachments_in(got.get("payload") or {})
+        return found
+
+    def download(self, message_id: str, attachment_id: str) -> bytes:
+        """The bytes of one attachment on one of that sender's emails."""
+        got = self._get(
+            f"/messages/{message_id}/attachments/{attachment_id}"
+        )
+        raw = str(got.get("data") or "")
+        if not raw:
+            return b""
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+
+
+def _attachments_in(part: dict) -> list:
+    """[(filename, attachment id)] for everything worth keeping on an email.
+
+    Walks the parts rather than trusting the first one: a Summit Pay invoice
+    arrives as a multipart with the PDF two levels down.
+    """
+    found = []
+    name = str(part.get("filename") or "")
+    body = part.get("body") or {}
+    if name and KEEPS.search(name) and body.get("attachmentId"):
+        found.append((name, str(body["attachmentId"])))
+    for inside in part.get("parts") or []:
+        found.extend(_attachments_in(inside))
+    return found
+
+
+def open_gmail(secrets) -> GmailClient:
+    """A signed-in client, or a plain sentence about what is missing."""
+    try:
+        creds = credentials(secrets)
+    except SheetsError as exc:
+        raise GmailError(str(exc).replace("Google Sheets", "Gmail")) from exc
+    return GmailClient(creds, sender=getattr(secrets, "gmail_invoice_sender", ""))
