@@ -233,6 +233,12 @@ class Secrets:
     # makes is pinned to it, so it is the boundary of what he can read rather
     # than a convenience.
     gmail_invoice_sender: str | None = None
+    # The invoices arrive at a different Google account than the one that owns
+    # the sheets, and a refresh token belongs to one account. Same OAuth
+    # client - that is the app rather than the person - and a second token
+    # minted while signed in as whoever gets the invoices. Left blank, Gmail
+    # uses the same token as everything else.
+    gmail_refresh_token: str | None = None
 
     def require(self, *names: str) -> None:
         missing = [n for n in names if not getattr(self, n)]
@@ -331,6 +337,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),
                 discord_dispute_channel_id=_env("DISCORD_DISPUTE_CHANNEL_ID"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
+                gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
             ),
             path=config_path,
         )

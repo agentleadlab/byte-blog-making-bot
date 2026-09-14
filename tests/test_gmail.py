@@ -139,3 +139,49 @@ def test_a_token_without_the_scope_says_which_scope(monkeypatch):
         one.invoices_for("Jose")
 
     assert "gmail.readonly" in str(raised.value)
+
+
+def test_a_different_account_signs_in_with_its_own_token(monkeypatch):
+    """"its a different gmail account is that okay?" — a refresh token belongs
+    to one account, so the invoice inbox needs its own."""
+    used = {}
+
+    class Tokens(FakeGmail):
+        def post(self, url, data=None, **kwargs):
+            used.update(data or {})
+            return super().post(url, data=data, **kwargs)
+
+    fake = Tokens()
+    monkeypatch.setattr(gmail.httpx, "Client", lambda **kw: fake)
+    one = gmail.open_gmail(SimpleNamespace(
+        google_client_id="id", google_client_secret="secret",
+        google_refresh_token="the-sheets-one",
+        gmail_refresh_token="the-invoice-one",
+        gmail_invoice_sender="no-reply@summitpay.co",
+    ))
+    one.invoices_for("Jose")
+
+    # The same app, a different person.
+    assert used["client_id"] == "id"
+    assert used["refresh_token"] == "the-invoice-one"
+
+
+def test_one_address_for_everything_needs_no_second_token(monkeypatch):
+    used = {}
+
+    class Tokens(FakeGmail):
+        def post(self, url, data=None, **kwargs):
+            used.update(data or {})
+            return super().post(url, data=data, **kwargs)
+
+    fake = Tokens()
+    monkeypatch.setattr(gmail.httpx, "Client", lambda **kw: fake)
+    one = gmail.open_gmail(SimpleNamespace(
+        google_client_id="id", google_client_secret="secret",
+        google_refresh_token="the-sheets-one",
+        gmail_refresh_token="",
+        gmail_invoice_sender="no-reply@summitpay.co",
+    ))
+    one.invoices_for("Jose")
+
+    assert used["refresh_token"] == "the-sheets-one"

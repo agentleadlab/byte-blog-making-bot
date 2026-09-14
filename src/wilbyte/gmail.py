@@ -11,8 +11,10 @@ the address the invoices come from, set in .env - so there is no call here
 that can read anything else in the inbox, whatever it is asked for. The one
 thing RYTE takes out is an attachment on a message from that address.
 
-Signing in is the same refresh token Sheets uses, with Gmail's read scope
-added to it. One token, one consent, several scopes.
+Signing in is the same OAuth client as everything else - the client is the
+app rather than the person - with its own refresh token when the invoices
+arrive at a different Google account than the one that owns the sheets, which
+they do. A refresh token belongs to one account.
 """
 
 from __future__ import annotations
@@ -198,9 +200,21 @@ def _attachments_in(part: dict) -> list:
 
 
 def open_gmail(secrets) -> GmailClient:
-    """A signed-in client, or a plain sentence about what is missing."""
+    """A signed-in client, or a plain sentence about what is missing.
+
+    The invoices arrive at a different Google account than the one that owns
+    the sheets, and a refresh token belongs to one account - so GMAIL_REFRESH_
+    TOKEN is that account's, minted against the same OAuth client. The client
+    is the app rather than the person, so only the token changes.
+
+    Left blank, Gmail signs in as everything else does, which is right when
+    the invoices come to the same address.
+    """
     try:
         creds = credentials(secrets)
     except SheetsError as exc:
         raise GmailError(str(exc).replace("Google Sheets", "Gmail")) from exc
+    instead = (getattr(secrets, "gmail_refresh_token", "") or "").strip()
+    if instead:
+        creds = Credentials(creds.client_id, creds.client_secret, instead)
     return GmailClient(creds, sender=getattr(secrets, "gmail_invoice_sender", ""))
