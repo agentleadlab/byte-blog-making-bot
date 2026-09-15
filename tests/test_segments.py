@@ -721,3 +721,14 @@ def test_the_guest_is_still_named():
     from wilbyte import segments
 
     assert "name and the work they do are the point" in segments.load_prompt()
+
+
+def test_the_title_may_still_carry_the_figure():
+    """"keep the $20k in the title, thats the hook" — the rule is about it
+    being repeated into every paragraph, not about the number existing."""
+    from wilbyte import segments
+
+    said = segments.load_prompt()
+
+    assert "except the YT Title" in said
+    assert "hook that earns the click" in said

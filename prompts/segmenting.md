@@ -93,10 +93,16 @@ website description alike:
   studies, not the marriage, not the diagnosis. Where rapport is the lesson,
   the lesson is *that he builds it on what the client cares about* — not the
   list of what he happens to care about himself.
-- **What they personally earn or lost.** No exact figures for their own money.
-  "$15,000 to $20,000" is written as "five figures"; "$200 to $400 a month
-  average premium" as "a high average premium". This applies hardest in the
-  title, which is the part that gets read by people who never watch.
+- **What they personally earn or lost — everywhere except the YT Title.** The
+  title may carry the figure, because that is the hook that earns the click:
+  "After Losing $20K His First Year" stays as it is. In the hook paragraph,
+  the bullets, the closing line and the website description it is rounded —
+  "$15,000 to $20,000" becomes "five figures", "$200 to $400 a month average
+  premium" becomes "a high average premium".
+  Said once, in the place it does the work, rather than five times. Emanuel
+  Nazco's copy repeated the same loss in the summary, the long-form hook, the
+  long-form website description, a segment hook and that segment's website
+  description, which reads less like a hook each time it appears.
 - **Their previous career, if it is personal rather than relevant.** "came out
   of behavior therapy" is a life story; "came in from outside the industry" is
   the part that teaches.
