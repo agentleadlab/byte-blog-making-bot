@@ -816,6 +816,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "clearout":
+                await _clear_out(bot, responder, config, request.brief or "")
+                return
+
             if request.action == "access":
                 await _what_i_can_do(responder, bot)
                 return
@@ -1748,6 +1752,201 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
         "`@RYTE noticed all` for the raw list, "
         "`@RYTE noticed forget <thing>` to stop me raising one._"
     )
+
+
+async def _clear_out(
+    bot: "WilByteBot", responder: Responder, config: Config, name: str
+) -> None:
+    """Close an agent down: keep the sheet, keep the conversation, then go.
+
+    Two presses. The first keeps things and is safe - a row in ALL CLIENTS and
+    a picture in Drive, neither of which takes anything away. The second is the
+    one that cannot be undone, and it only appears once the keeping is done:
+    "make it a button for me to confirm before ryte delete and remove them".
+
+    Nothing happens in any server but the one named in .env, whatever a
+    command is pointed at. The worst mistake available here is doing the right
+    thing in the wrong place.
+    """
+    from datetime import datetime
+
+    from .. import clearout
+
+    name = " ".join((name or "").split())
+    if not name:
+        await responder.send(
+            "Who? `@RYTE clearout Jay Rodriguez` — I'll find their channel, "
+            "keep their sheet and a picture of the conversation, and then ask "
+            "before anything goes."
+        )
+        return
+
+    where = (config.secrets.discord_clients_guild_id or "").strip()
+    guild = bot.get_guild(int(where)) if where.isdigit() else None
+    if guild is None:
+        await responder.send(
+            "I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in "
+            ".env isn't it. `@RYTE access` lists the servers I'm in."
+        )
+        return
+
+    channels = [
+        clearout.Channel(
+            channel_id=str(one.id),
+            name=str(one.name),
+            category=str(getattr(one.category, "name", "") or ""),
+        )
+        for one in guild.text_channels
+    ]
+    found = clearout.channels_for(name, channels)
+    if not found:
+        await responder.send(
+            f"No channel in **{guild.name}** looks like **{name}**'s."
+        )
+        return
+    if len(found) > 1:
+        await responder.send(
+            f"More than one channel could be **{name}**'s, so I've left them "
+            "all alone:\n"
+            + "\n".join(f"• #{one.name}" for one in found)
+            + "\nName the one you mean and I'll do that one."
+        )
+        return
+
+    plan = clearout.Plan(name=name, channel=found[0])
+    member = _member_called(guild, name)
+    if member is not None:
+        plan.member_id, plan.member_name = str(member.id), str(member)
+
+    plan.sheet, trouble = await asyncio.to_thread(jobs.sheet_for_agent, config, name)
+    plan.problems += trouble
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Keep the sheet and the picture",
+        emoji="🧹",
+    )
+    await responder.send(
+        clearout.describe(plan)
+        + "\n-# Nothing is deleted by this. I'll ask again before anything goes.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    today = datetime.now(ZoneInfo(config.schedule.timezone))
+    kept = []
+
+    tab, trouble = await asyncio.to_thread(
+        jobs.collect_client, config, clearout.row_for(plan, when=today)
+    )
+    kept.append(f"✅ Sheet link → **{tab}**" if tab else "❌ " + "; ".join(trouble))
+
+    messages = await _last_said(guild.get_channel(int(plan.channel.channel_id)))
+    picture, trouble = await asyncio.to_thread(
+        jobs.keep_the_picture, config,
+        clearout.as_page(plan, messages),
+        clearout.picture_name(plan, when=today),
+    )
+    kept.append(
+        f"✅ {len(messages)} message(s) → <{picture}>" if picture
+        else "❌ " + "; ".join(trouble)
+    )
+
+    # Only once both are kept. The whole point of the order is that a channel
+    # is never deleted with the only copy of something still inside it.
+    if not picture or not tab:
+        await responder.send(
+            "\n".join(kept)
+            + "\n\n**Nothing deleted.** One of those didn't work, and the "
+            "channel is the only copy of what it didn't keep."
+        )
+        return
+
+    going = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Ban and delete #{plan.channel.name}",
+        emoji="⛔",
+    )
+    await responder.send(
+        "\n".join(kept)
+        + f"\n\n**This cannot be undone.**\n"
+        + (f"• Ban **{plan.member_name}** from {guild.name}\n"
+           if plan.member_id else "• Nobody to ban — they've already left\n")
+        + f"• Delete **#{plan.channel.name}**",
+        view=going,
+    )
+    await going.wait()
+    if not going.confirmed:
+        await responder.send("Left alone. The sheet and the picture are kept either way.")
+        return
+
+    done, trouble = [], []
+    if member is not None:
+        try:
+            await guild.ban(member, reason=f"Closed down by RYTE for {name}", delete_message_days=0)
+            done.append(f"⛔ Banned **{plan.member_name}**")
+        except Exception as exc:
+            trouble.append(f"Couldn't ban them: {_readable(exc)}")
+    channel = guild.get_channel(int(plan.channel.channel_id))
+    if channel is not None:
+        try:
+            await channel.delete(reason=f"Closed down by RYTE for {name}")
+            done.append(f"🗑 Deleted **#{plan.channel.name}**")
+        except Exception as exc:
+            trouble.append(f"Couldn't delete the channel: {_readable(exc)}")
+
+    await responder.send(
+        "\n".join(done + [f"⚠ {one}" for one in trouble])
+        or "Nothing happened, which shouldn't be possible — check the channel."
+    )
+
+
+def _member_called(guild, name: str):
+    """The member whose name looks like this one, or None.
+
+    By what they are called in that server first, because an agent is added
+    under their own name and then renames themselves on Discord.
+    """
+    from .. import clearout
+
+    wanted = clearout.tidy(name)
+    if not wanted:
+        return None
+    for member in guild.members:
+        for called in (
+            getattr(member, "display_name", ""),
+            getattr(member, "global_name", "") or "",
+            getattr(member, "name", ""),
+        ):
+            said = clearout.tidy(called)
+            if said and (said == wanted or wanted in said or said in wanted):
+                return member
+    return None
+
+
+async def _last_said(channel) -> list:
+    """The last of the conversation, oldest first, for the picture."""
+    from .. import clearout
+
+    if channel is None:
+        return []
+    found = []
+    try:
+        async for said in channel.history(limit=clearout.KEEP_MESSAGES):
+            found.append(clearout.Said(
+                who=str(getattr(said.author, "display_name", "") or said.author),
+                when=f"{said.created_at:%b %d, %Y %H:%M}" if said.created_at else "",
+                text=str(said.content or ""),
+                attachments=len(getattr(said, "attachments", []) or []),
+            ))
+    except Exception:
+        log.exception("Couldn't read that channel's history")
+        return []
+    return list(reversed(found))
 
 
 async def _what_i_can_do(responder: Responder, bot: "WilByteBot") -> None:

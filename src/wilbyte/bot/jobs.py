@@ -3998,6 +3998,131 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     return found
 
 
+def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
+    """The delivered-leads sheet for one agent, off their own card. (link, problems).
+
+    The same place the rebuttal finds it: the setup confirmations Therese and
+    Faith leave on the New Agent card, each carrying the sheet for that round.
+    The last one is the one that counts - a setup gets redone and every round
+    leaves its own link.
+
+    Archived cards too. An agent being closed down is one whose card went to
+    Done months ago.
+    """
+    from .. import agents as rules
+
+    if not (name or "").strip():
+        return "", ["No name to look up."]
+
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = rules.named_that(name, every)
+        if not cards:
+            return "", [f"No New Agent card for “{name}” anywhere on the board."]
+        said = client.card_comments(str(cards[0].get("id") or ""))
+    except Exception as exc:
+        return "", [f"Couldn't read their card: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+    links = rules.sheet_links(said)
+    if not links:
+        return "", [f"No sheet link in the comments on “{name}”'s card."]
+    return links[-1][1], []
+
+
+def collect_client(config: Config, row: list) -> tuple[str, list[str]]:
+    """Put one line in the ALL CLIENTS tab. (what tab it went on, problems).
+
+    Appended, never written over: the tab is a record of every client who has
+    been closed down, and nothing here has any business changing a line that
+    is already in it.
+    """
+    from .. import gsheets
+
+    link = (getattr(config.secrets, "clients_sheet_link", "") or "").strip()
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return "", [
+            "CLIENTS_SHEET_LINK in .env isn't a spreadsheet link, so there is "
+            "nowhere to collect them."
+        ]
+
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            tab = client.tab_named(sheet_id, gsheets.gid_in(link))
+            if not tab:
+                return "", [
+                    "No tab in that spreadsheet with the gid in "
+                    "CLIENTS_SHEET_LINK - paste the link again with the right "
+                    "tab open."
+                ]
+            client.append(sheet_id, tab, [row])
+    except Exception as exc:
+        return "", [f"Couldn't write the sheet: {_short(exc, 140)}"]
+    return tab, []
+
+
+def keep_the_picture(config: Config, page: str, called: str) -> tuple[str, list[str]]:
+    """Photograph a conversation and put it in Drive. (link, problems).
+
+    The channel is about to stop existing, so this is the only copy there will
+    be of what was said in it - which is why it is a picture rather than a
+    paragraph somebody wrote about it.
+    """
+    import tempfile
+
+    from .. import drive
+
+    with tempfile.TemporaryDirectory() as folder:
+        where = Path(folder)
+        html_path, png_path = where / "convo.html", where / "convo.png"
+        html_path.write_text(page, encoding="utf-8")
+        try:
+            _photograph(html_path, png_path)
+        except Exception as exc:
+            return "", [f"Couldn't render the conversation: {_short(exc, 140)}"]
+
+        try:
+            with drive.open_drive(config.secrets) as uploading:
+                got = uploading.put(png_path, name=called)
+        except drive.DriveError as exc:
+            return "", [str(exc)]
+        except Exception as exc:
+            return "", [f"Couldn't upload to Drive: {_short(exc, 140)}"]
+    return got.link(), []
+
+
+#: Wide enough that a line of conversation is not wrapped into noise, and the
+#: height is whatever the messages come to.
+PICTURE_WIDTH = 900
+
+
+def _photograph(html_path: Path, png_path: Path) -> None:
+    """One page, full height, as a PNG."""
+    from playwright.sync_api import sync_playwright
+
+    from .. import cover
+
+    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    found = cover._chromium_executable()
+    if found:
+        launch["executable_path"] = found
+
+    with sync_playwright() as playing:
+        browser = playing.chromium.launch(**launch)
+        try:
+            page = browser.new_page(viewport={"width": PICTURE_WIDTH, "height": 1200})
+            page.goto(html_path.resolve().as_uri())
+            page.wait_for_function(
+                "document.documentElement.dataset.ready === '1'", timeout=10_000
+            )
+            page.screenshot(path=str(png_path), full_page=True)
+        finally:
+            browser.close()
+
+
 def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     """Payra's confirmation for this customer. (what it says, a problem or "").
 
