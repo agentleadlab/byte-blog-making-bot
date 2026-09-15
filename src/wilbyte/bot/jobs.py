@@ -4029,12 +4029,18 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         client = open_trello(config)
         try:
             detail = client.card_detail(str(card.get("id") or ""))
-            said = client.card_comments(str(card.get("id") or ""))
+            # The dated form. A rebuttal turns on when things happened, and
+            # the day the sheet was handed over is on the comment that handed
+            # it over - Nicole posted Juliana Hernandez's at 1:10 PM on the
+            # 28th and said "delivered" five minutes later.
+            notes = client.card_notes(str(card.get("id") or ""))
+            said = [str(one.get("text") or "") for one in notes]
         except Exception as exc:
             found.holes.append(f"Couldn't read their card: {_short(exc, 120)}")
-            detail, said = {}, []
+            detail, said, notes = {}, [], []
         finally:
             client.close()
+        found.delivered_on = _when_delivered(notes, rules)
 
     body = str(detail.get("desc") or "")
     if cards:
@@ -4343,6 +4349,21 @@ def _read_lead_sheet(config: Config, link: str, gsheets) -> tuple[str, str]:
     return "\n".join(written), ""
 
 
+def _when_delivered(notes, rules) -> str:
+    """The day the sheet was handed over, off the comment that handed it over.
+
+    Nicole posts the link and then says "delivered", so the link is the one
+    that dates the handover. The oldest such comment rather than the newest:
+    a top-up months later is not when the first delivery happened.
+    """
+    dated = []
+    for one in notes or []:
+        when = str(one.get("when") or "")[:10]
+        if when and rules.sheet_links([str(one.get("text") or "")]):
+            dated.append(when)
+    return min(dated) if dated else ""
+
+
 def _timeline(dispute, agent, found) -> list:
     """The dated spine of the document, from what was actually established."""
     when = []
@@ -4351,6 +4372,15 @@ def _timeline(dispute, agent, found) -> list:
         when.append((f"{paid:%m/%d/%Y}", f"Charged {dispute.amount}"))
     if agent is not None and agent.launch:
         when.append((f"{agent.launch:%m/%d/%Y}", "Launch date, leads begin delivery"))
+    # The handover. Without it the spine of the document is a charge and a
+    # chargeback with nothing in between, which is the half that answers the
+    # dispute - Juliana Hernandez's timeline was one line long.
+    handed = (getattr(found, "delivered_on", "") or "").split("-")
+    if len(handed) == 3:
+        when.append((
+            f"{handed[1]}/{handed[2]}/{handed[0]}",
+            "Leads delivered by shared spreadsheet, confirmed in writing",
+        ))
     disputed = dispute.disputed()
     if disputed:
         waited = dispute.days_waited()

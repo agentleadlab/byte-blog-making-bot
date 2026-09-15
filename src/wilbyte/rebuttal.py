@@ -236,6 +236,9 @@ class Gathered:
     sheet: str = ""
     activity: str = ""
     texts: str = ""
+    #: The day the sheet was handed over, "YYYY-MM-DD", off the comment that
+    #: carried the link. The timeline's missing middle without it.
+    delivered_on: str = ""
     timeline: list = field(default_factory=list)
     holes: list = field(default_factory=list)
 

@@ -644,6 +644,12 @@ def _gathering(monkeypatch, *, cards, receipt=("Reference # FJZ3FV3XAAJF-PXX9", 
         def card_comments(self, card_id):
             return list(HER_COMMENTS)
 
+        def card_notes(self, card_id):
+            return [
+                {"text": one, "when": "2026-08-28T18:10:00.000Z", "id": str(i)}
+                for i, one in enumerate(HER_COMMENTS)
+            ]
+
         def close(self):
             pass
 
@@ -692,3 +698,54 @@ def test_a_board_with_no_card_and_no_receipt_says_both_plainly(monkeypatch):
 
     assert any("anywhere on the board" in one for one in found.holes)
     assert any("No invoice email" in one for one in found.holes)
+
+
+def test_the_timeline_carries_the_day_the_sheet_was_handed_over(monkeypatch):
+    """Without it the spine is a charge and a chargeback with nothing in
+    between — which is the half that answers the dispute. Juliana's timeline
+    came out one line long."""
+    found = _gathering(monkeypatch, cards=[HER_CARD])
+
+    said = dict(found.timeline)
+    assert "08/28/2026" in said
+    assert any("delivered" in one.casefold() for one in said.values())
+    assert len(found.timeline) >= 2, "still just the charge"
+
+
+def test_the_handover_is_dated_from_the_comment_that_carried_the_link(monkeypatch):
+    """Nicole posts the link and then says "delivered", so the link is the
+    comment that dates it."""
+    from wilbyte import agents
+    from wilbyte.bot import jobs
+
+    notes = [
+        {"text": "delivered", "when": "2026-09-30T00:00:00Z"},
+        {"text": "https://docs.google.com/spreadsheets/d/abc/edit",
+         "when": "2026-08-28T18:10:00Z"},
+        {"text": "takeover financial", "when": "2026-08-27T00:00:00Z"},
+    ]
+
+    assert jobs._when_delivered(notes, agents) == "2026-08-28"
+
+
+def test_a_top_up_months_later_is_not_when_delivery_happened(monkeypatch):
+    from wilbyte import agents
+    from wilbyte.bot import jobs
+
+    notes = [
+        {"text": "https://docs.google.com/spreadsheets/d/late/edit",
+         "when": "2026-11-02T00:00:00Z"},
+        {"text": "https://docs.google.com/spreadsheets/d/first/edit",
+         "when": "2026-08-28T18:10:00Z"},
+    ]
+
+    assert jobs._when_delivered(notes, agents) == "2026-08-28"
+
+
+def test_no_sheet_comment_leaves_the_timeline_alone_rather_than_guessing(monkeypatch):
+    from wilbyte import agents
+    from wilbyte.bot import jobs
+
+    assert jobs._when_delivered([{"text": "delivered", "when": "2026-08-28T00:00:00Z"}],
+                                agents) == ""
+    assert jobs._when_delivered([], agents) == ""
