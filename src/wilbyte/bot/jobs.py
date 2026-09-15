@@ -3931,31 +3931,37 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     finally:
         client.close()
 
+    # No card is a hole in the document, not the end of gathering. The receipt
+    # is in Gmail and has nothing to do with the board, and returning here
+    # meant one missing card quietly took the paid invoice with it - Juliana
+    # Hernandez's rebuttal asked Franklin to go and find an invoice RYTE could
+    # already see, because her card was titled "AGED LEAD -" and got skipped.
+    agent, said, body, detail = None, [], "", {}
     if not cards:
         found.holes.append(
-            f"No New Agent card for “{name}” anywhere on the board, so the "
-            "order details and the sheet had to be left out."
+            f"No card for “{name}” anywhere on the board, so the order "
+            "details and the sheet had to be left out."
         )
-        return found
-
-    card = cards[0]
-    client = open_trello(config)
-    try:
-        detail = client.card_detail(str(card.get("id") or ""))
-        said = client.card_comments(str(card.get("id") or ""))
-    except Exception as exc:
-        found.holes.append(f"Couldn't read their card: {_short(exc, 120)}")
-        return found
-    finally:
-        client.close()
+    else:
+        card = cards[0]
+        client = open_trello(config)
+        try:
+            detail = client.card_detail(str(card.get("id") or ""))
+            said = client.card_comments(str(card.get("id") or ""))
+        except Exception as exc:
+            found.holes.append(f"Couldn't read their card: {_short(exc, 120)}")
+            detail, said = {}, []
+        finally:
+            client.close()
 
     body = str(detail.get("desc") or "")
-    agent = rules.read_agent(
-        {**card, **detail}, text=body, comments=tuple(said),
-        # Their launch date is months back. Read against the day they were
-        # charged, not today, or "Monday" reads as next Monday.
-        today=dispute.paid() or date.today(),
-    )
+    if cards:
+        agent = rules.read_agent(
+            {**cards[0], **detail}, text=body, comments=tuple(said),
+            # Their launch date is months back. Read against the day they were
+            # charged, not today, or "Monday" reads as next Monday.
+            today=dispute.paid() or date.today(),
+        )
     ordered = []
     if agent is not None:
         if agent.stated or agent.lead_type:
@@ -3974,12 +3980,12 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         found.delivery = "\n\n---\n".join(confirmations[:6])
 
     links = rules.sheet_links(said)
-    if not links:
+    if not links and cards:
         found.holes.append(
             "No sheet link on their card, so the delivered leads had to be "
             "left out. Paste the sheet link into the command if you have it."
         )
-    else:
+    elif links:
         found.sheet, trouble = _read_lead_sheet(config, links[0], gsheets)
         if trouble:
             found.holes.append(trouble)

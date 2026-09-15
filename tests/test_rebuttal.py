@@ -561,3 +561,134 @@ def test_the_writing_is_asked_for_the_messages_and_told_when_to_leave_them_out()
     assert "KEY MESSAGES:" in asked
     assert "when | who | what they said" in asked
     assert "Leave this out entirely if there are no messages" in asked
+
+
+# ------------------------------- a client who is not a new agent is still a client
+
+# Juliana Hernandez's real dispute. Her card was titled "AGED LEAD - Juliana
+# Hernandez" — an order from somebody already a client rather than a fresh
+# setup — so a search for New Agent cards reported that the board had never
+# heard of her, and the rebuttal went out asking Franklin to go and find the
+# order, the sheet and the invoice that RYTE could already see.
+
+JULIANA = """Disputed Payment | Elevateqs
+
+ARN: 72307626241809574244780
+Customer Name: Juliana Hernandez
+Customer Email: hjuliana650@gmail.com
+Card Number (Last 4): 7543
+Transaction Date: 8/28/2026
+Dispute Amount: $ 129.37"""
+
+HER_CARD = {"id": "c1", "name": "AGED LEAD - Juliana Hernandez"}
+
+HER_DESC = """Name: Juliana Hernandez
+Email: hjuliana650@gmail.com
+Phone Number: +14302302708
+Lead Type: Aged Final Expense - 30-90 days
+States Leads In: Texas
+Number of Requested Leads: 25"""
+
+HER_COMMENTS = [
+    "delivered",
+    "https://docs.google.com/spreadsheets/d/1bX2y6jK_JohC3bjuf/edit?usp=sharing",
+    "takeover financial",
+]
+
+
+def test_an_aged_lead_card_is_a_card_about_that_client():
+    from wilbyte import agents
+
+    assert agents.named_that("Juliana Hernandez", [HER_CARD]) == [HER_CARD]
+    assert agents.agent_name(HER_CARD["name"]) == "Juliana Hernandez"
+
+
+def test_an_aged_lead_order_is_still_not_a_new_agent_to_be_set_up():
+    """Widening the *lookup* must not widen what gets filed as a new setup."""
+    from wilbyte import agents
+
+    assert agents.is_agent_card(HER_CARD["name"]) is False
+    assert agents.is_client_card(HER_CARD["name"]) is True
+
+
+def test_a_setup_card_is_preferred_when_a_client_has_both():
+    from wilbyte import agents
+
+    found = agents.named_that("Juliana Hernandez", [
+        HER_CARD, {"id": "c2", "name": "New Agent - Juliana Hernandez"},
+    ])
+
+    assert [one["id"] for one in found] == ["c2", "c1"]
+
+
+def test_a_daily_card_is_still_not_anybody(monkeypatch):
+    from wilbyte import agents
+
+    assert agents.named_that("Lead Order", [{"name": "Lead Order 08/28"}]) == []
+
+
+def _gathering(monkeypatch, *, cards, receipt=("Reference # FJZ3FV3XAAJF-PXX9", "")):
+    """rebuttal_evidence with Trello, Sheets and Gmail all stubbed."""
+    from types import SimpleNamespace
+
+    from wilbyte import rebuttal
+    from wilbyte.bot import jobs
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return list(cards)
+
+        def card_detail(self, card_id):
+            return {"desc": HER_DESC}
+
+        def card_comments(self, card_id):
+            return list(HER_COMMENTS)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Board())
+    monkeypatch.setattr(jobs, "_payment_receipt", lambda config, dispute: receipt)
+    monkeypatch.setattr(
+        jobs, "_read_lead_sheet", lambda config, link, gs: ("25 rows of leads", "")
+    )
+
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b1"))
+    return jobs.rebuttal_evidence(config, rebuttal.read_facts(JULIANA))
+
+
+def test_her_order_and_her_sheet_are_found_off_the_aged_lead_card(monkeypatch):
+    found = _gathering(monkeypatch, cards=[HER_CARD])
+
+    assert "Aged Final Expense - 30-90 days" in found.invoice
+    assert "Number of Requested Leads: 25" in found.invoice
+    assert found.sheet == "25 rows of leads"
+    assert "delivered" in found.delivery
+    assert not any("anywhere on the board" in one for one in found.holes)
+
+
+def test_no_card_at_all_still_fetches_the_paid_invoice(monkeypatch):
+    """The receipt is in Gmail and has nothing to do with the board.
+
+    Returning early on a missing card meant one silent skip took the invoice
+    with it — and the rebuttal asked Franklin to go and find a receipt RYTE
+    was already able to read.
+    """
+    found = _gathering(monkeypatch, cards=[])
+
+    assert "FJZ3FV3XAAJF-PXX9" in found.invoice, "the receipt was dropped again"
+    assert any("anywhere on the board" in one for one in found.holes)
+
+
+def test_no_card_does_not_also_complain_about_a_missing_sheet_link(monkeypatch):
+    """One hole, not two. There is no card for the sheet link to be on."""
+    found = _gathering(monkeypatch, cards=[])
+
+    assert not any("No sheet link on their card" in one for one in found.holes)
+
+
+def test_a_board_with_no_card_and_no_receipt_says_both_plainly(monkeypatch):
+    found = _gathering(monkeypatch, cards=[], receipt=("", "No invoice email for her"))
+
+    assert any("anywhere on the board" in one for one in found.holes)
+    assert any("No invoice email" in one for one in found.holes)

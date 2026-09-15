@@ -111,6 +111,23 @@ SETUP_PEOPLE = ("Therese", "Kathleen", "Nicole")
 # person, and it would sit in the same list looking near enough the same.
 AGENT_CARD = re.compile(r"^\s*new\s+agent\s*[-–—:]+\s*", re.IGNORECASE)
 
+# "AGED LEAD - Juliana Hernandez". An order from somebody who is already a
+# client rather than a new setup, and it lands in "Aged Leads Order Done"
+# carrying the same things a rebuttal needs: what they ordered, how many, and
+# the sheet that was delivered.
+#
+# Deliberately NOT part of `is_agent_card`. That one decides what gets set up
+# as a new agent and what gets checked against a setup, and an aged-leads
+# re-order is neither - calling it one would file it as a fresh agent. This is
+# only for *finding a card about a named client*, which is a different question
+# and the one `named_that` asks.
+ORDER_CARD = re.compile(r"^\s*aged\s+leads?\s*[-–—:]+\s*", re.IGNORECASE)
+
+# Either kind, for stripping the prefix off a title once a card is in hand.
+CLIENT_CARD = re.compile(
+    rf"({AGENT_CARD.pattern}|{ORDER_CARD.pattern})", re.IGNORECASE
+)
+
 # The line the form writes. Authoritative: the body text mentions lead types
 # in passing ("paid for OTP IUL leads") and that is not the field.
 #
@@ -314,9 +331,29 @@ def still_being_written(agent: "Agent", *, now: datetime) -> bool:
 
 
 def agent_name(title: str) -> str:
-    """"New Agent - Gustin Elrod" -> "Gustin Elrod"."""
+    """"New Agent - Gustin Elrod" -> "Gustin Elrod".
+
+    And "AGED LEAD - Juliana Hernandez" -> "Juliana Hernandez", because a
+    re-ordering client is still a person with a name, and a rebuttal that
+    calls her "AGED LEAD - Juliana Hernandez" reads like it was written by
+    the database rather than by the company she is disputing.
+    """
     said = " ".join((title or "").split())
-    return AGENT_CARD.sub("", said).lstrip(" -–—:").strip() or said
+    return CLIENT_CARD.sub("", said, count=1).lstrip(" -–—:").strip() or said
+
+
+def is_order_card(title: str) -> bool:
+    """Whether this is an order from somebody who is already a client."""
+    return bool(ORDER_CARD.match(title or ""))
+
+
+def is_client_card(title: str) -> bool:
+    """Whether this card is about a named client at all, of either kind.
+
+    The question `named_that` asks. Not the question `is_agent_card` asks,
+    which is whether somebody needs setting up.
+    """
+    return is_agent_card(title) or is_order_card(title)
 
 
 def find_lead_type(text: str) -> str:
@@ -553,12 +590,22 @@ def sheet_links(comments) -> list[tuple[str, str]]:
 
 
 def named_that(name: str, cards: list[dict]) -> list[dict]:
-    """Every New Agent card whose agent looks like the name asked about.
+    """Every card about a client who looks like the name asked about.
 
     Every word of the question in the name, in any order - "vitality key" finds
     Vitality Key Financial LLC, and "faith" finds Faith Hannah Calla. Not the
     other way round: matching a name against part of the question would make
     "when did the leads go live" find an agent called Leads.
+
+    New Agent cards *and* aged-leads orders, because "what did this customer
+    buy" is asked about anybody who ever paid us. Juliana Hernandez disputed
+    $129.37 and her card said "AGED LEAD - Juliana Hernandez", so a search for
+    New Agent cards alone reported that the board had never heard of her - and
+    her order, her 25 leads and the sheet Nicole delivered were all sitting on
+    a card RYTE had skipped.
+
+    New Agent cards first when a client has both: a setup card carries the
+    launch date and the fuller record.
     """
     wanted = [word for word in re.split(r"\W+", (name or "").casefold()) if word]
     if not wanted:
@@ -566,11 +613,12 @@ def named_that(name: str, cards: list[dict]) -> list[dict]:
     found = []
     for card in cards or []:
         title = str(card.get("name") or "")
-        if not is_agent_card(title):
+        if not is_client_card(title):
             continue
         theirs = agent_name(title).casefold()
         if all(re.search(rf"(?<!\w){re.escape(word)}", theirs) for word in wanted):
             found.append(card)
+    found.sort(key=lambda one: not is_agent_card(str(one.get("name") or "")))
     return found
 
 
