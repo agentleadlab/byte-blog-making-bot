@@ -1619,7 +1619,34 @@ def check_recordings(config: Config) -> list[tuple[bool, str]]:
     results.extend(_check_notion(config))
     results.extend(_check_zoom(config))
     results.extend(_check_fathom(config))
+    results.extend(_check_docs(config))
     return results
+
+
+def _check_docs(config: Config) -> list[tuple[bool, str]]:
+    """Whether the posting doc can actually be reached, and as whom.
+
+    One read of the tab titles - the smallest thing the Docs API will answer -
+    because a scope that was not ticked and a doc that was never shared look
+    identical until an interview is filed, which is the worst moment to find
+    out. Nothing is written.
+    """
+    from .. import docs as doc
+
+    if not (getattr(config.secrets, "segments_doc_id", "") or "").strip():
+        return [(None, "Posting doc not configured — segment copy stays on the card")]
+    try:
+        with doc.open_docs(config.secrets) as reading:
+            tabs = reading.tabs()
+    except doc.DocsError as exc:
+        return [(False, f"Posting doc — {_short(exc, 240)}")]
+    except Exception as exc:
+        return [(False, f"Posting doc — {_short(exc, 240)}")]
+    return [(
+        True,
+        f"Posting doc — {len(tabs)} tab(s), latest "
+        + (f"“{tabs[-1].title}”" if tabs else "none yet"),
+    )]
 
 
 def _check_notion(config: Config) -> list[tuple[bool, str]]:

@@ -162,3 +162,75 @@ def test_the_scope_is_named_when_google_refuses():
 
     assert "auth/documents" in str(raised.value)
     client.close()
+
+
+# --------------------------------- checking it without filing an interview
+
+# A scope that was not ticked and a doc that was never shared look identical
+# until an interview is filed, which is the worst moment to find out.
+
+
+def _checking(monkeypatch, *, doc_id="D", paper=None, blows_up=None):
+    from wilbyte.bot import jobs
+
+    def opening(secrets):
+        if blows_up is not None:
+            raise blows_up
+        return paper or Paper()
+
+    monkeypatch.setattr(docs, "open_docs", opening)
+    return jobs._check_docs(
+        SimpleNamespace(secrets=SimpleNamespace(segments_doc_id=doc_id))
+    )
+
+
+def test_a_reachable_doc_says_how_many_tabs_it_has(monkeypatch):
+    paper = Paper(tabs=[
+        docs.Tab(tab_id="t.1", title="Leonardo Lopez"),
+        docs.Tab(tab_id="t.2", title="Emmanuel Nazco"),
+    ])
+    (ok, said), = _checking(monkeypatch, paper=paper)
+
+    assert ok is True
+    assert "2 tab(s)" in said
+    assert "Emmanuel Nazco" in said
+
+
+def test_a_missing_scope_is_named_in_the_check(monkeypatch):
+    (ok, said), = _checking(
+        monkeypatch,
+        blows_up=docs.DocsError(
+            "Google Docs refused that. The refresh token in .env was minted "
+            "without https://www.googleapis.com/auth/documents"
+        ),
+    )
+
+    assert ok is False
+    assert "auth/documents" in said
+
+
+def test_a_doc_nobody_shared_is_told_apart_from_a_missing_scope(monkeypatch):
+    (ok, said), = _checking(
+        monkeypatch,
+        blows_up=docs.DocsError(
+            "Google has no document with that id, or the account the token "
+            "belongs to cannot see it."
+        ),
+    )
+
+    assert ok is False
+    assert "cannot see it" in said
+
+
+def test_not_configured_is_neither_pass_nor_fail(monkeypatch):
+    (ok, said), = _checking(monkeypatch, doc_id="")
+
+    assert ok is None
+    assert "not configured" in said
+
+
+def test_the_check_never_writes(monkeypatch):
+    paper = Paper()
+    _checking(monkeypatch, paper=paper)
+
+    assert (paper.made, paper.written) == ([], [])
