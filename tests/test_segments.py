@@ -684,3 +684,40 @@ def test_the_ask_uses_the_same_name_the_card_does():
             f"@{segments.THUMBNAIL_FROM} needs {who} image"
         )
         assert segments.card_title(topic).startswith(who)
+
+
+# ------------------------------- what does not go out with somebody's name on it
+
+# "going forward, i dont want him putting too much private details on the copy"
+# — said of Emanuel Nazco's, which carried the city he lives in, the five
+# figures he lost as a new agent, what he personally earns now, the Bible
+# studies he does with clients and the agency he came through.
+
+
+def test_the_prompt_says_what_stays_out():
+    """A rule that can be deleted without anything noticing is not a rule."""
+    from wilbyte import segments
+
+    said = segments.load_prompt().casefold()
+
+    assert "what stays out" in said
+    for kept_out in ("area code", "faith", "personally earn", "client"):
+        assert kept_out in said, kept_out
+
+
+def test_it_draws_the_line_at_the_guest_rather_than_the_business():
+    """Rounding off the business figures would cost the copy its credibility —
+    the two-week window and the dial count are the substance."""
+    from wilbyte import segments
+
+    said = segments.load_prompt()
+
+    assert "two-week" in said and "six to nine dials" in said
+    assert "not private" in said
+
+
+def test_the_guest_is_still_named():
+    """The interview is with somebody. Anonymising it is not the ask."""
+    from wilbyte import segments
+
+    assert "name and the work they do are the point" in segments.load_prompt()

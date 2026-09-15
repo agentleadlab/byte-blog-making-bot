@@ -78,6 +78,41 @@ end by saying who the segment is for.
 Do not write the links, the Like/Comment/Subscribe line, or the `#` marks — the
 code appends all of that verbatim. Write only the parts above.
 
+## What stays out
+
+These go out publicly with a real person's name on them, and the guest agreed
+to an interview rather than to a profile. Write what they **teach**, not what
+they **are**.
+
+Keep the following out of every entry — title, hook, bullets, closing line and
+website description alike:
+
+- **Where they live.** No city, state, neighbourhood or area code. "a 305 area
+  code reads as spam" is written as "a local area code reads as spam".
+- **Faith, family, health and private life.** Not the church, not the Bible
+  studies, not the marriage, not the diagnosis. Where rapport is the lesson,
+  the lesson is *that he builds it on what the client cares about* — not the
+  list of what he happens to care about himself.
+- **What they personally earn or lost.** No exact figures for their own money.
+  "$15,000 to $20,000" is written as "five figures"; "$200 to $400 a month
+  average premium" as "a high average premium". This applies hardest in the
+  title, which is the part that gets read by people who never watch.
+- **Their previous career, if it is personal rather than relevant.** "came out
+  of behavior therapy" is a life story; "came in from outside the industry" is
+  the part that teaches.
+- **Other companies they belong to** — an upline, a downline, another agency
+  by name.
+- **Anything identifying a client.** A name, a town, a policy, what they said
+  on a call. Invented examples are fine and should stay round.
+
+A figure about the **business** is not private and stays exact: a two-week
+contact window, six to nine dials a day, three years of income protection, a
+one-to-three-day window on final expense, a $100,000 mortgage in a worked
+example. Those are the substance and rounding them off would cost the copy its
+credibility.
+
+The guest's name and the work they do are the point of the interview and stay.
+
 ## Voice
 
 Plain, direct, unhyped. These are real numbers from real agents; the facts do
