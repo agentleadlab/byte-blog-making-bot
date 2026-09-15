@@ -19,6 +19,7 @@ import os
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -638,6 +639,40 @@ async def guard(interaction: discord.Interaction, config: Config) -> bool:
 # --------------------------------------------------------------------- mentions
 
 
+@asynccontextmanager
+async def _typing(channel):
+    """Show "RYTE is typing…" if Discord will have it, and work either way.
+
+    The indicator is decoration. Discord's own API has bad minutes - on the
+    morning of the 15th it answered `send_typing` with a 500 behind a
+    Cloudflare challenge page - and `channel.typing()` raises that out of
+    `__aenter__`, which took the whole of `trello tags` with it before a
+    single card had been read. Franklin got "something broke" for a request
+    that never started.
+
+    So the indicator is entered on its own and its failure is a log line.
+    Nothing decorative is allowed to stand between a person asking for
+    something and it happening. The same reasoning as `RESTART_PAUSES`: the
+    other side is allowed to have a bad minute, and RYTE is not allowed to
+    fall over when it does.
+    """
+    showing = None
+    try:
+        showing = channel.typing()
+        await showing.__aenter__()
+    except Exception:
+        log.info("Couldn't show the typing indicator; carrying on", exc_info=True)
+        showing = None
+    try:
+        yield
+    finally:
+        if showing is not None:
+            try:
+                await showing.__aexit__(None, None, None)
+            except Exception:
+                log.debug("Couldn't stop the typing indicator", exc_info=True)
+
+
 async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     config = bot.config
 
@@ -690,7 +725,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         await responder.send(f"{mentions.HELP_TEXT}\n\n-# Running `{version.code_version()}`")
         return
 
-    async with message.channel.typing():
+    async with _typing(message.channel):
         try:
             if request.action == "status":
                 await _send_status(responder, config)

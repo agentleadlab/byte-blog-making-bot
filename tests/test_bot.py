@@ -5258,3 +5258,98 @@ def test_ticking_reports_each_one_by_name(config, monkeypatch):
     assert ticked == ["Justin Henry Najjar"]
     assert done == ["c9"]
     assert problems == []
+
+
+# ------------------------------ nothing decorative stands between asking and doing
+
+# On the morning of the 15th Discord answered send_typing with a 500 behind a
+# Cloudflare challenge page. `channel.typing()` raises that out of __aenter__,
+# so `trello tags` died before a single card was read and Franklin got
+# "something broke" for a request that never started.
+
+
+class Rude:
+    """A channel whose typing indicator is having a bad minute."""
+
+    def __init__(self, blows_up_on="enter"):
+        self.blows_up_on, self.entered, self.left = blows_up_on, False, False
+
+    def typing(self):
+        return self
+
+    async def __aenter__(self):
+        if self.blows_up_on == "enter":
+            raise RuntimeError("500 Internal Server Error")
+        self.entered = True
+        return self
+
+    async def __aexit__(self, *exc):
+        if self.blows_up_on == "exit":
+            raise RuntimeError("500 Internal Server Error")
+        self.left = True
+        return False
+
+
+def _through_typing(channel):
+    """Whether the work inside the indicator ran."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    done = []
+
+    async def go():
+        async with bot_client._typing(channel):
+            done.append("worked")
+
+    asyncio.run(go())
+    return done
+
+
+def test_a_typing_indicator_that_fails_does_not_take_the_work_with_it():
+    assert _through_typing(Rude("enter")) == ["worked"]
+
+
+def test_a_typing_indicator_that_fails_on_the_way_out_does_not_either():
+    assert _through_typing(Rude("exit")) == ["worked"]
+
+
+def test_a_channel_with_no_typing_at_all_still_works():
+    class Bare:
+        def typing(self):
+            raise AttributeError("no typing here")
+
+    assert _through_typing(Bare()) == ["worked"]
+
+
+def test_the_indicator_is_still_shown_when_discord_is_well():
+    channel = Rude(blows_up_on="never")
+    assert _through_typing(channel) == ["worked"]
+    assert (channel.entered, channel.left) == (True, True)
+
+
+def test_the_real_work_still_raises_through_it():
+    """Swallowing the indicator's failure must not swallow anybody else's."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    async def go():
+        async with bot_client._typing(Rude("never")):
+            raise ValueError("the board is on fire")
+
+    with pytest.raises(ValueError, match="on fire"):
+        asyncio.run(go())
+
+
+def test_the_mention_handler_uses_the_forgiving_indicator():
+    """Testing the wrapper proves nothing if the handler still calls the bare
+    one — which is exactly what broke."""
+    import inspect
+
+    from wilbyte.bot import client as bot_client
+
+    source = inspect.getsource(bot_client.handle_mention)
+
+    assert "_typing(message.channel)" in source
+    assert "message.channel.typing()" not in source
