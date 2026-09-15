@@ -142,9 +142,25 @@ class DocsClient:
         return reply.json()
 
     def tabs(self) -> list[Tab]:
-        """Every tab already in the document, so one is never made twice."""
+        """Every tab already in the document, so one is never made twice.
+
+        `includeTabsContent` is what populates the list at all: left false,
+        Google returns the first tab's text in the old content fields and an
+        empty `tabs`, which reads as a document with no tabs in it. A doc with
+        twenty-five of them came back as nought, and the guard against making
+        somebody a second tab quietly had nothing to compare against.
+
+        The field mask is what keeps that affordable. Asking for tabs content
+        would hand back every interview in the document to find out what the
+        tabs are called; asking for `tabProperties` alone names them and
+        carries none of the writing.
+        """
         got = self._call(
-            "GET", params={"includeTabsContent": "false"},
+            "GET",
+            params={
+                "includeTabsContent": "true",
+                "fields": "tabs.tabProperties,tabs.childTabs.tabProperties",
+            },
         )
         found = []
         for one in got.get("tabs") or []:

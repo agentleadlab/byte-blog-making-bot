@@ -234,3 +234,50 @@ def test_the_check_never_writes(monkeypatch):
     _checking(monkeypatch, paper=paper)
 
     assert (paper.made, paper.written) == ([], [])
+
+
+def test_the_tab_list_is_actually_asked_for():
+    """`@RYTE check` said "0 tab(s)" of a document with twenty-five. Left
+    false, Google returns the first tab's text and an empty tabs list — so
+    the guard against making somebody a second tab had nothing to compare
+    against and would have made one every run."""
+    import httpx
+
+    asked = {}
+
+    client = docs.DocsClient(docs.Credentials("i", "s", "r"), document="D")
+    client._token, client._token_until = "tok", 9e18
+
+    def watching(method, url, **kwargs):
+        asked.update(kwargs.get("params") or {})
+        return httpx.Response(
+            200,
+            json={"tabs": [{"tabProperties": {"tabId": "t.1", "title": "Karyn Giles"}}]},
+            request=httpx.Request(method, url),
+        )
+
+    client._client.request = watching
+    found = client.tabs()
+
+    assert asked["includeTabsContent"] == "true"
+    assert [one.title for one in found] == ["Karyn Giles"]
+    client.close()
+
+
+def test_the_whole_document_is_not_downloaded_to_read_its_tab_names():
+    """Twenty-five interviews of text to find out what the tabs are called."""
+    import httpx
+
+    asked = {}
+    client = docs.DocsClient(docs.Credentials("i", "s", "r"), document="D")
+    client._token, client._token_until = "tok", 9e18
+    client._client.request = lambda method, url, **kw: (
+        asked.update(kw.get("params") or {}),
+        httpx.Response(200, json={"tabs": []}, request=httpx.Request(method, url)),
+    )[1]
+
+    client.tabs()
+
+    assert "tabProperties" in asked["fields"]
+    assert "body" not in asked["fields"]
+    client.close()
