@@ -4088,6 +4088,17 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     elif trouble:
         found.holes.append(trouble)
 
+    # And the signed contract, out of the same inbox. PandaDoc emails the
+    # completed document with the PDF on it, which is the way to a contract
+    # that their API is not without a paid plan.
+    said, pdf, called, trouble = _signed_contract(config, dispute)
+    if said:
+        found.contract = said
+    if pdf:
+        found.contract_pdf, found.contract_name = pdf, called
+    if trouble:
+        found.holes.append(trouble)
+
     found.timeline = _timeline(dispute, agent, found)
     return found
 
@@ -4262,6 +4273,56 @@ def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
         f"{dispute.transaction_date or 'the transaction date'}. The most "
         "recent one is in the document - check it is the right charge."
     )
+
+
+def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
+    """The signed contract for this customer, out of the inbox it was sent to.
+
+    (what it says, the PDF, what to call it, a problem or "").
+
+    PandaDoc's production API is behind a sales call on this account and the
+    sandbox key only reaches sandbox documents - but a completed document is
+    emailed to the owner with the PDF on it, and that email is the contract.
+    No webhook, no public address for a Mac that sleeps, and nothing to keep
+    running between PandaDoc and here.
+
+    The PDF when there is one, because the no-chargeback clause is in the
+    document rather than in the notification. The body is the fallback: it
+    carries who signed and when, which is most of what the timeline wants.
+    """
+    from .. import gmail as inbox
+
+    if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
+        return "", b"", "", ""
+    try:
+        with inbox.open_contracts(config.secrets) as reading:
+            found = reading.invoices_for(dispute.customer_name)
+            if not found:
+                return "", b"", "", (
+                    f"No signed contract for “{dispute.customer_name}” in the "
+                    "inbox, so it had to be left out."
+                )
+            # The completed one. PandaDoc emails at every step - sent, viewed,
+            # a reminder - and only the completed one is the signed document.
+            done = [
+                one for one in found
+                if any(word in one.subject.casefold()
+                       for word in ("completed", "signed", "countersigned"))
+            ] or found
+            one = done[0]
+            said = f"{one.subject}\n{one.when}\n\n{one.body}".strip()
+            for name, attachment_id in one.files:
+                if name.casefold().endswith(".pdf"):
+                    return said, reading.download(one.message_id, attachment_id), name, ""
+            return said, b"", "", (
+                f"The contract email for “{dispute.customer_name}” has no PDF on "
+                "it, so only what it says is in the document. Download the "
+                "completed PDF from PandaDoc and attach it for the clause."
+            )
+    except inbox.GmailError as exc:
+        return "", b"", "", f"Couldn't read the signed contract: {_short(exc, 140)}"
+    except Exception as exc:
+        return "", b"", "", f"Couldn't read the signed contract: {_short(exc, 140)}"
 
 
 def _the_disputed_one(paid: list, dispute):

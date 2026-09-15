@@ -78,12 +78,20 @@ class Attached:
 class GmailClient:
     """One signed-in session. Searches one sender, reads, downloads. No more."""
 
-    def __init__(self, creds: Credentials, *, sender: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        creds: Credentials,
+        *,
+        sender: str,
+        timeout: float = 30.0,
+        setting: str = "GMAIL_INVOICE_SENDER",
+        what: str = "Summit Pay's invoices arrive from",
+    ):
         if not (sender or "").strip():
             raise GmailError(
-                "No invoice sender set. GMAIL_INVOICE_SENDER in .env is the "
-                "address Summit Pay's invoices arrive from, and every search "
-                "is pinned to it - without one there is nothing to search."
+                f"No sender set. {setting} in .env is the address {what}, and "
+                "every search is pinned to it - without one there is nothing "
+                "to search."
             )
         self._creds = creds
         self._sender = sender.strip()
@@ -256,6 +264,26 @@ def _attachments_in(part: dict) -> list:
     return found
 
 
+def open_contracts(secrets) -> GmailClient:
+    """A reader pinned to whoever sends the signed contracts.
+
+    The same narrowness as the invoice reader and for the same reason: the
+    sender is the boundary of what can be read, and it is set here rather
+    than passed in so nothing calling this can widen it.
+
+    PandaDoc is the reason this exists. Its production API is behind a sales
+    call on this account, and the sandbox key only reaches sandbox documents -
+    but a completed document is emailed to the owner with the PDF attached, so
+    the inbox is the way to the contract that the API is not.
+    """
+    return GmailClient(
+        _signed_in(secrets),
+        sender=getattr(secrets, "gmail_contract_sender", ""),
+        setting="GMAIL_CONTRACT_SENDER",
+        what="the signed contracts arrive from, \"pandadoc.com\" for a whole domain",
+    )
+
+
 def open_gmail(secrets) -> GmailClient:
     """A signed-in client, or a plain sentence about what is missing.
 
@@ -267,6 +295,13 @@ def open_gmail(secrets) -> GmailClient:
     Left blank, Gmail signs in as everything else does, which is right when
     the invoices come to the same address.
     """
+    return GmailClient(
+        _signed_in(secrets), sender=getattr(secrets, "gmail_invoice_sender", "")
+    )
+
+
+def _signed_in(secrets) -> Credentials:
+    """The credentials the inbox is read with, whoever is being read."""
     try:
         creds = credentials(secrets)
     except SheetsError as exc:
@@ -284,4 +319,4 @@ def open_gmail(secrets) -> GmailClient:
             or creds.client_secret,
             instead,
         )
-    return GmailClient(creds, sender=getattr(secrets, "gmail_invoice_sender", ""))
+    return creds

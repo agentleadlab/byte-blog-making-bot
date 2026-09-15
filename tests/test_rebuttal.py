@@ -816,3 +816,152 @@ def test_the_word_amount_due_buried_in_a_contract_no_longer_wins():
     said = "SERVICE AGREEMENT\n" + ("filler. " * 800) + "\nAmount due: $500"
 
     assert jobs._what_pdf_is(said) == "contract"
+
+
+# ---------------------------------- the signed contract, out of the inbox
+
+# PandaDoc's production API is behind a sales call on this account, the
+# sandbox key only reaches sandbox documents, and n8n is out — so there is no
+# webhook and no public address for a Mac that sleeps. But PandaDoc emails the
+# completed document with the PDF on it, and that email is the contract.
+
+
+class Inbox:
+    """A stubbed Gmail reader pinned to one sender."""
+
+    def __init__(self, found, *, pdf=b"%PDF-1.4 signed"):
+        self.found, self.pdf, self.asked = found, pdf, []
+
+    def invoices_for(self, *terms, since=None):
+        self.asked.append(terms)
+        return list(self.found)
+
+    def download(self, message_id, attachment_id):
+        return self.pdf
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _email(subject, *, files=(), body="Signed by Juliana Hernandez"):
+    from wilbyte import gmail
+
+    return gmail.Found(
+        message_id="m1", subject=subject, when="Fri, 28 Aug 2026 13:00:00",
+        body=body, files=list(files),
+    )
+
+
+def _contract(monkeypatch, emails, *, sender="pandadoc.com", pdf=b"%PDF-1.4 signed"):
+    from types import SimpleNamespace
+
+    from wilbyte import gmail, rebuttal
+    from wilbyte.bot import jobs
+
+    box = Inbox(emails, pdf=pdf)
+    monkeypatch.setattr(gmail, "open_contracts", lambda secrets: box)
+    config = SimpleNamespace(secrets=SimpleNamespace(gmail_contract_sender=sender))
+    return jobs._signed_contract(config, rebuttal.read_facts(JULIANA)), box
+
+
+def test_the_completed_document_brings_its_pdf_back(monkeypatch):
+    (said, pdf, name, trouble), box = _contract(
+        monkeypatch,
+        [_email("Juliana Hernandez completed the document",
+                files=[("Lead Purchase Agreement.pdf", "a1")])],
+    )
+
+    assert pdf == b"%PDF-1.4 signed"
+    assert name == "Lead Purchase Agreement.pdf"
+    assert "Juliana Hernandez" in said
+    assert trouble == ""
+    assert box.asked == [("Juliana Hernandez",)]
+
+
+def test_the_completed_one_wins_over_sent_and_viewed(monkeypatch):
+    """PandaDoc emails at every step, and only the completed one is signed."""
+    (said, _, _, _), _ = _contract(monkeypatch, [
+        _email("Document sent to Juliana Hernandez"),
+        _email("Juliana Hernandez completed Lead Purchase Agreement",
+               files=[("agreement.pdf", "a1")], body="completed"),
+    ])
+
+    assert "completed Lead Purchase Agreement" in said
+
+
+def test_an_email_with_no_pdf_says_so_and_still_gives_what_it_says(monkeypatch):
+    """Who signed and when is most of what the timeline wants, even with no
+    document to carry the clause."""
+    (said, pdf, _, trouble), _ = _contract(
+        monkeypatch, [_email("Juliana Hernandez completed the document")],
+    )
+
+    assert pdf == b""
+    assert "Juliana Hernandez" in said
+    assert "no PDF on it" in trouble
+
+
+def test_nothing_in_the_inbox_is_a_hole_rather_than_a_crash(monkeypatch):
+    (said, pdf, _, trouble), _ = _contract(monkeypatch, [])
+
+    assert (said, pdf) == ("", b"")
+    assert "No signed contract" in trouble
+
+
+def test_not_configured_is_not_a_hole_in_the_document(monkeypatch):
+    """A hole saying "nobody set up Gmail" is about RYTE, not the dispute."""
+    (said, pdf, _, trouble), _ = _contract(monkeypatch, [], sender="")
+
+    assert (said, pdf, trouble) == ("", b"", "")
+
+
+def test_the_contract_reader_is_pinned_to_its_own_sender():
+    """The sender is the boundary of what can be read, set in the module so
+    nothing calling it can widen it."""
+    from types import SimpleNamespace
+
+    from wilbyte import gmail
+
+    made = gmail.open_contracts(SimpleNamespace(
+        gmail_contract_sender="pandadoc.com",
+        google_client_id="i", google_client_secret="s", google_refresh_token="r",
+        gmail_refresh_token="", gmail_client_id="", gmail_client_secret="",
+    ))
+
+    assert made._sender == "pandadoc.com"
+
+
+def test_no_contract_sender_names_its_own_setting():
+    from types import SimpleNamespace
+
+    from wilbyte import gmail
+
+    with pytest.raises(gmail.GmailError) as raised:
+        gmail.open_contracts(SimpleNamespace(
+            gmail_contract_sender="",
+            google_client_id="i", google_client_secret="s",
+            google_refresh_token="r", gmail_refresh_token="",
+        ))
+
+    assert "GMAIL_CONTRACT_SENDER" in str(raised.value)
+
+
+def test_a_found_contract_stops_the_document_asking_for_one():
+    from wilbyte import rebuttal
+
+    holes = rebuttal.what_is_missing(
+        rebuttal.Gathered(contract="Juliana Hernandez completed the document"), [],
+    )
+
+    assert not any("signed contract" in one for one in holes)
+
+
+def test_no_contract_anywhere_still_asks_for_it():
+    from wilbyte import rebuttal
+
+    holes = rebuttal.what_is_missing(rebuttal.Gathered(), [])
+
+    assert any("signed contract" in one for one in holes)

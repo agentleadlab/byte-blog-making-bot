@@ -239,6 +239,10 @@ class Gathered:
     #: The day the sheet was handed over, "YYYY-MM-DD", off the comment that
     #: carried the link. The timeline's missing middle without it.
     delivered_on: str = ""
+    #: The signed contract as PandaDoc emailed it, so it can go in as an
+    #: exhibit rather than being described. The clause is in the document.
+    contract_pdf: bytes = b""
+    contract_name: str = ""
     timeline: list = field(default_factory=list)
     holes: list = field(default_factory=list)
 

@@ -1731,6 +1731,18 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         if exhibits:
             exhibits = await asyncio.to_thread(jobs.sort_exhibits, config, exhibits)
         found = await asyncio.to_thread(jobs.rebuttal_evidence, config, dispute)
+        # The contract PandaDoc emailed, as an exhibit rather than as a
+        # description of one - the no-chargeback clause is in the document.
+        # Only when nobody attached one: a contract dragged in by hand is the
+        # one somebody chose, and it wins over the one that was found.
+        if found.contract_pdf and not any(
+            one.kind == "contract" for one in exhibits
+        ):
+            exhibits.append(rules_doc.Exhibit(
+                name=found.contract_name or "contract.pdf",
+                data=found.contract_pdf,
+                kind="contract",
+            ))
         where = Path(DEFAULT_OUTPUT_DIR) / _rebuttal_name(dispute)
         path = await asyncio.to_thread(
             jobs.write_rebuttal, config, dispute, found, exhibits, into=where

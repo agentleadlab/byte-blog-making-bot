@@ -247,6 +247,13 @@ class Secrets:
     # makes is pinned to it, so it is the boundary of what he can read rather
     # than a convenience.
     gmail_invoice_sender: str | None = None
+    # And the address the signed contracts arrive from. PandaDoc's production
+    # API is behind a sales call on this account and the sandbox key only
+    # reaches sandbox documents - but PandaDoc emails the completed document
+    # to the owner when it is signed, with the PDF on it, so the inbox is the
+    # way in. A bare domain works here: "pandadoc.com" matches whichever
+    # address they send from.
+    gmail_contract_sender: str | None = None
     # The invoices arrive at a different Google account than the one that owns
     # the sheets, and a refresh token belongs to one account. Same OAuth
     # client - that is the app rather than the person - and a second token
@@ -361,6 +368,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 clients_sheet_link=_env("CLIENTS_SHEET_LINK"),
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
+                gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
                 gmail_client_id=_env("GMAIL_CLIENT_ID"),
                 gmail_client_secret=_env("GMAIL_CLIENT_SECRET"),
