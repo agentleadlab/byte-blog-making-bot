@@ -1048,9 +1048,122 @@ def file_interview(
                 problems.append(
                     f"Made the card but couldn't ask for the image — {_short(exc, 160)}"
                 )
-        return str(card.get("url") or ""), problems
+        return str(card.get("url") or ""), str(card.get("id") or ""), problems
     finally:
         client.close()
+
+
+#: Who cuts the interviews. Tagged on the YT VID checklist so the job reaches
+#: them rather than sitting on a card they would have to think to open.
+EDITORS = ("@mgproductions7", "@mgvideoeditors")
+
+#: The card in Marketing Department that tracks what is waiting to be cut.
+YT_CARD = "YT VID"
+
+#: Whose list on the day's General card an interview goes onto.
+CUTS_THEM = "Faith"
+
+
+def hand_off_interview(
+    config: Config, *, card_url: str, card_id: str, day
+) -> tuple[list[str], list[str]]:
+    """Put the new interview card where the people who act on it will see it.
+
+    (what was done, problems). Three places, in the order they are done by
+    hand:
+
+      1. Faith's checklist on the day's General card, so it is on somebody's
+         list for today rather than only on a board.
+      2. The YT VID card's checklist, tagging the two editors who cut it.
+      3. The interview card itself into Done, because being cut up is what the
+         card was for and that part is finished.
+
+    A checklist item whose name is a card's URL is rendered by Trello as a
+    link to that card, carrying its title and which list it is in - which is
+    why the URL is sent as the whole of the name and nothing else.
+
+    Each step is its own request and its own line. Three things that can fail
+    separately should not be reported as one thing that worked.
+    """
+    from .. import dailyops, trello
+
+    done: list[str] = []
+    problems: list[str] = []
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+
+        general = dailyops.cards_covering(every, day).get("general")
+        if general is None:
+            problems.append(f"No General card dated {day:%m/%d/%y} to put it on.")
+        else:
+            said = _onto_checklist(
+                client, str(general.get("id") or ""), CUTS_THEM, card_url
+            )
+            (done if said.startswith("✅") else problems).append(said)
+
+        waiting = next(
+            (one for one in every
+             if str(one.get("name") or "").strip().casefold() == YT_CARD.casefold()),
+            None,
+        )
+        if waiting is None:
+            problems.append(f"No card called {YT_CARD!r} on the board.")
+        else:
+            said = _onto_checklist(
+                client, str(waiting.get("id") or ""), "",
+                f"{card_url} {' '.join(EDITORS)}",
+            )
+            (done if said.startswith("✅") else problems).append(said)
+
+        gone = trello.find_list(lists, dailyops.DONE)
+        if gone is None:
+            problems.append(f"The board has no list called {dailyops.DONE!r}.")
+        else:
+            try:
+                client.move_card(card_id, str(gone.get("id") or ""))
+                done.append(f"✅ Moved the card to {dailyops.DONE}")
+            except Exception as exc:
+                problems.append(f"Couldn't move it to {dailyops.DONE} — {_short(exc, 140)}")
+        return done, problems
+    finally:
+        client.close()
+
+
+def _onto_checklist(client, card_id: str, whose: str, item: str) -> str:
+    """Add one item to a checklist on a card. One line saying what happened.
+
+    `whose` names the checklist - "Faith" on the General card, where every
+    person has their own. Empty means the card has one list and that is the
+    one, which is how the YT VID card is kept.
+    """
+    try:
+        checklists = client.card_checklists(card_id)
+    except Exception as exc:
+        return f"Couldn't read that card's checklists — {_short(exc, 140)}"
+    if not checklists:
+        return "That card has no checklist to add to."
+
+    if whose:
+        found = next(
+            (one for one in checklists
+             if whose.casefold() in str(one.get("name") or "").casefold()),
+            None,
+        )
+        if found is None:
+            return (
+                f"No checklist called {whose!r} on that card, so it wasn't added "
+                "— the others were left alone rather than guessed between."
+            )
+    else:
+        found = checklists[0]
+
+    try:
+        client.add_check_item(str(found.get("id") or ""), item)
+    except Exception as exc:
+        return f"Couldn't add it to {found.get('name') or 'that checklist'} — {_short(exc, 140)}"
+    return f"✅ Added to **{found.get('name') or 'the checklist'}**"
 
 
 def timed_call_by_name(config: Config, words: str) -> tuple[list, str, str, str]:

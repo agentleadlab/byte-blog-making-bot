@@ -4647,13 +4647,14 @@ def test_the_interview_card_is_made_then_asked_about(config, monkeypatch):
 
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
 
-    url, problems = jobs.file_interview(
+    url, card_id, problems = jobs.file_interview(
         config, name="Leonardo Lopez Interview", description="the index",
         ask="@faithhannahcalla needs Leonardo Lopez image",
     )
 
     assert problems == []
     assert url == "https://trello.com/c/abc"
+    assert card_id == "c", "the id is needed to move the card afterwards"
     assert done[0][0] == "card"
     assert done[-1] == ("comment", "@faithhannahcalla needs Leonardo Lopez image")
 
@@ -4677,7 +4678,7 @@ def test_a_card_that_could_not_be_asked_about_still_says_so(config, monkeypatch)
 
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
 
-    url, problems = jobs.file_interview(
+    url, _, problems = jobs.file_interview(
         config, name="x", description="y", ask="@faithhannahcalla needs x image",
     )
 
@@ -5655,3 +5656,151 @@ def test_the_parser_and_the_handler_agree_about_the_word(config, monkeypatch):
     asyncio.run(bot_client._send_visible_calls(heard, config, link=said.brief or ""))
 
     assert asked == {"fields": "https://fathom.video/calls/822789278"}
+
+
+# ------------------- the interview card, onto the lists of whoever acts on it
+
+# "once this card is added, get the link of the card and add it to Faith's
+# checklist on today's general card like the leonardo one / and on the YT VID
+# checklist card under marketing department and tag this two like this and
+# move the card to done after"
+
+NAZCO = "https://trello.com/c/29mTRImS/16224-emanuel-nazco-interview"
+
+
+class HandOffBoard:
+    """A board with a General card, a YT VID card and a Done list."""
+
+    def __init__(self, *, general=True, yt=True, done=True, faith=True):
+        self.added, self.moved = [], []
+        self.lists = [{"id": "T", "name": "Today"}, {"id": "M", "name": "Marketing Department"}]
+        if done:
+            self.lists.append({"id": "D", "name": "Done"})
+        self.cards = []
+        if general:
+            self.cards.append({"id": "g", "idList": "T", "name": "💎 General 09/15/26"})
+        if yt:
+            self.cards.append({"id": "y", "idList": "M", "name": "YT VID"})
+        self.faith = faith
+
+    def board_lists(self, _board_id):
+        return list(self.lists)
+
+    def list_cards(self, list_id):
+        return [one for one in self.cards if one["idList"] == list_id]
+
+    def card_checklists(self, card_id):
+        if card_id == "g":
+            whose = [{"id": "ck-therese", "name": "Therese"}, {"id": "ck-nicole", "name": "Nicole"}]
+            if self.faith:
+                whose.insert(1, {"id": "ck-faith", "name": "Faith"})
+            return whose
+        return [{"id": "ck-yt", "name": "To cut"}]
+
+    def add_check_item(self, checklist_id, name, checked=False):
+        self.added.append((checklist_id, name))
+        return {}
+
+    def move_card(self, card_id, list_id, position="top"):
+        self.moved.append((card_id, list_id))
+        return {}
+
+    def close(self):
+        pass
+
+
+def _hand_off(monkeypatch, board, **kwargs):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    return jobs.hand_off_interview(
+        config, card_url=NAZCO, card_id="n", day=date(2026, 9, 15), **kwargs
+    )
+
+
+def test_the_card_goes_on_faiths_list_as_a_link_to_itself(monkeypatch):
+    """A checklist item whose name is a card URL renders as a link to that
+    card, carrying its title and which list it is in."""
+    board = HandOffBoard()
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert ("ck-faith", NAZCO) in board.added
+    assert problems == []
+
+
+def test_the_editors_are_tagged_on_the_yt_vid_card(monkeypatch):
+    board = HandOffBoard()
+    _hand_off(monkeypatch, board)
+
+    said = dict(board.added)["ck-yt"]
+
+    assert said.startswith(NAZCO)
+    assert "@mgproductions7" in said
+    assert "@mgvideoeditors" in said
+
+
+def test_it_is_moved_to_done_afterwards(monkeypatch):
+    board = HandOffBoard()
+    done, _ = _hand_off(monkeypatch, board)
+
+    assert board.moved == [("n", "D")]
+    assert any("Done" in one for one in done)
+
+
+def test_nobody_elses_checklist_is_written_to(monkeypatch):
+    """Therese and Nicole have their own lists on the same card."""
+    board = HandOffBoard()
+    _hand_off(monkeypatch, board)
+
+    assert [one for one, _ in board.added if one.startswith("ck-")] == [
+        "ck-faith", "ck-yt",
+    ]
+
+
+def test_no_faith_checklist_leaves_the_others_alone_rather_than_guessing(monkeypatch):
+    board = HandOffBoard(faith=False)
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert not any(one == "ck-therese" for one, _ in board.added)
+    assert any("Faith" in one for one in problems)
+
+
+def test_a_missing_general_card_does_not_stop_the_rest(monkeypatch):
+    """Three things that can fail separately are not one thing that worked."""
+    board = HandOffBoard(general=False)
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert dict(board.added).get("ck-yt"), "the YT VID card was skipped too"
+    assert board.moved == [("n", "D")]
+    assert any("General card" in one for one in problems)
+
+
+def test_a_missing_yt_card_does_not_stop_the_move(monkeypatch):
+    board = HandOffBoard(yt=False)
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert board.moved == [("n", "D")]
+    assert any("YT VID" in one for one in problems)
+
+
+def test_no_done_list_still_files_it_on_both_checklists(monkeypatch):
+    board = HandOffBoard(done=False)
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert len(board.added) == 2
+    assert board.moved == []
+    assert any("Done" in one for one in problems)
+
+
+def test_a_checklist_that_refuses_is_said_rather_than_swallowed(monkeypatch):
+    board = HandOffBoard()
+
+    def refuse(checklist_id, name, checked=False):
+        raise RuntimeError("Trello said 429")
+
+    board.add_check_item = refuse
+    done, problems = _hand_off(monkeypatch, board)
+
+    assert len(problems) == 2
+    assert board.moved == [("n", "D")], "the move still happened"

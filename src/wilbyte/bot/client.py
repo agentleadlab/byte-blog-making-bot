@@ -3130,7 +3130,7 @@ async def _file_interview(
     description = segmenting.as_card(keep, link=link, passcode=passcode)
 
     try:
-        url, problems = await asyncio.to_thread(
+        url, card_id, problems = await asyncio.to_thread(
             jobs.file_interview, config, name=name, description=description,
             ask=segmenting.needs_an_image(topic),
         )
@@ -3144,6 +3144,22 @@ async def _file_interview(
         return
 
     await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
+
+    # And onto the lists of the people who act on it. The card existing is not
+    # the same as anybody knowing it exists: it goes on Faith's list for today
+    # and on the YT VID card where the editors are tagged, and then into Done,
+    # because being cut up is what it was for and that part is finished.
+    try:
+        did, trouble = await asyncio.to_thread(
+            jobs.hand_off_interview, config,
+            card_url=url, card_id=card_id, day=_today(config),
+        )
+    except PIPELINE_ERRORS as exc:
+        did, trouble = [], [f"Couldn't hand it off: {jobs._short(exc, 160)}"]
+    if did or trouble:
+        await responder.send(
+            "\n".join(did + [f"⚠ {one}" for one in trouble])
+        )
     # Zoom only returns a typed passcode on some recordings, and a card with a
     # link nobody can open is worth one line rather than silence. Fathom links
     # have no passcode at all, so saying so there is noise about a setting that
