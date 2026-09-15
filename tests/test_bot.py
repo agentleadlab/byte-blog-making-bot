@@ -5804,3 +5804,102 @@ def test_a_checklist_that_refuses_is_said_rather_than_swallowed(monkeypatch):
 
     assert len(problems) == 2
     assert board.moved == [("n", "D")], "the move still happened"
+
+
+# ------------------- the card gets the index, the doc gets the copy
+
+# The Evan Scott tab came out holding the share link and six SEGMENT lines —
+# the card's index — when what the doc is for is the copy: titles, YT
+# descriptions, bullets, hashtags, website paragraphs. "Nooo add these not
+# just that".
+
+
+class Filing:
+    """Catches what the card and the doc were each given."""
+
+    def __init__(self):
+        self.card_text, self.doc_text, self.doc_title = "", "", ""
+
+    def file_interview(self, config, *, name, description, ask=""):
+        self.card_text = description
+        return "https://trello.com/c/x", "cx", []
+
+    def copy_into_doc(self, config, *, title, text):
+        self.doc_title, self.doc_text = title, text
+        return "https://docs.google.com/document/d/D/edit?tab=t.9", []
+
+
+def _filed(monkeypatch, config, *, copy):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    caught = Filing()
+    monkeypatch.setattr(bot_client.jobs, "file_interview", caught.file_interview)
+    monkeypatch.setattr(bot_client.jobs, "copy_into_doc", caught.copy_into_doc)
+    monkeypatch.setattr(
+        bot_client.jobs, "hand_off_interview", lambda cfg, **kw: ([], []),
+    )
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 9, 15))
+
+    from wilbyte import segments as segmenting
+
+    kept = [
+        segmenting.Segment(
+            start=137.0, end=426.0,
+            yt_title="He Made 2 Sales His First Month",
+            website_section="Veteran Training",
+            hook="Evan Scott sold two policies his first month.",
+            bullets=["Leaving the old vendor", "What changed"],
+            closing="Size the premium to the income.",
+            hashtags=["veteranleads", "agentleadlab"],
+            website_description="Evan Scott explains how he got there.",
+        ),
+    ]
+
+    heard = Asked()
+    asyncio.run(bot_client._file_interview(
+        heard, config, kept, topic="Evan Scott", link="https://fathom.video/share/x",
+        passcode="", copy=copy,
+    ))
+    return caught, heard.messages
+
+
+def test_the_doc_gets_the_whole_copy_not_the_index(config, monkeypatch):
+    whole = (
+        "Evan Scott is a veteran final expense writer.\n\n"
+        "SEGMENT (00:02:17-00:07:06) - 4:49\n"
+        "He Made 2 Sales His First Month (YT Title)\n\n"
+        "(YT Description) Evan Scott sold two policies his first month.\n"
+        "#veteranleads #agentleadlab\n"
+        "(Website Description) Evan Scott explains how he got there."
+    )
+    caught, _ = _filed(monkeypatch, config, copy=whole)
+
+    assert caught.doc_text == whole
+    assert "(YT Description)" in caught.doc_text
+    assert "(Website Description)" in caught.doc_text
+    assert "#veteranleads" in caught.doc_text
+
+
+def test_the_card_still_gets_the_index(config, monkeypatch):
+    """The board is where somebody checks what was cut, not where it is read."""
+    caught, _ = _filed(monkeypatch, config, copy="the whole copy")
+
+    assert "SEGMENT" in caught.card_text
+    assert caught.card_text != caught.doc_text
+    assert "(YT Description)" not in caught.card_text
+
+
+def test_the_tab_is_named_for_the_person(config, monkeypatch):
+    caught, _ = _filed(monkeypatch, config, copy="x")
+
+    assert caught.doc_title == "Evan Scott"
+
+
+def test_no_copy_falls_back_to_the_index_rather_than_writing_nothing(config, monkeypatch):
+    caught, _ = _filed(monkeypatch, config, copy="")
+
+    assert caught.doc_text == caught.card_text
+    assert caught.doc_text != ""

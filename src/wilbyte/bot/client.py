@@ -3117,13 +3117,29 @@ async def _send_segments(
         topic=searched or title,
         link=link or source or "",
         passcode=passcode,
+        # What went to Discord, whole: the opening and then every segment in
+        # full. The card gets the index — timestamps and titles, which is what
+        # the board is for — and the doc gets the copy, because the copy is
+        # what the website and YouTube are posted from.
+        copy="\n\n".join([summary] + [one.as_text() for one in keep]),
     )
 
 
 async def _file_interview(
-    responder: Responder, config: Config, keep, *, topic: str, link: str, passcode: str
+    responder: Responder, config: Config, keep, *, topic: str, link: str,
+    passcode: str, copy: str = "",
 ) -> None:
-    """Put the cut-up interview on the board as a card in Marketing Department."""
+    """Put the cut-up interview on the board, and its copy in the posting doc.
+
+    Two different things want two different shapes of the same work. The card
+    is an index — the link, and every segment's timestamps and title — because
+    the board is where somebody checks what was cut and whether it is done.
+    The doc is the copy itself, titles and descriptions and bullets and
+    hashtags and website paragraphs, because that is what gets posted from.
+
+    `copy` is what went to Discord, whole. Without it the doc got the index
+    too, which is the one thing nobody needs it for.
+    """
     from .. import segments as segmenting
 
     name = segmenting.card_title(topic)
@@ -3154,7 +3170,7 @@ async def _file_interview(
             # The tabs are named for the person — "Leonardo Lopez", not
             # "Leonardo Lopez Interview", which is the card's title.
             title=segmenting.client_name(topic) or name,
-            text=description,
+            text=copy or description,
         )
     except PIPELINE_ERRORS as exc:
         where, trouble = "", [f"Couldn't write it into the doc: {jobs._short(exc, 160)}"]
