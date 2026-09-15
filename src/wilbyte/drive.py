@@ -23,7 +23,10 @@ from pathlib import Path
 
 import httpx
 
-from .gsheets import Credentials, SheetsError, credentials, explain_token, folder_id_in
+from .gsheets import (
+    Credentials, SheetsError, credentials, explain_token, folder_id_in,
+    why_refused,
+)
 
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -125,10 +128,12 @@ class DriveClient:
 
         if reply.status_code == 403:
             raise DriveError(
-                "Drive refused that. Either the token in .env was minted "
-                "without https://www.googleapis.com/auth/drive.file, or the "
-                "folder in CLIENTS_DRIVE_FOLDER is not shared with the "
-                "account it was minted for."
+                "Drive refused that: "
+                + (why_refused(reply.text) or "no reason given")
+                + "\n-# If that mentions a scope, the one it wants is "
+                "https://www.googleapis.com/auth/drive.file. If it mentions "
+                "permission, CLIENTS_DRIVE_FOLDER is not shared with the "
+                "account the token was minted for."
             )
         if reply.status_code == 404:
             raise DriveError(

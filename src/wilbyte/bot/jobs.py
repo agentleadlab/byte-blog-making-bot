@@ -1678,9 +1678,9 @@ def _check_gmail(config: Config) -> list[tuple[bool, str]]:
         with inbox.open_gmail(config.secrets) as reading:
             who, many = reading.whoami()
     except inbox.GmailError as exc:
-        return [(False, f"Gmail - {_short(exc, 200)}")]
+        return [(False, f"Gmail - {_short(exc, 480)}")]
     except Exception as exc:
-        return [(False, f"Gmail - {_short(exc, 200)}")]
+        return [(False, f"Gmail - {_short(exc, 480)}")]
     return [(True, f"Gmail - reading **{who}** ({many:,} messages)")]
 
 
@@ -1700,9 +1700,9 @@ def _check_docs(config: Config) -> list[tuple[bool, str]]:
         with doc.open_docs(config.secrets) as reading:
             tabs = reading.tabs()
     except doc.DocsError as exc:
-        return [(False, f"Posting doc — {_short(exc, 240)}")]
+        return [(False, f"Posting doc — {_short(exc, 480)}")]
     except Exception as exc:
-        return [(False, f"Posting doc — {_short(exc, 240)}")]
+        return [(False, f"Posting doc — {_short(exc, 480)}")]
     return [(
         True,
         f"Posting doc — {len(tabs)} tab(s), latest "

@@ -60,6 +60,27 @@ def credentials(secrets) -> Credentials:
     )
 
 
+def why_refused(body: str) -> str:
+    """What Google actually said, out of the JSON it says it in.
+
+    Worth the trouble because Google's 403s are not interchangeable and
+    guessing between them costs somebody an afternoon: a missing scope and an
+    API that was never enabled on the project look identical from the status
+    code, and the message names which it is - and for a disabled API it
+    carries the console link that turns it on.
+    """
+    import json
+
+    try:
+        said = json.loads(body or "{}")
+    except (ValueError, TypeError):
+        return " ".join((body or "").split())[:400]
+    found = said.get("error")
+    if isinstance(found, dict):
+        return " ".join(str(found.get("message") or "").split())[:400]
+    return " ".join(str(found or "").split())[:400]
+
+
 def granted(creds: Credentials, *, timeout: float = 20.0) -> list[str]:
     """Which scopes this refresh token actually carries.
 

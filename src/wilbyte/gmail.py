@@ -31,7 +31,9 @@ from datetime import date, timedelta
 
 import httpx
 
-from .gsheets import Credentials, SheetsError, credentials, explain_token
+from .gsheets import (
+    Credentials, SheetsError, credentials, explain_token, why_refused,
+)
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -144,11 +146,14 @@ class GmailClient:
         except httpx.HTTPError as exc:
             raise GmailError(f"Couldn't reach Gmail: {exc}") from exc
         if reply.status_code == 403:
+            # What Google said, not what we assume it meant. A scope that was
+            # never ticked and an API that was never enabled on the project
+            # are the same 403 and different afternoons to fix.
             raise GmailError(
-                "Gmail refused that. The refresh token in .env was minted "
-                "without the Gmail read scope - mint a new one with "
-                "https://www.googleapis.com/auth/gmail.readonly ticked "
-                "alongside the ones already there."
+                "Gmail refused that: "
+                + (why_refused(reply.text) or "no reason given")
+                + "\n-# If that mentions a scope, the one it wants is "
+                "https://www.googleapis.com/auth/gmail.readonly."
             )
         if reply.status_code >= 400:
             raise GmailError(f"Gmail said {reply.status_code}: {reply.text[:200]}")

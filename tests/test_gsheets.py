@@ -251,3 +251,72 @@ def test_it_asks_about_the_token_the_docs_actually_use(monkeypatch):
 
     assert asked["refresh_token"] == "1//gmail"
     assert asked["client_id"] == "gmail-id"
+
+
+# ------------------------- Google's own words, rather than a guess at them
+
+# "Google token grants: drive.file, documents, gmail.readonly" and the very
+# next line still said the token was minted without the documents scope. It
+# had the scope. The 403 was the Docs API never having been switched on for
+# the project — a different job entirely, and only the message says which.
+
+
+def test_the_reason_comes_out_of_googles_json():
+    from wilbyte import gsheets
+
+    said = gsheets.why_refused(
+        '{"error":{"code":403,"message":"Google Docs API has not been used in '
+        'project 477354716167 before or it is disabled. Enable it by visiting '
+        'https://console.developers.google.com/apis/api/docs.googleapis.com/'
+        'overview?project=477354716167 then retry.","status":"PERMISSION_DENIED"}}'
+    )
+
+    assert "has not been used in project" in said
+    assert "console.developers.google.com" in said, "the link to the fix was lost"
+
+
+def test_a_scope_refusal_still_reads_as_one():
+    from wilbyte import gsheets
+
+    said = gsheets.why_refused(
+        '{"error":{"message":"Request had insufficient authentication scopes."}}'
+    )
+
+    assert "insufficient authentication scopes" in said
+
+
+def test_something_that_is_not_json_is_still_said():
+    from wilbyte import gsheets
+
+    assert "forbidden" in gsheets.why_refused("<html>forbidden</html>")
+
+
+def test_nothing_at_all_is_empty_rather_than_a_crash():
+    from wilbyte import gsheets
+
+    assert gsheets.why_refused("") == ""
+    assert gsheets.why_refused(None) == ""
+
+
+def test_the_docs_error_carries_what_google_said():
+    import httpx
+    import pytest
+
+    from wilbyte import docs
+
+    client = docs.DocsClient(docs.Credentials("i", "s", "r"), document="D")
+    client._token, client._token_until = "tok", 9e18
+    client._client.request = lambda *a, **k: httpx.Response(
+        403,
+        text='{"error":{"message":"Google Docs API has not been used in project 1 '
+             'before or it is disabled."}}',
+        request=httpx.Request("GET", "https://x"),
+    )
+
+    with pytest.raises(docs.DocsError) as raised:
+        client.tabs()
+
+    said = str(raised.value)
+    assert "has not been used in project" in said
+    assert "minted without" not in said, "it asserted a cause again"
+    client.close()

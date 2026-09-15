@@ -22,7 +22,9 @@ from dataclasses import dataclass
 
 import httpx
 
-from .gsheets import Credentials, SheetsError, credentials, explain_token
+from .gsheets import (
+    Credentials, SheetsError, credentials, explain_token, why_refused,
+)
 
 API = "https://docs.googleapis.com/v1/documents"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -119,10 +121,15 @@ class DocsClient:
             raise DocsError(f"Couldn't reach Google Docs: {exc}") from exc
 
         if reply.status_code == 403:
+            # Google's own words first. A missing scope and an API that was
+            # never switched on for the project are the same status code and
+            # entirely different jobs to fix, and only the message tells them
+            # apart - asserting one of them cost an afternoon of re-minting a
+            # token that already had the scope on it.
             raise DocsError(
-                f"Google Docs refused that. The token in .env was minted "
-                f"without {SCOPE}, which Sheets and Drive don't cover. Mint "
-                "it again with that scope ticked too."
+                "Google Docs refused that: "
+                + (why_refused(reply.text) or "no reason given")
+                + f"\n-# If that mentions a scope, the one it wants is {SCOPE}."
             )
         if reply.status_code == 404:
             raise DocsError(
