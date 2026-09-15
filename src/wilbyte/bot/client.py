@@ -1297,6 +1297,68 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
         return
     # No ping: somebody just asked, so they are already looking at it.
     await responder.send(embed=_unmarked_card(found, days=covers))
+    await _offer_the_top_ups(responder, config, found)
+
+
+async def _offer_the_top_ups(responder: Responder, config: Config, found) -> None:
+    """Offer to tick the ones that were never a setup in the first place.
+
+    "if you see this on the agent going live today and tomorrow and the card
+    is unticked, tick it" - the comment being Therese's, saying the order is
+    ongoing and Nicole should bump the leads on a drip already running. There
+    is no setup on those to do and nobody is ever going to tick them, so they
+    are chased every afternoon for work that was finished before the card was
+    copied.
+
+    A button rather than done quietly: a tick is somebody saying they did it,
+    which is the whole value of the tick, and RYTE putting them on unasked
+    would make the green circle mean less on every other card too. It comes
+    off again if it is wrong.
+    """
+    from .. import agents
+
+    try:
+        theirs, problems = await asyncio.to_thread(
+            partial(jobs.ongoing_to_tick, found=found), config
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the comments\n{exc}"))
+        return
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+    if not theirs:
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Tick {len(theirs)} ongoing order" + ("s" if len(theirs) != 1 else ""),
+        emoji="✅",
+    )
+    lines = [
+        f"• **{agents.agent_name(str(one.get('name') or ''))}** — live {one.get('when')}"
+        f"\n-# {one.get('because') or ''}"
+        for one in theirs
+    ]
+    await responder.send(
+        f"{len(theirs)} of those "
+        + ("is a top-up" if len(theirs) == 1 else "are top-ups")
+        + ", not a setup — the comment says the order is already running:\n"
+        + "\n".join(lines),
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        ticked, trouble = await asyncio.to_thread(jobs.tick_ongoing, config, theirs)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't tick them\n{exc}"))
+        return
+    said = [f"✅ Ticked **{one}**" for one in ticked]
+    said += [f"⚠ {one}" for one in trouble]
+    await responder.send("\n".join(said) or "Nothing was ticked.")
 
 
 async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
@@ -2148,6 +2210,10 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
 
     responder = _board_responder(bot)
     card = None
+    # The unticked cards that were never a setup, offered under the chase
+    # rather than instead of it: they are still unticked and still worth
+    # seeing, and the button is what makes them stop coming back.
+    top_ups = None
     try:
         if step == "make_setup":
             title, problems = await asyncio.to_thread(jobs.make_setup_card, bot.config)
@@ -2163,6 +2229,7 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
             card = _unmarked_card(
                 found, step=step, days=dailyops.days_chased(_today(bot.config)),
             ) if found else None
+            top_ups = found or None
         elif step == "link_setup":
             added, problems = await asyncio.to_thread(jobs.link_setup_on_day, bot.config)
             note = (
@@ -2255,6 +2322,8 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     # every morning reporting that nothing happened is a line nobody reads.
     if responder and (note or card):
         await responder.send(note or None, embed=card)
+    if responder and top_ups:
+        await _offer_the_top_ups(responder, bot.config, top_ups)
 
 
 def _why_flagged(item) -> str:

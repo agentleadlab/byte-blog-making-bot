@@ -2414,7 +2414,7 @@ def test_one_of_each_is_reported_as_the_serious_one():
 # ------------------------------------------------- unticked, on a day you name
 
 
-def _unticked(monkeypatch, config, said, *, found=()):
+def _unticked(monkeypatch, config, said, *, found=(), top_ups=(), ticked=None):
     """Run the handler and report what reached the board. (asked, sent)"""
     from wilbyte.bot import client
 
@@ -2424,7 +2424,20 @@ def _unticked(monkeypatch, config, said, *, found=()):
         asked["day"], asked["ahead"] = day, ahead
         return list(found), []
 
+    def top_up_check(cfg, *, day=None, ahead=True, found=None):
+        asked["offered"] = list(found or [])
+        return list(top_ups), []
+
     monkeypatch.setattr(jobs, "unmarked_agents", reading)
+    monkeypatch.setattr(jobs, "ongoing_to_tick", top_up_check)
+    monkeypatch.setattr(
+        jobs, "tick_ongoing",
+        lambda cfg, cards: (
+            asked.setdefault("ticked", [str(one.get("name")) for one in cards]), []
+        ),
+    )
+    if ticked is not None:
+        monkeypatch.setattr(client.views, "ConfirmView", ticked)
     monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 4))
     heard = Listening()
     asyncio.run(client._send_unticked(ChannelResponder(heard), config, said))
@@ -5086,3 +5099,162 @@ def test_the_dispute_channel_asks_for_message_content_on_its_own(monkeypatch):
 
     monkeypatch.setenv("DISCORD_DISPUTE_CHANNEL_ID", "1549160193353322607")
     assert bot_client._intents().message_content is True
+
+
+# ------------------------------------- a top-up is not a setup, so nobody ticks it
+
+# Justin Henry Najjar's real card. Therese's comment says the order is already
+# running and Nicole should bump the leads onto the setup he has — so there is
+# no setup to do, nobody is ever going to tick it, and it gets chased every
+# afternoon for work that was finished before the card was copied.
+
+ONGOING_NOTE = (
+    "@card\nJustin Henry Najjar has an ongoing order that still need to get "
+    "fulfilled.\n@nic0l3 kindly bump # of leads to his current setup. thank you!"
+)
+
+JUSTIN = {
+    "id": "c9", "name": "New Agent - Justin Henry Najjar",
+    "url": "", "when": "today",
+}
+
+
+class ToldToTick(Button):
+    pass
+
+
+def test_a_top_up_is_offered_with_a_button_rather_than_ticked_quietly(
+    config, monkeypatch
+):
+    """A tick is somebody saying they did it, which is the whole value of it."""
+    ToldToTick.press, ToldToTick.answered = False, True
+    asked, sent = _unticked(
+        monkeypatch, config, "unticked",
+        found=[JUSTIN], top_ups=[{**JUSTIN, "because": ONGOING_NOTE}],
+        ticked=ToldToTick,
+    )
+
+    assert "ticked" not in asked, "it ticked the card without being asked"
+    whole = "\n".join(str(one) for one in sent)
+    assert "Justin Henry Najjar" in whole
+    assert "top-up" in whole
+
+
+def test_pressing_it_ticks_the_card(config, monkeypatch):
+    ToldToTick.press, ToldToTick.answered = True, True
+    asked, sent = _unticked(
+        monkeypatch, config, "unticked",
+        found=[JUSTIN], top_ups=[{**JUSTIN, "because": ONGOING_NOTE}],
+        ticked=ToldToTick,
+    )
+
+    assert asked["ticked"] == ["New Agent - Justin Henry Najjar"]
+
+
+def test_the_chase_is_still_shown_underneath_the_offer(config, monkeypatch):
+    """The card is still unticked and still worth seeing. The button is what
+    makes it stop coming back, not a reason to hide it."""
+    ToldToTick.press = False
+    _, sent = _unticked(
+        monkeypatch, config, "unticked",
+        found=[JUSTIN], top_ups=[{**JUSTIN, "because": ONGOING_NOTE}],
+        ticked=ToldToTick,
+    )
+
+    assert len(sent) == 2, "the unticked chase and the offer are both said"
+
+
+def test_an_ordinary_unticked_card_is_offered_nothing(config, monkeypatch):
+    """Only the ones whose comment says the order is ongoing."""
+    _, sent = _unticked(monkeypatch, config, "unticked", found=[JUSTIN], top_ups=[])
+
+    assert len(sent) == 1
+
+
+def test_the_offer_is_only_asked_about_the_cards_already_found(config, monkeypatch):
+    """Reading the whole of Done's comments to answer this would be sixty
+    requests for a question about two cards."""
+    asked, _ = _unticked(monkeypatch, config, "unticked", found=[JUSTIN], top_ups=[])
+
+    assert asked["offered"] == [JUSTIN]
+
+
+def test_the_words_are_what_count_not_the_idea(config):
+    """A comment about an agent already on the board is most of what gets
+    written on these cards. The ones asking to pause a drip are real setups."""
+    from wilbyte import tagged
+
+    assert tagged.an_ongoing_order(ONGOING_NOTE) is True
+    assert tagged.an_ongoing_order(
+        "kindly bump # of leads to his current setup"
+    ) is False
+    assert tagged.an_ongoing_order("pause his drip until Monday") is False
+
+
+def test_only_the_ongoing_ones_come_back_from_the_job(config, monkeypatch):
+    """The job itself, over a board with one top-up and one real setup."""
+    said = {
+        "c9": [ONGOING_NOTE],
+        "c8": ["all set up, sheet to follow"],
+    }
+    monkeypatch.setattr(
+        jobs, "unmarked_agents",
+        lambda cfg, **kw: (
+            [JUSTIN, {"id": "c8", "name": "New Agent - Real Setup", "when": "today"}], []
+        ),
+    )
+
+    class Board:
+        def card_comments(self, card_id):
+            return said.get(card_id, [])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    found, problems = jobs.ongoing_to_tick(config)
+
+    assert [one["id"] for one in found] == ["c9"]
+    assert "ongoing order" in found[0]["because"]
+    assert problems == []
+
+
+def test_a_card_whose_comments_cannot_be_read_is_said_rather_than_skipped(
+    config, monkeypatch
+):
+    """A silent skip is the bug."""
+    monkeypatch.setattr(
+        jobs, "unmarked_agents", lambda cfg, **kw: ([JUSTIN], []),
+    )
+
+    class Broken:
+        def card_comments(self, card_id):
+            raise RuntimeError("Trello said 429")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Broken())
+    found, problems = jobs.ongoing_to_tick(config)
+
+    assert found == []
+    assert any("Justin Henry Najjar" in one for one in problems)
+
+
+def test_ticking_reports_each_one_by_name(config, monkeypatch):
+    done = []
+
+    class Board:
+        def tick_card(self, card_id, done_=True):
+            done.append(card_id)
+            return {}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    ticked, problems = jobs.tick_ongoing(config, [JUSTIN])
+
+    assert ticked == ["Justin Henry Najjar"]
+    assert done == ["c9"]
+    assert problems == []

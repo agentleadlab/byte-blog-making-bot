@@ -3457,6 +3457,88 @@ def unmarked_agents(
         client.close()
 
 
+def ongoing_to_tick(
+    config: Config, *, day=None, ahead: bool = True, found=None
+) -> tuple[list[dict], list[str]]:
+    """The unticked cards going live now whose comments say the order is ongoing.
+
+    (cards, problems). Reads only - `tick_ongoing` does the writing.
+
+    A top-up is not a setup. Therese writes "Justin Henry Najjar has an ongoing
+    order that still need to get fulfilled. @nic0l3 kindly bump # of leads to
+    his current setup", and there is no new setup to do: the leads go onto a
+    drip that is already running. So nobody ever puts the green circle on the
+    card, and it sits in Done being chased every afternoon for work that was
+    finished before the card was copied.
+
+    The words, not the idea - the same rule the checklists use. A comment about
+    an agent already on the board is most of what gets written on these cards,
+    and the ones asking to pause a drip or fix a schedule are real setups that
+    somebody does have to tick by hand.
+
+    Only the ones already narrowed to today and tomorrow, so the comments are
+    read for a handful of cards rather than for the sixty in Done.
+
+    `found` is the unticked list when the caller already has it, so asking
+    "which of these are top-ups" costs the comments and not the board twice.
+    """
+    from .. import tagged
+
+    problems: list = []
+    if found is None:
+        found, problems = unmarked_agents(config, day=day, ahead=ahead)
+    if not found:
+        return [], problems
+
+    client = open_trello(config)
+    try:
+        theirs = []
+        for card in found:
+            card_id = str(card.get("id") or "")
+            try:
+                said = client.card_comments(card_id)
+            except Exception as exc:
+                problems.append(
+                    f"Couldn't read the comments on {card.get('name')!r}: "
+                    f"{_short(exc, 120)}"
+                )
+                continue
+            note = next(
+                (one for one in said if tagged.an_ongoing_order(one)), ""
+            )
+            if note:
+                theirs.append({**card, "because": _short(" ".join(note.split()), 160)})
+        return theirs, problems
+    finally:
+        client.close()
+
+
+def tick_ongoing(config: Config, cards) -> tuple[list[str], list[str]]:
+    """Put the green circle on these cards. (ticked, problems).
+
+    Writes. Reversible - a tick comes off again - but it is four people's live
+    board, so nothing calls this without somebody pressing the button first.
+    """
+    from .. import agents as rules
+
+    if not cards:
+        return [], []
+    client = open_trello(config)
+    try:
+        ticked, problems = [], []
+        for card in cards:
+            title = str(card.get("name") or "")
+            try:
+                client.tick_card(str(card.get("id") or ""))
+            except Exception as exc:
+                problems.append(f"Couldn't tick {title!r}: {_short(exc, 120)}")
+                continue
+            ticked.append(rules.agent_name(title))
+        return ticked, problems
+    finally:
+        client.close()
+
+
 def make_setup_card(config: Config, *, day=None) -> tuple[str, list[str]]:
     """Make the setup card for the day after tomorrow. (title made, problems).
 

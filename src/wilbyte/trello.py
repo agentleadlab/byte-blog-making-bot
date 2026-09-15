@@ -295,6 +295,17 @@ class TrelloClient:
         """
         return self._request("PUT", f"/cards/{card_id}", params={"closed": "true"})
 
+    def tick_card(self, card_id: str, *, done: bool = True) -> dict:
+        """The green circle on the card front. Reversible - it unticks again.
+
+        Trello carries it as `dueComplete` whether or not the card has a due
+        date, which is why a card with no dates can still show the tick.
+        """
+        return self._request(
+            "PUT", f"/cards/{card_id}",
+            params={"dueComplete": "true" if done else "false"},
+        )
+
     def create_card(self, list_id: str, name: str, *, position: str = "top") -> dict:
         return self._request(
             "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
