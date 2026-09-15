@@ -178,3 +178,203 @@ def test_an_agent_whose_name_is_a_server_word_keeps_their_channel():
     assert clearout.off_limits(channel("grant-rules")) is False
     assert clearout.off_limits(channel("rule-hernandez")) is False
     assert clearout.matches("Grant Rules", channel("grant-rules")) is True
+
+
+# ---------------------------------------- nothing goes until it has been asked
+
+# Franklin: "make sure it ask me first before delting and kicking people".
+# Reading the code and seeing that it asks is not the same as the suite
+# refusing to let it stop asking, which is what these are for.
+
+
+class Pressed:
+    """A stubbed ConfirmView. Answers the presses in `says`, in order."""
+
+    says = [True, True]
+
+    def __init__(self, **kw):
+        told = type(self).says
+        self.confirmed = told.pop(0) if told else False
+        self.answered = True
+        self.label = kw.get("label", "")
+        self.danger = kw.get("danger", False)
+
+    async def wait(self):
+        return None
+
+
+class Member:
+    def __init__(self, name):
+        self.id, self.display_name, self.name = 7, name, name
+
+    def __str__(self):
+        return self.display_name
+
+
+class Channel:
+    def __init__(self, name):
+        self.id, self.name, self.category = 11, name, None
+        self.deleted = False
+
+    async def history(self, limit=0):
+        for one in ():
+            yield one
+
+    async def delete(self, reason=""):
+        self.deleted = True
+
+
+class Guild:
+    def __init__(self, channel, member):
+        self.id, self.name = 3, "Agent Lead Lab Clients"
+        self.text_channels = [channel] if channel else []
+        self.members = [member] if member else []
+        self.banned = []
+
+    def get_channel(self, channel_id):
+        return next((one for one in self.text_channels if one.id == channel_id), None)
+
+    async def ban(self, member, reason="", delete_message_days=0):
+        self.banned.append(member)
+
+
+def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
+             name="Jay Rodriguez", called="jay-rodriguez", member=True):
+    """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = list(says)
+    buttons = []
+
+    class Watched(Pressed):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            buttons.append(self)
+
+    channel = Channel(called)
+    guild = Guild(channel, Member(name) if member else None)
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Watched)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://sheet", [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, row: (tab, [] if tab else ["the sheet refused that"]),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "keep_the_picture",
+        lambda config, page, called: (
+            picture, [] if picture else ["Chromium isn't installed"]
+        ),
+    )
+
+    heard = SimpleNamespace(requester_id=1, messages=[])
+
+    async def send(content=None, *, embed=None, file=None, view=None):
+        heard.messages.append(content or "")
+
+    heard.send = send
+    bot = SimpleNamespace(get_guild=lambda where: guild)
+    config = SimpleNamespace(
+        secrets=SimpleNamespace(discord_clients_guild_id="3"),
+        discord=SimpleNamespace(approval_timeout_seconds=1),
+        schedule=SimpleNamespace(timezone="America/Chicago"),
+    )
+
+    asyncio.run(bot_client._clear_out(bot, heard, config, name))
+    return guild, channel, heard.messages, buttons
+
+
+def test_the_first_button_is_only_ever_offered_before_anything_happens(monkeypatch):
+    """Shown the plan, RYTE has done nothing yet - not even kept the sheet."""
+    guild, channel, said, _ = _closing(monkeypatch, says=[False])
+
+    assert guild.banned == []
+    assert channel.deleted is False
+    assert "Nothing is deleted by this" in said[0]
+
+
+def test_saying_no_to_the_second_bans_nobody_and_deletes_nothing(monkeypatch):
+    """The sheet and the picture are kept. The channel and the person stay."""
+    guild, channel, said, _ = _closing(monkeypatch, says=[True, False])
+
+    assert guild.banned == []
+    assert channel.deleted is False
+    assert "Left alone" in said[-1]
+
+
+def test_a_button_nobody_pressed_reads_as_a_no():
+    """A view that timed out is a view nobody saw, and must not count as yes.
+
+    The real one rather than the stub, because this is the only thing standing
+    between walking away from the message and coming back to a deleted channel.
+    """
+    import asyncio
+
+    from wilbyte.bot import views
+
+    view = views.ConfirmView(
+        requester_id=1, timeout=1, label="Ban and delete #x", emoji="⛔", danger=True
+    )
+
+    assert view.confirmed is False, "unpressed is a yes before it even times out"
+    asyncio.run(view.on_timeout())
+    assert view.confirmed is False
+    assert view.answered is False, "a timeout is not somebody answering"
+
+
+def test_the_second_button_says_who_and_what_before_it_is_pressed(monkeypatch):
+    _, _, said, buttons = _closing(monkeypatch, says=[True, True])
+
+    asked = said[-2]
+    assert "**This cannot be undone.**" in asked
+    assert "Ban **Jay Rodriguez**" in asked
+    assert "Delete **#jay-rodriguez**" in asked
+    assert buttons[-1].label == "Ban and delete #jay-rodriguez"
+
+
+def test_the_irreversible_button_is_red_and_the_safe_one_is_not(monkeypatch):
+    """It should not look like the button that moves a blog post."""
+    _, _, _, buttons = _closing(monkeypatch, says=[True, True])
+
+    assert buttons[0].danger is False
+    assert buttons[-1].danger is True
+
+
+def test_a_sheet_that_did_not_save_never_offers_the_delete(monkeypatch):
+    """The channel is the only copy of what the keeping failed to keep."""
+    guild, channel, said, buttons = _closing(monkeypatch, says=[True, True], tab="")
+
+    assert len(buttons) == 1, "the second button was offered anyway"
+    assert guild.banned == []
+    assert channel.deleted is False
+    assert "**Nothing deleted.**" in said[-1]
+
+
+def test_a_picture_that_did_not_upload_never_offers_the_delete(monkeypatch):
+    guild, channel, said, buttons = _closing(monkeypatch, says=[True, True], picture="")
+
+    assert len(buttons) == 1
+    assert guild.banned == []
+    assert channel.deleted is False
+    assert "**Nothing deleted.**" in said[-1]
+
+
+def test_both_presses_ban_them_and_delete_the_channel(monkeypatch):
+    """And the one path that does go through, so the asking isn't just a wall."""
+    guild, channel, said, _ = _closing(monkeypatch, says=[True, True])
+
+    assert [str(one) for one in guild.banned] == ["Jay Rodriguez"]
+    assert channel.deleted is True
+    assert "Deleted **#jay-rodriguez**" in said[-1]
+
+
+def test_nobody_left_to_ban_still_asks_before_the_channel_goes(monkeypatch):
+    guild, channel, said, buttons = _closing(monkeypatch, says=[True, False], member=False)
+
+    assert "Nobody to ban" in said[-2]
+    assert channel.deleted is False

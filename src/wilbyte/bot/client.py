@@ -1870,6 +1870,7 @@ async def _clear_out(
         timeout=config.discord.approval_timeout_seconds,
         label=f"Ban and delete #{plan.channel.name}",
         emoji="⛔",
+        danger=True,
     )
     await responder.send(
         "\n".join(kept)

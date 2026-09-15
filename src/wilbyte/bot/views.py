@@ -139,7 +139,15 @@ class ConfirmView(discord.ui.View):
     presses the button.
     """
 
-    def __init__(self, *, requester_id: int | None, timeout: float, label: str, emoji: str):
+    def __init__(
+        self,
+        *,
+        requester_id: int | None,
+        timeout: float,
+        label: str,
+        emoji: str,
+        danger: bool = False,
+    ):
         super().__init__(timeout=timeout)
         self.requester_id = requester_id
         self.confirmed = False
@@ -149,6 +157,11 @@ class ConfirmView(discord.ui.View):
         self.answered = False
         self._go.label = label
         self._go.emoji = emoji
+        # Red for the ones that cannot be undone. Everything else RYTE asks
+        # about can be put back, and a button that bans somebody and deletes
+        # their channel should not look like the one that moves a blog post.
+        if danger:
+            self._go.style = discord.ButtonStyle.danger
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.requester_id is None or interaction.user.id == self.requester_id:
