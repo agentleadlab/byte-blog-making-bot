@@ -141,3 +141,113 @@ def test_a_gid_that_names_no_tab_comes_back_empty():
             return [{"sheetId": 0, "title": "Sheet1"}]
 
     assert gsheets.SheetsClient.tab_named(Book(), "x", "999") == ""
+
+
+# ------------------------ telling one refresh token from another
+
+# They all start "1//" and carry nothing readable, so a new one pasted and a
+# new one forgotten look identical — and both look like the scope never having
+# been ticked. Google names the scopes on every refresh.
+
+
+def test_the_scopes_come_back_short(monkeypatch):
+    import httpx
+
+    from wilbyte import gsheets
+
+    def answer(url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"access_token": "a", "expires_in": 3599, "scope": (
+                "https://www.googleapis.com/auth/gmail.readonly "
+                "https://www.googleapis.com/auth/drive.file "
+                "https://www.googleapis.com/auth/documents"
+            )},
+            request=httpx.Request("POST", "https://x"),
+        )
+
+    monkeypatch.setattr(httpx, "post", answer)
+
+    assert gsheets.granted(gsheets.Credentials("i", "s", "1//old")) == [
+        "gmail.readonly", "drive.file", "documents",
+    ]
+
+
+def test_a_token_without_the_new_scope_says_so(monkeypatch):
+    import httpx
+
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+    from types import SimpleNamespace
+
+    def answer(url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"scope": "https://www.googleapis.com/auth/gmail.readonly"},
+            request=httpx.Request("POST", "https://x"),
+        )
+
+    monkeypatch.setattr(httpx, "post", answer)
+    (ok, said), = jobs._check_google_scopes(SimpleNamespace(secrets=SimpleNamespace(
+        google_client_id="i", google_client_secret="s", google_refresh_token="1//old",
+        gmail_refresh_token="", gmail_client_id="", gmail_client_secret="",
+    )))
+
+    assert ok is False
+    assert "gmail.readonly" in said
+    assert "still the old token" in said
+
+
+def test_a_token_with_it_passes(monkeypatch):
+    import httpx
+
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+    from types import SimpleNamespace
+
+    def answer(url, **kwargs):
+        return httpx.Response(
+            200,
+            json={"scope": (
+                "https://www.googleapis.com/auth/gmail.readonly "
+                "https://www.googleapis.com/auth/documents"
+            )},
+            request=httpx.Request("POST", "https://x"),
+        )
+
+    monkeypatch.setattr(httpx, "post", answer)
+    (ok, said), = jobs._check_google_scopes(SimpleNamespace(secrets=SimpleNamespace(
+        google_client_id="i", google_client_secret="s", google_refresh_token="1//new",
+        gmail_refresh_token="", gmail_client_id="", gmail_client_secret="",
+    )))
+
+    assert ok is True
+    assert "documents" in said
+    assert "old token" not in said
+
+
+def test_it_asks_about_the_token_the_docs_actually_use(monkeypatch):
+    """GMAIL_REFRESH_TOKEN overrides the Sheets one for Gmail, Drive and Docs,
+    so checking the Sheets one would answer about the wrong token."""
+    import httpx
+
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+    from types import SimpleNamespace
+
+    asked = {}
+
+    def answer(url, **kwargs):
+        asked.update(kwargs.get("data") or {})
+        return httpx.Response(200, json={"scope": ""}, request=httpx.Request("POST", "https://x"))
+
+    monkeypatch.setattr(httpx, "post", answer)
+    jobs._check_google_scopes(SimpleNamespace(secrets=SimpleNamespace(
+        google_client_id="sheets-id", google_client_secret="s",
+        google_refresh_token="1//sheets",
+        gmail_refresh_token="1//gmail", gmail_client_id="gmail-id",
+        gmail_client_secret="gs",
+    )))
+
+    assert asked["refresh_token"] == "1//gmail"
+    assert asked["client_id"] == "gmail-id"

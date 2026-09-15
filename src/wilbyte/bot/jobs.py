@@ -1619,9 +1619,47 @@ def check_recordings(config: Config) -> list[tuple[bool, str]]:
     results.extend(_check_notion(config))
     results.extend(_check_zoom(config))
     results.extend(_check_fathom(config))
+    results.extend(_check_google_scopes(config))
     results.extend(_check_gmail(config))
     results.extend(_check_docs(config))
     return results
+
+
+def _check_google_scopes(config: Config) -> list[tuple[bool, str]]:
+    """What the Google token in .env is actually allowed to do.
+
+    Every refresh token starts "1//" and carries nothing readable, so a new
+    one pasted and a new one forgotten look identical from the outside - and
+    both look like the scope never having been ticked. Google names the
+    scopes on every refresh; this asks it and says them out loud.
+    """
+    from .. import docs as doc, gsheets
+
+    try:
+        creds = gsheets.credentials(config.secrets)
+    except gsheets.SheetsError as exc:
+        return [(False, f"Google token - {_short(exc, 160)}")]
+    instead = (getattr(config.secrets, "gmail_refresh_token", "") or "").strip()
+    if instead:
+        creds = gsheets.Credentials(
+            (getattr(config.secrets, "gmail_client_id", "") or "").strip()
+            or creds.client_id,
+            (getattr(config.secrets, "gmail_client_secret", "") or "").strip()
+            or creds.client_secret,
+            instead,
+        )
+    try:
+        scopes = gsheets.granted(creds)
+    except Exception as exc:
+        return [(False, f"Google token - {_short(exc, 160)}")]
+
+    wanted = doc.SCOPE.rsplit("/", 1)[-1]
+    has_it = wanted in scopes
+    return [(
+        has_it,
+        f"Google token grants: {', '.join(scopes) or 'nothing'}"
+        + ("" if has_it else f" - no **{wanted}**, so it is still the old token"),
+    )]
 
 
 def _check_gmail(config: Config) -> list[tuple[bool, str]]:

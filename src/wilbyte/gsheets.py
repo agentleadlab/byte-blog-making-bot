@@ -60,6 +60,37 @@ def credentials(secrets) -> Credentials:
     )
 
 
+def granted(creds: Credentials, *, timeout: float = 20.0) -> list[str]:
+    """Which scopes this refresh token actually carries.
+
+    Google says so on every refresh, in the `scope` field of the reply, and it
+    is the only way to tell one refresh token from another: they all start
+    "1//" and there is nothing in the value itself to read. Minting a new one
+    and forgetting to paste it looks exactly like pasting it and forgetting to
+    restart, and both look like the scope never having been ticked.
+
+    Short names - "gmail.readonly", "documents" - because the full URLs are
+    forty characters of prefix they all share.
+    """
+    try:
+        reply = httpx.post(
+            TOKEN_URL,
+            timeout=timeout,
+            data={
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "refresh_token": creds.refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+    except httpx.HTTPError as exc:
+        raise SheetsError(f"Couldn't reach Google to sign in: {exc}") from exc
+    if reply.status_code >= 400:
+        raise SheetsError(explain_token(reply.status_code, reply.text))
+    said = str((reply.json() or {}).get("scope") or "")
+    return [one.rsplit("/", 1)[-1] for one in said.split() if one]
+
+
 class SheetsClient:
     """One signed-in session. Reads headings, appends rows, nothing else."""
 
