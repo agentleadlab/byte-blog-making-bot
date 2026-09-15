@@ -5155,6 +5155,8 @@ def preflight(config: Config) -> list[str]:
          "read and flag chargeback notifications as they land"),
         (config.secrets.discord_chargeback_channel_id, "DISCORD_CHARGEBACK_CHANNEL_ID",
          "say them in their own channel rather than with the board"),
+        (config.secrets.discord_clients_guild_id, "DISCORD_CLIENTS_GUILD_ID",
+         "the server the agents' own channels live in"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
          "offer new comments and description lines as they are written"),
     ):

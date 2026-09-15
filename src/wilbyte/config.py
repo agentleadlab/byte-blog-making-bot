@@ -233,6 +233,10 @@ class Secrets:
     # board's: a dispute is money and is nobody's daily routine. Falls back to
     # the board channel when it is blank.
     discord_chargeback_channel_id: str | None = None
+    # The server the agents' own channels live in - a different one from the
+    # team's. Banning somebody and deleting their channel both happen there,
+    # and naming it here means neither can happen anywhere else by mistake.
+    discord_clients_guild_id: str | None = None
     # The address Summit Pay's invoices arrive from. Every Gmail search RYTE
     # makes is pinned to it, so it is the boundary of what he can read rather
     # than a convenience.
@@ -347,6 +351,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),
                 discord_dispute_channel_id=_env("DISCORD_DISPUTE_CHANNEL_ID"),
                 discord_chargeback_channel_id=_env("DISCORD_CHARGEBACK_CHANNEL_ID"),
+                discord_clients_guild_id=_env("DISCORD_CLIENTS_GUILD_ID"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
                 gmail_client_id=_env("GMAIL_CLIENT_ID"),
