@@ -820,6 +820,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _clear_out(bot, responder, config, request.brief or "")
                 return
 
+            if request.action == "quiet":
+                await _quiet_channels(bot, responder, config, request.brief or "")
+                return
+
             if request.action == "access":
                 await _what_i_can_do(responder, bot)
                 return
@@ -1904,6 +1908,73 @@ async def _clear_out(
         "\n".join(done + [f"⚠ {one}" for one in trouble])
         or "Nothing happened, which shouldn't be possible — check the channel."
     )
+
+
+async def _quiet_channels(
+    bot: "WilByteBot", responder: Responder, config: Config, asked: str
+) -> None:
+    """Which of the clients server's channels nobody has used lately.
+
+    The other end of the clear-out: `clearout` needs a name, and this is how
+    you find out whose names to type. It only ever lists - there is no button
+    on it, nothing is deleted, and the way to act on it is still to run
+    `clearout` on one name at a time and press through the two questions.
+
+    One server, the one in DISCORD_CLIENTS_GUILD_ID, because that is the only
+    one the agents' own channels are in and listing another server's is how a
+    list of things to delete ends up pointing somewhere it shouldn't.
+    """
+    from .. import clearout
+
+    where = (config.secrets.discord_clients_guild_id or "").strip()
+    guild = bot.get_guild(int(where)) if where.isdigit() else None
+    if guild is None:
+        await responder.send(
+            "I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in "
+            ".env isn't it. `@RYTE access` lists the servers I'm in."
+        )
+        return
+
+    now = datetime.now(ZoneInfo(config.schedule.timezone))
+    since = now - timedelta(days=clearout.how_far_back(asked or ""))
+
+    channels = []
+    for one in guild.text_channels:
+        when, used = _last_used(one)
+        channels.append(clearout.Channel(
+            channel_id=str(one.id),
+            name=str(one.name),
+            category=str(getattr(one.category, "name", "") or ""),
+            last_active=when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None,
+            ever_used=used,
+        ))
+
+    quiet, ours, unknown = clearout.quiet_ones(channels, since=since)
+    for page in clearout.describe_quiet(
+        quiet, ours, unknown, since=since, now=now
+    ):
+        await responder.send(page)
+
+
+def _last_used(channel):
+    """(when anything was last said in it, whether anything ever was).
+
+    From the id of the last message rather than by reading the channel: a
+    Discord id has the time it was made inside it, so a whole server's worth
+    of this is no requests at all, where asking each channel for its history
+    is one request per channel and a rate limit at the end of it.
+
+    An empty channel dates from when it was made, which is the honest answer
+    to how long it has been sitting there.
+    """
+    try:
+        last = getattr(channel, "last_message_id", None)
+        if last:
+            return discord.utils.snowflake_time(int(last)), True
+        return getattr(channel, "created_at", None), False
+    except Exception:
+        log.exception("Couldn't tell when #%s was last used", getattr(channel, "name", "?"))
+        return None, True
 
 
 def _member_called(guild, name: str):

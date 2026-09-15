@@ -51,7 +51,16 @@ class Channel:
     channel_id: str
     name: str
     category: str = ""
-    last_active: str = ""
+    #: When anything was last said in it, or None when that couldn't be told.
+    #: A real date rather than something already formatted, because the whole
+    #: point of it is comparing one channel against a cutoff and against
+    #: another channel.
+    last_active: datetime | None = None
+    #: False when nothing was ever said in it, in which case `last_active` is
+    #: the day it was made. An empty channel from March is exactly what a
+    #: clear-out is looking for, so it belongs in the list rather than in the
+    #: couldn't-tell pile - but it should not claim somebody spoke in March.
+    ever_used: bool = True
 
 
 @dataclass
@@ -206,7 +215,7 @@ def describe(plan: Plan) -> str:
     if plan.channel.category:
         lines.append(f"• Category — {plan.channel.category}")
     if plan.channel.last_active:
-        lines.append(f"• Last message — {plan.channel.last_active}")
+        lines.append(f"• Last message — {plan.channel.last_active:%d %b %Y}")
     lines.append(
         f"• Sheet — {plan.sheet}" if plan.sheet
         else "• Sheet — **none found on their card**"
@@ -217,3 +226,136 @@ def describe(plan: Plan) -> str:
     )
     lines += [f"⚠ {one}" for one in plan.problems]
     return "\n".join(lines)
+
+
+# ------------------------------------------------- which channels have gone quiet
+
+#: How long a channel says nothing before it is worth looking at. Franklin's
+#: own figure: "give me list of inactive channel for 2-3months".
+QUIET_MONTHS = 2
+
+#: A month, for the purpose of "two months ago". Nobody closing a channel down
+#: cares whether February was short.
+DAYS_A_MONTH = 30
+
+#: "2 months", "3mo", "90 days", "10 weeks" - however it is typed.
+HOW_LONG = re.compile(
+    r"(\d+)\s*(month|mo|week|wk|day)s?\b", re.IGNORECASE
+)
+
+#: Discord's own limit is 2000. Enough room under it for the heading and the
+#: footer that go around the lines.
+ROOM = 1700
+
+
+def how_far_back(text: str, *, months: int = QUIET_MONTHS) -> int:
+    """How many days back "2 months" means, defaulting when nothing is said.
+
+    Typing nothing is the common case - `@RYTE quiet` - and it should give
+    the answer rather than a question about units.
+    """
+    found = HOW_LONG.search(text or "")
+    if not found:
+        return months * DAYS_A_MONTH
+    many = max(1, int(found.group(1)))
+    unit = found.group(2).casefold()
+    if unit.startswith("d"):
+        return many
+    if unit.startswith("w"):
+        return many * 7
+    return many * DAYS_A_MONTH
+
+
+def how_long(channel: Channel, *, now: datetime) -> str:
+    """How long this channel has been quiet, in the roundest honest terms."""
+    if channel.last_active is None:
+        return "not known"
+    days = max(0, (now - channel.last_active).days)
+    if days < 14:
+        said = f"{days} day{'s' if days != 1 else ''}"
+    elif days < 60:
+        said = f"{days // 7} weeks"
+    else:
+        said = f"{days // DAYS_A_MONTH} months"
+    return f"nothing ever said, made {said} ago" if not channel.ever_used else said
+
+
+def quiet_ones(channels, *, since: datetime) -> tuple:
+    """(gone quiet, the server's own, couldn't tell), quietest first.
+
+    Three lists rather than one, because a channel nobody can date is not a
+    channel that is busy, and dropping it silently is how a list that looks
+    complete stops being one.
+    """
+    quiet, ours, unknown = [], [], []
+    for one in channels or []:
+        if off_limits(one):
+            ours.append(one)
+        elif one.last_active is None:
+            unknown.append(one)
+        elif one.last_active < since:
+            quiet.append(one)
+    quiet.sort(key=lambda one: one.last_active)
+    return quiet, ours, unknown
+
+
+def describe_quiet(quiet, ours, unknown, *, since: datetime, now: datetime) -> list:
+    """The list, as however many messages Discord will take.
+
+    Pages rather than a truncated list: the whole point is to act on it, and
+    "and 40 more" is the half nobody closes down.
+    """
+    days = max(0, (now - since).days)
+    head = (
+        f"🕸 **{len(quiet)} channel{'s' if len(quiet) != 1 else ''}** with nothing "
+        f"said since **{since:%d %b %Y}** ({days // DAYS_A_MONTH} months)"
+    )
+    if not quiet:
+        head = (
+            f"Nothing has been quiet since **{since:%d %b %Y}** "
+            f"({days // DAYS_A_MONTH} months) — every channel has been used."
+        )
+
+    lines = [
+        f"• **#{one.name}** — {how_long(one, now=now)}"
+        + (f", {one.category}" if one.category else "")
+        for one in quiet
+    ]
+
+    tail = []
+    if ours:
+        tail.append(
+            f"-# Left out {len(ours)} of the server's own: "
+            + ", ".join(f"#{one.name}" for one in ours[:6])
+            + (", …" if len(ours) > 6 else "")
+        )
+    if unknown:
+        tail.append(
+            f"⚠ Couldn't tell when {len(unknown)} "
+            + ("was" if len(unknown) == 1 else "were")
+            + " last used: "
+            + ", ".join(f"#{one.name}" for one in unknown[:6])
+            + (", …" if len(unknown) > 6 else "")
+        )
+    tail.append("-# Nothing here is deleted. `@RYTE clearout <name>` does that, and asks twice.")
+
+    return _pages(head, lines, tail)
+
+
+def _pages(head: str, lines, tail) -> list:
+    """One message if it fits, several if it doesn't. Never a cut-off list."""
+    out, now_saying = [], head
+    for line in lines:
+        if len(now_saying) + len(line) + 1 > ROOM:
+            out.append(now_saying)
+            now_saying = line
+        else:
+            now_saying = f"{now_saying}\n{line}"
+    out.append(now_saying)
+
+    for one in tail:
+        if len(out[-1]) + len(one) + 2 > ROOM:
+            out.append(one)
+        else:
+            out[-1] = f"{out[-1]}\n{one}"
+    return out

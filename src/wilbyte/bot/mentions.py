@@ -126,6 +126,11 @@ ACTION_WORDS = {
     "clearout": "clearout",
     "clear": "clearout",
     "closedown": "clearout",
+    # Which of the clients server's channels nobody has used lately - the
+    # other end of the clear-out, and the part that only ever reports.
+    "quiet": "quiet",
+    "inactive": "quiet",
+    "unused": "quiet",
     # What RYTE is allowed to do, in every server he is in.
     "access": "access",
     "permissions": "access",
@@ -521,7 +526,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
                          "archive", "setups", "spread", "unspread", "tags",
-                         "noticed", "daycheck", "access", "clearout")
+                         "noticed", "daycheck", "access", "clearout", "quiet")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -638,7 +643,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags", "noticed", "daycheck", "access", "clearout",
+        "words", "tags", "noticed", "daycheck", "access", "clearout", "quiet",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -851,6 +856,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **clearout Jay Rodriguez** — close an agent down: their sheet into ALL
 > CLIENTS, a picture of the conversation into Drive, then a second button to
 > ban them and delete the channel. Nothing goes until both are kept
+> @RYTE **quiet** — every channel in the clients server nobody has used in
+> two months, quietest first. Add **3 months** for a tighter list. Reads only;
+> nothing is deleted, and `clearout` is still how anything goes
 > @RYTE **access** — every server I'm in, what I'm allowed to do in each, and
 > which privileged intents are switched on
 > @RYTE **trello daycheck** — every line on a Lead Order card for a day its

@@ -378,3 +378,215 @@ def test_nobody_left_to_ban_still_asks_before_the_channel_goes(monkeypatch):
 
     assert "Nobody to ban" in said[-2]
     assert channel.deleted is False
+
+
+# -------------------------------------------- which channels have gone quiet
+
+from datetime import timedelta  # noqa: E402
+
+NOW = datetime(2026, 9, 15)
+
+
+def quiet_channel(name, *, days=None, category="", used=True):
+    return clearout.Channel(
+        channel_id=name, name=name, category=category,
+        last_active=None if days is None else NOW - timedelta(days=days),
+        ever_used=used,
+    )
+
+
+@pytest.mark.parametrize(
+    "typed, days",
+    [
+        ("", 60),
+        ("quiet", 60),
+        ("3 months", 90),
+        ("3months", 90),
+        ("1 month", 30),
+        ("90 days", 90),
+        ("2 weeks", 14),
+        ("6 mo", 180),
+    ],
+)
+def test_how_long_back_however_it_is_typed(typed, days):
+    assert clearout.how_far_back(typed) == days
+
+
+def test_nothing_typed_gives_the_answer_rather_than_a_question():
+    """`@RYTE quiet` on its own is the common case and must just work."""
+    assert clearout.how_far_back("") == clearout.QUIET_MONTHS * clearout.DAYS_A_MONTH
+
+
+def test_a_busy_channel_is_not_on_the_list():
+    quiet, _, _ = clearout.quiet_ones(
+        [quiet_channel("busy", days=3)], since=NOW - timedelta(days=60)
+    )
+
+    assert quiet == []
+
+
+def test_the_quietest_comes_first():
+    found, _, _ = clearout.quiet_ones(
+        [quiet_channel("recent", days=70), quiet_channel("ancient", days=400),
+         quiet_channel("middle", days=120)],
+        since=NOW - timedelta(days=60),
+    )
+
+    assert [one.name for one in found] == ["ancient", "middle", "recent"]
+
+
+def test_the_servers_own_channels_are_never_on_the_list():
+    """However long #general has been quiet, it is not an agent's."""
+    quiet, ours, _ = clearout.quiet_ones(
+        [quiet_channel("general", days=400), quiet_channel("admin-team", days=400),
+         quiet_channel("jay-rodriguez", days=400)],
+        since=NOW - timedelta(days=60),
+    )
+
+    assert [one.name for one in quiet] == ["jay-rodriguez"]
+    assert {one.name for one in ours} == {"general", "admin-team"}
+
+
+def test_a_channel_nobody_can_date_is_said_out_loud_rather_than_dropped():
+    """A silent skip is the bug. An undatable channel is still a channel."""
+    quiet, _, unknown = clearout.quiet_ones(
+        [quiet_channel("mystery", days=None)], since=NOW - timedelta(days=60)
+    )
+
+    assert quiet == []
+    assert [one.name for one in unknown] == ["mystery"]
+    said = clearout.describe_quiet(
+        quiet, [], unknown, since=NOW - timedelta(days=60), now=NOW
+    )
+    assert "Couldn't tell when 1 was last used" in said[-1]
+    assert "#mystery" in said[-1]
+
+
+def test_a_channel_nobody_ever_used_is_listed_and_does_not_claim_otherwise():
+    quiet, _, _ = clearout.quiet_ones(
+        [quiet_channel("empty", days=200, used=False)], since=NOW - timedelta(days=60)
+    )
+
+    assert [one.name for one in quiet] == ["empty"]
+    assert clearout.how_long(quiet[0], now=NOW) == "nothing ever said, made 6 months ago"
+
+
+def test_the_list_says_it_deletes_nothing():
+    """It only ever reports, and it should be impossible to read otherwise."""
+    quiet, _, _ = clearout.quiet_ones(
+        [quiet_channel("jay-rodriguez", days=100)], since=NOW - timedelta(days=60)
+    )
+    said = clearout.describe_quiet(
+        quiet, [], [], since=NOW - timedelta(days=60), now=NOW
+    )
+
+    assert "Nothing here is deleted" in said[-1]
+    assert "**#jay-rodriguez** — 3 months" in said[0]
+
+
+def test_an_empty_list_reads_as_an_answer_not_a_failure():
+    said = clearout.describe_quiet([], [], [], since=NOW - timedelta(days=60), now=NOW)
+
+    assert "every channel has been used" in said[0]
+
+
+def test_a_long_list_is_paged_rather_than_cut_off():
+    """"and 40 more" is the half nobody closes down."""
+    many = [quiet_channel(f"a-long-agent-name-number-{i}", days=100 + i) for i in range(120)]
+    quiet, _, _ = clearout.quiet_ones(many, since=NOW - timedelta(days=60))
+    said = clearout.describe_quiet(
+        quiet, [], [], since=NOW - timedelta(days=60), now=NOW
+    )
+
+    assert len(said) > 1, "120 channels fitted in one Discord message?"
+    assert all(len(one) <= 2000 for one in said)
+    for one in many:
+        assert any(f"#{one.name}" in page for page in said), f"{one.name} fell off"
+
+
+def test_quiet_is_a_word_ryte_knows():
+    from wilbyte.bot import mentions
+
+    for typed in ("quiet", "inactive 3 months", "unused"):
+        assert mentions.parse(f"<@1> {typed}").action == "quiet"
+
+
+def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
+    """End to end, with Discord stubbed: it reports and it stops there."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import discord
+
+    from wilbyte.bot import client as bot_client
+
+    def snowflake(when):
+        """A Discord id with this time inside it, the way Discord makes them."""
+        return (int(when.timestamp() * 1000) - 1420070400000) << 22
+
+    class Text:
+        def __init__(self, name, *, last=None, category=""):
+            self.id, self.name = abs(hash(name)) % 10**6, name
+            self.category = SimpleNamespace(name=category) if category else None
+            self.last_message_id = snowflake(last) if last else None
+            self.created_at = datetime(2026, 1, 1, tzinfo=discord.utils.utcnow().tzinfo)
+
+    old = datetime(2026, 5, 1, tzinfo=discord.utils.utcnow().tzinfo)
+    new = datetime(2026, 9, 14, tzinfo=discord.utils.utcnow().tzinfo)
+    guild = SimpleNamespace(
+        name="Agent Lead Lab Clients",
+        text_channels=[
+            Text("jay-rodriguez", last=old, category="ONGOING CLIENTS"),
+            Text("connor-knudsen", last=new),
+            Text("general", last=old),
+            Text("never-used"),
+        ],
+    )
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(content or "")
+
+    asked = []
+    bot = SimpleNamespace(get_guild=lambda where: (asked.append(where), guild)[1])
+    config = SimpleNamespace(
+        secrets=SimpleNamespace(discord_clients_guild_id="1291897127882195056"),
+        schedule=SimpleNamespace(timezone="America/Chicago"),
+    )
+
+    asyncio.run(bot_client._quiet_channels(
+        bot, SimpleNamespace(send=send, requester_id=1), config, "",
+    ))
+
+    whole = "\n".join(said)
+    assert asked == [1291897127882195056], "it looked at some other server"
+    assert "#jay-rodriguez" in whole
+    assert "#never-used" in whole, "an empty channel is exactly what this is for"
+    assert "#connor-knudsen" not in whole, "a channel used yesterday is not quiet"
+    assert "Left out 1 of the server's own" in whole
+    assert "Nothing here is deleted" in whole
+
+
+def test_the_command_will_not_list_a_server_that_is_not_the_clients_one(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(content or "")
+
+    asyncio.run(bot_client._quiet_channels(
+        SimpleNamespace(get_guild=lambda where: None),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(
+            secrets=SimpleNamespace(discord_clients_guild_id=""),
+            schedule=SimpleNamespace(timezone="America/Chicago"),
+        ),
+        "",
+    ))
+
+    assert "DISCORD_CLIENTS_GUILD_ID" in said[0]
