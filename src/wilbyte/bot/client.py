@@ -656,21 +656,58 @@ async def _typing(channel):
     other side is allowed to have a bad minute, and RYTE is not allowed to
     fall over when it does.
     """
-    showing = None
+    showing, stopping = None, None
     try:
         showing = channel.typing()
-        await showing.__aenter__()
+        # Bounded, because a rate-limited send_typing does not raise - the
+        # library sleeps until the bucket clears, and an indicator nobody can
+        # see is not worth waiting on. This is the half that made RYTE go
+        # silent rather than merely undecorated.
+        await asyncio.wait_for(showing.__aenter__(), TYPING_STARTS_IN)
     except Exception:
         log.info("Couldn't show the typing indicator; carrying on", exc_info=True)
         showing = None
+
+    if showing is not None:
+        stopping = asyncio.create_task(_stop_typing_later(showing))
     try:
         yield
     finally:
+        if stopping is not None:
+            stopping.cancel()
         if showing is not None:
-            try:
-                await showing.__aexit__(None, None, None)
-            except Exception:
-                log.debug("Couldn't stop the typing indicator", exc_info=True)
+            await _stop_typing(showing)
+
+
+#: Longest to wait for Discord to start the indicator. It is decoration, and
+#: waiting on it is the opposite of what it is for.
+TYPING_STARTS_IN = 5.0
+
+#: And the longest to leave it running. Work takes seconds; a button waits up
+#: to `approval_timeout_minutes`, which is 720 - twelve hours. The indicator
+#: used to run for the whole of that, re-sending every five seconds, which is
+#: eight thousand requests on one channel for one button nobody pressed. That
+#: is what rate-limited the channel and took the next mention down with it.
+TYPING_AT_MOST = 60.0
+
+
+async def _stop_typing_later(showing) -> None:
+    """Take the indicator down once the work is clearly not seconds away."""
+    try:
+        await asyncio.sleep(TYPING_AT_MOST)
+    except asyncio.CancelledError:
+        return
+    await _stop_typing(showing)
+
+
+async def _stop_typing(showing) -> None:
+    """Stop it, and never let stopping it be the thing that fails."""
+    try:
+        await asyncio.wait_for(
+            showing.__aexit__(None, None, None), TYPING_STARTS_IN
+        )
+    except Exception:
+        log.debug("Couldn't stop the typing indicator", exc_info=True)
 
 
 async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:

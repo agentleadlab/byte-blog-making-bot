@@ -5353,3 +5353,91 @@ def test_the_mention_handler_uses_the_forgiving_indicator():
 
     assert "_typing(message.channel)" in source
     assert "message.channel.typing()" not in source
+
+
+class Slow:
+    """A typing indicator Discord is rate-limiting: it sleeps, never raises.
+
+    Which is the shape that mattered — an exception was survivable, a sleep
+    was not, because nothing was waiting for the indicator to be worth it.
+    """
+
+    def __init__(self, delay=3600):
+        self.delay, self.left = delay, False
+
+    def typing(self):
+        return self
+
+    async def __aenter__(self):
+        import asyncio
+
+        await asyncio.sleep(self.delay)
+        return self
+
+    async def __aexit__(self, *exc):
+        self.left = True
+        return False
+
+
+def test_a_rate_limited_indicator_does_not_hold_the_work_up():
+    """discord.py sleeps out a rate limit rather than raising, so catching
+    exceptions was never going to be enough."""
+    import asyncio
+    import time
+
+    from wilbyte.bot import client as bot_client
+
+    monkey = bot_client.TYPING_STARTS_IN
+    bot_client.TYPING_STARTS_IN = 0.05
+    try:
+        started = time.monotonic()
+        assert _through_typing(Slow()) == ["worked"]
+        assert time.monotonic() - started < 1.0, "it waited on the indicator"
+    finally:
+        bot_client.TYPING_STARTS_IN = monkey
+
+
+def test_the_indicator_comes_down_long_before_a_button_times_out():
+    """A button waits up to approval_timeout_minutes — 720 of them. The
+    indicator used to re-send every five seconds for the whole of that."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    channel = Rude(blows_up_on="never")
+    was = bot_client.TYPING_AT_MOST
+    bot_client.TYPING_AT_MOST = 0.05
+    try:
+        async def go():
+            async with bot_client._typing(channel):
+                await asyncio.sleep(0.3)   # a button nobody is pressing
+
+        asyncio.run(go())
+    finally:
+        bot_client.TYPING_AT_MOST = was
+
+    assert channel.left is True, "it typed for the whole wait"
+
+
+def test_a_quick_job_still_keeps_the_indicator_to_the_end():
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    channel = Rude(blows_up_on="never")
+
+    async def go():
+        async with bot_client._typing(channel):
+            await asyncio.sleep(0)
+
+    asyncio.run(go())
+
+    assert (channel.entered, channel.left) == (True, True)
+
+
+def test_the_caps_are_nowhere_near_the_button_timeout():
+    """The whole bug was one outliving the other."""
+    from wilbyte.bot import client as bot_client
+
+    assert bot_client.TYPING_AT_MOST <= 120
+    assert bot_client.TYPING_STARTS_IN <= 10
