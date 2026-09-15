@@ -4989,3 +4989,73 @@ def test_when_nothing_matches_it_says_so_rather_than_guessing_quietly(config, mo
     assert "INV-18490" in said          # the most recent, so there is something
     assert "3 payment confirmations" in trouble
     assert "check it is the right charge" in trouble
+
+
+# ------------------------------------ what RYTE is actually allowed to do
+
+
+def _allowed(**held):
+    every = dict(
+        ban_members=False, kick_members=False, manage_channels=False,
+        read_message_history=False, manage_messages=False,
+    )
+    every.update(held)
+    return SimpleNamespace(**every)
+
+
+def _guild(name, guild_id, **held):
+    return SimpleNamespace(
+        name=name, id=guild_id,
+        me=SimpleNamespace(guild_permissions=_allowed(**held)),
+    )
+
+
+def _asking_access(guilds, *, members=True, content=True):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    heard = Asked()
+    bot = SimpleNamespace(
+        guilds=guilds,
+        intents=SimpleNamespace(members=members, message_content=content),
+    )
+    asyncio.run(bot_client._what_i_can_do(heard, bot))
+    return heard.messages[0]
+
+
+def test_it_names_the_server_and_its_id():
+    """The id is the thing that has to go in .env, so it is printed rather
+    than described."""
+    said = _asking_access([_guild("Agent Lead Lab Clients", 1234567890)])
+
+    assert "Agent Lead Lab Clients" in said
+    assert "1234567890" in said
+
+
+def test_it_says_what_is_missing_as_well_as_what_is_there():
+    """A tick in the portal and a permission that survived the role hierarchy
+    are two different things."""
+    said = _asking_access([
+        _guild("Clients", 1, ban_members=True, read_message_history=True),
+    ])
+
+    assert "ban" in said
+    assert "delete channels" in said.split("❌")[1]
+
+
+def test_a_server_it_can_do_nothing_in_says_nothing_rather_than_lying():
+    said = _asking_access([_guild("Somewhere", 2)])
+
+    assert "nothing" in said
+
+
+def test_the_members_intent_is_checked_too():
+    """Without it RYTE cannot look a member up by name, so he cannot ban
+    anybody however many permissions he has."""
+    said = _asking_access([_guild("Clients", 1, ban_members=True)], members=False)
+
+    assert "Privileged Gateway Intents" in said
+
+    on = _asking_access([_guild("Clients", 1, ban_members=True)], members=True)
+    assert "Privileged Gateway Intents" not in on

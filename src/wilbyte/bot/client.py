@@ -93,6 +93,10 @@ def _intents() -> discord.Intents:
         # never mentions RYTE. Without this the message turns up with its
         # fields blank, which reads exactly like a month with no sales.
         or _id_list(os.getenv("DISCORD_PAYMENT_CHANNEL_ID"))
+        # And the chargeback notices are the same shape - "@here" and an
+        # embed, from another bot. This one worked only because the payment
+        # channel happened to be set, which is not a thing to rely on.
+        or _id_list(os.getenv("DISCORD_DISPUTE_CHANNEL_ID"))
     ):
         intents.message_content = True
     return intents
@@ -801,6 +805,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "spread":
                 await _spread_setup(responder, config, request.brief or "")
+                return
+
+            if request.action == "access":
+                await _what_i_can_do(responder, bot)
                 return
 
             if request.action == "daycheck":
@@ -1731,6 +1739,50 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
         "`@RYTE noticed all` for the raw list, "
         "`@RYTE noticed forget <thing>` to stop me raising one._"
     )
+
+
+async def _what_i_can_do(responder: Responder, bot: "WilByteBot") -> None:
+    """Every server RYTE is in, and what he is actually allowed to do in it.
+
+    Asked before anything is built on top of a permission rather than after.
+    A tick in the Discord portal and a permission that survived the role
+    hierarchy are two different things, and the difference only shows up at
+    the moment somebody presses a button expecting an agent to be removed.
+    """
+    wanted = (
+        ("ban_members", "ban"),
+        ("kick_members", "kick"),
+        ("manage_channels", "delete channels"),
+        ("read_message_history", "read history"),
+        ("manage_messages", "manage messages"),
+    )
+    lines = []
+    for guild in sorted(bot.guilds, key=lambda one: str(one.name or "")):
+        me = guild.me
+        held = me.guild_permissions if me is not None else None
+        able = [
+            said for name, said in wanted
+            if held is not None and getattr(held, name, False)
+        ]
+        missing = [
+            said for name, said in wanted
+            if held is None or not getattr(held, name, False)
+        ]
+        lines.append(
+            f"**{guild.name}** · `{guild.id}`\n"
+            f"  ✅ {', '.join(able) or 'nothing'}"
+            + (f"\n  ❌ {', '.join(missing)}" if missing else "")
+        )
+
+    intents = bot.intents
+    lines.append(
+        "\n**Intents** — members "
+        + ("✅" if getattr(intents, "members", False) else
+           "❌ *(Developer Portal → Bot → Privileged Gateway Intents)*")
+        + ", message content "
+        + ("✅" if getattr(intents, "message_content", False) else "❌")
+    )
+    await responder.send("\n".join(lines))
 
 
 async def _wrong_days(responder: Responder, config: Config) -> None:

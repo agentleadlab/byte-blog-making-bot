@@ -122,6 +122,9 @@ ACTION_WORDS = {
     "leadorder": "spread",
     # Taking a spread back off a card it should not have gone on.
     "unspread": "unspread",
+    # What RYTE is allowed to do, in every server he is in.
+    "access": "access",
+    "permissions": "access",
     # Every Lead Order line sitting on a day its agent is not live on.
     "daycheck": "daycheck",
     "wrongday": "daycheck",
@@ -514,7 +517,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
                          "archive", "setups", "spread", "unspread", "tags",
-                         "noticed", "daycheck")
+                         "noticed", "daycheck", "access")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -631,7 +634,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
-        "words", "tags", "noticed", "daycheck",
+        "words", "tags", "noticed", "daycheck", "access",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -841,6 +844,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > the agents **go live**, the one on both cards
 > @RYTE **trello unspread 08/28** — list what a spread put on that day's Lead
 > Order card; add **confirm** to take those lines back off
+> @RYTE **access** — every server I'm in, what I'm allowed to do in each, and
+> which privileged intents are switched on
 > @RYTE **trello daycheck** — every line on a Lead Order card for a day its
 > agent is not live on, read off the agents' own cards. Reads only; nothing
 > is moved
