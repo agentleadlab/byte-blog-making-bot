@@ -237,6 +237,12 @@ class Secrets:
     # team's. Banning somebody and deleting their channel both happen there,
     # and naming it here means neither can happen anywhere else by mistake.
     discord_clients_guild_id: str | None = None
+    # Where a deleted agent's sheet link is collected before their channel
+    # goes. The whole link out of the browser bar, gid and all - the tab is
+    # resolved from it rather than typed.
+    clients_sheet_link: str | None = None
+    # The Drive folder a screenshot of their channel goes into.
+    clients_drive_folder: str | None = None
     # The address Summit Pay's invoices arrive from. Every Gmail search RYTE
     # makes is pinned to it, so it is the boundary of what he can read rather
     # than a convenience.
@@ -352,6 +358,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_dispute_channel_id=_env("DISCORD_DISPUTE_CHANNEL_ID"),
                 discord_chargeback_channel_id=_env("DISCORD_CHARGEBACK_CHANNEL_ID"),
                 discord_clients_guild_id=_env("DISCORD_CLIENTS_GUILD_ID"),
+                clients_sheet_link=_env("CLIENTS_SHEET_LINK"),
+                clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
                 gmail_client_id=_env("GMAIL_CLIENT_ID"),

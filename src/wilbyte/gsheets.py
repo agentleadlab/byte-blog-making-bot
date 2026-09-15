@@ -153,6 +153,23 @@ class SheetsClient:
 
     # ------------------------------------------------------------------ writing
 
+    def tab_named(self, sheet_id: str, gid: str | int) -> str:
+        """The title of the tab a `#gid=` in a link points at, or "".
+
+        A sheet link carries the gid rather than the name - "…/edit?gid=
+        1765528573" - and every write here is addressed by name. Resolving it
+        means a link pasted out of the browser is enough, with nobody having
+        to read the tab strip and type what it says.
+        """
+        wanted = str(gid).strip()
+        if not wanted:
+            return ""
+        for one in self.tabs(sheet_id):
+            found = one.get("properties") or one
+            if str(found.get("sheetId")) == wanted:
+                return str(found.get("title") or "")
+        return ""
+
     def append(self, sheet_id: str, tab: str, rows: list[list[str]]) -> str:
         """Add rows under whatever is already in the tab. Returns their range.
 
@@ -232,6 +249,36 @@ def rows_in(span: str) -> tuple[int, int] | None:
         return None
     numbers = [int(one) for one in found]
     return min(numbers), max(numbers)
+
+
+# The two halves of a sheet link: which spreadsheet, and which tab.
+_SHEET_IN_LINK = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})")
+_GID_IN_LINK = re.compile(r"[?#&]gid=(\d+)")
+
+# A Drive folder link, or the bare id somebody pasted instead.
+_FOLDER_IN_LINK = re.compile(r"/folders/([A-Za-z0-9_-]{15,})")
+
+
+def sheet_id_in(link: str) -> str:
+    """The spreadsheet id out of a pasted link, or "" if there isn't one."""
+    found = _SHEET_IN_LINK.search(str(link or ""))
+    return found.group(1) if found else ""
+
+
+def gid_in(link: str) -> str:
+    """The tab's gid out of a pasted link, or ""."""
+    found = _GID_IN_LINK.search(str(link or ""))
+    return found.group(1) if found else ""
+
+
+def folder_id_in(link: str) -> str:
+    """The Drive folder id out of a pasted link, or the id if that is all
+    somebody pasted."""
+    said = str(link or "").strip()
+    found = _FOLDER_IN_LINK.search(said)
+    if found:
+        return found.group(1)
+    return said if re.fullmatch(r"[A-Za-z0-9_-]{15,}", said) else ""
 
 
 def explain_token(status: int, body: str) -> str:
