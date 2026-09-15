@@ -5545,3 +5545,59 @@ def test_a_plain_link_still_gets_the_old_answer(config, monkeypatch):
     ))
 
     assert asked["diagnosed"] == "https://fathom.video/calls/822789278"
+
+
+# --------------------------- a link is asked of whoever the link belongs to
+
+# `@RYTE calls fields https://fathom.video/calls/822789278` came back "❌ No
+# match among 143 recording(s)" — true of Zoom, and nothing at all to do with
+# the link. This function exists so "I couldn't find it" has one meaning.
+
+
+def _asked_about(monkeypatch, link):
+    """Which services got asked about this link."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    asked = []
+    monkeypatch.setattr(
+        jobs, "_zoom_link", lambda cfg, one: (asked.append("zoom"), ["zoom said no"])[1]
+    )
+    monkeypatch.setattr(
+        jobs, "_fathom_link",
+        lambda cfg, one: (asked.append("fathom"), ["fathom said no"])[1],
+    )
+    jobs.diagnose_link(SimpleNamespace(secrets=SimpleNamespace()), link)
+    return asked
+
+
+def test_a_fathom_link_is_asked_of_fathom(monkeypatch):
+    assert _asked_about(monkeypatch, "https://fathom.video/calls/822789278") == ["fathom"]
+
+
+def test_a_zoom_link_is_still_asked_of_zoom(monkeypatch):
+    assert _asked_about(
+        monkeypatch, "https://us06web.zoom.us/rec/share/j9e4AzgxfB7IpFFd63X"
+    ) == ["zoom"]
+
+
+def test_a_link_belonging_to_neither_asks_both_rather_than_guessing(monkeypatch):
+    assert _asked_about(monkeypatch, "https://example.com/a-recording") == [
+        "zoom", "fathom",
+    ]
+
+
+def test_no_fathom_key_says_that_rather_than_no_match():
+    """"No match" about a service that was never asked is the answer this
+    whole function exists to prevent."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    said = jobs._fathom_link(
+        SimpleNamespace(secrets=SimpleNamespace(fathom_api_key="")), "x",
+    )
+
+    assert "isn't configured" in said[0]
+    assert "No match" not in said[0]

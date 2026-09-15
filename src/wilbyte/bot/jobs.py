@@ -1694,11 +1694,8 @@ def fathom_fields(config: Config, link: str) -> list[str]:
                 f"Fathom doesn't show a call at that link. `@RYTE calls` lists "
                 f"the {len(meetings)} it will show me."
             ]
-        whole = asking.meeting_with_transcript(fathom.meeting_id(
-            next((one for one in meetings
-                  if fathom.share_key(str(fathom.first_of(one, fathom.URL_FIELDS) or ""))
-                  == fathom.share_key(link)), {})
-        )) or {}
+        # The record as it came back, which `find` already kept.
+        whole = call.raw or {}
 
     found = [f"**{call.title}** — everything Fathom returns for it:"]
     found += _fields_in(whole or {})
@@ -1736,7 +1733,49 @@ def diagnose_link(config: Config, link: str) -> list[str]:
     The list of visible calls answers "can RYTE see it". This answers the next
     question, which turned out to be the real one: it can see the call and
     still not recognise the link as pointing at it.
+
+    Asked of whoever the link belongs to. It used to ask Zoom whatever was
+    pasted, so a fathom.video link came back "No match among 143 recording(s)"
+    — which is true of Zoom and says nothing at all about the link. This
+    function exists so that "I couldn't find it" has one meaning rather than
+    two, and answering about the wrong service gave it a third: I didn't look.
     """
+    said = (link or "").casefold()
+    if "fathom" in said:
+        return _fathom_link(config, link)
+    if "zoom" in said:
+        return _zoom_link(config, link)
+    # Neither name in it, so ask both rather than guess.
+    return _zoom_link(config, link) + _fathom_link(config, link)
+
+
+def _fathom_link(config: Config, link: str) -> list[str]:
+    """Whether Fathom shows a call at this link."""
+    from .. import fathom
+
+    key = (config.secrets.fathom_api_key or "").strip()
+    if not key:
+        return ["Fathom isn't configured, so there's nothing to match against."]
+    try:
+        with fathom.FathomClient(key) as asking:
+            found, meetings = asking.find(link)
+    except Exception as exc:
+        return [f"Couldn't ask Fathom: {_short(exc)}"]
+
+    if found is not None:
+        return [
+            f"✅ Fathom shows that link as **{found.title or '(no title)'}**"
+            + (f" ({found.started_at[:10]})" if found.started_at else "")
+            + "."
+        ]
+    return [
+        f"❌ Fathom shows no call at that link, among {len(meetings)} it will "
+        "show me. `@RYTE calls` lists them.",
+    ]
+
+
+def _zoom_link(config: Config, link: str) -> list[str]:
+    """Whether Zoom shows a recording at this link."""
     from .. import zoom
 
     secrets = config.secrets
