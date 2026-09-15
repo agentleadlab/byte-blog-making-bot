@@ -4392,6 +4392,47 @@ def _timeline(dispute, agent, found) -> list:
     return when
 
 
+# What a signed contract looks like when it comes out of PandaDoc. Checked
+# before the invoice words, because a services agreement states a price and
+# says "amount due" in its payment terms - and a contract filed as an invoice
+# is the one exhibit the rebuttal most needs, under the wrong heading.
+#
+# The completion certificate is the strongest of these: PandaDoc staples it to
+# the back of a completed document, and it carries the signing date, the
+# reference and the audit trail - which is the whole reason the contract is
+# worth attaching.
+SIGNED = (
+    "pandadoc", "completion certificate", "signature certificate",
+    "electronically signed", "document completed", "audit trail",
+    "no-chargeback", "no chargeback",
+)
+
+AGREEMENT = ("agreement", "acuerdo", "terms of service", "this contract")
+
+RECEIPT = ("invoice", "amount due", "payment confirmation", "you just got paid")
+
+
+def _what_pdf_is(text: str) -> str:
+    """"contract", "invoice" or "" for a PDF, from the words in it.
+
+    Order matters. A services agreement quotes a price and has payment terms
+    in it, so looking for invoice words first files the signed contract as a
+    receipt - and the contract is the exhibit carrying the signing date and
+    the no-chargeback clause, which is the point of attaching it at all.
+    """
+    low = " ".join((text or "").casefold().split())
+    if not low:
+        return ""
+    if any(word in low for word in SIGNED):
+        return "contract"
+    front = low[:3000]
+    if any(word in front for word in AGREEMENT):
+        return "contract"
+    if any(word in front for word in RECEIPT):
+        return "invoice"
+    return ""
+
+
 def sort_exhibits(config: Config, exhibits: list) -> list:
     """Work out what each attached file is, by looking at it.
 
@@ -4412,11 +4453,7 @@ def sort_exhibits(config: Config, exhibits: list) -> list:
     for one in exhibits:
         if one.is_pdf():
             one.text = _pdf_text(one.data)
-            low = (one.text or "").casefold()
-            if "invoice" in low[:2000] or "amount due" in low:
-                one.kind = "invoice"
-            elif "agreement" in low[:3000] or "acuerdo" in low[:3000]:
-                one.kind = "contract"
+            one.kind = _what_pdf_is(one.text) or one.kind
 
     pictures = [one for one in exhibits if one.is_image() and one.data]
     if not pictures or not config.secrets.anthropic_api_key:
