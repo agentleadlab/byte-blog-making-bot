@@ -99,6 +99,15 @@ def _intents() -> discord.Intents:
         or _id_list(os.getenv("DISCORD_DISPUTE_CHANNEL_ID"))
     ):
         intents.message_content = True
+
+    # Members, for the agents' own server. Finding somebody by name is the
+    # whole of removing them, and the member list is not sent without this.
+    #
+    # Asked for only when that server is named, because asking for a
+    # privileged intent the portal has not granted does not degrade - Discord
+    # refuses the login outright, and RYTE stops doing everything else too.
+    if os.getenv("DISCORD_CLIENTS_GUILD_ID", "").strip():
+        intents.members = True
     return intents
 
 
@@ -5239,9 +5248,20 @@ def run_bot(config: Config | None = None) -> None:
             raise SystemExit(1)
         except discord.PrivilegedIntentsRequired:
             log.error(
-                "Discord requires the intents this bot asked for to be enabled in the "
-                "developer portal. Either turn on Message Content there, or unset "
-                "DISCORD_MESSAGE_CONTENT - mentions work without it."
+                "Discord requires the intents this bot asked for to be enabled in "
+                "the developer portal, under Bot -> Privileged Gateway Intents:"
+            )
+            log.error(
+                "  Message Content - for the watched, SOP, payment and dispute "
+                "channels. Or unset those; mentions work without it."
+            )
+            log.error(
+                "  Server Members - for DISCORD_CLIENTS_GUILD_ID, so somebody "
+                "can be found by name in the agents' server. Or unset that."
+            )
+            log.error(
+                "Nothing else runs until one or the other is settled, which is "
+                "why this stops rather than carrying on without them."
             )
             raise SystemExit(1)
         except KeyboardInterrupt:

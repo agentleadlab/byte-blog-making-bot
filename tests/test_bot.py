@@ -5059,3 +5059,30 @@ def test_the_members_intent_is_checked_too():
 
     on = _asking_access([_guild("Clients", 1, ban_members=True)], members=True)
     assert "Privileged Gateway Intents" not in on
+
+
+def test_the_members_intent_is_asked_for_only_with_a_clients_server(monkeypatch):
+    """Asking for a privileged intent the portal has not granted does not
+    degrade — Discord refuses the login and RYTE stops doing everything."""
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.delenv("DISCORD_CLIENTS_GUILD_ID", raising=False)
+    assert bot_client._intents().members is False
+
+    monkeypatch.setenv("DISCORD_CLIENTS_GUILD_ID", "1291897127882195056")
+    assert bot_client._intents().members is True
+
+
+def test_the_dispute_channel_asks_for_message_content_on_its_own(monkeypatch):
+    """It worked only because the payments channel happened to be set."""
+    from wilbyte.bot import client as bot_client
+
+    for name in ("DISCORD_WATCH_CHANNEL_IDS", "DISCORD_SOP_CHANNEL_IDS",
+                 "DISCORD_PAYMENT_CHANNEL_ID", "DISCORD_MESSAGE_CONTENT"):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.delenv("DISCORD_DISPUTE_CHANNEL_ID", raising=False)
+    assert bot_client._intents().message_content is False
+
+    monkeypatch.setenv("DISCORD_DISPUTE_CHANNEL_ID", "1549160193353322607")
+    assert bot_client._intents().message_content is True
