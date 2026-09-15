@@ -33,6 +33,21 @@ class FathomError(RuntimeError):
 # Where a value might live, in the order worth trying.
 TITLE_FIELDS = ("title", "meeting_title", "name", "topic")
 URL_FIELDS = ("url", "share_url", "meeting_url", "recording_url", "share_link", "permalink")
+
+# Where the link that goes *on the card* comes from, which is a different
+# question from where a pasted link might have come from.
+#
+# `share_url` first. Fathom returns both /calls/<id> and /share/<token> for the
+# same call, and they are not the same thing to a person: /calls/ is the
+# workspace's own view and wants a seat on the team, /share/ is the link Fathom
+# makes to be handed to somebody who hasn't got one. The card is read by
+# whoever is cutting the clips - "fathom is inaccesible unless our account is
+# used" is that distinction, and RYTE was picking the wrong one because `url`
+# happened to come first in the list above.
+#
+# `meeting_url` is deliberately not here at all. It is the Zoom *join* link for
+# a call that finished weeks ago, which is worse than no link.
+WATCH_FIELDS = ("share_url", "share_link", "permalink", "url", "recording_url")
 TRANSCRIPT_FIELDS = ("transcript", "transcript_text", "segments", "transcript_segments")
 SPEAKER_FIELDS = ("speaker", "speaker_name", "display_name", "name")
 
@@ -111,7 +126,7 @@ def as_call(meeting: dict) -> FathomCall:
         # the call in the platform's own terms; ours is the fallback.
         summary=str(first_of(meeting, ("default_summary", "summary")) or "").strip(),
         title=str(first_of(meeting, TITLE_FIELDS) or "").strip(),
-        url=str(first_of(meeting, URL_FIELDS) or ""),
+        url=str(first_of(meeting, WATCH_FIELDS) or ""),
         started_at=str(
             first_of(meeting, ("recording_start_time", "scheduled_start_time", "created_at")) or ""
         ),

@@ -969,3 +969,71 @@ def test_the_picker_still_respects_discords_limit(monkeypatch):
     monkeypatch.setattr(recordings, "filed_ids", lambda path=None: set())
 
     assert len(jobs.picker_choices(None)) == 25
+
+
+# ------------------- the link on the card is the one the team can open
+
+# Leonardo Lopez's interview card carried https://fathom.video/calls/822789278
+# — the workspace's own view, which wants a seat on the team. Fathom returned a
+# /share/ link for the same call the whole time. "fathom is inaccesible unless
+# our account is used" was RYTE picking the wrong one of the two.
+
+LEO = {
+    "title": "Interview with Leonardo Lopez",
+    "url": "https://fathom.video/calls/822789278",
+    "share_url": "https://fathom.video/share/in4tmnBzMkrye-CiXTT6ah3Jer8jMrA5",
+    "meeting_url": "https://us06web.zoom.us/j/84070740891?pwd=xPReXDLjKaSy4h8v",
+    "recording_start_time": "2026-09-14T16:03:14Z",
+}
+
+
+def test_the_card_gets_the_share_link_not_the_workspace_one():
+    from wilbyte import fathom
+
+    assert fathom.as_call(LEO).url == (
+        "https://fathom.video/share/in4tmnBzMkrye-CiXTT6ah3Jer8jMrA5"
+    )
+
+
+def test_a_zoom_join_link_never_becomes_the_recording_link():
+    """meeting_url is the join link for a call that finished weeks ago, which
+    is worse than no link at all."""
+    from wilbyte import fathom
+
+    only_zoom = {"title": "x", "meeting_url": LEO["meeting_url"]}
+
+    assert fathom.as_call(only_zoom).url == ""
+
+
+def test_the_calls_link_is_still_used_when_there_is_no_share_one():
+    from wilbyte import fathom
+
+    without = {one: LEO[one] for one in ("title", "url")}
+
+    assert fathom.as_call(without).url == "https://fathom.video/calls/822789278"
+
+
+def test_either_form_of_the_link_still_finds_the_call():
+    """Changing which one is shown must not change which ones are matched —
+    people paste whichever they were given."""
+    from wilbyte import fathom
+
+    for pasted in (
+        "https://fathom.video/calls/822789278",
+        "https://fathom.video/share/in4tmnBzMkrye-CiXTT6ah3Jer8jMrA5",
+        "https://fathom.video/calls/822789278?utm_source=email",
+    ):
+        assert fathom.match_share_url([LEO], pasted) is not None, pasted
+
+
+def test_the_zoom_link_the_call_was_held_on_finds_it_too():
+    """Worth keeping. Leonardo's interview was a Zoom meeting that Fathom
+    recorded, so the link somebody has to hand is as likely to be the calendar
+    invite's as Fathom's own. Being findable by it is not the same as being
+    shown as it."""
+    from wilbyte import fathom
+
+    found = fathom.match_share_url([LEO], "https://us06web.zoom.us/j/84070740891")
+
+    assert found is not None
+    assert found.url.startswith("https://fathom.video/share/")
