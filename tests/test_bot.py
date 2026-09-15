@@ -5903,3 +5903,113 @@ def test_no_copy_falls_back_to_the_index_rather_than_writing_nothing(config, mon
 
     assert caught.doc_text == caught.card_text
     assert caught.doc_text != ""
+
+
+# --------------------------- asked about a day, answered with names
+
+# "@Ryte how many people are going live on thursday" came back with the help
+# text — the answer to a question nobody asked, from a bot that walks that
+# board three times a day.
+
+
+LIVE_CARDS = [
+    {"id": "1", "name": "New Agent - Kahlil Jackson II", "dueComplete": True,
+     "desc": "Lead Type: Text-Verified Veteran Leads\nLive Thursday, September 17"},
+    {"id": "2", "name": "New Agent - Jay Rodriguez", "dueComplete": False,
+     "desc": "Lead Type: Text Verified Veteran\nLaunch Date: Thursday, September 17"},
+    {"id": "3", "name": "AGED LEAD - Juliana Hernandez", "dueComplete": True,
+     "desc": "Lead Type: Aged Final Expense\nLaunch Date: Friday, September 18"},
+    {"id": "4", "name": "New Agent - No Date At All", "desc": "Lead Type: OTP IUL"},
+    {"id": "5", "name": "Lead Order 09/17", "desc": "not an agent"},
+]
+
+
+def _live_on(monkeypatch, config, when, cards=LIVE_CARDS):
+    from types import SimpleNamespace
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            assert archived, "a closed-down agent's card is archived"
+            return list(cards)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    return jobs.going_live_on(
+        SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), when
+    )
+
+
+def test_it_counts_who_goes_live_that_day(config, monkeypatch):
+    found, undated, problems = _live_on(monkeypatch, config, date(2026, 9, 17))
+
+    assert [one["agent"] for one in found] == ["Jay Rodriguez", "Kahlil Jackson II"]
+    assert problems == []
+
+
+def test_another_day_is_a_different_answer(config, monkeypatch):
+    found, _, _ = _live_on(monkeypatch, config, date(2026, 9, 18))
+
+    assert [one["agent"] for one in found] == ["Juliana Hernandez"]
+
+
+def test_an_aged_lead_order_counts_as_somebody_going_live(config, monkeypatch):
+    """Same blind spot that hid Juliana's card from the rebuttal."""
+    found, _, _ = _live_on(monkeypatch, config, date(2026, 9, 18))
+
+    assert found[0]["leads"] == "Aged Final Expense"
+
+
+def test_a_daily_card_is_not_a_person(config, monkeypatch):
+    found, _, _ = _live_on(monkeypatch, config, date(2026, 9, 17))
+
+    assert not any("Lead Order" in one["agent"] for one in found)
+
+
+def test_cards_with_no_date_are_counted_out_loud(config, monkeypatch):
+    """Not found is not the same as not there, and a number that is wrong and
+    looks right is worse than one with a caveat on it."""
+    _, undated, _ = _live_on(monkeypatch, config, date(2026, 9, 17))
+
+    assert undated == 1
+
+
+def test_whether_they_are_ticked_comes_back_too(config, monkeypatch):
+    found, _, _ = _live_on(monkeypatch, config, date(2026, 9, 17))
+
+    assert {one["agent"]: one["ticked"] for one in found} == {
+        "Jay Rodriguez": False, "Kahlil Jackson II": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "how many people are going live on thursday",
+        "who is going live tomorrow",
+        "who's live monday",
+        "how many go live 09/18",
+        "how many are launching thursday",
+    ],
+)
+def test_the_question_is_understood_however_it_is_asked(asked):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(f"<@1> {asked}").action == "golive"
+
+
+def test_asking_about_one_person_still_answers_with_a_date():
+    """WHEN_LIVE is asked about a name and answers with a day. This one is
+    asked about a day and answers with names. They must not swap."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> when did Faith go live").action == "whenlive"
+
+
+def test_a_copy_brief_that_mentions_going_live_is_still_a_copy_brief():
+    from wilbyte.bot import mentions
+
+    said = mentions.parse("<@1> sms about the OTP leads going live Monday")
+
+    assert said.action == "write"

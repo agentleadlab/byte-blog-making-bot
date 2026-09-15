@@ -465,6 +465,20 @@ class MentionRequest:
 # "when did Faith go live", "when is Faith's live date", "Faith live date".
 # A question rather than a command, so it is recognised by its shape: a name
 # with going-live language on one side of it or the other.
+# "how many people are going live on thursday", "who is going live tomorrow",
+# "how many go live 09/18", "who's live monday". Asked about a day and answered
+# with names, where WHEN_LIVE is asked about a name and answered with a day.
+#
+# A day has to be in it. "who is going live" with nothing after it is a
+# question about today and reads fine, but "when did Faith go live" would
+# otherwise be caught here and answered about the wrong thing entirely.
+LIVE_ON_DAY = re.compile(
+    r"\b(?:how\s+many|who(?:'?s|\s+is|\s+are)?)\b"
+    r"[^?]{0,60}?\b(?:go(?:es|ing)?\s+live|live|launch(?:es|ing)?)\b",
+    re.IGNORECASE,
+)
+
+
 WHEN_LIVE = re.compile(
     r"\bwhen\b.{0,60}?\b(?:go(?:es|ing)?|went|gone|will|launch\w*|live)\b"
     r"|\blive\s+date\b|\blaunch\s+date\b",
@@ -499,6 +513,16 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # A question about one agent's launch, before anything else looks at the
     # words: "when did Faith go live" carries no command word, and the name in
     # the middle of it must not be read as one.
+    # "how many people are going live on thursday", "who goes live tomorrow",
+    # "who's live 09/18". A question about the day rather than about a person,
+    # which is what tells it apart from WHEN_LIVE below - that one is asked
+    # about somebody by name and answers with a date, this one is asked about
+    # a date and answers with names. Checked first because "how many are going
+    # live" contains going-live language and no name at all, and used to fall
+    # all the way through to the help text.
+    if LIVE_ON_DAY.search(text):
+        return MentionRequest(action="golive", brief=text)
+
     if WHEN_LIVE.search(text):
         return MentionRequest(action="whenlive", brief=text)
 
@@ -864,6 +888,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **clearout Jay Rodriguez** — close an agent down: their sheet into ALL
 > CLIENTS, a picture of the conversation into Drive, then a second button to
 > ban them and delete the channel. Nothing goes until both are kept
+> @RYTE **how many are going live thursday** — who the board says goes live
+> on a day, with what they bought and whether their card is ticked. Any day:
+> tomorrow, monday, 09/18
 > @RYTE **quiet** — every channel in the clients server nobody has used in
 > two months, quietest first. Add **3 months** for a tighter list. Reads only;
 > nothing is deleted, and `clearout` is still how anything goes

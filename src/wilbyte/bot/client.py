@@ -892,6 +892,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _clear_out(bot, responder, config, request.brief or "")
                 return
 
+            if request.action == "golive":
+                await _who_goes_live(responder, config, request.brief or "")
+                return
+
             if request.action == "quiet":
                 await _quiet_channels(bot, responder, config, request.brief or "")
                 return
@@ -2054,6 +2058,52 @@ async def _clear_out(
         "\n".join(done + [f"⚠ {one}" for one in trouble])
         or "Nothing happened, which shouldn't be possible — check the channel."
     )
+
+
+async def _who_goes_live(responder: Responder, config: Config, said: str) -> None:
+    """Who is going live on the day somebody asked about.
+
+    "how many people are going live on thursday" used to fall through to the
+    help text, which is the answer to a question nobody asked and reads like
+    RYTE has never heard of the board he walks three times a day.
+    """
+    from .. import dailyops
+
+    day = dailyops.day_named(said, today=_today(config)) or _today(config)
+    try:
+        found, undated, problems = await asyncio.to_thread(
+            jobs.going_live_on, config, day
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
+        return
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+
+    when = f"{day:%A %b %d}"
+    if not found:
+        await responder.send(
+            f"Nobody's card says they go live on **{when}**."
+            + (f"\n-# {undated} card(s) carry no launch date at all." if undated else "")
+        )
+        return
+
+    lines = [
+        f"• **{one['agent']}**"
+        + (f" — {one['leads']}" if one.get("leads") else "")
+        + ("" if one.get("ticked") else " · *not ticked*")
+        for one in found
+    ]
+    note = (
+        f"**{len(found)}** going live **{when}**:\n" + "\n".join(lines)
+    )
+    if undated:
+        note += (
+            f"\n-# {undated} card(s) carry no launch date in their description, "
+            "so they aren't counted either way."
+        )
+    await responder.send(note)
 
 
 async def _quiet_channels(

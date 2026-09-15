@@ -4297,6 +4297,54 @@ def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
+    """Every agent whose card says they go live on this day.
+
+    (found, how many cards carry no date, problems). Reads only.
+
+    "how many people are going live on thursday" is a question about the whole
+    board rather than about one person, and it used to fall through to the
+    help text.
+
+    One request. The launch date is read out of the description, which is
+    where the form writes it, and the comments are not opened - doing that for
+    sixty cards is sixty requests to answer one question. A card whose launch
+    only ever got said in a comment is therefore not found, so the count of
+    cards with no date in them comes back too: a number that is wrong and
+    looks right is worse than a number with a caveat on it.
+    """
+    from .. import agents as rules
+
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+    except Exception as exc:
+        return [], 0, [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+    found, undated = [], 0
+    for card in every:
+        title = str(card.get("name") or "")
+        if not rules.is_client_card(title):
+            continue
+        said = str(card.get("desc") or "")
+        launch = rules.find_launch(said, today=day)
+        if launch is None:
+            undated += 1
+            continue
+        if launch != day:
+            continue
+        found.append({
+            **card,
+            "agent": rules.agent_name(title),
+            "leads": rules.find_lead_type(said),
+            "ticked": bool(card.get("dueComplete")),
+        })
+    found.sort(key=lambda one: one["agent"].casefold())
+    return found, undated, []
+
+
 def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
     """The setup sheet for the agent somebody named. (found, problems). Reads only.
 
