@@ -3145,6 +3145,24 @@ async def _file_interview(
 
     await responder.send(f"Filed as **{name}** in Marketing Department — <{url}>")
 
+    # And into the doc the website is posted from, as a tab of its own. The
+    # card stays as it is: the board runs on the card, and the copy is pasted
+    # from the doc - so it wants to be in both rather than moved.
+    try:
+        where, trouble = await asyncio.to_thread(
+            jobs.copy_into_doc, config,
+            # The tabs are named for the person — "Leonardo Lopez", not
+            # "Leonardo Lopez Interview", which is the card's title.
+            title=segmenting.client_name(topic) or name,
+            text=description,
+        )
+    except PIPELINE_ERRORS as exc:
+        where, trouble = "", [f"Couldn't write it into the doc: {jobs._short(exc, 160)}"]
+    if where:
+        await responder.send(f"📄 Copy in the posting doc — <{where}>")
+    for problem in trouble:
+        await responder.send(f"⚠ {problem}")
+
     # And onto the lists of the people who act on it. The card existing is not
     # the same as anybody knowing it exists: it goes on Faith's list for today
     # and on the YT VID card where the editors are tagged, and then into Done,

@@ -1053,6 +1053,48 @@ def file_interview(
         client.close()
 
 
+def copy_into_doc(config: Config, *, title: str, text: str) -> tuple[str, list[str]]:
+    """Put an interview's copy into the segments doc, as its own tab.
+
+    (link to the tab, problems).
+
+    Franklin keeps "YOUTUBE LINKS FOR WEBSITE POSTING" with a tab per agent
+    and pastes the copy in by hand once RYTE has written it. This is that
+    paste - the card stays as it is, because the card is what the board runs
+    on and the doc is what the website is posted from.
+
+    Not set up is not a problem worth reporting. The segment command worked
+    before there was a doc to write into, and a line saying "nobody set
+    SEGMENTS_DOC_ID" is about RYTE rather than about the interview.
+
+    A tab already called this is written into rather than duplicated: two runs
+    over the same interview should not leave two tabs for somebody to pick
+    between.
+    """
+    from .. import docs as doc
+
+    if not (getattr(config.secrets, "segments_doc_id", "") or "").strip():
+        return "", []
+    try:
+        with doc.open_docs(config.secrets) as writing:
+            already = next(
+                (one for one in writing.tabs()
+                 if one.title.strip().casefold() == title.strip().casefold()),
+                None,
+            )
+            tab = already or writing.add_tab(title)
+            writing.write(tab, text if text.endswith("\n") else text + "\n")
+            return writing.link_to(tab), (
+                [] if already is None else
+                [f"There was already a tab called {title!r}, so it went "
+                 "underneath what was in it rather than into a second one."]
+            )
+    except doc.DocsError as exc:
+        return "", [f"Couldn't write it into the doc: {_short(exc, 200)}"]
+    except Exception as exc:
+        return "", [f"Couldn't write it into the doc: {_short(exc, 200)}"]
+
+
 #: Who cuts the interviews. Tagged on the YT VID checklist so the job reaches
 #: them rather than sitting on a card they would have to think to open.
 EDITORS = ("@mgproductions7", "@mgvideoeditors")

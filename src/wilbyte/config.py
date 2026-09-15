@@ -254,6 +254,10 @@ class Secrets:
     # way in. A bare domain works here: "pandadoc.com" matches whichever
     # address they send from.
     gmail_contract_sender: str | None = None
+    # The Google Doc the segment copy goes into, a tab per agent —
+    # "YOUTUBE LINKS FOR WEBSITE POSTING". Its link or its id. Needs the
+    # documents scope on the token, which Sheets and Drive do not cover.
+    segments_doc_id: str | None = None
     # The invoices arrive at a different Google account than the one that owns
     # the sheets, and a refresh token belongs to one account. Same OAuth
     # client - that is the app rather than the person - and a second token
@@ -369,6 +373,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
+                segments_doc_id=_env("SEGMENTS_DOC_ID"),
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
                 gmail_client_id=_env("GMAIL_CLIENT_ID"),
                 gmail_client_secret=_env("GMAIL_CLIENT_SECRET"),
