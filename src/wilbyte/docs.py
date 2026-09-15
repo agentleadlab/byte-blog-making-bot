@@ -120,10 +120,9 @@ class DocsClient:
 
         if reply.status_code == 403:
             raise DocsError(
-                "Google Docs refused that. The refresh token in .env was "
-                f"minted without {SCOPE} - the Sheets and Drive scopes do not "
-                "cover somebody else's document. Mint it again with that one "
-                "ticked alongside the ones already there."
+                f"Google Docs refused that. The token in .env was minted "
+                f"without {SCOPE}, which Sheets and Drive don't cover. Mint "
+                "it again with that scope ticked too."
             )
         if reply.status_code == 404:
             raise DocsError(
