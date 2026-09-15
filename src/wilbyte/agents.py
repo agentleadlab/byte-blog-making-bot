@@ -1856,6 +1856,41 @@ def setup_covers(title: str, day: date) -> bool:
     return wanted >= start or wanted <= end
 
 
+#: A setup card's checklist item: a link to the agent's own card, then what
+#: they bought. Trello writes the link as markdown when it renders as a card
+#: chip - "[New Agent - Steve Dass](https://trello.com/c/xyz) 25 Text Verified
+#: Veteran Leads" - and as a bare URL when somebody pasted one.
+_SETUP_ITEM = re.compile(
+    r"^\s*(?:\[(?P<label>[^\]]*)\]\(\s*(?P<linked>https?://\S+?)\s*\)"
+    r"|(?P<bare>https?://\S+))\s*(?P<rest>.*)$",
+    re.DOTALL,
+)
+
+
+def split_setup_item(said: str) -> tuple[str, str, str]:
+    """One checklist line as (agent, what they bought, their card's url).
+
+    ("Steve Dass", "25 Text Verified Veteran Leads", "https://trello.com/c/xyz")
+
+    The name comes off the linked card's title rather than out of the line,
+    because the line is whatever somebody typed: "NEW AGENT- Gavin Mathieu"
+    and "New Agent - Steve Dass" are the same shape written two ways, and the
+    leads are the half that follows.
+    """
+    found = _SETUP_ITEM.match(" ".join((said or "").split()))
+    if not found:
+        return "", "", ""
+    label = found.group("label") or ""
+    url = (found.group("linked") or found.group("bare") or "").strip()
+    # Everything after the link is what they bought, whether or not the link
+    # carried a label. A bare URL leaves the name empty on purpose: the linked
+    # card knows it, and taking the lead type for a name is how "50 OTP Vets"
+    # ends up being read out as somebody's name.
+    return (agent_name(label) if label else "",
+            " ".join((found.group("rest") or "").split()),
+            url)
+
+
 def is_setup_card(title: str) -> bool:
     """Whether a card is one of the "Agent Setup Going Live" ones."""
     return bool(_SETUP_CARD.search(title or ""))

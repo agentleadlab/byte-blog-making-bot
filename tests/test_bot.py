@@ -6013,3 +6013,110 @@ def test_a_copy_brief_that_mentions_going_live_is_still_a_copy_brief():
     said = mentions.parse("<@1> sms about the OTP leads going live Monday")
 
     assert said.action == "write"
+
+
+# ---------------------- the day's answer comes off the card somebody keeps
+
+# "Agent Setup Going Live Thursday 09/17" carries Therese's checklist: a link
+# to each agent's card and what they bought next to it. Rebuilding that by
+# reading sixty agent cards is guessing at something already written down.
+
+SETUP_CARD = {"id": "s1", "name": "Agent Setup Going Live Thursday 09/17"}
+
+SETUP_ITEMS = [
+    ("[NEW AGENT- Gavin Mathieu](https://trello.com/c/a1) 25 OTP VETS", "incomplete"),
+    ("[New Agent - Steve Dass](https://trello.com/c/a2) 25 Text Verified Veteran Leads",
+     "complete"),
+    ("[New Agent - Ryan Kadnuck](https://trello.com/c/a3) OTP VETs", "incomplete"),
+]
+
+SETUP_AGENTS = [
+    {"id": "a1", "name": "NEW AGENT- Gavin Mathieu",
+     "url": "https://trello.com/c/a1", "dueComplete": True, "desc": ""},
+    {"id": "a2", "name": "New Agent - Steve Dass",
+     "url": "https://trello.com/c/a2", "dueComplete": False, "desc": ""},
+    {"id": "a3", "name": "New Agent - Ryan Kadnuck",
+     "url": "https://trello.com/c/a3", "dueComplete": False, "desc": ""},
+]
+
+
+def _live_off_setup(monkeypatch, when, *, items=SETUP_ITEMS, cards=None):
+    from types import SimpleNamespace
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [SETUP_CARD] + list(SETUP_AGENTS if cards is None else cards)
+
+        def card_checklists(self, card_id):
+            assert card_id == "s1", "it read some other card's checklists"
+            return [{"name": "Therese", "checkItems": [
+                {"name": one, "state": state} for one, state in items
+            ]}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    return jobs.going_live_on(
+        SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), when
+    )
+
+
+def test_the_setup_card_is_the_answer_when_there_is_one(config, monkeypatch):
+    found, undated, problems = _live_off_setup(monkeypatch, date(2026, 9, 17))
+
+    assert [one["agent"] for one in found] == [
+        "Gavin Mathieu", "Steve Dass", "Ryan Kadnuck",
+    ]
+    assert problems == []
+
+
+def test_the_leads_come_off_the_line_rather_than_being_worked_out(config, monkeypatch):
+    found, _, _ = _live_off_setup(monkeypatch, date(2026, 9, 17))
+
+    assert [one["leads"] for one in found] == [
+        "25 OTP VETS", "25 Text Verified Veteran Leads", "OTP VETs",
+    ]
+
+
+def test_the_order_is_the_one_somebody_wrote(config, monkeypatch):
+    """Not alphabetical. Therese's order is a working order."""
+    found, _, _ = _live_off_setup(monkeypatch, date(2026, 9, 17))
+
+    assert [one["agent"] for one in found][0] == "Gavin Mathieu"
+
+
+def test_it_says_whose_checklist_they_are_on(config, monkeypatch):
+    found, _, _ = _live_off_setup(monkeypatch, date(2026, 9, 17))
+
+    assert {one["setup_by"] for one in found} == {"Therese"}
+
+
+def test_the_checklist_tick_and_the_card_tick_are_different_claims(config, monkeypatch):
+    """One says the setup was done, the other says somebody said so."""
+    found, _, _ = _live_off_setup(monkeypatch, date(2026, 9, 17))
+    by_name = {one["agent"]: one for one in found}
+
+    assert by_name["Gavin Mathieu"]["setup_done"] is False
+    assert by_name["Gavin Mathieu"]["ticked"] is True
+    assert by_name["Steve Dass"]["setup_done"] is True
+    assert by_name["Steve Dass"]["ticked"] is False
+
+
+def test_a_bare_link_takes_its_name_from_the_card(config, monkeypatch):
+    """Otherwise "50 OTP Vets" gets read out as somebody's name."""
+    found, _, _ = _live_off_setup(
+        monkeypatch, date(2026, 9, 17),
+        items=[("https://trello.com/c/a3 50 OTP Vets", "incomplete")],
+    )
+
+    assert found[0]["agent"] == "Ryan Kadnuck"
+    assert found[0]["leads"] == "50 OTP Vets"
+
+
+def test_no_setup_card_falls_back_to_reading_the_agent_cards(config, monkeypatch):
+    """Friday's card covers the weekend; a day with none still answers."""
+    found, undated, _ = _live_on(monkeypatch, config, date(2026, 9, 17))
+
+    assert [one["agent"] for one in found] == ["Jay Rodriguez", "Kahlil Jackson II"]
+    assert undated == 1

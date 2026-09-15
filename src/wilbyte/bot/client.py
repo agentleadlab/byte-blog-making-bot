@@ -2092,12 +2092,20 @@ async def _who_goes_live(responder: Responder, config: Config, said: str) -> Non
     lines = [
         f"• **{one['agent']}**"
         + (f" — {one['leads']}" if one.get("leads") else "")
-        + ("" if one.get("ticked") else " · *not ticked*")
+        + (f" · {one['setup_by']}" if one.get("setup_by") else "")
+        + ("" if one.get("ticked") else " · *card not ticked*")
         for one in found
     ]
+    # Whoever set them up, when the setup card said. Two people's checklists on
+    # one card is the normal shape of a busy day and worth seeing at a glance.
     note = (
         f"**{len(found)}** going live **{when}**:\n" + "\n".join(lines)
     )
+    waiting = [one for one in found if one.get("setup_by") and not one.get("setup_done")]
+    if waiting:
+        note += (
+            f"\n-# {len(waiting)} not ticked off on the setup card yet."
+        )
     if undated:
         note += (
             f"\n-# {undated} card(s) carry no launch date in their description, "

@@ -4323,6 +4323,20 @@ def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
     finally:
         client.close()
 
+    # The setup card for that day first. "Agent Setup Going Live Thursday
+    # 09/17" is the list Therese keeps by hand, with the lead counts written
+    # next to each name, and it is what the team actually works from - reading
+    # sixty agent cards to rebuild it is guessing at something somebody has
+    # already written down.
+    setup = next(
+        (one for one in every
+         if rules.is_setup_card(str(one.get("name") or ""))
+         and rules.setup_covers(str(one.get("name") or ""), day)),
+        None,
+    )
+    if setup is not None:
+        return _off_the_setup_card(config, setup, every)
+
     found, undated = [], 0
     for card in every:
         title = str(card.get("name") or "")
@@ -4343,6 +4357,49 @@ def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
         })
     found.sort(key=lambda one: one["agent"].casefold())
     return found, undated, []
+
+
+def _off_the_setup_card(config: Config, setup: dict, every: list) -> tuple:
+    """Who is on the setup card's checklists, in the order somebody wrote them.
+
+    Each item is a link to the agent's own card followed by what they bought -
+    "New Agent - Steve Dass  25 Text Verified Veteran Leads" - so the name and
+    the leads are both already there and neither has to be inferred.
+
+    Whether their card is ticked still comes off the card itself, because the
+    checklist item being ticked means the setup was done and the green circle
+    means somebody said so, and those are different claims.
+    """
+    from .. import agents as rules
+
+    client = open_trello(config)
+    try:
+        checklists = client.card_checklists(str(setup.get("id") or ""))
+    except Exception as exc:
+        return [], 0, [f"Couldn't read the setup card: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+    by_url = {str(one.get("url") or ""): one for one in every}
+    found = []
+    for checklist in checklists:
+        for item in checklist.get("checkItems") or []:
+            said = str(item.get("name") or "")
+            name, leads, url = rules.split_setup_item(said)
+            card = by_url.get(url, {})
+            # The linked card's own title when the line didn't carry a label.
+            name = name or rules.agent_name(str(card.get("name") or ""))
+            if not name:
+                continue
+            found.append({
+                **card,
+                "agent": name,
+                "leads": leads,
+                "ticked": bool(card.get("dueComplete")),
+                "setup_by": str(checklist.get("name") or ""),
+                "setup_done": str(item.get("state") or "") == "complete",
+            })
+    return found, 0, []
 
 
 def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
