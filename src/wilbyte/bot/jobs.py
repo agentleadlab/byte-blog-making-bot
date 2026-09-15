@@ -1619,8 +1619,31 @@ def check_recordings(config: Config) -> list[tuple[bool, str]]:
     results.extend(_check_notion(config))
     results.extend(_check_zoom(config))
     results.extend(_check_fathom(config))
+    results.extend(_check_gmail(config))
     results.extend(_check_docs(config))
     return results
+
+
+def _check_gmail(config: Config) -> list[tuple[bool, str]]:
+    """Which mailbox the token actually reads, which is not a thing to assume.
+
+    A refresh token belongs to one account. Minted against the wrong one it
+    looks exactly like an empty inbox - every search finds nothing and none of
+    it is an error - so the receipt and the signed contract quietly stop
+    appearing in rebuttals and nobody hears about it until a chargeback.
+    """
+    from .. import gmail as inbox
+
+    if not (getattr(config.secrets, "gmail_invoice_sender", "") or "").strip():
+        return [(None, "Gmail not configured - no invoice or contract in rebuttals")]
+    try:
+        with inbox.open_gmail(config.secrets) as reading:
+            who, many = reading.whoami()
+    except inbox.GmailError as exc:
+        return [(False, f"Gmail - {_short(exc, 200)}")]
+    except Exception as exc:
+        return [(False, f"Gmail - {_short(exc, 200)}")]
+    return [(True, f"Gmail - reading **{who}** ({many:,} messages)")]
 
 
 def _check_docs(config: Config) -> list[tuple[bool, str]]:

@@ -156,6 +156,17 @@ class GmailClient:
 
     # ------------------------------------------------------------- searching
 
+    def whoami(self) -> tuple[str, int]:
+        """(the address this token belongs to, how many messages it can see).
+
+        A refresh token belongs to one account, and a token minted against the
+        wrong one looks exactly like an empty inbox: every search comes back
+        with nothing and none of it is an error. This is the one call that
+        says which mailbox is actually being read.
+        """
+        got = self._get("/profile")
+        return str(got.get("emailAddress") or ""), int(got.get("messagesTotal") or 0)
+
     def invoices_for(self, *terms: str, since: date | None = None) -> list[Found]:
         """Emails from the invoice sender that mention all of `terms`.
 

@@ -318,3 +318,89 @@ def test_one_client_for_everything_still_needs_nothing_extra(monkeypatch):
 
     assert used["client_id"] == "935508900085-sheets"
     assert used["refresh_token"] == "the-invoice-one"
+
+
+# ---------------------------- which mailbox the token actually reads
+
+# A refresh token belongs to one account. Minted against the wrong one it looks
+# exactly like an empty inbox — every search finds nothing and none of it is an
+# error — so the receipt and the contract quietly stop appearing in rebuttals.
+
+
+class Mailbox:
+    """A stubbed Gmail client that knows whose it is."""
+
+    def __init__(self, who="franklinmay@agentleadlab.com", many=10330, blows_up=None):
+        self.who, self.many, self.blows_up = who, many, blows_up
+        self.searched = []
+
+    def whoami(self):
+        if self.blows_up is not None:
+            raise self.blows_up
+        return self.who, self.many
+
+    def invoices_for(self, *terms, since=None):
+        self.searched.append(terms)
+        return []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _checking_gmail(monkeypatch, box, *, sender="AgentLeadLab@payra.com"):
+    from types import SimpleNamespace
+
+    from wilbyte import gmail
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(gmail, "open_gmail", lambda secrets: box)
+    return jobs._check_gmail(
+        SimpleNamespace(secrets=SimpleNamespace(gmail_invoice_sender=sender))
+    )
+
+
+def test_the_check_names_the_mailbox_being_read(monkeypatch):
+    """So signing in as the wrong account is visible rather than silent."""
+    (ok, said), = _checking_gmail(monkeypatch, Mailbox())
+
+    assert ok is True
+    assert "franklinmay@agentleadlab.com" in said
+    assert "10,330" in said
+
+
+def test_a_token_for_the_wrong_account_still_reads_as_a_pass_but_names_it(monkeypatch):
+    """There is no way to know from here which account is right — naming it is
+    the whole of what can be done, and it is enough."""
+    (ok, said), = _checking_gmail(monkeypatch, Mailbox(who="someone.else@gmail.com"))
+
+    assert ok is True
+    assert "someone.else@gmail.com" in said
+
+
+def test_a_missing_scope_is_reported_rather_than_raised(monkeypatch):
+    from wilbyte import gmail
+
+    (ok, said), = _checking_gmail(
+        monkeypatch, Mailbox(blows_up=gmail.GmailError("minted without the Gmail read scope")),
+    )
+
+    assert ok is False
+    assert "Gmail read scope" in said
+
+
+def test_gmail_not_configured_is_neither_pass_nor_fail(monkeypatch):
+    (ok, said), = _checking_gmail(monkeypatch, Mailbox(), sender="")
+
+    assert ok is None
+    assert "not configured" in said
+
+
+def test_the_check_reads_nobody_s_mail(monkeypatch):
+    """Whose inbox it is, not what is in it."""
+    box = Mailbox()
+    _checking_gmail(monkeypatch, box)
+
+    assert box.searched == []
