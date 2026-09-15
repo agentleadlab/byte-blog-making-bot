@@ -5441,3 +5441,107 @@ def test_the_caps_are_nowhere_near_the_button_timeout():
 
     assert bot_client.TYPING_AT_MOST <= 120
     assert bot_client.TYPING_STARTS_IN <= 10
+
+
+# ------------------------- what Fathom actually hands back about one call
+
+# "fathom is inaccesible unless our account is used, is it possible that ryte
+# upload it to my drive and share the drive link instead?" — which turns on
+# whether their API returns the recording or only a link to their player.
+
+
+def test_the_fields_listing_shows_links_and_hides_everything_else():
+    """A call's record carries guests' names and email addresses, and none of
+    that is any part of this question."""
+    from wilbyte.bot import jobs
+
+    said = "\n".join(jobs._fields_in({
+        "id": "abc",
+        "share_url": "https://fathom.video/calls/822789278",
+        "recording": {"download_url": "https://media.fathom.video/x.mp4"},
+        "guests": [{"name": "Leonardo Lopez", "email": "leo@example.com"}],
+    }))
+
+    assert "https://media.fathom.video/x.mp4" in said
+    assert "recording.download_url" in said
+    assert "leo@example.com" not in said, "it printed a guest's email"
+    assert "Leonardo Lopez" not in said
+    assert "guests[0].name — _str_" in said
+
+
+def test_a_list_says_how_long_it_is_rather_than_printing_it():
+    from wilbyte.bot import jobs
+
+    said = "\n".join(jobs._fields_in({"turns": [{"speaker": "a"}] * 400}))
+
+    assert "turns — 400 item(s)" in said
+
+
+def test_it_does_not_walk_forever_into_a_nested_record():
+    from wilbyte.bot import jobs
+
+    deep = {}
+    at = deep
+    for i in range(12):
+        at["down"] = {}
+        at = at["down"]
+
+    said = jobs._fields_in(deep)
+
+    assert len(said) < 10
+
+
+def test_no_fathom_key_says_so_rather_than_failing(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    said = jobs.fathom_fields(
+        SimpleNamespace(secrets=SimpleNamespace(fathom_api_key="")), "x",
+    )
+
+    assert "FATHOM_API_KEY" in said[0]
+
+
+def test_calls_fields_asks_the_other_question(config, monkeypatch):
+    """`calls <link>` asks whether RYTE can see it; `calls fields <link>` asks
+    what Fathom returns about it."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    asked = {}
+    monkeypatch.setattr(
+        bot_client.jobs, "fathom_fields",
+        lambda cfg, link: (asked.update(fields=link), ["• id — _str_"])[1],
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "diagnose_link",
+        lambda cfg, link: (asked.update(diagnosed=link), ["nope"])[1],
+    )
+
+    heard = Asked()
+    asyncio.run(bot_client._send_visible_calls(
+        heard, config, link="fields https://fathom.video/calls/822789278",
+    ))
+
+    assert asked == {"fields": "https://fathom.video/calls/822789278"}
+
+
+def test_a_plain_link_still_gets_the_old_answer(config, monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    asked = {}
+    monkeypatch.setattr(
+        bot_client.jobs, "diagnose_link",
+        lambda cfg, link: (asked.update(diagnosed=link), ["nope"])[1],
+    )
+
+    heard = Asked()
+    asyncio.run(bot_client._send_visible_calls(
+        heard, config, link="https://fathom.video/calls/822789278",
+    ))
+
+    assert asked["diagnosed"] == "https://fathom.video/calls/822789278"

@@ -1667,6 +1667,69 @@ def read_chosen(config: Config, rec, call: Call) -> str:
     return zoom_read(config, rec, zoom.as_recording(call.raw or {}))
 
 
+def fathom_fields(config: Config, link: str) -> list[str]:
+    """Every field Fathom returns for one call, so we can see what is in there.
+
+    The question this answers is whether the recording itself can be fetched -
+    "fathom is inaccesible unless our account is used". If their API hands back
+    a link to the media, RYTE can put it in Drive and share that instead. If it
+    only hands back a link to their player, it cannot, and no amount of code
+    will change that.
+
+    Keys, and values only when they look like a link. A call's record carries
+    guests' names and email addresses, and none of that is any part of this
+    question - so everything else is shown as what kind of thing it is rather
+    than as itself.
+    """
+    from .. import fathom
+
+    key = (config.secrets.fathom_api_key or "").strip()
+    if not key:
+        return ["No FATHOM_API_KEY in .env, so there is nothing to ask."]
+
+    with fathom.FathomClient(key) as asking:
+        call, meetings = asking.find(link)
+        if call is None:
+            return [
+                f"Fathom doesn't show a call at that link. `@RYTE calls` lists "
+                f"the {len(meetings)} it will show me."
+            ]
+        whole = asking.meeting_with_transcript(fathom.meeting_id(
+            next((one for one in meetings
+                  if fathom.share_key(str(fathom.first_of(one, fathom.URL_FIELDS) or ""))
+                  == fathom.share_key(link)), {})
+        )) or {}
+
+    found = [f"**{call.title}** — everything Fathom returns for it:"]
+    found += _fields_in(whole or {})
+    found.append(
+        "-# A link ending .mp4 or .m4a, or a field called anything like "
+        "`download`, is what RYTE would need to put it in Drive."
+    )
+    return found
+
+
+def _fields_in(data, path: str = "", depth: int = 0) -> list[str]:
+    """Key paths and link-shaped values. Everything else by its kind only."""
+    if depth > 3:
+        return [f"• {path} — …"]
+    found = []
+    if isinstance(data, dict):
+        for name, value in list(data.items())[:40]:
+            found += _fields_in(value, f"{path}.{name}" if path else str(name), depth + 1)
+    elif isinstance(data, list):
+        found.append(f"• {path} — {len(data)} item(s)")
+        if data:
+            found += _fields_in(data[0], f"{path}[0]", depth + 1)
+    else:
+        said = str(data or "")
+        if said.startswith("http"):
+            found.append(f"• {path} — {said}")
+        else:
+            found.append(f"• {path} — _{type(data).__name__}_")
+    return found
+
+
 def diagnose_link(config: Config, link: str) -> list[str]:
     """Whether a pasted link matches a recording, and the tokens compared if not.
 

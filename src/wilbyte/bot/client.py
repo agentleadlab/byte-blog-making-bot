@@ -3187,12 +3187,24 @@ async def _send_visible_calls(responder: Responder, config: Config, *, link: str
     invisible to the API, and from Discord that is indistinguishable from a
     broken app. Seeing the list is what tells them apart.
     """
+    # "calls fields <link>" asks a different question: not whether RYTE can see
+    # the call, but what Fathom hands back about it - which is how we find out
+    # whether the recording itself can be fetched and put somewhere the team
+    # can reach without the Fathom account.
+    said = " ".join((link or "").split())
+    raw = bool(re.match(r"(?i)^(fields|raw)\b", said))
+    if raw:
+        link = re.sub(r"(?i)^(fields|raw)\b\s*", "", said)
+
     await responder.send(
-        "Checking that link against Zoom…" if link
+        "Asking Fathom what it returns for that call…" if raw
+        else "Checking that link against Zoom…" if link
         else "Asking Zoom and Fathom what they'll show me…"
     )
     try:
-        if link:
+        if raw:
+            lines = await asyncio.to_thread(jobs.fathom_fields, config, link)
+        elif link:
             lines = await asyncio.to_thread(jobs.diagnose_link, config, link)
         else:
             lines = await asyncio.to_thread(jobs.visible_calls, config)
