@@ -630,7 +630,15 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         # With a link it answers the sharper question: not "what can you see"
         # but "why don't you recognise this one".
         found = RECORDING_URL_RE.search(text)
-        return MentionRequest(action="calls", brief=found.group(0).rstrip(".,;)>") if found else "")
+        link = found.group(0).rstrip(".,;)>") if found else ""
+        # "calls fields <link>" asks a third question: not what RYTE can see,
+        # nor why it doesn't recognise this one, but what the service hands
+        # back about it - which is how we found out whether a recording can be
+        # fetched at all. The word has to be carried deliberately, because the
+        # link is lifted out of the sentence and every other word is dropped.
+        if link and re.search(r"(?i)\b(fields|raw)\b", text):
+            link = f"fields {link}"
+        return MentionRequest(action="calls", brief=link)
 
     # After the format check on purpose: "an email about our weekend sale"
     # writes copy, it doesn't change which days the blog goes out on.

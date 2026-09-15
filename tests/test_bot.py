@@ -5601,3 +5601,57 @@ def test_no_fathom_key_says_that_rather_than_no_match():
 
     assert "isn't configured" in said[0]
     assert "No match" not in said[0]
+
+
+def test_the_word_fields_survives_the_parser():
+    """It didn't. The link is lifted out of the sentence and every other word
+    dropped, so `calls fields <link>` reached the handler as a bare link and
+    ran the ordinary diagnosis — twice, before this was noticed."""
+    from wilbyte.bot import mentions
+
+    said = mentions.parse("<@1> calls fields https://fathom.video/calls/822789278")
+
+    assert said.action == "calls"
+    assert said.brief == "fields https://fathom.video/calls/822789278"
+
+
+def test_raw_is_the_same_word():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(
+        "<@1> calls raw https://fathom.video/calls/822789278"
+    ).brief.startswith("fields ")
+
+
+def test_a_plain_calls_link_is_unchanged():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(
+        "<@1> calls https://fathom.video/calls/822789278"
+    ).brief == "https://fathom.video/calls/822789278"
+
+
+def test_calls_on_its_own_is_still_the_whole_list():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> calls").brief == ""
+
+
+def test_the_parser_and_the_handler_agree_about_the_word(config, monkeypatch):
+    """The two halves were written apart and neither was run against the
+    other, which is exactly how this got shipped twice."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client, mentions
+
+    asked = {}
+    monkeypatch.setattr(
+        bot_client.jobs, "fathom_fields",
+        lambda cfg, link: (asked.update(fields=link), ["• id — _str_"])[1],
+    )
+    said = mentions.parse("<@1> calls fields https://fathom.video/calls/822789278")
+
+    heard = Asked()
+    asyncio.run(bot_client._send_visible_calls(heard, config, link=said.brief or ""))
+
+    assert asked == {"fields": "https://fathom.video/calls/822789278"}
