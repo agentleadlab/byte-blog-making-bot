@@ -246,3 +246,74 @@ def test_blacklist_is_a_word_ryte_knows():
 
     for typed in ("blacklist Juliana Hernandez", "blacklisted jay@example.com"):
         assert mentions.parse(f"<@1> {typed}").action == "blacklist"
+
+
+# ------------------------------- finding one person among eleven thousand
+
+# 11,431 contacts, fifty to a page, is 229 requests to tag one person. The
+# account's own search does it in one — but what it hands back is checked here
+# rather than trusted.
+
+
+class Paged:
+    """A GHL client with a real search and a real walk, both countable."""
+
+    def __init__(self, everyone, *, search=None):
+        self.everyone = list(everyone)
+        self.search = everyone if search is None else list(search)
+        self.location_id = "l"
+        self.requests = []
+
+    def _request(self, method, path, **kwargs):
+        params = kwargs.get("params") or {}
+        self.requests.append(params.get("query") or f"page:{params.get('startAfterId')}")
+        if params.get("query") is not None:
+            return {"contacts": list(self.search)}
+        after = params.get("startAfterId")
+        start = 0
+        if after:
+            start = next(
+                (i + 1 for i, one in enumerate(self.everyone) if one["id"] == after), 0
+            )
+        return {"contacts": self.everyone[start:start + 50]}
+
+    find_contacts = ghl.GHLClient.find_contacts
+    _ask_for = ghl.GHLClient._ask_for
+
+
+def test_the_search_answers_in_one_request_when_it_works():
+    crm = Paged([JULIANA, JAY], search=[JULIANA])
+    found = crm.find_contacts(email="hjuliana650@gmail.com")
+
+    assert [one["id"] for one in found] == ["c1"]
+    assert len(crm.requests) == 1, "it walked the whole account anyway"
+
+
+def test_a_fuzzy_search_result_that_is_not_them_is_not_tagged():
+    """Twenty near-misses come back and none of them is the person asked for."""
+    crm = Paged([JULIANA], search=[OTHER_JAY, JAY])
+    found = crm.find_contacts(email="hjuliana650@gmail.com")
+
+    assert [one["id"] for one in found] == ["c1"]
+
+
+def test_a_search_that_finds_nothing_falls_back_to_walking():
+    """A rejected filter comes back empty rather than complaining, and "not in
+    GHL" is the one answer that must not be guessed at."""
+    crm = Paged([OTHER_JAY, JULIANA], search=[])
+    found = crm.find_contacts(email="hjuliana650@gmail.com")
+
+    assert [one["id"] for one in found] == ["c1"]
+    assert len(crm.requests) > 1, "it gave up on the search's word"
+
+
+def test_somebody_genuinely_absent_comes_back_empty():
+    crm = Paged([OTHER_JAY, JAY], search=[])
+
+    assert crm.find_contacts(email="nobody@example.com") == []
+
+
+def test_the_wavv_blacklisted_tag_is_a_different_tag():
+    """"blacklisted" and "wavv-blacklisted" both live in that account."""
+    assert bot_client._carries({"tags": ["wavv-blacklisted"]}, "blacklisted") is False
+    assert bot_client._carries({"tags": ["blacklisted"]}, "blacklisted") is True

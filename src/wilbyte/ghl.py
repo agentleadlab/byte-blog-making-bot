@@ -307,6 +307,21 @@ class GHLClient:
         if not (wanted_email or wanted_phone or wanted_name):
             return []
 
+        # Ask GHL first. Walking 11,431 contacts fifty at a time is 229
+        # requests to find one person, and the account's own search does it in
+        # one - but what comes back is checked here rather than trusted, so a
+        # fuzzy match returning twenty near-misses tags none of them.
+        asked = [
+            one for one in self._ask_for(email or phone or name)
+            if _is_them(one, wanted_email, wanted_phone, wanted_name)
+        ]
+        if asked:
+            return asked
+
+        # Nothing it returned was actually them, which is not the same as them
+        # not being here: the filter grammar differs between accounts and a
+        # rejected one comes back empty rather than complaining. So the slow
+        # way is what gets to decide they are absent.
         found: list[dict] = []
         after_id, after = None, None
         while len(found) < cap:
@@ -330,6 +345,24 @@ class GHLClient:
             if not after_id:
                 return found
         return found
+
+    def _ask_for(self, asked: str) -> list[dict]:
+        """One page of whatever GHL's own search makes of this. [] if it won't.
+
+        Never the answer on its own: every row is checked against the person
+        being looked for before it counts.
+        """
+        said = " ".join((asked or "").split())
+        if not said:
+            return []
+        try:
+            data = self._request(
+                "GET", "/contacts/",
+                params={"locationId": self.location_id, "limit": MAX_PAGE, "query": said},
+            )
+        except GHLError:
+            return []
+        return data.get("contacts") or data.get("data") or []
 
     def add_tags(self, contact_id: str, tags) -> list[str]:
         """Put these tags on a contact. The tags it has afterwards.
