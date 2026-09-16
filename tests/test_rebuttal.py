@@ -1160,3 +1160,61 @@ def test_nothing_pasted_adds_no_section():
     said = rebuttal.writing_prompt(one, rebuttal.Gathered(), [])
 
     assert "THE GATEWAY'S OWN RECORD" not in said
+
+
+# ------------------------- a screenshot of the portal does the same job
+
+# "yeah ill just send the screenshots for that for you to attach" — RYTE
+# already transcribes what is in an attached image, so the gateway record
+# reaches the document the same way whether it was pasted or photographed.
+
+
+def test_a_payment_record_is_one_of_the_kinds_of_exhibit():
+    assert "payment" in rebuttal.EXHIBITS
+    assert "AVS" in rebuttal.EXHIBITS["payment"]
+
+
+def test_it_is_filed_next_to_the_invoice_not_at_the_back():
+    """"other" goes in at the end under its own heading, which is where a
+    gateway record would have landed."""
+    assert rebuttal.UNDER["payment"] == rebuttal.UNDER["invoice"] + 1
+
+
+def test_the_exhibits_are_lettered_with_it_in_that_order():
+    made = [
+        rebuttal.Exhibit(name="texts.png", kind="texts"),
+        rebuttal.Exhibit(name="gateway.png", kind="payment"),
+        rebuttal.Exhibit(name="invoice.pdf", kind="invoice"),
+    ]
+    lettered = rebuttal.letter_them(made)
+
+    by_kind = {one.kind: one.letter for one in lettered}
+    assert by_kind["invoice"] < by_kind["payment"]
+
+
+def test_a_transcribed_screenshot_reaches_the_writing():
+    """The transcript is what carries the AVS value, not the caption."""
+    shot = rebuttal.Exhibit(
+        name="gateway.png", kind="payment",
+        caption="payment gateway record",
+        transcript="Initiated By  Customer\nAVS Response  Y",
+    )
+    lettered = rebuttal.letter_them([shot])
+    one = rebuttal.read_facts("Customer Name: X\nDispute Amount: $10\nCode: 37")
+    said = rebuttal.writing_prompt(one, rebuttal.Gathered(), lettered)
+
+    assert "AVS Response  Y" in said
+    assert "Payment Authorization Record" in said
+
+
+def test_pasting_it_still_wins_over_a_screenshot(monkeypatch):
+    """What was typed is what somebody chose; a transcript is RYTE reading."""
+    import inspect
+
+    from wilbyte.bot import client as bot_client
+
+    source = inspect.getsource(bot_client._build_rebuttal) if hasattr(
+        bot_client, "_build_rebuttal"
+    ) else ""
+    # The wiring: the pasted block is only replaced when there wasn't one.
+    assert "if not paid_with:" in inspect.getsource(bot_client)

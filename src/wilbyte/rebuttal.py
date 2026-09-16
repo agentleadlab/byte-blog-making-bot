@@ -319,6 +319,12 @@ def named_in(text: str) -> str:
 EXHIBITS = {
     "contract": "the signed agreement, or a page of it",
     "invoice": "an invoice or receipt",
+    "payment": (
+        "a payment gateway or invoice portal record - AVS result, "
+        "authorisation response, billing name and address, whether the "
+        "payment was customer-initiated, or an invoice's event log showing "
+        "it sent, opened, clicked and paid"
+    ),
     "texts": "a text-message or SMS conversation",
     "discord": "a Discord conversation or channel",
     "sheet": "a spreadsheet of leads, or a lead record",
@@ -328,7 +334,8 @@ EXHIBITS = {
 
 # Which proof each kind of exhibit sits under.
 UNDER = {
-    "contract": 1, "invoice": 2, "discord": 3, "sheet": 4, "sale": 5, "texts": 6,
+    "contract": 1, "invoice": 2, "payment": 3, "discord": 4, "sheet": 5,
+    "sale": 6, "texts": 7,
 }
 
 
@@ -462,7 +469,10 @@ def letter_them(exhibits: list) -> list:
     the messages before the purchase come before the contract, which comes
     before the invoice, which comes before what was delivered.
     """
-    order = ("texts", "discord", "contract", "invoice", "sheet", "sale", "other")
+    order = (
+        "texts", "discord", "contract", "invoice", "payment", "sheet", "sale",
+        "other",
+    )
     lettered = []
     letter = ord("A")
     for kind in order:
@@ -491,6 +501,7 @@ def exhibit_groups(exhibits: list) -> list[tuple[str, str, list]]:
         "discord": "Support Channel",
         "contract": "Signed Service Agreement",
         "invoice": "Invoice and Payment",
+        "payment": "Payment Authorization Record",
         "sheet": "Lead Delivery Records",
         "sale": "Sale Posted by the Cardholder",
         "other": "Further Supporting Material",

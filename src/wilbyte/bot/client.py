@@ -1817,6 +1817,22 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         if exhibits:
             exhibits = await asyncio.to_thread(jobs.sort_exhibits, config, exhibits)
         found = await asyncio.to_thread(jobs.rebuttal_evidence, config, dispute)
+        # Pasted, or transcribed off a screenshot of the portal - either
+        # reaches the same section. A picture of the gateway record is easier
+        # to produce than a tidy copy of it, and RYTE reads what is in it.
+        if not paid_with:
+            paid_with = "\n\n".join(
+                one.transcript.strip() for one in exhibits
+                if one.kind == "payment" and one.transcript.strip()
+            )
+        # Pasted, or transcribed off a screenshot of the portal - either
+        # reaches the same section. A picture of the gateway record is easier
+        # to produce than a tidy copy of it, and RYTE reads what is in it.
+        if not paid_with:
+            paid_with = "\n\n".join(
+                one.transcript.strip() for one in exhibits
+                if one.kind == "payment" and one.transcript.strip()
+            )
         if paid_with:
             found.payment = paid_with
         # The contract PandaDoc emailed, as an exhibit rather than as a
