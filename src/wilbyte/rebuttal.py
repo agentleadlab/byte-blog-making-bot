@@ -249,6 +249,34 @@ def money(said: str) -> str:
         return ""
 
 
+# Where the pasted dispute block stops and the payment record starts. The two
+# arrive in one message and are read differently: the first is labelled fields,
+# the second is whatever the portal happened to lay out.
+PAYMENT_MARKER = re.compile(
+    r"^[ \t]*(?:payment|gateway|authoriz(?:ation|ed)|authoris(?:ation|ed)|"
+    r"transaction\s+details?|invoice\s+log|portal)\b[ \t]*:?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_payment(text: str) -> tuple[str, str]:
+    """(the dispute block, the payment record) out of one pasted message.
+
+    Everything after a line that says PAYMENT: - or GATEWAY:, or TRANSACTION
+    DETAILS: - is the payment portal's own record and is not parsed as fields.
+    It is laid out however the portal laid it out, and trying to read labels
+    out of it would turn "AVS Response  Y" into a customer email.
+
+    No marker means the whole thing is the dispute block, which is how every
+    rebuttal before this one worked.
+    """
+    said = str(text or "")
+    found = PAYMENT_MARKER.search(said)
+    if not found:
+        return said, ""
+    return said[: found.start()].rstrip(), said[found.end():].strip()
+
+
 def read_facts(text: str) -> Dispute:
     """The dispute block, parsed. Unknown labels are ignored rather than
     guessed at - a field RYTE invented is worse than one left blank.
@@ -370,6 +398,12 @@ class Gathered:
     #: out with a red line demanding it reads as though something is missing
     #: when nothing is.
     aged: bool = False
+    #: The gateway's own record, pasted from the payment portal. AVS, whether
+    #: the payment was customer-initiated, the billing name and address it
+    #: captured, the invoice's event log. None of it is in the receipt email
+    #: and none of it is reachable by any API we have - and against a
+    #: no-authorisation code it is the whole argument.
+    payment: str = ""
     timeline: list = field(default_factory=list)
     holes: list = field(default_factory=list)
 
@@ -527,6 +561,15 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
         f"Reason given: {one.reason or one.dispute_type or 'not stated'}"
         + (f"\nDays waited: {one.days_waited()}" if one.days_waited() else "")
         + aimed_at(one)
+        + (
+            "\n\nTHE GATEWAY'S OWN RECORD OF THE PAYMENT\nThis came out of the "
+            "payment portal. Quote its fields exactly as they are written and "
+            "say what each one means - an AVS match is a match on the "
+            "cardholder's own billing address, and customer-initiated means "
+            "the cardholder started the payment rather than the merchant "
+            "keying it in.\n" + found.payment
+            if found.payment else ""
+        )
         + f"\n\nWHAT OUR RECORDS SHOW\n{seen}\n\nEXHIBITS ATTACHED\n{files}\n\n"
         "Write:\n\n"
         "SUMMARY:\nTwo or three paragraphs. What was bought, what was "

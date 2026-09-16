@@ -1094,3 +1094,69 @@ def test_the_inbox_is_not_searched_for_a_contract_that_never_existed(monkeypatch
     _gathering(monkeypatch, cards=[HER_CARD])
 
     assert asked == []
+
+
+# ----------------------- what only the payment portal knows, pasted in
+
+# Section 2 of Franklin's Juliana rebuttal — AVS Y, initiated by customer, the
+# billing address matching, the issuer's approval — is the whole answer to
+# code 37 and none of it is in the Payra receipt email or reachable by any API
+# RYTE has. So it is pasted, under a line that says where it starts.
+
+
+PORTAL = """Initiated By       Customer
+AVS Response       Y
+Billing name       Juliana Hernandez, 13722 Brownsville Street, Houston, TX 77015
+Authorization      100 - approved
+Transaction ID     da8ro570i476liker12g"""
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["PAYMENT:", "payment", "GATEWAY:", "Transaction details:", "Invoice log:"],
+)
+def test_the_record_starts_where_it_says_it_does(marker):
+    block, paid = rebuttal.split_payment(
+        f"Customer Name: Juliana Hernandez\n{marker}\n{PORTAL}"
+    )
+
+    assert paid == PORTAL
+    assert "Customer Name" in block
+
+
+def test_the_portal_lines_are_not_parsed_as_dispute_fields():
+    """"AVS Response  Y" read as a labelled field is how an email address
+    becomes the letter Y."""
+    block, _ = rebuttal.split_payment(
+        f"Customer Name: Juliana Hernandez\nCustomer Email: hjuliana650@gmail.com\n"
+        f"PAYMENT:\n{PORTAL}"
+    )
+    one = rebuttal.read_facts(block)
+
+    assert one.customer_email == "hjuliana650@gmail.com"
+    assert one.customer_name == "Juliana Hernandez"
+    assert "Brownsville" not in one.customer_name
+
+
+def test_no_marker_leaves_everything_as_the_dispute_block():
+    """Every rebuttal before this one worked without one."""
+    block, paid = rebuttal.split_payment("Customer Name: X\nDispute Amount: $10")
+
+    assert paid == ""
+    assert rebuttal.read_facts(block).customer_name == "X"
+
+
+def test_the_prompt_carries_the_gateway_record_and_says_what_it_means():
+    one = rebuttal.read_facts("Customer Name: X\nDispute Amount: $10\nCode: 37")
+    said = rebuttal.writing_prompt(one, rebuttal.Gathered(payment=PORTAL), [])
+
+    assert "THE GATEWAY'S OWN RECORD" in said
+    assert "AVS Response       Y" in said
+    assert "customer-initiated means" in said
+
+
+def test_nothing_pasted_adds_no_section():
+    one = rebuttal.read_facts("Customer Name: X\nDispute Amount: $10")
+    said = rebuttal.writing_prompt(one, rebuttal.Gathered(), [])
+
+    assert "THE GATEWAY'S OWN RECORD" not in said

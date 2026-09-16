@@ -1758,14 +1758,20 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     # it, and nobody wants to paste either again. The message RYTE gets is
     # bare, so the one it answers is where to look. Same as filing a recording
     # off a reply.
+    # Anything under a PAYMENT: line is the portal's own record of the charge -
+    # AVS, whether the cardholder started it, the invoice's event log - and it
+    # is read as itself rather than parsed for labelled fields.
+    said, paid_with = rules_doc.split_payment(said)
     dispute = rules_doc.read_facts(said)
     if dispute.missing():
         replied = await _replied_to(message)
         if replied is not None and (replied.content or "").strip():
-            older = rules_doc.read_facts(replied.content or "")
+            older_said, older_paid = rules_doc.split_payment(replied.content or "")
+            older = rules_doc.read_facts(older_said)
             if len(older.missing()) < len(dispute.missing()):
                 dispute = older
-                said = replied.content or said
+                said = older_said or said
+                paid_with = paid_with or older_paid
                 # The screenshots were attached to that message too.
                 if not getattr(message, "attachments", None):
                     message = replied
@@ -1811,6 +1817,8 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         if exhibits:
             exhibits = await asyncio.to_thread(jobs.sort_exhibits, config, exhibits)
         found = await asyncio.to_thread(jobs.rebuttal_evidence, config, dispute)
+        if paid_with:
+            found.payment = paid_with
         # The contract PandaDoc emailed, as an exhibit rather than as a
         # description of one - the no-chargeback clause is in the document.
         # Only when nobody attached one: a contract dragged in by hand is the
