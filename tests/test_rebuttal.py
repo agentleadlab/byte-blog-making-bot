@@ -965,3 +965,132 @@ def test_no_contract_anywhere_still_asks_for_it():
     holes = rebuttal.what_is_missing(rebuttal.Gathered(), [])
 
     assert any("signed contract" in one for one in holes)
+
+
+# ------------------------------- the reason code decides what to argue
+
+# Franklin's own two rebuttals, side by side. Juliana Hernandez's answers code
+# 37 — the cardholder saying she never authorised the payment — with who paid:
+# the AVS match on her home address, the order confirmed from the number on
+# her invoice, the payment link she clicked. Jose Zambrano's answers "not as
+# described", where none of that matters and the answer is the tier he chose,
+# the clauses he signed, and him working the leads for months.
+
+
+@pytest.mark.parametrize(
+    "block, code",
+    [
+        ("Code: 37 - No Cardholder Authorization", "37"),
+        ("Reason: Not as Described\ncode: 13.3", "13.3"),
+        ("Reason Code: 13.1", "13.1"),
+        ("code: 10.4", "10.4"),
+    ],
+)
+def test_the_code_is_found_wherever_it_was_written(block, code):
+    assert rebuttal.read_facts(f"Customer Name: X\n{block}").code == code
+
+
+def test_a_dollar_amount_is_not_a_reason_code():
+    """"$ 129.37" ends in the digits of code 37, and reading it as one aims
+    the whole document at the wrong question while looking correct."""
+    one = rebuttal.read_facts("Customer Name: X\nDispute Amount: $ 129.37")
+
+    assert one.code == ""
+    assert one.amount == "$129.37"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "ARN: 72307626241809574244780",
+        "Card Number (Last 4): 7543",
+        "Transaction Date: 8/28/2026",
+    ],
+)
+def test_the_other_numbers_on_a_notice_are_not_codes(block):
+    assert rebuttal.read_facts(f"Customer Name: X\n{block}").code == ""
+
+
+def test_code_37_is_aimed_at_who_paid():
+    one = rebuttal.read_facts("Customer Name: X\nCode: 37")
+    said = rebuttal.aimed_at(one)
+
+    assert "37" in said and "No Cardholder Authorization" in said
+    assert "WHO paid" in said
+    assert "AVS" in said
+    assert "concedes the point" in said
+
+
+def test_not_as_described_is_aimed_at_what_arrived():
+    one = rebuttal.read_facts("Customer Name: X\nCode: 13.3")
+    said = rebuttal.aimed_at(one)
+
+    assert "WHAT was promised" in said
+    assert "not guaranteed" in said
+    assert "AVS" not in said, "that is the other code's argument"
+
+
+def test_no_code_argues_the_whole_record_rather_than_guessing():
+    """The code lives in the ElevateQS portal, not on the notification."""
+    said = rebuttal.aimed_at(rebuttal.read_facts("Customer Name: X"))
+
+    assert "NO REASON CODE WAS GIVEN" in said
+    assert "whole record" in said
+
+
+def test_a_code_nobody_knows_is_not_invented():
+    assert rebuttal.code_in("Code: 99.9") == ""
+    assert rebuttal.what_the_code_means("99.9") is None
+
+
+def test_the_prompt_carries_the_aim():
+    one = rebuttal.read_facts("Customer Name: X\nDispute Amount: $10\nCode: 37")
+    said = rebuttal.writing_prompt(one, rebuttal.Gathered(), [])
+
+    assert "THE REASON CODE IS 37" in said
+
+
+# ------------------------------- aged leads are not asked for a contract
+
+# "aged leads we dont have contracts, only fresh/new agents. Juliana is an
+# aged leads."
+
+
+def test_an_aged_leads_order_is_not_asked_for_a_contract():
+    holes = rebuttal.what_is_missing(rebuttal.Gathered(aged=True), [])
+
+    assert not any("signed contract" in one for one in holes)
+
+
+def test_a_new_agent_still_is():
+    holes = rebuttal.what_is_missing(rebuttal.Gathered(aged=False), [])
+
+    assert any("signed contract" in one for one in holes)
+
+
+def test_the_aged_flag_comes_off_their_card(monkeypatch):
+    found = _gathering(monkeypatch, cards=[HER_CARD])
+
+    assert found.aged is True, "AGED LEAD - Juliana Hernandez"
+
+
+def test_a_new_agent_card_is_not_aged(monkeypatch):
+    found = _gathering(
+        monkeypatch, cards=[{"id": "c1", "name": "New Agent - Steve Dass"}],
+    )
+
+    assert found.aged is False
+
+
+def test_the_inbox_is_not_searched_for_a_contract_that_never_existed(monkeypatch):
+    """Not just unasked for — not looked for either."""
+    from wilbyte.bot import jobs
+
+    asked = []
+    monkeypatch.setattr(
+        jobs, "_signed_contract",
+        lambda config, dispute: (asked.append(1), ("", b"", "", ""))[1],
+    )
+    _gathering(monkeypatch, cards=[HER_CARD])
+
+    assert asked == []

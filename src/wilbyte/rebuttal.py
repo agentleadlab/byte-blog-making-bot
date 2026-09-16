@@ -30,7 +30,7 @@ FIELDS = (
     ("dba", r"\bdba\b|doing\s+business"),
     ("dispute_date", r"dispute\s*date|chargeback\s*date|case\s*date"),
     ("dispute_type", r"dispute\s*type"),
-    ("reason", r"reason\b|dispute\s*reason|reason\s*code"),
+    ("reason", r"reason\b|dispute\s*reason|reason\s*code|^\s*code\b"),
     ("amount", r"dollar\s*amount|dispute\s*amount|\bamount\b"),
     ("arn", r"\barn\b|acquirer.?s?\s*reference"),
     ("card", r"card\s*(?:number|no)|\bcard\b"),
@@ -70,6 +70,16 @@ class Dispute:
     transaction_date: str = ""
     customer_name: str = ""
     customer_email: str = ""
+    #: The block as it was pasted. Kept because the reason code does not
+    #: reliably arrive on the line labelled "Reason" - Jose Zambrano's notice
+    #: said "Reason: Not as Described" and put "code: 13.3" underneath it, and
+    #: the first line claimed the field and the second was dropped.
+    raw: str = ""
+
+    @property
+    def code(self) -> str:
+        """The reason code, off whichever line happened to carry it."""
+        return code_in(f"{self.reason}\n{self.dispute_type}\n{self.raw}")
 
     def missing(self) -> list[str]:
         """The fields a rebuttal cannot be written without."""
@@ -97,6 +107,116 @@ class Dispute:
         if paid is None or disputed is None:
             return None
         return (disputed - paid).days
+
+
+#: What a reason code actually asserts, and what answers it.
+#:
+#: The code is the whole shape of the document. Juliana Hernandez's was 37 -
+#: the cardholder saying she never authorised the payment at all - and the
+#: answer to that is who paid: the AVS match on her own home address, the
+#: order she confirmed by text from the number on her invoice, the payment
+#: link she clicked herself. Jose Zambrano's was "not as described", where
+#: none of that matters and the answer is what was promised and delivered:
+#: the tier he chose in writing, the clauses of the agreement he signed, the
+#: leads landing in his own CRM, and him working them for months afterwards.
+#:
+#: Written out here because a rebuttal aimed at the wrong question is a
+#: rebuttal that loses while being entirely true.
+CODES = {
+    "37": (
+        "No Cardholder Authorization",
+        "that the cardholder never authorised this payment at all - that "
+        "somebody else used the card",
+        "proof of WHO paid. The gateway's own authorisation record: whether "
+        "the payment was customer-initiated, the AVS result on the billing "
+        "address, the billing name captured at payment, the issuer's "
+        "approval. Then everything tying the payment to the cardholder "
+        "personally - an order they confirmed from their own phone number, "
+        "an invoice sent to their own email and opened, a payment link they "
+        "clicked, delivery to their own address. Quality, description and "
+        "usefulness are not the question and arguing them concedes the point",
+    ),
+    "10.4": (
+        "Other Fraud - Card Absent Environment",
+        "that the cardholder never authorised this payment at all",
+        "the same as code 37: proof of who paid rather than what was sold",
+    ),
+    "4837": (
+        "No Cardholder Authorization",
+        "that the cardholder never authorised this payment at all",
+        "the same as code 37: proof of who paid rather than what was sold",
+    ),
+    "13.3": (
+        "Not as Described or Defective Merchandise/Services",
+        "that what arrived was not what was described, or did not work",
+        "proof of WHAT was promised and WHAT arrived. What the cardholder was "
+        "shown before buying and what they chose in their own words; the "
+        "terms of any signed agreement, quoted by section, especially any "
+        "defining what counts as delivered and any saying results are not "
+        "guaranteed; what was actually delivered, field by field, against "
+        "what was promised; and every sign the cardholder used it afterwards "
+        "- a lead worked through a pipeline is not a defective one",
+    ),
+    "13.1": (
+        "Merchandise/Services Not Received",
+        "that nothing ever arrived",
+        "proof of delivery and of its date: where it was sent, to which "
+        "address, when, and anything showing the cardholder received or "
+        "opened it. The cardholder's own acknowledgement afterwards is "
+        "worth more than any internal record",
+    ),
+    "13.6": (
+        "Credit Not Processed",
+        "that a refund was promised or owed and never given",
+        "the terms that say what is refundable and what is not, and what was "
+        "actually said to the cardholder about a refund",
+    ),
+    "13.7": (
+        "Cancelled Merchandise/Services",
+        "that the order was cancelled and charged anyway",
+        "when the cancellation was said to have happened, what the terms say "
+        "about cancelling, and what had already been delivered by then",
+    ),
+    "4853": (
+        "Cardholder Dispute",
+        "that what arrived was not what was described",
+        "the same as 13.3: what was promised, what arrived, and what the "
+        "cardholder did with it",
+    ),
+}
+
+# Not part of a longer number. "Dispute Amount: $ 129.37" ends in the digits
+# of reason code 37, and reading it as one would aim the entire document at
+# the wrong question while looking perfectly correct.
+_CODE = re.compile(r"(?<![.\d])(\d{1,2}\.\d{1,2}|\d{2,4})(?![.\d])")
+
+# The line the code is actually on, when there is one.
+_CODE_LINE = re.compile(r"^.*\b(?:code|reason)\b.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def code_in(text: str) -> str:
+    """The reason code out of whatever was pasted, or "".
+
+    "Code: 37 - No Cardholder Authorization", "13.3" and a bare "37" all come
+    out as the key.
+
+    The line that says "code" or "reason" is read first, because a dispute
+    notice is full of numbers that are not reason codes - an ARN, a card's
+    last four, an amount, three dates. Only codes this knows about come back:
+    guessing one is worse than not having it, since the document is built
+    around whichever question it is told to answer.
+    """
+    said = str(text or "")
+    for where in ("\n".join(_CODE_LINE.findall(said)), said):
+        for found in _CODE.finditer(where):
+            if found.group(1) in CODES:
+                return found.group(1)
+    return ""
+
+
+def what_the_code_means(code: str) -> tuple[str, str, str] | None:
+    """(its name, what it asserts, what answers it) or None if unknown."""
+    return CODES.get(" ".join(str(code or "").split()))
 
 
 def as_date(said: str) -> date | None:
@@ -149,6 +269,7 @@ def read_facts(text: str) -> Dispute:
             setattr(found, name, money(value) if name == "amount" else value)
             seen.add(name)
             break
+    found.raw = str(text or "")
     return found
 
 
@@ -243,6 +364,12 @@ class Gathered:
     #: exhibit rather than being described. The clause is in the document.
     contract_pdf: bytes = b""
     contract_name: str = ""
+    #: An aged-leads re-order rather than a new agent's setup. "aged leads we
+    #: dont have contracts, only fresh/new agents" - so asking for one is
+    #: asking for a document that was never signed, and a rebuttal that goes
+    #: out with a red line demanding it reads as though something is missing
+    #: when nothing is.
+    aged: bool = False
     timeline: list = field(default_factory=list)
     holes: list = field(default_factory=list)
 
@@ -399,6 +526,7 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
         f"Disputed: {spelled(one.dispute_date)}\n"
         f"Reason given: {one.reason or one.dispute_type or 'not stated'}"
         + (f"\nDays waited: {one.days_waited()}" if one.days_waited() else "")
+        + aimed_at(one)
         + f"\n\nWHAT OUR RECORDS SHOW\n{seen}\n\nEXHIBITS ATTACHED\n{files}\n\n"
         "Write:\n\n"
         "SUMMARY:\nTwo or three paragraphs. What was bought, what was "
@@ -430,6 +558,38 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
     )
 
 
+def aimed_at(one: Dispute) -> str:
+    """What this reason code asserts and what answers it, for the prompt.
+
+    The difference between a rebuttal that wins and one that is merely true.
+    Code 37 says the cardholder never authorised the payment; answering it
+    with how good the leads were concedes the point without arguing it. "Not
+    as described" says the opposite - that they did pay, and got the wrong
+    thing - where the authorisation data is beside the point and the terms of
+    the agreement are everything.
+
+    Nothing at all when the code is unknown, which is honest: the document
+    then argues the whole record rather than being aimed by a guess.
+    """
+    found = what_the_code_means(one.code)
+    if found is None:
+        return (
+            "\n\nNO REASON CODE WAS GIVEN. Argue the whole record - what was "
+            "bought, that the cardholder bought it, that it was delivered as "
+            "described, and what they did with it afterwards - rather than "
+            "aiming at one question."
+        )
+    name, asserts, answered = found
+    return (
+        f"\n\nTHE REASON CODE IS {one.code} - {name}.\n"
+        f"This code asserts {asserts}.\n"
+        f"What answers it is {answered}.\n"
+        "Aim every argument at that question. An argument that answers a "
+        "different question, however true, reads to the issuer as not having "
+        "answered this one."
+    )
+
+
 def demand(one: Dispute) -> str:
     """The closing paragraph. The amount is the only thing that varies."""
     return (
@@ -448,7 +608,7 @@ def what_is_missing(found: Gathered, exhibits: list) -> list[str]:
     """
     kinds = {one.kind for one in exhibits}
     holes = list(found.holes)
-    if "contract" not in kinds and not found.contract:
+    if "contract" not in kinds and not found.contract and not found.aged:
         holes.append(
             "The signed contract. Download the completed PDF from PandaDoc and "
             "attach it — it carries the signing date, the reference and the "

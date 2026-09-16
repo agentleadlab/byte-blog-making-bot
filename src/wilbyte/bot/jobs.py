@@ -4568,6 +4568,10 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         finally:
             client.close()
         found.delivered_on = _when_delivered(notes, rules)
+        # An aged-leads re-order has no contract to go looking for: those are
+        # signed by new agents at setup, and a returning client ordering more
+        # leads signs nothing.
+        found.aged = rules.is_order_card(str(card.get("name") or ""))
 
     body = str(detail.get("desc") or "")
     if cards:
@@ -4618,7 +4622,9 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     # And the signed contract, out of the same inbox. PandaDoc emails the
     # completed document with the PDF on it, which is the way to a contract
     # that their API is not without a paid plan.
-    said, pdf, called, trouble = _signed_contract(config, dispute)
+    said, pdf, called, trouble = (
+        ("", b"", "", "") if found.aged else _signed_contract(config, dispute)
+    )
     if said:
         found.contract = said
     if pdf:
