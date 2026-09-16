@@ -317,3 +317,69 @@ def test_the_wavv_blacklisted_tag_is_a_different_tag():
     """"blacklisted" and "wavv-blacklisted" both live in that account."""
     assert bot_client._carries({"tags": ["wavv-blacklisted"]}, "blacklisted") is False
     assert bot_client._carries({"tags": ["blacklisted"]}, "blacklisted") is True
+
+
+# ------------------- the word that chose the command is not part of the name
+
+# "@Ryte blacklist Juliana Hernandez" came back "No contact in GHL matches
+# blacklist Juliana Hernandez" — the command word was searched for as though
+# it were part of her name. `clearout` had it too, unnoticed because nobody
+# had run the command that bans somebody and deletes a channel.
+
+
+@pytest.mark.parametrize(
+    "typed, action, brief",
+    [
+        ("blacklist Juliana Hernandez", "blacklist", "Juliana Hernandez"),
+        ("blacklisted hjuliana650@gmail.com", "blacklist", "hjuliana650@gmail.com"),
+        ("clearout Jay Rodriguez", "clearout", "Jay Rodriguez"),
+        ("clear Jay Rodriguez", "clearout", "Jay Rodriguez"),
+        ("closedown Jay Rodriguez", "clearout", "Jay Rodriguez"),
+    ],
+)
+def test_the_command_word_does_not_reach_the_name(typed, action, brief):
+    from wilbyte.bot import mentions
+
+    said = mentions.parse(f"<@1> {typed}")
+
+    assert (said.action, said.brief) == (action, brief)
+
+
+def test_every_alias_is_stripped_not_just_the_obvious_one():
+    """Built from ACTION_WORDS, so an alias added there cannot be forgotten."""
+    from wilbyte.bot import mentions
+
+    for action, words in mentions.NAMES_SOMEBODY.items():
+        for word in words:
+            assert mentions.ACTION_WORDS[word] == action
+            assert mentions.parse(f"<@1> {word} Somebody Named").brief == "Somebody Named"
+
+
+def test_the_command_on_its_own_still_asks_who():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> clearout").brief == ""
+    assert mentions.parse("<@1> blacklist").brief == ""
+
+
+def test_the_whole_message_still_travels_where_it_is_meant_to():
+    """"rollover general" names which card, and that branch is untouched."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> rollover general").brief == "rollover general"
+
+
+def test_what_the_stray_word_cost_the_clear_out():
+    """Not the channel — "jayrodriguez" is inside "clearoutjayrodriguez", so
+    that still matched. It was their Trello card, which is matched word by
+    word and needs every word to be in the name. No card means no sheet link,
+    and the clear-out would have written a blank one into ALL CLIENTS and then
+    offered to delete the channel the link was the only copy of."""
+    from wilbyte import agents, clearout as rules
+
+    channels = [rules.Channel(channel_id="1", name="jay-rodriguez")]
+    cards = [{"name": "New Agent - Jay Rodriguez", "id": "c1"}]
+
+    assert rules.channels_for("clearout Jay Rodriguez", channels), "the channel was fine"
+    assert agents.named_that("clearout Jay Rodriguez", cards) == []
+    assert agents.named_that("Jay Rodriguez", cards) == cards

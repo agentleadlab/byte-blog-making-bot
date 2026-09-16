@@ -182,6 +182,16 @@ ACTION_WORDS = {
     "hey": "help",
 }
 
+# The commands that take a person's name, and every word that reaches them.
+# Built from ACTION_WORDS so an alias added there cannot be forgotten here.
+NAMES_SOMEBODY = {
+    action: sorted(
+        word for word, maps_to in ACTION_WORDS.items() if maps_to == action
+    )
+    for action in ("blacklist", "clearout")
+}
+
+
 # Words that introduce a brief and shouldn't survive into it.
 _BRIEF_LEAD_INS = re.compile(
     r"^(?:write|make|draft|give|create|do|need|want)\s+(?:me\s+)?(?:an?\s+|some\s+)?",
@@ -674,6 +684,18 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         # The whole message, not the remainder: whether this is a change or a
         # question turns on where the words sit relative to each other.
         return MentionRequest(action="weekends", brief=text)
+
+    # Commands whose brief is somebody's name. Everywhere else the whole
+    # message travels on purpose - "rollover general" names which card - but a
+    # name is matched against a channel or a contact, and "clearout Jay
+    # Rodriguez" matches neither a channel called jay-rodriguez nor a contact
+    # called Jay Rodriguez. The word that chose the command is not part of who
+    # is being asked about.
+    if action in NAMES_SOMEBODY:
+        return MentionRequest(
+            action=action,
+            brief=_strip_word(text, tuple(NAMES_SOMEBODY[action])),
+        )
 
     if action in (
         "status", "schedule", "help", "fields", "reconcile", "missed", "sweep",
