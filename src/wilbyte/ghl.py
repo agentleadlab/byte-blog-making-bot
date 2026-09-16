@@ -60,6 +60,32 @@ class GHLError(RuntimeError):
     """Raised when the LeadConnector API rejects a request."""
 
 
+def _digits(value) -> str:
+    """A phone number as its digits, so +1 (430) 230-2708 matches 14302302708."""
+    return "".join(one for one in str(value or "") if one.isdigit())
+
+
+def _is_them(contact: dict, email: str, phone: str, name: str) -> bool:
+    """Whether this contact is the person being looked for.
+
+    Any one of the three is enough, and the email is the one that means it.
+    The name has to match whole - "Jay" against "Jay Rodriguez" is a prefix,
+    and prefixes are how the wrong person gets blacklisted.
+    """
+    if email and " ".join(str(contact.get("email") or "").split()).casefold() == email:
+        return True
+    if phone and _digits(contact.get("phone")) and _digits(contact.get("phone")) == phone:
+        return True
+    if not name:
+        return False
+    whole = " ".join(
+        f"{contact.get('firstName') or ''} {contact.get('lastName') or ''}".split()
+    ).casefold()
+    return whole == name or " ".join(
+        str(contact.get("contactName") or "").split()
+    ).casefold() == name
+
+
 def as_millis(value) -> int | None:
     """A contact's date, as the number GoHighLevel pages by.
 
@@ -256,6 +282,65 @@ class GHLClient:
             if not after_id:
                 return found
         return found
+
+    def find_contacts(self, *, email: str = "", phone: str = "", name: str = "",
+                      cap: int = 20000) -> list[dict]:
+        """Contacts that look like this person. Everything that matches.
+
+        Everything, not the first: tagging the wrong person blacklisted is a
+        real client who stops getting leads and never finds out why. Two
+        matches is an answer for somebody to look at, not a coin to flip.
+
+        The email is the identifier that means it. A name matches on the whole
+        name, because "Jay" would otherwise blacklist every Jay in the
+        account.
+
+        Walked rather than searched, for the reason `contacts_tagged` is: the
+        search grammar differs between accounts and a lookup that quietly
+        matches nobody because a filter was rejected would read as "they are
+        not in GHL" - which, for this, ends with somebody being told they were
+        blacklisted when they were not.
+        """
+        wanted_email = " ".join((email or "").split()).casefold()
+        wanted_phone = _digits(phone)
+        wanted_name = " ".join((name or "").split()).casefold()
+        if not (wanted_email or wanted_phone or wanted_name):
+            return []
+
+        found: list[dict] = []
+        after_id, after = None, None
+        while len(found) < cap:
+            params = {"locationId": self.location_id, "limit": MAX_PAGE}
+            if after_id:
+                params["startAfterId"] = after_id
+            if after is not None:
+                params["startAfter"] = after
+            data = self._request("GET", "/contacts/", params=params)
+            batch = data.get("contacts") or data.get("data") or []
+            if not batch:
+                return found
+            for contact in batch:
+                if _is_them(contact, wanted_email, wanted_phone, wanted_name):
+                    found.append(contact)
+            if len(batch) < MAX_PAGE:
+                return found
+            last = batch[-1]
+            after_id = str(last.get("id") or "")
+            after = as_millis(last.get("dateAdded") or last.get("dateUpdated"))
+            if not after_id:
+                return found
+        return found
+
+    def add_tags(self, contact_id: str, tags) -> list[str]:
+        """Put these tags on a contact. The tags it has afterwards.
+
+        Adds - GHL keeps whatever was already on them. Reversible: a tag comes
+        off again from the contact's own page.
+        """
+        got = self._request(
+            "POST", f"/contacts/{contact_id}/tags", json={"tags": [str(one) for one in tags]},
+        )
+        return [str(one) for one in (got.get("tags") or got.get("data") or [])]
 
     def list_authors(self) -> list[dict]:
         return self._paged("/blogs/authors", ("authors", "data"))

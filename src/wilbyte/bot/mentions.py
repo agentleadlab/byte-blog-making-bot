@@ -131,6 +131,9 @@ ACTION_WORDS = {
     "quiet": "quiet",
     "inactive": "quiet",
     "unused": "quiet",
+    # Tag a client blacklisted in GHL, after a chargeback.
+    "blacklist": "blacklist",
+    "blacklisted": "blacklist",
     # What RYTE is allowed to do, in every server he is in.
     "access": "access",
     "permissions": "access",
@@ -550,7 +553,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
             action=after
             if after in ("board", "rollover", "move", "agents", "unticked", "words",
                          "archive", "setups", "spread", "unspread", "tags",
-                         "noticed", "daycheck", "access", "clearout", "quiet")
+                         "noticed", "daycheck", "access", "clearout", "quiet",
+                         "blacklist")
             else "board",
             brief=rest,
             today=wants_today(rest),
@@ -676,6 +680,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         "board", "rollover", "backfill", "index", "rearrange", "probe", "agents",
         "unticked", "archive", "setups", "spread", "unspread", "levinson",
         "words", "tags", "noticed", "daycheck", "access", "clearout", "quiet",
+        "blacklist",
     ):
         # The whole message travels: "rollover general" names which card, and
         # deciding that here would mean teaching this module the board's
@@ -891,6 +896,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **how many are going live thursday** — who the board says goes live
 > on a day, with what they bought and whether their card is ticked. Any day:
 > tomorrow, monday, 09/18
+> @RYTE **blacklist Juliana Hernandez** — tag a client blacklisted in GHL
+> after a chargeback. Shows every contact that matches before anything is
+> written, and never tags on a name it only half-matched
 > @RYTE **quiet** — every channel in the clients server nobody has used in
 > two months, quietest first. Add **3 months** for a tighter list. Reads only;
 > nothing is deleted, and `clearout` is still how anything goes

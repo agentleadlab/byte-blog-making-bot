@@ -892,6 +892,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _clear_out(bot, responder, config, request.brief or "")
                 return
 
+            if request.action == "blacklist":
+                await _blacklist_them(responder, config, request.brief or "")
+                return
+
             if request.action == "golive":
                 await _who_goes_live(responder, config, request.brief or "")
                 return
@@ -2057,6 +2061,85 @@ async def _clear_out(
     await responder.send(
         "\n".join(done + [f"⚠ {one}" for one in trouble])
         or "Nothing happened, which shouldn't be possible — check the channel."
+    )
+
+
+async def _blacklist_them(responder: Responder, config: Config, asked: str) -> None:
+    """Tag a client blacklisted in GHL, after a chargeback.
+
+    The last step of the chargeback run: "ryte we'll go to GHL and find their
+    contact information and put a tag as blacklisted".
+
+    Everything that matched is shown first, and the button names how many it
+    will tag. A blacklist tag on the wrong contact is a paying client who
+    stops getting leads and is never told why, so more than one match is
+    something for a person to look at rather than for RYTE to pick between -
+    and a name that matched nobody is said plainly rather than passed over.
+    """
+    try:
+        found, tag, problems = await asyncio.to_thread(
+            jobs.who_to_blacklist, config, asked
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read GHL\n{exc}"))
+        return
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+    if not found:
+        await responder.send(
+            f"No contact in GHL matches **{' '.join(asked.split())}**. "
+            "Their email address matches where a name might not."
+        )
+        return
+
+    already = [one for one in found if _carries(one, tag)]
+    left = [one for one in found if one not in already]
+    lines = [
+        f"• {jobs._contact_name(one)}"
+        + (f" — *already {tag}*" if one in already else "")
+        for one in found
+    ]
+    if not left:
+        await responder.send(
+            f"All {len(found)} already carry **{tag}**:\n" + "\n".join(lines)
+        )
+        return
+
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Tag {len(left)} as {tag}",
+        emoji="🚫",
+        danger=True,
+    )
+    await responder.send(
+        f"🚫 Tagging **{tag}** in GHL:\n" + "\n".join(lines)
+        + ("\n\n**More than one contact matches that name.** Everything listed "
+           "gets the tag — say an email address instead if that isn't right."
+           if len(left) > 1 else ""),
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        done, trouble = await asyncio.to_thread(jobs.blacklist_them, config, left, tag)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't tag them\n{exc}"))
+        return
+    said = [f"🚫 Tagged **{one}**" for one in done]
+    said += [f"⚠ {one}" for one in trouble]
+    await responder.send("\n".join(said) or "Nothing was tagged.")
+
+
+def _carries(contact: dict, tag: str) -> bool:
+    """Whether this contact already has the tag, however it was capitalised."""
+    wanted = " ".join((tag or "").split()).casefold()
+    return any(
+        " ".join(str(one).split()).casefold() == wanted
+        for one in (contact.get("tags") or [])
     )
 
 

@@ -258,6 +258,10 @@ class Secrets:
     # "YOUTUBE LINKS FOR WEBSITE POSTING". Its link or its id. Needs the
     # documents scope on the token, which Sheets and Drive do not cover.
     segments_doc_id: str | None = None
+    # What a blacklisted client is tagged in GHL. Spelling matters more
+    # than it looks: a tag that differs by a capital is a second tag that
+    # nobody's filters or workflows are watching.
+    ghl_blacklist_tag: str = "blacklisted"
     # The invoices arrive at a different Google account than the one that owns
     # the sheets, and a refresh token belongs to one account. Same OAuth
     # client - that is the app rather than the person - and a second token
@@ -374,6 +378,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),
+                ghl_blacklist_tag=_env("GHL_BLACKLIST_TAG") or "blacklisted",
                 gmail_refresh_token=_env("GMAIL_REFRESH_TOKEN"),
                 gmail_client_id=_env("GMAIL_CLIENT_ID"),
                 gmail_client_secret=_env("GMAIL_CLIENT_SECRET"),

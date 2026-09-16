@@ -4297,6 +4297,83 @@ def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def who_to_blacklist(config: Config, asked: str) -> tuple[list[dict], str, list[str]]:
+    """Contacts in GHL that look like the person named. (found, tag, problems).
+
+    Reads only. `blacklist_them` does the writing.
+
+    Everything that matches comes back, never just the first. A blacklist tag
+    on the wrong contact is a paying client who stops getting leads and is
+    never told why, and the only thing standing between that and a typed name
+    is somebody reading the list before pressing the button.
+    """
+    from .. import ghl, rebuttal as rules_doc
+
+    said = " ".join((asked or "").split())
+    if not said:
+        return [], "", [
+            "Who? `@RYTE blacklist Juliana Hernandez`, or their email address."
+        ]
+    tag = (getattr(config.secrets, "ghl_blacklist_tag", "") or "blacklisted").strip()
+    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
+        return [], tag, ["GHL isn't set up: GHL_API_TOKEN or GHL_LOCATION_ID missing."]
+
+    looks_like_email = "@" in said
+    try:
+        with ghl.GHLClient(
+            config.secrets.ghl_api_token, config.secrets.ghl_location_id
+        ) as asking:
+            found = asking.find_contacts(
+                email=said if looks_like_email else "",
+                name="" if looks_like_email else said,
+            )
+    except ghl.GHLError as exc:
+        return [], tag, [f"Couldn't read GHL: {_short(exc, 200)}"]
+    except Exception as exc:
+        return [], tag, [f"Couldn't read GHL: {_short(exc, 200)}"]
+    return found, tag, []
+
+
+def blacklist_them(config: Config, contacts, tag: str) -> tuple[list[str], list[str]]:
+    """Tag these contacts. (who was tagged, problems).
+
+    Writes. Reversible - the tag comes off from the contact's own page - but
+    it is a live CRM that workflows read, so nothing calls this without
+    somebody having seen the list first.
+    """
+    from .. import ghl
+
+    if not contacts:
+        return [], []
+    done, problems = [], []
+    try:
+        with ghl.GHLClient(
+            config.secrets.ghl_api_token, config.secrets.ghl_location_id
+        ) as writing:
+            for one in contacts:
+                who = _contact_name(one)
+                try:
+                    writing.add_tags(str(one.get("id") or ""), [tag])
+                except Exception as exc:
+                    problems.append(f"Couldn't tag {who}: {_short(exc, 140)}")
+                    continue
+                done.append(who)
+    except Exception as exc:
+        problems.append(f"Couldn't reach GHL: {_short(exc, 140)}")
+    return done, problems
+
+
+def _contact_name(one: dict) -> str:
+    """A contact said the way a person would say it."""
+    whole = " ".join(
+        f"{one.get('firstName') or ''} {one.get('lastName') or ''}".split()
+    ) or str(one.get("contactName") or "").strip()
+    email = str(one.get("email") or "").strip()
+    if whole and email:
+        return f"{whole} ({email})"
+    return whole or email or str(one.get("id") or "somebody")
+
+
 def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
     """Every agent whose card says they go live on this day.
 
