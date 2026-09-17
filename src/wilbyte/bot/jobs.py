@@ -4336,7 +4336,36 @@ def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
-def tracker_headings(config: Config) -> tuple[list[str], str, list[str]]:
+def _which_tab(titles: list, when) -> tuple[str, str]:
+    """(the tab to write in, a problem or ""). One tab a month, or just one.
+
+    The tracker keeps a tab per month - Aug 2026, Sept 2026, Oct 2026 - so a
+    chargeback belongs in the month it was logged. Writing every one into
+    whichever tab came first would pile the year into August.
+
+    A sheet with no month-shaped tab at all is a sheet kept some other way,
+    and its first tab is the answer. A sheet that clearly is kept by month but
+    has none for this one is not guessed at: the row would be filed under the
+    wrong month, which is worse than not filed, because not filed gets
+    noticed.
+    """
+    from .. import rebuttal as rules_doc
+
+    if not titles:
+        return "", "The tracker has no tabs."
+    found = rules_doc.monthly_tab(titles, when)
+    if found:
+        return found, ""
+    monthly = [one for one in titles if rules_doc.looks_monthly(one)]
+    if not monthly:
+        return titles[0], ""
+    return "", (
+        f"The tracker is kept by month and has no tab for {when:%b %Y}. "
+        f"It has: {', '.join(titles)}. Make that month's tab and try again."
+    )
+
+
+def tracker_headings(config: Config, *, day=None) -> tuple[list[str], str, list[str]]:
     """The chargeback tracker's own column headings. (headings, tab, problems).
 
     Reads only. The sheet is somebody's, with their columns in their order and
@@ -4348,12 +4377,16 @@ def tracker_headings(config: Config) -> tuple[list[str], str, list[str]]:
     if not sheet:
         return [], "", []
     sheet = gsheets.sheet_id_in(sheet) or sheet
+    when = day or board_day(config)
     try:
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as reading:
-            tabs = reading.tabs(sheet)
-            tab = str(
-                ((tabs or [{}])[0].get("properties") or {}).get("title") or "Sheet1"
-            )
+            # `tabs` already hands back the properties, so reaching into them
+            # again found nothing and fell back to a tab called "Sheet1" that
+            # does not exist: "Unable to parse range: 'Sheet1'!1:1".
+            titles = [str(one.get("title") or "") for one in reading.tabs(sheet)]
+            tab, trouble = _which_tab(titles, when)
+            if trouble:
+                return [], "", [trouble]
             rows = reading.rows(sheet, f"'{tab}'!1:1")
     except Exception as exc:
         return [], "", [f"Couldn't read the tracker: {_short(exc, 200)}"]

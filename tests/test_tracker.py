@@ -115,14 +115,22 @@ def test_the_row_is_shown_heading_by_heading_before_it_is_written():
 
 
 class Sheet:
-    def __init__(self, headings=None, blows_up=None):
+    """The real tracker's shape: a tab per month."""
+
+    MONTHS = ["Aug 2026", "Sept 2026", "Oct 2026", "Nov 2026", "Dec 2026"]
+
+    def __init__(self, headings=None, blows_up=None, titles=None):
         self.headings = HEADS if headings is None else headings
-        self.blows_up, self.written = blows_up, []
+        self.titles = list(self.MONTHS) if titles is None else list(titles)
+        self.blows_up, self.written, self.asked = blows_up, [], []
 
     def tabs(self, sheet_id):
-        return [{"properties": {"title": "Chargebacks"}}]
+        # `tabs()` hands back the properties already — reaching into them
+        # again is what produced 'Sheet1'!1:1.
+        return [{"title": one, "sheetId": i} for i, one in enumerate(self.titles)]
 
     def rows(self, sheet_id, span):
+        self.asked.append(span)
         if self.blows_up:
             raise self.blows_up
         return [list(self.headings)]
@@ -172,7 +180,9 @@ def _offered(monkeypatch, *, sheet_id="1BSU", press=True, sheet=None):
     config = SimpleNamespace(
         secrets=SimpleNamespace(tracker_sheet_id=sheet_id),
         discord=SimpleNamespace(approval_timeout_seconds=1),
+        schedule=SimpleNamespace(timezone="America/Chicago"),
     )
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 17))
     asyncio.run(bot_client._offer_the_tracker(
         SimpleNamespace(send=send, requester_id=1), config, JULIANA, FOUND,
     ))
@@ -184,9 +194,9 @@ def test_pressing_it_writes_one_row(monkeypatch):
 
     assert len(paper.written) == 1
     tab, rows = paper.written[0]
-    assert tab == "Chargebacks"
+    assert tab == "Sept 2026"
     assert rows[0][1] == "Juliana Hernandez"
-    assert "Added to **Chargebacks**" in said[-1]
+    assert "Added to **Sept 2026**" in said[-1]
 
 
 def test_nothing_is_written_without_the_press(monkeypatch):
@@ -198,7 +208,7 @@ def test_nothing_is_written_without_the_press(monkeypatch):
 def test_the_row_is_shown_before_the_button(monkeypatch):
     _, said = _offered(monkeypatch, press=False)
 
-    assert "One row for **Chargebacks**" in said[0]
+    assert "One row for **Sept 2026**" in said[0]
     assert "Juliana Hernandez" in said[0]
     assert "_(blank)_" in said[0]
 
@@ -259,16 +269,18 @@ def _checked(monkeypatch, *, sheet_id="1BSU", sheet=None):
     paper = sheet or Sheet()
     monkeypatch.setattr(gsheets, "SheetsClient", lambda creds, **kw: paper)
     monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
-    return paper, jobs._check_tracker(
-        SimpleNamespace(secrets=SimpleNamespace(tracker_sheet_id=sheet_id))
-    )
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 9, 17))
+    return paper, jobs._check_tracker(SimpleNamespace(
+        secrets=SimpleNamespace(tracker_sheet_id=sheet_id),
+        schedule=SimpleNamespace(timezone="America/Chicago"),
+    ))
 
 
 def test_the_check_names_the_tab_and_the_columns(monkeypatch):
     _, ((ok, said),) = _checked(monkeypatch)
 
     assert ok is True
-    assert "Chargebacks" in said
+    assert "Sept 2026" in said
     assert "13 column(s)" in said
 
 
@@ -308,3 +320,63 @@ def test_checking_writes_nothing(monkeypatch):
     paper, _ = _checked(monkeypatch)
 
     assert paper.written == []
+
+
+# --------------------------------- one tab a month, and the right one
+
+# Aug 2026, Sept 2026, Oct 2026, Nov 2026, Dec 2026. Writing every chargeback
+# into whichever tab came first would pile the year into August.
+
+
+@pytest.mark.parametrize(
+    "when, tab",
+    [
+        (date(2026, 9, 17), "Sept 2026"),
+        (date(2026, 8, 1), "Aug 2026"),
+        (date(2026, 12, 31), "Dec 2026"),
+    ],
+)
+def test_the_row_goes_in_its_own_month(when, tab):
+    assert jobs._which_tab(Sheet.MONTHS, when) == (tab, "")
+
+
+def test_sept_and_sep_and_september_are_one_month():
+    for said in ("Sep 2026", "Sept 2026", "September 2026", "SEPT 2026"):
+        assert rebuttal.monthly_tab([said], date(2026, 9, 17)) == said
+
+
+def test_the_year_has_to_agree():
+    assert rebuttal.monthly_tab(["Sept 2025"], date(2026, 9, 17)) == ""
+
+
+def test_a_month_with_no_tab_is_not_guessed_at():
+    """Filed under the wrong month is worse than not filed — not filed gets
+    noticed."""
+    tab, trouble = jobs._which_tab(Sheet.MONTHS, date(2027, 1, 5))
+
+    assert tab == ""
+    assert "no tab for Jan 2027" in trouble
+    assert "Aug 2026" in trouble, "it should say what is there"
+
+
+def test_a_sheet_not_kept_by_month_uses_its_first_tab():
+    assert jobs._which_tab(["Chargebacks", "Notes"], date(2026, 9, 17)) == (
+        "Chargebacks", ""
+    )
+
+
+def test_no_tabs_at_all_is_said():
+    assert jobs._which_tab([], date(2026, 9, 17))[1] == "The tracker has no tabs."
+
+
+def test_the_headings_are_read_off_that_month_s_tab(monkeypatch):
+    paper, _ = _offered(monkeypatch, press=False)
+
+    assert paper.asked == ["'Sept 2026'!1:1"]
+
+
+def test_a_missing_month_stops_before_any_row_is_offered(monkeypatch):
+    paper, said = _offered(monkeypatch, sheet=Sheet(titles=["Aug 2026"]))
+
+    assert paper.written == []
+    assert "no tab for Sep 2026" in said[0]

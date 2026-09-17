@@ -678,6 +678,60 @@ TRACKS = (
 NEW_DISPUTE = "Pending"
 
 
+#: How the tracker's tabs are named - "Aug 2026", "Sept 2026", "Oct 2026".
+#: One tab a month, so a chargeback belongs in the month it was logged and
+#: writing every one into whichever tab happens to be first would pile the
+#: year into August.
+_MONTH_TAB = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\b"
+    r"[^0-9]{0,4}(\d{2,4})?",
+    re.IGNORECASE,
+)
+
+_MONTHS_SHORT = (
+    "jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec",
+)
+
+
+def looks_monthly(title: str) -> bool:
+    """Whether this tab is named for a month at all.
+
+    The question "is this sheet kept by month" is not the same as "is this
+    September", and answering the first with a January date says no to every
+    tab in the year.
+    """
+    found = _MONTH_TAB.search(str(title or ""))
+    return bool(found) and found.group(1).casefold()[:3] in _MONTHS_SHORT
+
+
+def monthly_tab(titles, when: date) -> str:
+    """The tab for this month, out of a sheet that has one per month, or "".
+
+    "Sept 2026" and "Sep 2026" and "September 2026" are the same month written
+    three ways, so the first three letters decide it and the year has to agree
+    when the tab says one.
+
+    "" when nothing matches, which is the honest answer: a chargeback written
+    into the wrong month is worse than one nobody wrote down, because the
+    second gets noticed.
+    """
+    wanted = _MONTHS_SHORT[when.month - 1]
+    loose = ""
+    for title in titles or []:
+        found = _MONTH_TAB.search(str(title or ""))
+        if not found or found.group(1).casefold()[:3] != wanted:
+            continue
+        said = found.group(2)
+        if not said:
+            loose = loose or str(title)
+            continue
+        year = int(said) + (2000 if len(said) == 2 else 0)
+        if year == when.year:
+            return str(title)
+    return loose
+
+
 def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
                     status: str = NEW_DISPUTE) -> list[str]:
     """One row, laid out to match the tracker's own columns.
