@@ -3063,7 +3063,7 @@ def _filing(monkeypatch, config, agent, *, silent):
 
     filed = {}
     monkeypatch.setattr(
-        jobs, "read_agents", lambda cfg: ([_plan_for(agent)], {"Done": "d"}, []),
+        jobs, "read_agents", lambda cfg: ([_plan_for(agent)], {"Done": "d"}, [], []),
     )
     monkeypatch.setattr(
         jobs, "apply_agents",
@@ -6203,3 +6203,24 @@ def test_the_warnings_are_not_repeated_under_both(config, monkeypatch):
 
     whole = "\n".join(str(one) for one in said)
     assert whole.count("@tysonlindquist") == 1
+
+
+def test_a_misspelled_title_does_not_stop_everybody_being_filed(config, monkeypatch):
+    """The typo note went into the list that means "the board is not shaped
+    the way the filing needs" — and the handler stops on that list. One card
+    reading AGEND would have filed nobody at all."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(
+        bot_client.jobs, "read_agents",
+        lambda cfg: ([], {"Done": "d"}, [], ['"NEW AGEND- Logan Baker" says AGEND']),
+    )
+
+    heard = Asked()
+    asyncio.run(bot_client._file_agents(heard, config))
+
+    whole = "\n".join(str(one) for one in heard.messages)
+    assert "AGEND" in whole, "the typo was never mentioned"
+    assert "No new agents" in whole, "it stopped instead of carrying on"

@@ -5967,8 +5967,13 @@ def read_agents(config: Config, *, day=None):
             f"The board has no list called {name!r}"
             for name in (agents.PARKED, agents.AUTOMATION, agents.DONE)
             if name not in where
-        ] + typos
-        return plans, where, missing
+        ]
+        # Deliberately not folded into `missing`. That list means the board is
+        # not shaped the way the filing needs and nothing can be done at all,
+        # and the handler stops on it - so a misspelled title would have
+        # stopped every agent on the board from being filed, which is worse
+        # than the typo by a wide margin.
+        return plans, where, missing, typos
     finally:
         client.close()
 

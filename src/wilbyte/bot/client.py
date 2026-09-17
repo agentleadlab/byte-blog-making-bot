@@ -4286,7 +4286,9 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
     from .. import agents as rules
 
     try:
-        plans, where, missing = await asyncio.to_thread(jobs.read_agents, config)
+        plans, where, missing, notes = await asyncio.to_thread(
+            jobs.read_agents, config
+        )
     except PIPELINE_ERRORS as exc:
         if not silent:
             await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
@@ -4295,6 +4297,10 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
     if missing:
         await responder.send(embed=embeds.error("\n".join(missing)))
         return
+    # Said, and then carried on. A title one letter out is worth fixing and is
+    # not a reason to file nobody.
+    for note in notes:
+        await responder.send(f"⚠ {note}")
     if not plans:
         if not silent:
             await responder.send("No new agents waiting in In Que.")
