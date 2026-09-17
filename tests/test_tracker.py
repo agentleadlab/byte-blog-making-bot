@@ -36,7 +36,7 @@ HEADS = [
 def _row(headings=None):
     return rebuttal.row_for_tracker(
         headings or HEADS, JULIANA, FOUND,
-        when=date(2026, 9, 17), status="Rebuttal drafted",
+        when=date(2026, 9, 17),
     )
 
 
@@ -88,13 +88,13 @@ def test_the_columns_can_be_in_any_order():
         ("Last 4", "7543"),
         ("Chargeback Date", "September 12, 2026"),
         ("Lead Type", "25 Aged Final Expense — Texas"),
-        ("Stage", "Rebuttal drafted"),
+        ("Stage", "Pending"),
     ],
 )
 def test_the_headings_are_matched_by_what_they_sound_like(heading, expected):
     """It is somebody's sheet, with their wording."""
     assert rebuttal.row_for_tracker(
-        [heading], JULIANA, FOUND, when=date(2026, 9, 17), status="Rebuttal drafted",
+        [heading], JULIANA, FOUND, when=date(2026, 9, 17),
     ) == [expected]
 
 
@@ -222,3 +222,29 @@ def test_an_empty_first_row_is_said_rather_than_written_into(monkeypatch):
 
     assert paper.written == []
     assert "first row is empty" in said[0]
+
+
+def test_a_new_dispute_is_pending():
+    """"new dispute is always pending" — and Status is a dropdown of Win,
+    Pending and the other one, so anything else fails the sheet's own
+    validation and lands in nobody's filter."""
+    got = dict(zip(HEADS, _row()))
+
+    assert got["Status"] == "Pending"
+    assert rebuttal.NEW_DISPUTE == "Pending"
+
+
+def test_the_outcome_is_still_not_guessed_at():
+    """Pending is the status of a dispute in flight. Win and Lose are what
+    somebody writes when the bank has decided."""
+    got = dict(zip(HEADS, _row()))
+
+    assert got["Outcome"] == ""
+
+
+def test_a_column_called_closer_is_left_for_a_person():
+    """Tarpley, Villegas — who closed the sale is not something RYTE knows
+    from a dispute notice."""
+    assert rebuttal.row_for_tracker(
+        ["Closer"], JULIANA, FOUND, when=date(2026, 9, 17),
+    ) == [""]

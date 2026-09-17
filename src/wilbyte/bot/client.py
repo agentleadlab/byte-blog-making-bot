@@ -1901,7 +1901,7 @@ async def _offer_the_tracker(
         return
 
     row = rules_doc.row_for_tracker(
-        headings, dispute, found, when=_today(config), status="Rebuttal drafted",
+        headings, dispute, found, when=_today(config),
     )
     view = views.ConfirmView(
         requester_id=responder.requester_id,

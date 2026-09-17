@@ -668,8 +668,18 @@ TRACKS = (
 )
 
 
+#: What a new dispute's Status says. "new dispute is always pending".
+#:
+#: The tracker's Status column is a dropdown - Win, Pending, and whatever the
+#: third one is - so this is not a label to be invented. A value outside the
+#: list fails the sheet's own validation, and a row that reads "Rebuttal
+#: drafted" where every other row reads one of three words is a row nobody's
+#: filter counts.
+NEW_DISPUTE = "Pending"
+
+
 def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
-                    status: str = "") -> list[str]:
+                    status: str = NEW_DISPUTE) -> list[str]:
     """One row, laid out to match the tracker's own columns.
 
     A heading this does not recognise gets an empty cell. Guessing which
