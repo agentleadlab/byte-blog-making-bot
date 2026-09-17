@@ -262,9 +262,53 @@ class Agent:
         return "later"
 
 
+# "NEW AGEND- Logan Baker". These titles are typed by hand, forty a week, and
+# a card whose title is one letter out is invisible to everything: not filed,
+# not spread onto a Lead Order card, not chased for a tick, not found by a
+# rebuttal. Logan Baker sat in In Que going live on the Friday with nobody
+# told.
+#
+# So one letter wrong is still an agent card - and it is said out loud, because
+# tolerating it quietly means the board fills up with titles nobody fixes.
+_NEARLY = re.compile(r"^\s*new\s+([a-z]{4,7})\s*[-–—:]+\s*", re.IGNORECASE)
+
+
+def _one_letter_out(said: str, wanted: str = "agent") -> bool:
+    """Whether `said` is `wanted` with a single letter wrong, added or dropped.
+
+    Distance one and no further. "agency" and "agenda" are two away from
+    "agent" and are words somebody might mean, so they stay other things.
+    """
+    said = (said or "").casefold()
+    if said == wanted:
+        return False
+    if abs(len(said) - wanted.__len__()) > 1:
+        return False
+    if len(said) == len(wanted):
+        return sum(a != b for a, b in zip(said, wanted)) == 1
+    longer, shorter = (said, wanted) if len(said) > len(wanted) else (wanted, said)
+    for at in range(len(longer)):
+        if longer[:at] + longer[at + 1:] == shorter:
+            return True
+    return False
+
+
+def misspelled_agent(title: str) -> str:
+    """The misspelling in an agent card's title, or "" when there isn't one.
+
+    "NEW AGEND- Logan Baker" -> "AGEND".
+    """
+    if AGENT_CARD.match(title or ""):
+        return ""
+    found = _NEARLY.match(title or "")
+    if found and _one_letter_out(found.group(1)):
+        return found.group(1)
+    return ""
+
+
 def is_agent_card(title: str) -> bool:
     """Whether a card in In Que is a new agent rather than a daily card."""
-    return bool(AGENT_CARD.match(title or ""))
+    return bool(AGENT_CARD.match(title or "")) or bool(misspelled_agent(title))
 
 
 # How long a *copied* card has to sit untouched before it is taken to be
@@ -339,7 +383,13 @@ def agent_name(title: str) -> str:
     the database rather than by the company she is disputing.
     """
     said = " ".join((title or "").split())
-    return CLIENT_CARD.sub("", said, count=1).lstrip(" -–—:").strip() or said
+    stripped = CLIENT_CARD.sub("", said, count=1)
+    if stripped == said:
+        # "NEW AGEND- Logan Baker": the prefix is misspelled, so the tidy
+        # pattern did not touch it and the whole title would come back as
+        # somebody's name.
+        stripped = _NEARLY.sub("", said, count=1)
+    return stripped.lstrip(" -–—:").strip() or said
 
 
 def is_order_card(title: str) -> bool:

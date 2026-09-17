@@ -5806,10 +5806,20 @@ def read_agents(config: Config, *, day=None):
             card for card in every_card if str(card.get("idList") or "") in waiting
         ]
 
-        plans = []
+        plans, typos = [], []
         for card in waiting_cards:
-            if not agents.is_agent_card(str(card.get("name", ""))):
+            title = str(card.get("name", ""))
+            if not agents.is_agent_card(title):
                 continue
+            # Filed anyway, and said out loud. A title one letter out is
+            # invisible to everything that reads the board, and tolerating it
+            # in silence means it stays wrong and the next one is too.
+            wrong = agents.misspelled_agent(title)
+            if wrong:
+                typos.append(
+                    f"“{title}” says {wrong.upper()} where it should say AGENT. "
+                    "Filed anyway — worth fixing on the card."
+                )
             detail = client.card_detail(str(card.get("id") or ""))
             # One request for the comments and for whether this card was
             # copied from another - see `agents.still_being_written`.
@@ -5840,7 +5850,7 @@ def read_agents(config: Config, *, day=None):
             f"The board has no list called {name!r}"
             for name in (agents.PARKED, agents.AUTOMATION, agents.DONE)
             if name not in where
-        ]
+        ] + typos
         return plans, where, missing
     finally:
         client.close()

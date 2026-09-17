@@ -3784,3 +3784,70 @@ def test_a_line_product_with_no_checklist_is_still_not_own_setup():
 )
 def test_the_real_lines_off_fridays_card(line, expected):
     assert spread_onto(line) == [expected]
+
+
+# ------------------------- a title one letter out is still an agent card
+
+# "NEW AGEND- Logan Baker" sat in In Que going live on the Friday and nothing
+# saw it: not filed, not spread onto a Lead Order card, not chased for a tick,
+# not findable by a rebuttal. These titles are typed by hand, forty a week.
+
+
+@pytest.mark.parametrize(
+    "title, typo",
+    [
+        ("NEW AGEND- Logan Baker", "AGEND"),
+        ("NEW AGNT- Logan Baker", "AGNT"),
+        ("New Agemt - Logan Baker", "AGEMT"),
+        ("New Agennt - Logan Baker", "AGENNT"),
+    ],
+)
+def test_one_letter_wrong_is_still_an_agent_card(title, typo):
+    assert agents.is_agent_card(title) is True
+    assert agents.misspelled_agent(title).upper() == typo
+
+
+def test_the_name_still_comes_off_a_misspelled_title():
+    """Otherwise the whole title comes back as somebody's name."""
+    assert agents.agent_name("NEW AGEND- Logan Baker") == "Logan Baker"
+
+
+def test_a_correct_title_is_not_reported_as_a_typo():
+    assert agents.misspelled_agent("New Agent - Joseph Joucoo") == ""
+    assert agents.misspelled_agent("NEW AGENT- Logan Baker") == ""
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "New Agency - Somebody",
+        "New Agenda - Monday",
+    ],
+)
+def test_two_letters_out_is_a_different_word_somebody_meant(title):
+    """"agency" and "agenda" are words. Tolerating them would make a card
+    about the week's agenda into an agent nobody ordered."""
+    assert agents.misspelled_agent(title) == ""
+    assert agents.is_agent_card(title) is False
+
+
+def test_the_plural_is_taken_as_the_typo_it_almost_always_is():
+    """"New Agents - Logan Baker" is one agent and a stray s, not a card
+    about everybody."""
+    assert agents.is_agent_card("New Agents - Logan Baker") is True
+    assert agents.agent_name("New Agents - Logan Baker") == "Logan Baker"
+
+
+def test_the_sop_page_is_still_not_an_agent():
+    """The dash is what tells a person from a procedure."""
+    assert agents.is_agent_card("New Agent Onboarding SOP") is False
+
+
+def test_an_aged_leads_order_is_untouched_by_any_of_this():
+    assert agents.misspelled_agent("AGED LEAD - Juliana Hernandez") == ""
+    assert agents.is_client_card("AGED LEAD - Juliana Hernandez") is True
+
+
+def test_a_daily_card_is_not_a_misspelled_agent():
+    for title in ("Lead Order 09/17", "💎 General 09/17/26", "Agent Setup Going Live Thursday 09/17"):
+        assert agents.misspelled_agent(title) == "", title
