@@ -1939,3 +1939,145 @@ def test_the_example_cannot_become_the_dispute():
     )
 
     assert fuller is None
+
+
+# ----------------------- the screenshot is on the message, not in the sentence
+
+
+def test_the_screenshots_come_off_the_message_being_replied_to(monkeypatch):
+    """Franklin posted the payment screenshot, then replied to it with the
+    reason code. The screenshot's own message had no text, so there were no
+    facts to read out of it, so it was skipped - and the screenshot went with
+    it. The rebuttal then named the gateway record as still needed while it
+    was attached one message up."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    class Shot:
+        filename = "payment.png"
+        size = 1000
+
+        async def read(self):
+            return b"png"
+
+    class Carrying:
+        content = ""
+        attachments = [Shot()]
+        jump_url = ""
+
+        class author:
+            bot = False
+
+    class Message:
+        attachments: list = []
+        reference = Carrying()
+
+        class channel:
+            @staticmethod
+            async def history(limit=0, before=None):
+                return
+                yield
+
+    Message.reference.resolved = Carrying()
+
+    seen = {}
+
+    def stop(config, dispute):
+        raise TypeError("far enough")
+
+    def sorted_out(config, exhibits):
+        seen["exhibits"] = [one.name for one in exhibits]
+        return exhibits
+
+    monkeypatch.setattr(jobs, "rebuttal_evidence", stop)
+    monkeypatch.setattr(jobs, "sort_exhibits", sorted_out)
+    monkeypatch.setattr(bot_client.embeds, "error", lambda text, **kw: text)
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            return None
+
+    class Config:
+        class secrets:
+            anthropic_api_key = "x"
+
+    asyncio.run(bot_client._rebuttal(
+        Responder(), Config(), Message(),
+        "code: 37\nCustomer Name: Juliana Hernandez\nDispute Amount: $129.37\n"
+        "Transaction Date: 8/28/2026",
+    ))
+
+    assert seen["exhibits"] == ["payment.png"]
+
+
+# ------------------------------- and only about the dispute being answered
+
+
+def test_only_a_message_about_the_same_dispute_fills_anything():
+    """Looking a hundred messages back reaches other people's chargebacks."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    hers = rules.read_facts(HER_FLAG_CARD)
+    somebody_else = rules.read_facts(
+        "Customer Name: Jose Zambrano\nCustomer Email: jz@example.com\n"
+        "Dispute Amount: $1,552.50\nTransaction Date: 6/15/2026"
+    )
+
+    assert not bot_client.same_dispute(hers, somebody_else)
+
+
+def test_the_same_dispute_written_two_ways_is_still_the_same_dispute():
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    hers = rules.read_facts(HER_FLAG_CARD)
+    again = rules.read_facts(HER_NOTICE)
+
+    assert bot_client.same_dispute(hers, again)
+    assert bot_client._as_written("$ 129.37") == bot_client._as_written("$129.37")
+
+
+def test_a_message_with_nothing_identifying_fills_nothing():
+    """"Paid" on its own agrees with everything and identifies nothing."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    assert not bot_client.same_dispute(
+        rules.read_facts(HER_FLAG_CARD), rules.read_facts("Card Number: 9999")
+    )
+
+
+def test_the_card_is_not_read_as_telling_two_disputes_apart():
+    """A notice says "Card Number (Last 4): 7543"; a portal says "ending in
+    7543". Those are one card, and one dispute."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    hers = rules.read_facts(HER_FLAG_CARD)
+    hers.card = "ending in 7543"
+
+    assert bot_client.same_dispute(hers, rules.read_facts(HER_NOTICE))
+
+
+def test_another_customers_notice_cannot_fill_this_ones_blanks():
+    """The check exists; this is it being used. Looking a hundred messages
+    back through a shared dispute channel reaches other people's chargebacks,
+    and the fields being filled are the ones nobody would notice were wrong."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    hers = rules.read_facts(HER_FLAG_CARD)
+    bot_client._fill_the_blanks(rules, hers, _said(
+        "Customer Name: Jose Zambrano\nCustomer Email: jz@example.com\n"
+        "Card Number: ending in 2610\nDispute Amount: $1,552.50\n"
+        "Transaction Date: 6/15/2026",
+        by=_Person,
+    ))
+
+    assert hers.customer_email == ""
+    assert hers.card == ""

@@ -1544,6 +1544,45 @@ def worth_reading(older) -> bool:
     return True
 
 
+#: Which fields identify a dispute. Two messages that carry any of these and
+#: agree on all of them are about the same one.
+#:
+#: Not the card, the email or the MID, which are the fields being filled in
+#: and are the ones written inconsistently: a notice says "Card Number (Last
+#: 4): 7543" where a portal says "ending in 7543", and reading those as two
+#: different disputes would stop the filling this exists to allow.
+_IDENTIFYING = ("arn", "customer_name", "amount", "transaction_date")
+
+
+def _as_written(said: str) -> str:
+    """A field flattened for comparing: "$ 129.37" and "$129.37" are one sum."""
+    return re.sub(r"[^a-z0-9]", "", str(said or "").casefold())
+
+
+def same_dispute(dispute, found) -> bool:
+    """Whether an older message is about the dispute being answered.
+
+    At least one identifying field in common, and no identifying field they
+    disagree on. A different customer, a different amount or a different ARN
+    is a different dispute, and a channel that has held two of them will hold
+    more.
+
+    This is what makes it safe to look further back. Without it, widening the
+    search to find Juliana Hernandez's email four dozen messages up would also
+    let the dispute before hers fill in her card number.
+    """
+    agreed = 0
+    for name in _IDENTIFYING:
+        mine = _as_written(getattr(dispute, name, ""))
+        theirs = _as_written(getattr(found, name, ""))
+        if not mine or not theirs:
+            continue
+        if mine != theirs:
+            return False
+        agreed += 1
+    return agreed > 0
+
+
 def _fill_the_blanks(rules_doc, dispute, older) -> None:
     """Fill a dispute's empty fields from an older message. Never overwrite.
 
@@ -1558,17 +1597,25 @@ def _fill_the_blanks(rules_doc, dispute, older) -> None:
     text = (getattr(older, "content", "") or "").strip()
     said, _ = rules_doc.split_payment(text)
     found = rules_doc.read_facts(said)
+    if not same_dispute(dispute, found):
+        return
     for name, _pattern in rules_doc.FIELDS:
         if not getattr(dispute, name, "") and getattr(found, name, ""):
             setattr(dispute, name, getattr(found, name))
 
 
-async def _said_before(message, *, howmany: int = 30):
+async def _said_before(message, *, howmany: int = 100):
     """The messages above this one, newest first - RYTE's own included.
 
     Unlike `_the_one_before`, this one keeps RYTE's messages: the chargeback
     flag card is RYTE's, it carries every fact off the notice, and it is
     usually the last thing said before somebody asks for the rebuttal.
+
+    A hundred rather than thirty, which is the same one request to Discord.
+    Thirty did not reach back past an afternoon of RYTE's own output to the
+    notice itself, and the rebuttal came out without the cardholder's email
+    or her card. Reaching further is only safe because what is read back has
+    to be about the same dispute.
     """
     try:
         async for older in message.channel.history(limit=howmany, before=message):
@@ -1861,15 +1908,24 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     said, paid_with = rules_doc.split_payment(said)
     dispute = rules_doc.read_facts(said)
     from_elsewhere = None
+    replied = await _replied_to(message)
     if dispute.missing():
-        replied = await _replied_to(message)
         fuller = _fuller_dispute(rules_doc, dispute, said, paid_with, replied)
         if fuller is not None:
             dispute, said, paid_with = fuller
             from_elsewhere = replied
-            # The screenshots were attached to that message too.
-            if not getattr(message, "attachments", None):
-                message = replied
+
+    # The exhibits come off whichever message actually carries them, and that
+    # is a separate question from where the facts came from. Franklin posted
+    # the payment screenshot, then replied to it with the reason code. The
+    # screenshot's own message had no text, so there were no facts to read out
+    # of it, so it was skipped - and the screenshot was skipped with it. The
+    # rebuttal then named the gateway record as still needed while it was
+    # sitting one message up, attached to the thing being answered.
+    if not getattr(message, "attachments", None) and getattr(
+        replied, "attachments", None
+    ):
+        message = replied
 
     # Nobody replies to the notice every time. "@RYTE code: 37 - No Cardholder
     # Authorization rebuttal", typed fresh in the dispute channel with the
