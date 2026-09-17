@@ -1421,3 +1421,70 @@ def test_a_reason_code_line_is_not_a_customer_name():
 
     assert rules.named_in("code: 37 — No Cardholder Authorization rebuttal") == ""
     assert rules.named_in("rebuttal Jose Zambrano") == "Jose Zambrano"
+
+
+# ----------------------------------- the gaps Juliana's first rebuttal didn't name
+
+
+def test_a_who_paid_code_asks_for_the_gateway_record():
+    """Juliana's rebuttal was built under code 37 and named one gap - texts.
+    It argued who paid from the invoice alone, so the acquirer was asked to
+    take our word for the AVS match and the billing name captured at payment,
+    neither of which was in front of them."""
+    from wilbyte import rebuttal as rules
+
+    holes = rules.what_is_missing(
+        rules.Gathered(), [], rules.read_facts("code: 37\nCustomer Name: Juliana")
+    )
+
+    assert any("authorisation record" in one for one in holes), holes
+
+
+def test_a_pasted_payment_record_closes_that_gap():
+    from wilbyte import rebuttal as rules
+
+    found = rules.Gathered()
+    found.payment = "AVS: Y  Customer initiated: yes  Approval: 004411"
+    holes = rules.what_is_missing(found, [], rules.read_facts("code: 37"))
+
+    assert not any("authorisation record" in one for one in holes), holes
+
+
+def test_a_not_as_described_code_does_not_ask_for_it():
+    """On 13.3 the authorisation data is beside the point, and a gap named
+    that does not matter is one that gets ignored along with the ones that do."""
+    from wilbyte import rebuttal as rules
+
+    holes = rules.what_is_missing(rules.Gathered(), [], rules.read_facts("code: 13.3"))
+
+    assert not any("authorisation record" in one for one in holes), holes
+
+
+def test_no_dispute_date_is_named_because_the_timeline_loses_a_line():
+    """Juliana's notice carried no dispute date, so the timeline ended at the
+    charge and nobody was told why."""
+    from wilbyte import rebuttal as rules
+
+    holes = rules.what_is_missing(
+        rules.Gathered(), [], rules.read_facts("Transaction Date: 8/28/2026")
+    )
+
+    assert any("date the chargeback was filed" in one for one in holes), holes
+
+
+def test_a_dispute_date_that_is_there_is_not_asked_for():
+    from wilbyte import rebuttal as rules
+
+    holes = rules.what_is_missing(
+        rules.Gathered(), [], rules.read_facts("Dispute Date: 9/8/2026")
+    )
+
+    assert not any("date the chargeback was filed" in one for one in holes), holes
+
+
+def test_the_gaps_are_still_named_with_no_dispute_at_all():
+    """`what_is_missing` is called from two places and the dispute is new to
+    it. Neither caller may break for want of it."""
+    from wilbyte import rebuttal as rules
+
+    assert rules.what_is_missing(rules.Gathered(), []) is not None

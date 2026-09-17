@@ -119,7 +119,7 @@ def build(
     _title(doc, dispute, Pt, RGBColor, ALIGN)
     _facts(doc, dispute, Pt, RGBColor)
 
-    holes = rebuttal.what_is_missing(found, exhibits)
+    holes = rebuttal.what_is_missing(found, exhibits, dispute)
     if holes:
         _holes(doc, holes, Pt, RGBColor)
 

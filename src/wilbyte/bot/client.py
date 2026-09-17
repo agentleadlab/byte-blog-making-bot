@@ -1923,7 +1923,7 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
             "Attachments filed as: "
             + ", ".join(f"{one.name} → {one.kind}" for one in exhibits)
         )
-    still = rules_doc.what_is_missing(found, exhibits)
+    still = rules_doc.what_is_missing(found, exhibits, dispute)
     if still:
         note.append(f"⚠ Still needed ({len(still)}) — it's listed at the top of the file.")
     if skipped:

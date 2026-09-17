@@ -207,6 +207,11 @@ CODES = {
     ),
 }
 
+#: The codes that ask WHO paid rather than what was sold. On these the
+#: gateway's own authorisation record is the exhibit that answers the dispute,
+#: so its absence is worth saying out loud rather than writing around.
+WHO_PAID = ("37", "10.4", "4837")
+
 # Not part of a longer number. "Dispute Amount: $ 129.37" ends in the digits
 # of reason code 37, and reading it as one would aim the entire document at
 # the wrong question while looking perfectly correct.
@@ -836,7 +841,9 @@ def demand(one: Dispute) -> str:
     )
 
 
-def what_is_missing(found: Gathered, exhibits: list) -> list[str]:
+def what_is_missing(
+    found: Gathered, exhibits: list, dispute: "Dispute | None" = None
+) -> list[str]:
     """What a person still has to supply, said plainly at the top of the file.
 
     A gap named is a gap somebody fills. A gap written around is one that
@@ -844,6 +851,26 @@ def what_is_missing(found: Gathered, exhibits: list) -> list[str]:
     """
     kinds = {one.kind for one in exhibits}
     holes = list(found.holes)
+    code = dispute.code if dispute is not None else ""
+    # On a code that asks who paid, the gateway's authorisation record is the
+    # exhibit that answers it. Juliana Hernandez's rebuttal argued who paid
+    # from the invoice alone and named one gap, which was about texts - the
+    # acquirer was being asked to take our word for the AVS match and the
+    # billing name, neither of which was in front of them.
+    if code in WHO_PAID and "payment" not in kinds and not found.payment:
+        holes.append(
+            "The payment gateway's own authorisation record — AVS result, "
+            "billing name captured at payment, whether the charge was "
+            "customer-initiated, the issuer's approval. Paste it under a "
+            f"PAYMENT: line or attach a screenshot of the portal. On code "
+            f"{code} this is the exhibit that answers the dispute."
+        )
+    if dispute is not None and not dispute.dispute_date:
+        holes.append(
+            "The date the chargeback was filed. Without it the timeline ends "
+            "at the charge, and how long they waited before disputing is part "
+            "of the answer."
+        )
     if "contract" not in kinds and not found.contract and not found.aged:
         holes.append(
             "The signed contract. Download the completed PDF from PandaDoc and "
