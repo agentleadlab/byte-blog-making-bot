@@ -50,7 +50,7 @@ def test_each_column_gets_what_its_heading_asked_for():
     assert got["Card"] == "7543"
     assert got["Reason Code"] == "37 — No Cardholder Authorization"
     assert got["Product"] == "25 Aged Final Expense — Texas"
-    assert got["Date Logged"] == "2026-09-17"
+    assert got["Date Logged"] == "9/17/2026"
 
 
 def test_a_column_ryte_does_not_know_is_left_blank():
@@ -86,7 +86,7 @@ def test_the_columns_can_be_in_any_order():
         ("Disputed Amount", "$129.37"),
         ("Acquirer Reference", "72307626241809574244780"),
         ("Last 4", "7543"),
-        ("Chargeback Date", "September 12, 2026"),
+        ("Chargeback Date", "9/12/2026"),
         ("Lead Type", "25 Aged Final Expense — Texas"),
         ("Stage", "Pending"),
     ],
@@ -123,6 +123,7 @@ class Sheet:
         self.headings = HEADS if headings is None else headings
         self.titles = list(self.MONTHS) if titles is None else list(titles)
         self.blows_up, self.written, self.asked = blows_up, [], []
+        self.restyled = []
 
     def tabs(self, sheet_id):
         # `tabs()` hands back the properties already — reaching into them
@@ -138,6 +139,9 @@ class Sheet:
     def put(self, sheet_id, span, rows):
         self.written.append((span, rows))
         return span
+
+    def match_row_above(self, sheet_id, tab_id, row, wide):
+        self.restyled.append((tab_id, row, wide))
 
     def append(self, sheet_id, tab, rows):  # pragma: no cover - must not run
         raise AssertionError(
@@ -432,3 +436,55 @@ def test_a_missing_month_stops_before_any_row_is_offered(monkeypatch):
 
     assert paper.written == []
     assert "no tab for Sep 2026" in said[0]
+
+
+# ------------------------------------- the row has to look like the sheet's own
+
+
+def test_dates_are_written_so_the_sheet_stores_them_as_dates():
+    """"August 28, 2026" typed into a cell stays a string: it sorts
+    alphabetically, no date filter sees it, and it sits in a column of real
+    dates in a different shape from every one of them."""
+    got = dict(zip(HEADS, _row()))
+
+    assert got["Transaction Date"] == "8/28/2026"
+    assert got["Dispute Date"] == "9/12/2026"
+    assert got["Date Logged"] == "9/17/2026"
+
+
+def test_a_date_that_cannot_be_read_is_kept_as_it_was_written():
+    """Losing a date RYTE cannot parse is worse than writing it as text."""
+    assert rebuttal.sheet_date("sometime in August") == "sometime in August"
+    assert rebuttal.sheet_date("") == ""
+
+
+def test_the_written_row_is_given_the_look_of_the_one_above(monkeypatch):
+    """The sheet is kept in Arial 12. A row in Google's default Calibri 11
+    reads as an outsider's row before anybody reads what is in it."""
+    paper, _ = _offered(monkeypatch)
+
+    assert paper.restyled == [(1, 2, 13)]
+
+
+def test_the_heading_rows_clothes_are_never_copied_down():
+    """The row above row 2 is the heading. A dispute in bold blue is the older
+    bug `restyle` was written for."""
+    from wilbyte import gsheets
+
+    asked = []
+
+    class Client(gsheets.SheetsClient):
+        def __init__(self):
+            pass
+
+        def _request(self, method, path, **kwargs):
+            asked.append(path)
+            return {}
+
+    Client().match_row_above("sid", 3, 2, 5)
+
+    assert asked == []
+
+    Client().match_row_above("sid", 3, 3, 5)
+
+    assert len(asked) == 1

@@ -1574,6 +1574,12 @@ def test_the_tracker_write_says_which_row_it_landed_on():
             written["span"] = span
             return span
 
+        def tabs(self, sheet):
+            return [{"title": "Sept 2026", "sheetId": 7}]
+
+        def match_row_above(self, sheet, tab_id, row, wide):
+            written["styled"] = (tab_id, row, wide)
+
         def append(self, *a, **kw):  # pragma: no cover - must not be used
             raise AssertionError("append picks the wrong table on this sheet")
 
@@ -1592,6 +1598,7 @@ def test_the_tracker_write_says_which_row_it_landed_on():
     assert not trouble, trouble
     assert written["span"] == "'Sept 2026'!A3:E3"
     assert where == "Sept 2026, row 3"
+    assert written["styled"] == (7, 3, 5)
 
 
 # ------------------------------- what Juliana's first draft got wrong in prose

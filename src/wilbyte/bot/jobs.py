@@ -4457,6 +4457,14 @@ def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as writing:
             where, at = _a_free_row(writing, sheet, tab, len(row))
             writing.put(sheet, where, [[str(one) for one in row]])
+            # The look of the sheet is the sheet owner's, not Google's.
+            tab_id = next(
+                (one.get("sheetId") for one in writing.tabs(sheet)
+                 if str(one.get("title") or "") == tab),
+                None,
+            )
+            if tab_id is not None:
+                writing.match_row_above(sheet, int(tab_id), at, len(row))
     except Exception as exc:
         return "", [f"Couldn't write to the tracker: {_short(exc, 200)}"]
     return f"{tab}, row {at}", []

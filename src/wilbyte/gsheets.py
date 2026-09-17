@@ -278,6 +278,43 @@ class SheetsClient:
         found = (made.get("properties") or {}).get("sheetId")
         return int(found) if found is not None else None
 
+    def match_row_above(
+        self, sheet_id: str, tab_id: int, row: int, wide: int
+    ) -> None:
+        """Give a written row the look of the one above it.
+
+        PASTE_FORMAT, so the values just written are untouched. It brings the
+        font, the size, the borders, the number format and the dropdown - and
+        a row that arrives in Google's default Calibri 11, with its date as
+        left-aligned text, in a sheet somebody keeps in Arial 12, reads as an
+        outsider's row before anybody has read what is in it.
+
+        Never from row 1: the row above the first written one is the heading,
+        and a dispute wearing the heading's clothes is the older bug that
+        `restyle` exists for.
+        """
+        if tab_id is None or row < 3 or wide < 1:
+            return
+        self._request(
+            "POST",
+            f"/{sheet_id}:batchUpdate",
+            json={"requests": [{
+                "copyPaste": {
+                    "source": {
+                        "sheetId": tab_id,
+                        "startRowIndex": row - 2, "endRowIndex": row - 1,
+                        "startColumnIndex": 0, "endColumnIndex": wide,
+                    },
+                    "destination": {
+                        "sheetId": tab_id,
+                        "startRowIndex": row - 1, "endRowIndex": row,
+                        "startColumnIndex": 0, "endColumnIndex": wide,
+                    },
+                    "pasteType": "PASTE_FORMAT",
+                }
+            }]},
+        )
+
     def restyle(
         self, sheet_id: str, tab_id: int, first: int, last: int, *, bold: bool
     ) -> None:

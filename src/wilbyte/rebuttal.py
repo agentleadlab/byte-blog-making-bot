@@ -784,6 +784,23 @@ def monthly_tab(titles, when: date) -> str:
     return loose
 
 
+def sheet_date(said) -> str:
+    """A date written so a spreadsheet stores it as a date, not as text.
+
+    "August 28, 2026" is prose. Typed into a cell it stays a string: it sorts
+    alphabetically, no date filter sees it, and it sits in a column of real
+    dates in a different shape from all of them. "8/28/2026" is parsed and
+    stored as the day itself.
+
+    Anything unreadable comes back as it was written rather than as nothing -
+    a date RYTE cannot parse is still a date somebody can read.
+    """
+    found = said if isinstance(said, date) else as_date(said)
+    if found is None:
+        return " ".join(str(said or "").split())
+    return f"{found.month}/{found.day}/{found.year}"
+
+
 def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
                     status: str = NEW_DISPUTE) -> list[str]:
     """One row, laid out to match the tracker's own columns.
@@ -796,14 +813,14 @@ def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
     code = one.code
     named = what_the_code_means(code)
     have = {
-        "logged": f"{when:%Y-%m-%d}",
+        "logged": sheet_date(when),
         "customer_name": one.customer_name,
         "customer_email": one.customer_email,
         "amount": one.amount,
         "arn": one.arn,
         "card": one.card,
-        "transaction_date": spelled(one.transaction_date),
-        "dispute_date": spelled(one.dispute_date),
+        "transaction_date": sheet_date(one.transaction_date),
+        "dispute_date": sheet_date(one.dispute_date),
         "code": f"{code} — {named[0]}" if named else (code or one.reason),
         "product": found.product,
         "status": status,
