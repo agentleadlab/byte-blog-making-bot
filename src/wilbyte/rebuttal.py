@@ -411,6 +411,10 @@ class Gathered:
     #: and none of it is reachable by any API we have - and against a
     #: no-authorisation code it is the whole argument.
     payment: str = ""
+    #: What they bought, for the tracker's own column.
+    product: str = ""
+    #: What the rebuttal file was called, so the row points at it.
+    rebuttal_name: str = ""
     timeline: list = field(default_factory=list)
     holes: list = field(default_factory=list)
 
@@ -642,6 +646,71 @@ def aimed_at(one: Dispute) -> str:
         "different question, however true, reads to the issuer as not having "
         "answered this one."
     )
+
+
+#: What each column of the tracker wants, by what its heading sounds like.
+#: The sheet is somebody's and its columns are in their order with their
+#: wording, so the row is built against the headings that are actually there
+#: rather than against a shape assumed here.
+TRACKS = (
+    ("logged", r"date\s*(?:logged|added|filed|entered)|^date$|log\s*date"),
+    ("customer_name", r"customer|client|cardholder|\bname\b|agent"),
+    ("customer_email", r"e-?mail"),
+    ("amount", r"amount|disputed|\bsum\b|\btotal\b|\$"),
+    ("arn", r"\barn\b|acquirer|reference"),
+    ("card", r"card\s*(?:number|no|ending)|last\s*4|\bcard\b"),
+    ("transaction_date", r"transaction|sale\s*date|charge\s*date|paid"),
+    ("dispute_date", r"dispute\s*date|chargeback\s*date|case\s*date|received"),
+    ("code", r"\bcode\b|reason"),
+    ("product", r"product|package|lead\s*type|what\s*(?:they|was)"),
+    ("status", r"status|stage|progress"),
+    ("rebuttal", r"rebuttal|response|document|evidence|submitted"),
+)
+
+
+def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
+                    status: str = "") -> list[str]:
+    """One row, laid out to match the tracker's own columns.
+
+    A heading this does not recognise gets an empty cell. Guessing which
+    column an unknown heading wants is how an outcome column - the one filled
+    in weeks later when the bank decides - gets written over on the day the
+    dispute lands.
+    """
+    code = one.code
+    named = what_the_code_means(code)
+    have = {
+        "logged": f"{when:%Y-%m-%d}",
+        "customer_name": one.customer_name,
+        "customer_email": one.customer_email,
+        "amount": one.amount,
+        "arn": one.arn,
+        "card": one.card,
+        "transaction_date": spelled(one.transaction_date),
+        "dispute_date": spelled(one.dispute_date),
+        "code": f"{code} — {named[0]}" if named else (code or one.reason),
+        "product": found.product,
+        "status": status,
+        "rebuttal": found.rebuttal_name,
+    }
+    row = []
+    for heading in headings:
+        said = " ".join(str(heading or "").split()).casefold()
+        row.append(next(
+            (have.get(name, "") for name, pattern in TRACKS
+             if said and re.search(pattern, said, re.IGNORECASE)),
+            "",
+        ))
+    return row
+
+
+def describe_row(headings, row) -> str:
+    """The row as a person would check it, heading by heading."""
+    lines = []
+    for heading, cell in zip(headings, row):
+        said = " ".join(str(heading or "").split())
+        lines.append(f"• **{said or '(unnamed)'}** — {cell or '_(blank)_'}")
+    return "\n".join(lines)
 
 
 def demand(one: Dispute) -> str:

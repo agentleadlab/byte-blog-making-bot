@@ -4297,6 +4297,57 @@ def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         client.close()
 
 
+def tracker_headings(config: Config) -> tuple[list[str], str, list[str]]:
+    """The chargeback tracker's own column headings. (headings, tab, problems).
+
+    Reads only. The sheet is somebody's, with their columns in their order and
+    their wording, so the row is built against what is actually there.
+    """
+    from .. import gsheets
+
+    sheet = (getattr(config.secrets, "tracker_sheet_id", "") or "").strip()
+    if not sheet:
+        return [], "", []
+    sheet = gsheets.sheet_id_in(sheet) or sheet
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as reading:
+            tabs = reading.tabs(sheet)
+            tab = str(
+                ((tabs or [{}])[0].get("properties") or {}).get("title") or "Sheet1"
+            )
+            rows = reading.rows(sheet, f"'{tab}'!1:1")
+    except Exception as exc:
+        return [], "", [f"Couldn't read the tracker: {_short(exc, 200)}"]
+
+    headings = [str(one).strip() for one in (rows[0] if rows else [])]
+    if not headings:
+        return [], tab, [
+            "The tracker's first row is empty, so there are no columns to fill."
+        ]
+    return headings, tab, []
+
+
+def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str]]:
+    """Append one row to the tracker. (what it was added to, problems).
+
+    Writes. Appends only - it never edits a row somebody has already filled
+    in, because the column that gets filled in weeks later is the outcome and
+    that is not RYTE's to touch.
+    """
+    from .. import gsheets
+
+    sheet = (getattr(config.secrets, "tracker_sheet_id", "") or "").strip()
+    if not sheet:
+        return "", ["No TRACKER_SHEET_ID in .env."]
+    sheet = gsheets.sheet_id_in(sheet) or sheet
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as writing:
+            writing.append(sheet, tab, [[str(one) for one in row]])
+    except Exception as exc:
+        return "", [f"Couldn't write to the tracker: {_short(exc, 200)}"]
+    return tab, []
+
+
 def who_to_blacklist(config: Config, asked: str) -> tuple[list[dict], str, list[str]]:
     """Contacts in GHL that look like the person named. (found, tag, problems).
 

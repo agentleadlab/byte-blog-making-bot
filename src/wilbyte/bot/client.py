@@ -1869,6 +1869,65 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     note.append("_Read it before it goes anywhere. Nothing in it is invented, but "
                 "nothing in it has been checked by a person either._")
     await responder.send("\n".join(note), file=discord.File(str(path)))
+    found.rebuttal_name = path.name
+    await _offer_the_tracker(responder, config, dispute, found)
+
+
+async def _offer_the_tracker(
+    responder: Responder, config: Config, dispute, found
+) -> None:
+    """The last step: one row in the chargeback tracker.
+
+    The row is laid out against the tracker's own headings and shown in full
+    before anything is written - a column RYTE does not recognise stays blank
+    rather than being guessed at, and the one that gets filled in weeks later
+    when the bank decides is not RYTE's to touch.
+
+    Silent when there is no tracker configured. The rebuttal worked before
+    there was one.
+    """
+    from .. import rebuttal as rules_doc
+
+    try:
+        headings, tab, problems = await asyncio.to_thread(
+            jobs.tracker_headings, config
+        )
+    except PIPELINE_ERRORS as exc:
+        headings, tab, problems = [], "", [f"Couldn't read the tracker: {exc}"]
+    if problems:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+        return
+    if not headings:
+        return
+
+    row = rules_doc.row_for_tracker(
+        headings, dispute, found, when=_today(config), status="Rebuttal drafted",
+    )
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add to {tab}",
+        emoji="🧾",
+    )
+    await responder.send(
+        f"🧾 One row for **{tab}**:\n"
+        + rules_doc.describe_row(headings, row)
+        + "\n-# Blank means RYTE doesn't know that column — fill those in yourself.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+
+    try:
+        where, trouble = await asyncio.to_thread(
+            jobs.track_chargeback, config, tab, row
+        )
+    except PIPELINE_ERRORS as exc:
+        where, trouble = "", [f"Couldn't write to the tracker: {exc}"]
+    await responder.send(
+        f"🧾 Added to **{where}**." if where else "⚠ " + "\n⚠ ".join(trouble)
+    )
 
 
 def _rebuttal_name(dispute) -> str:
