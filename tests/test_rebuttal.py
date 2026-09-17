@@ -1634,3 +1634,213 @@ def test_our_own_records_are_not_described_as_thin():
     said = _prompt()
 
     assert "never how much of it there is" in said
+
+
+# ------------------------------------- the document's shape, against his own
+
+
+def test_the_subtitle_names_the_code_being_answered():
+    """"Response to Cardholder Dispute" says nothing the title has not. The
+    acquirer's reader sorts these by code."""
+    from wilbyte import rebuttal as rules
+
+    assert rules.answering(rules.read_facts("code: 37")) == (
+        "AGENT LEAD LAB — Response to Reason Code 37, No Cardholder Authorization"
+    )
+
+
+def test_an_unknown_code_does_not_get_invented_into_the_subtitle():
+    from wilbyte import rebuttal as rules
+
+    assert rules.answering(rules.read_facts("Customer Name: X")).endswith(
+        "Response to Cardholder Dispute"
+    )
+
+
+def test_the_fact_table_says_what_was_bought():
+    """A reader deciding a dispute wants the product in the first ten seconds,
+    not in paragraph four of the summary."""
+    from wilbyte import rebuttal as rules
+
+    rows = dict(rules.header(
+        rules.read_facts("Customer Name: X\nDispute Amount: $1"),
+        rules.Gathered(product="25 Aged Final Expense — Texas"),
+    ))
+
+    assert rows["Product"] == "25 Aged Final Expense — Texas"
+
+
+def test_the_fact_table_still_builds_with_nothing_gathered():
+    """`header` is called from two places and `found` is new to it."""
+    from wilbyte import rebuttal as rules
+
+    assert rules.header(rules.read_facts("Customer Name: X"))
+
+
+def test_a_set_of_fields_is_written_as_a_table_not_a_sentence():
+    """Franklin's own rebuttal for this dispute is four tables, and they are
+    why it can be checked field by field in the time an acquirer has."""
+    said = _prompt()
+
+    assert "TABLE: Field | Value | What it means" in said
+    assert "first line without one ends the table" in said
+
+
+def test_a_table_is_read_back_out_of_the_writing():
+    from wilbyte import rebuttaldoc
+
+    assert rebuttaldoc._TABLE.match("TABLE: Field | Value | What it means")
+    assert rebuttaldoc._cells("Initiated By | **Customer** | started it") == [
+        "Initiated By", "Customer", "started it",
+    ]
+
+
+def test_a_numbered_column_is_not_given_two_inches_of_white_space():
+    """"# | Fact" has one digit in its first column and a sentence squeezed
+    into its second."""
+    from wilbyte import rebuttaldoc
+
+    numbered = rebuttaldoc._column_widths(["#", "Fact"], [["1", "..."]], 2)
+    labelled = rebuttaldoc._column_widths(
+        ["Field", "Value"], [["Initiated By", "Customer"]], 2
+    )
+
+    assert numbered[0] == 0.55
+    assert sum(numbered) == pytest.approx(sum(labelled))
+
+
+def test_the_tables_reach_the_finished_file(tmp_path):
+    """Written and rendered are two different things, and the prompt has been
+    right while the document was wrong before."""
+    from wilbyte import rebuttal as rules, rebuttaldoc
+    import docx
+
+    said = {"body": """SUMMARY:
+She paid it herself.
+
+ARGUMENT: Payment authorization data (Exhibit B)
+The gateway record establishes who paid.
+TABLE: Field | Value | What it means
+Initiated By | Customer | The cardholder started the payment.
+AVS Response | Y | Full match on the billing address.
+
+CONCLUSION:
+The record answers the code.
+TABLE: # | Fact
+1 | Customer-initiated, AVS Y.
+2 | Paid through a link she clicked.
+""", "messages": ""}
+
+    where = tmp_path / "r.docx"
+    rebuttaldoc.build(
+        rules.read_facts("Customer Name: Juliana Hernandez\nDispute Amount: $129.37\n"
+                         "Transaction Date: 8/28/2026\ncode: 37"),
+        said, rules.Gathered(), [], into=where,
+    )
+    made = docx.Document(str(where))
+    shapes = [[c.text.strip() for c in row.cells] for t in made.tables for row in t.rows]
+
+    assert ["Field", "Value", "What it means"] in shapes
+    assert ["Initiated By", "Customer", "The cardholder started the payment."] in shapes
+    assert ["#", "Fact"] in shapes
+    # And the prose around them is still prose.
+    assert any("The gateway record establishes who paid." == p.text.strip()
+               for p in made.paragraphs)
+
+
+def test_a_line_of_prose_with_a_pipe_in_it_is_not_swallowed(tmp_path):
+    """A table ends at the first line with no pipe. Only lines under a TABLE:
+    are read as rows, so a stray pipe in a sentence cannot start one."""
+    from wilbyte import rebuttal as rules, rebuttaldoc
+    import docx
+
+    where = tmp_path / "r.docx"
+    rebuttaldoc.build(
+        rules.read_facts("Customer Name: X\nDispute Amount: $1\nTransaction Date: 8/28/2026"),
+        {"body": "SUMMARY:\nThe invoice reads Paid | Settled, as shown.", "messages": ""},
+        rules.Gathered(), [], into=where,
+    )
+    made = docx.Document(str(where))
+
+    assert any("Paid | Settled" in p.text for p in made.paragraphs)
+
+
+def test_blanks_are_filled_from_the_channel_but_nothing_is_overwritten():
+    """The flag card answers `missing()`, so reading stopped there and the
+    notice below it carrying her email, her card's last four and the MID was
+    never opened. Those rows belong on the fact table.
+
+    Filled, never replaced: an older dispute further up the channel must not
+    be able to rewrite the facts of the one being answered."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    class Older:
+        content = HER_NOTICE + "\nMID: 510200014664"
+
+    one = rules.read_facts(HER_FLAG_CARD)
+    one.customer_email = "typed-by-hand@example.com"
+
+    bot_client._fill_the_blanks(rules, one, Older())
+
+    assert one.mid == "510200014664"
+    assert one.card == "7543"
+    assert one.customer_email == "typed-by-hand@example.com"
+    assert one.customer_name == "Juliana Hernandez"
+
+
+def test_the_handler_fills_the_fact_table_from_the_whole_channel(monkeypatch):
+    """End to end: the code typed, the flag card above it, the notice above
+    that. The finished fact table needs all three."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    seen = {}
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            return None
+
+    class Older:
+        attachments: list = []
+        jump_url = "https://discord.com/above"
+
+        def __init__(self, content):
+            self.content = content
+
+    class Message:
+        attachments: list = []
+        reference = None
+
+        class channel:
+            @staticmethod
+            async def history(limit=0, before=None):
+                for one in (HER_FLAG_CARD, HER_NOTICE + "\nMID: 510200014664"):
+                    yield Older(one)
+
+    def stop(config, dispute):
+        seen["dispute"] = dispute
+        raise TypeError("far enough")
+
+    monkeypatch.setattr(jobs, "rebuttal_evidence", stop)
+    monkeypatch.setattr(bot_client.embeds, "error", lambda text, **kw: text)
+
+    class Config:
+        class secrets:
+            anthropic_api_key = "x"
+
+    asyncio.run(bot_client._rebuttal(
+        Responder(), Config(), Message(), "code: 37 — No Cardholder Authorization"
+    ))
+
+    one = seen["dispute"]
+
+    assert one.customer_name == "Juliana Hernandez"
+    assert one.code == "37"
+    assert one.mid == "510200014664"
+    assert one.card == "7543"
+    assert one.customer_email == "hjuliana650@gmail.com"

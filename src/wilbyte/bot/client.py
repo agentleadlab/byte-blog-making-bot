@@ -1521,6 +1521,25 @@ def _fuller_dispute(rules_doc, dispute, said: str, paid_with: str, older):
     return found, (older_said or said), (paid_with or older_paid)
 
 
+def _fill_the_blanks(rules_doc, dispute, older) -> None:
+    """Fill a dispute's empty fields from an older message. Never overwrite.
+
+    The fact table at the top of the rebuttal is the acquirer's index to the
+    case, and it prints only the rows it has. Juliana Hernandez's came out
+    five rows long - no MID, no card, no email - because the facts were read
+    off RYTE's own flag card, which does not carry them, and the notice that
+    did was three lines further up.
+    """
+    text = (getattr(older, "content", "") or "").strip()
+    if not text:
+        return
+    said, _ = rules_doc.split_payment(text)
+    found = rules_doc.read_facts(said)
+    for name, _pattern in rules_doc.FIELDS:
+        if not getattr(dispute, name, "") and getattr(found, name, ""):
+            setattr(dispute, name, getattr(found, name))
+
+
 async def _said_before(message, *, howmany: int = 30):
     """The messages above this one, newest first - RYTE's own included.
 
@@ -1829,6 +1848,15 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
                 message = older
             if not dispute.missing():
                 break
+
+    # And whatever is still blank, off the rest of the channel. The flag card
+    # answers `missing()` - name, amount, transaction date - so reading stopped
+    # at it, and the notice two lines below it carrying her email, her card's
+    # last four and the MID was never opened. Those are fact-table rows, not
+    # blockers, so they are filled and never overwritten: a field somebody
+    # typed always beats one found lying about.
+    async for older in _said_before(message):
+        _fill_the_blanks(rules_doc, dispute, older)
 
     if not dispute.customer_name:
         dispute.customer_name = rules_doc.named_in(said)

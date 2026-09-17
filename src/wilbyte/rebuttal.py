@@ -462,8 +462,29 @@ def spelled(said: str) -> str:
     return f"{when:%B %-d, %Y}" if when else str(said or "")
 
 
-def header(one: Dispute) -> list[tuple[str, str]]:
-    """The fact table at the top."""
+def answering(one: Dispute) -> str:
+    """The document's subtitle: which dispute, on which code, this answers.
+
+    "Response to Cardholder Dispute" says nothing the title has not already
+    said. The acquirer's reader has a queue of these and sorts them by code,
+    and naming it in the second line says at a glance which question this
+    document is aimed at - which is also the one thing a rebuttal can get
+    wrong while being entirely true.
+    """
+    named = what_the_code_means(one.code)
+    if named:
+        return f"{one.dba} — Response to Reason Code {one.code}, {named[0]}"
+    return f"{one.dba} — Response to Cardholder Dispute"
+
+
+def header(one: Dispute, found: "Gathered | None" = None) -> list[tuple[str, str]]:
+    """The fact table at the top: the acquirer's index to the case.
+
+    What was bought belongs on it. A reader deciding a dispute wants to know
+    the product in the first ten seconds, and having to find it in paragraph
+    four of the summary is ten seconds spent on the wrong thing.
+    """
+    named = what_the_code_means(one.code)
     rows = [
         ("Merchant (DBA)", one.dba),
         ("MID", one.mid),
@@ -473,8 +494,12 @@ def header(one: Dispute) -> list[tuple[str, str]]:
         ("Card", one.card),
         ("Transaction Date", spelled(one.transaction_date)),
         ("Amount", one.amount),
+        ("Product", getattr(found, "product", "") if found is not None else ""),
         ("Dispute Date", spelled(one.dispute_date)),
-        ("Reason", one.reason or one.dispute_type),
+        (
+            "Reason Code" if named else "Reason",
+            f"{one.code} — {named[0]}" if named else (one.reason or one.dispute_type),
+        ),
     ]
     return [(label, value) for label, value in rows if str(value).strip()]
 
@@ -631,6 +656,22 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
         "(Exhibit A)\n"
         "Then two to five sentences making it, quoting the messages, the notes "
         "and the terms with their dates.\n\n"
+        "Where an argument rests on a set of fields rather than on a story - "
+        "the gateway's authorisation data, an invoice's event log, the "
+        "customer's own details against what we recorded - put them in a "
+        "table under the sentences instead of listing them in prose. Write it "
+        "as:\n\n"
+        "TABLE: Field | Value | What it means\n"
+        "Initiated By | Customer | The cardholder started the payment; we did "
+        "not key it in.\n"
+        "AVS Response | Y | Full match on the billing street address and the "
+        "postal code.\n\n"
+        "The line after TABLE: is the headings. Every line under it with a | "
+        "in it is a row, and the first line without one ends the table. Two or "
+        "three columns, and keep every cell to a phrase or one short sentence "
+        "- a table of paragraphs is worse than the paragraph it replaced. "
+        "Use a table only where the fields are the argument; never to hold "
+        "prose that reads better as prose.\n\n"
         "The line after ARGUMENT: is a heading - a short phrase naming the "
         "argument, at most twelve words, with the exhibits it rests on in "
         "brackets, and no full stop at the end. Do not number them; they are numbered when the document "
@@ -640,7 +681,11 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
         "'Cardholder' and 'Agent Lead Lab' as the sender. Quote the words, "
         "translated, and keep each under twenty-five words. Leave this out "
         "entirely if there are no messages in the exhibits.\n\n"
-        "Then CONCLUSION: and one paragraph.\n\n"
+        "Then CONCLUSION: and one paragraph. Where the case is a set of "
+        "facts the issuer has to weigh against each other rather than one "
+        "argument, follow that paragraph with a numbered table - "
+        "\"TABLE: # | Fact\" and a numbered line for each - so the person "
+        "deciding can read the whole answer in the time they have.\n\n"
         "Rules. Cite only what is above - never a fact, date or sum that is "
         "not written there. Cite exhibits by letter, and only ones that "
         "exist. Where the money needs explaining, show the arithmetic. Quote "

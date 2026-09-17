@@ -74,6 +74,11 @@ _NUMBERED = re.compile(r"^\s{0,3}\d+[.)]\s+")
 # writing came back numbered *with* full stops, so every argument in the
 # document rendered as a bullet and it had no structure at all.
 _ARGUMENT = re.compile(r"^\s{0,3}ARGUMENT\s*[:.\-—]\s*(.+?)\s*$", re.IGNORECASE)
+# A set of fields - the gateway's authorisation data, an invoice's event log,
+# our record against the customer's own - read as a table and not as a
+# sentence. Franklin's own rebuttal for this dispute is four of them, and they
+# are the reason it can be checked field by field in the time an acquirer has.
+_TABLE = re.compile(r"^\s{0,3}TABLE\s*[:.]\s*(.+?)\s*$", re.IGNORECASE)
 _SECTION = re.compile(
     r"^\s{0,3}(SUMMARY|CONCLUSION|TIMELINE|BACKGROUND)\s*[:.]?\s*$", re.IGNORECASE
 )
@@ -117,7 +122,7 @@ def build(
     doc = docx.Document()
     _set_up(doc, Pt, RGBColor, Inches)
     _title(doc, dispute, Pt, RGBColor, ALIGN)
-    _facts(doc, dispute, Pt, RGBColor)
+    _facts(doc, dispute, found, Pt, RGBColor)
 
     holes = rebuttal.what_is_missing(found, exhibits, dispute)
     if holes:
@@ -132,12 +137,12 @@ def build(
     opening, arguments = _split_at_first_argument(body)
     counted = [0]
     if opening:
-        _prose(doc, opening, Pt, RGBColor, counted)
+        _prose(doc, opening, Pt, RGBColor, counted, Inches)
     if messages:
         _heading(doc, "Key Messages", Pt, RGBColor)
         _message_table(doc, messages, Pt, RGBColor, Inches)
     if arguments:
-        _prose(doc, arguments, Pt, RGBColor, counted)
+        _prose(doc, arguments, Pt, RGBColor, counted, Inches)
 
     # Only when nothing was written. The number is in the prompt, so a
     # written rebuttal makes the argument itself and better - repeating it
@@ -145,7 +150,7 @@ def build(
     if not body:
         waited = rebuttal.waited_line(dispute)
         if waited:
-            _prose(doc, waited, Pt, RGBColor)
+            _prose(doc, waited, Pt, RGBColor, Inches=Inches)
 
     if found.timeline:
         _heading(doc, "Timeline", Pt, RGBColor)
@@ -332,7 +337,7 @@ def _title(doc, dispute, Pt, RGBColor, ALIGN) -> None:
     under = doc.add_paragraph()
     under.paragraph_format.space_after = Pt(10)
     _ink(
-        under.add_run(f"{dispute.dba} — Response to Cardholder Dispute"),
+        under.add_run(rebuttal.answering(dispute)),
         Pt, RGBColor, size=10.5, colour=QUIET,
     )
     _rule(under)
@@ -394,8 +399,8 @@ def _heading(doc, text, Pt, RGBColor, *, level: int = 1) -> None:
     _ink(line.add_run(text), Pt, RGBColor, size=12 if level == 1 else 11, bold=True)
 
 
-def _facts(doc, dispute, Pt, RGBColor) -> None:
-    rows = rebuttal.header(dispute)
+def _facts(doc, dispute, found, Pt, RGBColor) -> None:
+    rows = rebuttal.header(dispute, found)
     if not rows:
         return
     table = doc.add_table(rows=0, cols=2)
@@ -438,17 +443,32 @@ def _holes(doc, holes, Pt, RGBColor) -> None:
     _rule(note)
 
 
-def _prose(doc, text, Pt, RGBColor, numbered=None) -> None:
-    """Claude's writing, as paragraphs, bullets and bold rather than markup.
+def _prose(doc, text, Pt, RGBColor, numbered=None, Inches=None) -> None:
+    """Claude's writing, as paragraphs, bullets, tables and bold, not markup.
 
     It writes markdown because everything else it writes is read as markdown.
     Word is not, so "**attached files**" printed with its asterisks showing in
     the middle of a document going to an acquirer.
+
+    Read by index rather than line by line, because a table is several lines
+    that have to be taken together.
     """
     numbered = numbered if numbered is not None else [0]
-    for block in str(text or "").split("\n"):
-        line = block.rstrip()
+    lines = str(text or "").split("\n")
+    at = 0
+    while at < len(lines):
+        line = lines[at].rstrip()
+        at += 1
         if not line.strip():
+            continue
+        gridded = _TABLE.match(line)
+        if gridded:
+            head = _cells(gridded.group(1))
+            rows = []
+            while at < len(lines) and "|" in lines[at]:
+                rows.append(_cells(lines[at]))
+                at += 1
+            _grid(doc, head, rows, Pt, RGBColor, Inches)
             continue
         if _HEADING.match(line):
             bare = _HEADING.sub("", line).strip().strip("*")
@@ -478,6 +498,72 @@ def _prose(doc, text, Pt, RGBColor, numbered=None) -> None:
             _runs(doc.add_paragraph(style="List Number"), _NUMBERED.sub("", line), Pt, RGBColor)
             continue
         _runs(doc.add_paragraph(), line.strip(), Pt, RGBColor)
+
+
+def _cells(line: str) -> list[str]:
+    """One table row, split on the pipes, with its markdown taken off."""
+    return [
+        _BOLD.sub(r"\1", part).strip()
+        for part in str(line or "").strip().strip("|").split("|")
+    ]
+
+
+#: How wide each column is, by how many there are. The first column is a label
+#: and the last is the sentence, so an even split gives the labels room they do
+#: not need and the sentences less than they do. Inside 6.7" of page.
+_WIDTHS = {2: (2.0, 4.7), 3: (1.6, 2.0, 3.1), 4: (1.4, 1.6, 1.8, 1.9)}
+
+
+def _column_widths(head, rows, wide: int) -> list[float] | None:
+    """The column widths for one table, given what is actually in it.
+
+    A numbered "# | Fact" table has a first column holding one digit, and the
+    fixed label width gives it two inches of white space beside a sentence
+    that has been squeezed to fit. Where the first column is that short, it
+    gets what it needs and the last column gets the rest.
+    """
+    widths = _WIDTHS.get(wide)
+    if not widths:
+        return None
+    widths = list(widths)
+    longest = max((len(one[0]) for one in [head, *rows] if one), default=0)
+    if longest <= 4:
+        widths[-1] += widths[0] - 0.55
+        widths[0] = 0.55
+    return widths
+
+
+def _grid(doc, head, rows, Pt, RGBColor, Inches) -> None:
+    """A table written as pipes, set the way the fact table at the top is.
+
+    The header row is the only bold one, and the rules are hairlines - a table
+    boxed in black on every cell reads as a spreadsheet somebody pasted in.
+    """
+    wide = max([len(head)] + [len(one) for one in rows]) if head else 0
+    if wide < 2 or not rows:
+        return
+    table = doc.add_table(rows=0, cols=wide)
+    table.style = "Table Grid"
+    _hairlines(table)
+
+    def _write(said, *, bold):
+        cells = table.add_row().cells
+        for cell, text in zip(cells, list(said) + [""] * wide):
+            cell.paragraphs[0].paragraph_format.space_after = Pt(2)
+            _ink(
+                cell.paragraphs[0].add_run(text), Pt, RGBColor,
+                size=9, bold=bold, colour=QUIET if bold else INK,
+            )
+
+    _write(head, bold=True)
+    for one in rows:
+        _write(one, bold=False)
+    widths = _column_widths(head, rows, wide)
+    if widths and Inches is not None:
+        for row in table.rows:
+            for cell, inches in zip(row.cells, widths):
+                cell.width = Inches(inches)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
 def _runs(paragraph, text, Pt, RGBColor) -> None:
