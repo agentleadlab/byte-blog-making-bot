@@ -1509,9 +1509,9 @@ def _fuller_dispute(rules_doc, dispute, said: str, paid_with: str, older):
     than on the notice, so Franklin types it when he asks. Taking the fuller
     message must not throw away the half he added.
     """
-    text = (getattr(older, "content", "") or "").strip()
-    if not text:
+    if not worth_reading(older):
         return None
+    text = (getattr(older, "content", "") or "").strip()
     older_said, older_paid = rules_doc.split_payment(text)
     found = rules_doc.read_facts(older_said)
     if len(found.missing()) >= len(dispute.missing()):
@@ -1519,6 +1519,29 @@ def _fuller_dispute(rules_doc, dispute, said: str, paid_with: str, older):
     if not found.code:
         found.raw = f"{found.raw}\n{said}"
     return found, (older_said or said), (paid_with or older_paid)
+
+
+def worth_reading(older) -> bool:
+    """Whether an older message may be read for dispute facts at all.
+
+    Anything a person said, yes. Of RYTE's own messages only the chargeback
+    flag card, which is the notice restated - the rest is RYTE talking.
+
+    This is not a tidiness rule. The message RYTE sends when a notice is short
+    of facts contains a worked example of a dispute block: a MID, a dispute
+    date, an ARN, a card number, a name and an email, all made up. The first
+    rebuttal built after RYTE learned to read the channel took the email, the
+    card and the dispute date off that example and printed them in the fact
+    table of a document addressed to an acquirer - and argued, at length, that
+    the cardholder had waited eleven days, counted from a date nobody had ever
+    sent.
+    """
+    text = (getattr(older, "content", "") or "").strip()
+    if not text or ASK_FOR_THE_BLOCK.splitlines()[0] in text:
+        return False
+    if getattr(getattr(older, "author", None), "bot", False):
+        return text.startswith(OUR_FLAG)
+    return True
 
 
 def _fill_the_blanks(rules_doc, dispute, older) -> None:
@@ -1530,9 +1553,9 @@ def _fill_the_blanks(rules_doc, dispute, older) -> None:
     off RYTE's own flag card, which does not carry them, and the notice that
     did was three lines further up.
     """
-    text = (getattr(older, "content", "") or "").strip()
-    if not text:
+    if not worth_reading(older):
         return
+    text = (getattr(older, "content", "") or "").strip()
     said, _ = rules_doc.split_payment(text)
     found = rules_doc.read_facts(said)
     for name, _pattern in rules_doc.FIELDS:
@@ -1794,6 +1817,24 @@ TAGS_SHOWN = 25
 MOST_EXHIBIT_BYTES = 20_000_000
 
 
+#: What RYTE says when the notice is short of facts. One constant, because the
+#: message has to be recognisable again later: it is full of labelled fields
+#: with made-up values in them, and RYTE now reads the channel.
+ASK_FOR_THE_BLOCK = (
+    "Paste the block as it comes off the portal:\n"
+    "```\n@RYTE rebuttal\nMID: 510200014664\n"
+    "Dispute Date: 9/8/2026\nDispute Dollar Amount: $1,552.50\n"
+    "Acquirer's Reference Number: 2455640616780894270\n"
+    "Card Number: ending in 2610\nTransaction Date: 6/15/2026\n"
+    "Customer Name: Jose Zambrano\nCustomer Email: jose@example.com\n```"
+)
+
+#: The one thing RYTE says in a channel that is data rather than prose about
+#: the work. Everything else - help, status, an example of what to paste - is
+#: RYTE talking, and none of it is evidence.
+OUR_FLAG = "⚖️ **Chargeback**"
+
+
 async def _rebuttal(responder: Responder, config: Config, message, said: str) -> None:
     """Build a chargeback rebuttal from the dispute facts and what he can find.
 
@@ -1866,12 +1907,7 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         await responder.send(
             "I need a bit more of the dispute notice — missing "
             + ", ".join(f"**{one}**" for one in holes)
-            + ".\nPaste the block as it comes off the portal:\n"
-            "```\n@RYTE rebuttal\nMID: 510200014664\n"
-            "Dispute Date: 9/8/2026\nDispute Dollar Amount: $1,552.50\n"
-            "Acquirer's Reference Number: 2455640616780894270\n"
-            "Card Number: ending in 2610\nTransaction Date: 6/15/2026\n"
-            "Customer Name: Jose Zambrano\nCustomer Email: jose@example.com\n```"
+            + ".\n" + ASK_FOR_THE_BLOCK
         )
         return
 

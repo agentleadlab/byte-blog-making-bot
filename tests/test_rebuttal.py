@@ -1844,3 +1844,98 @@ def test_the_handler_fills_the_fact_table_from_the_whole_channel(monkeypatch):
     assert one.mid == "510200014664"
     assert one.card == "7543"
     assert one.customer_email == "hjuliana650@gmail.com"
+
+
+# --------------------------- RYTE's own example is not evidence about anybody
+
+
+class _Bot:
+    bot = True
+
+
+class _Person:
+    bot = False
+
+
+def _said(text, *, by=_Bot):
+    class One:
+        content = text
+        author = by()
+        attachments: list = []
+        jump_url = ""
+    return One()
+
+
+def test_the_example_block_is_never_read_as_facts():
+    """Juliana Hernandez's rebuttal went out with jose@example.com in the
+    Cardholder row, "ending in 2610" as her card, and a whole argument that
+    she waited eleven days - counted from September 8, a date nobody had sent.
+    All three came off RYTE's own "paste the block like this" message, which
+    is a worked example with made-up values in labelled fields."""
+    from wilbyte.bot import client as bot_client
+
+    example = _said(
+        "I need a bit more of the dispute notice — missing **Customer Name**.\n"
+        + bot_client.ASK_FOR_THE_BLOCK
+    )
+
+    assert not bot_client.worth_reading(example)
+
+
+def test_the_example_is_ignored_even_when_a_person_quotes_it():
+    from wilbyte.bot import client as bot_client
+
+    assert not bot_client.worth_reading(
+        _said(bot_client.ASK_FOR_THE_BLOCK, by=_Person)
+    )
+
+
+def test_ryte_s_own_flag_card_is_still_read():
+    """It is the notice restated, and it is what somebody replies to."""
+    from wilbyte.bot import client as bot_client
+
+    assert bot_client.worth_reading(_said(HER_FLAG_CARD))
+
+
+def test_anything_else_ryte_says_is_not_evidence():
+    """Help text, status, a list of cards - RYTE talking about the work."""
+    from wilbyte.bot import client as bot_client
+
+    assert not bot_client.worth_reading(
+        _said("Customer Name: Someone Else\nDispute Amount: $9.99")
+    )
+
+
+def test_what_a_person_says_is_read():
+    from wilbyte.bot import client as bot_client
+
+    assert bot_client.worth_reading(_said(HER_NOTICE, by=_Person))
+
+
+def test_the_example_cannot_fill_a_blank_field():
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    one = rules.read_facts(HER_FLAG_CARD)
+    bot_client._fill_the_blanks(
+        rules, one,
+        _said("I need a bit more.\n" + bot_client.ASK_FOR_THE_BLOCK),
+    )
+
+    assert one.customer_email == ""
+    assert one.card == ""
+    assert one.dispute_date == ""
+
+
+def test_the_example_cannot_become_the_dispute():
+    """Worse than filling a blank: a bare "@RYTE rebuttal" with the example as
+    the fullest message nearby would have built a rebuttal for Jose Zambrano."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    fuller = bot_client._fuller_dispute(
+        rules, rules.read_facts(""), "", "",
+        _said("I need a bit more.\n" + bot_client.ASK_FOR_THE_BLOCK),
+    )
+
+    assert fuller is None
