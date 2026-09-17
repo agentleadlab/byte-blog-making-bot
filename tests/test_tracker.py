@@ -296,10 +296,40 @@ def test_it_says_which_columns_are_left_for_a_person(monkeypatch):
 def test_the_ones_ryte_fills_are_named_too(monkeypatch):
     _, ((_, said),) = _checked(monkeypatch)
 
-    filled = said.split("filled by RYTE:")[1].split("· left for you")[0]
+    filled = said.split("RYTE fills")[1].split("· left for you")[0]
     assert "Client Name" in filled
     assert "Amount" in filled
     assert "Outcome" not in filled
+
+
+def test_a_recognised_column_counts_even_when_this_dispute_leaves_it_blank():
+    """The real tracker's "Date of Transaction" was reported as a column RYTE
+    could not fill, because the check asked a made-up dispute that had no
+    transaction date. It sent somebody looking for a bug that was not there."""
+    knows, leaves = rebuttal.columns_known(
+        ["Name of Disputer", "Amount", "Status", "Date of Transaction", "Closer"]
+    )
+
+    assert knows == ["Name of Disputer", "Amount", "Status", "Date of Transaction"]
+    assert leaves == ["Closer"]
+
+
+def test_an_unnamed_column_is_left_alone_and_named_as_such():
+    knows, leaves = rebuttal.columns_known(["Amount", "", "   "])
+
+    assert knows == ["Amount"]
+    assert leaves == ["(unnamed)", "(unnamed)"]
+
+
+def test_a_section_title_in_the_heading_row_is_not_a_column_to_fill():
+    """"Sep 2026 chargebacks — deductions by closer" is somebody's heading,
+    not a field."""
+    knows, leaves = rebuttal.columns_known(
+        ["Amount", "Sep 2026 chargebacks — deductions by closer"]
+    )
+
+    assert knows == ["Amount"]
+    assert len(leaves) == 1
 
 
 def test_not_configured_is_neither_pass_nor_fail(monkeypatch):

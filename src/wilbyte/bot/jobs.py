@@ -1704,22 +1704,16 @@ def _check_tracker(config: Config) -> list[tuple[bool, str]]:
     if not headings:
         return [(False, "Chargeback tracker - no columns in its first row")]
 
-    # Which of them RYTE will actually fill, which is the useful half.
-    filled = [
-        one for one, cell in zip(
-            headings,
-            rules_doc.row_for_tracker(
-                headings, rules_doc.Dispute(customer_name="x", amount="$1"),
-                rules_doc.Gathered(), when=date.today(),
-            ),
-        ) if cell
-    ]
+    # Which columns RYTE recognises, not which happen to carry a value for
+    # some made-up dispute: a stub with no transaction date left "Date of
+    # Transaction" empty and the check reported it as a column RYTE could not
+    # fill, which sent somebody looking for a bug that was not there.
+    knows, leaves = rules_doc.columns_known(headings)
     return [(
         True,
-        f"Chargeback tracker - **{tab}**, {len(headings)} column(s), "
-        f"{len(filled)} filled by RYTE: " + ", ".join(filled)
-        + (f" · left for you: {', '.join(one for one in headings if one not in filled)}"
-           if len(filled) < len(headings) else ""),
+        f"Chargeback tracker - **{tab}**, {len(headings)} column(s). "
+        f"RYTE fills {len(knows)}: " + ", ".join(knows)
+        + (f" · left for you: {', '.join(leaves)}" if leaves else ""),
     )]
 
 

@@ -768,6 +768,24 @@ def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
     return row
 
 
+def columns_known(headings) -> tuple[list[str], list[str]]:
+    """(the headings RYTE fills, the ones it leaves alone).
+
+    Which columns are *recognised*, not which happen to carry a value. A
+    dispute with no dispute date leaves that cell empty, and reporting that as
+    a column RYTE cannot fill sends somebody looking for a bug that is not
+    there.
+    """
+    knows, leaves = [], []
+    for heading in headings or []:
+        said = " ".join(str(heading or "").split())
+        matched = said and any(
+            re.search(pattern, said, re.IGNORECASE) for _, pattern in TRACKS
+        )
+        (knows if matched else leaves).append(said or "(unnamed)")
+    return knows, leaves
+
+
 def describe_row(headings, row) -> str:
     """The row as a person would check it, heading by heading."""
     lines = []
