@@ -5361,8 +5361,9 @@ def write_rebuttal(config: Config, dispute, found, exhibits, *, into) -> "object
             found.invoice = (found.invoice + "\n\n" + one.text[:3000]).strip()
 
     # Lettered before the writing, so the argument can cite Exhibit A and
-    # mean the same thing the back of the document does.
-    exhibits[:] = rules_doc.letter_them(exhibits)
+    # mean the same thing the back of the document does. The same screenshot
+    # twice is one exhibit.
+    exhibits[:] = rules_doc.letter_them(rules_doc.only_once(exhibits))
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)

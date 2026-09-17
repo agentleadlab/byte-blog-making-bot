@@ -526,6 +526,27 @@ def happened_on(transcript: str) -> tuple:
     return (0, month, int(found.group(5)))
 
 
+def only_once(exhibits: list) -> list:
+    """The attachments with the byte-for-byte repeats dropped, first kept.
+
+    The same screenshot gets attached twice easily - it is two taps on a
+    phone - and Juliana Hernandez's rebuttal went out with the same text
+    conversation as Exhibit A screenshot 1 of 2 and screenshot 2 of 2. RYTE
+    even captioned the second one "Duplicate SMS thread" and filed it anyway,
+    which reads worse than not noticing: a document going to an acquirer with
+    the same picture in it twice invites being read as one nobody checked.
+    """
+    kept, seen = [], set()
+    for one in exhibits:
+        mark = one.data if isinstance(one.data, bytes) else None
+        if mark is not None:
+            if mark in seen:
+                continue
+            seen.add(mark)
+        kept.append(one)
+    return kept
+
+
 def letter_them(exhibits: list) -> list:
     """Group the attachments by kind and letter each group A, B, C...
 

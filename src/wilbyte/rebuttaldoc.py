@@ -37,6 +37,19 @@ QUIET = (0x66, 0x66, 0x66)
 WARN = (0xA6, 0x1B, 0x1B)
 RULE = "BFBFBF"
 
+# Agent Lead Lab's green, taken off Franklin's own rebuttal for this dispute:
+# the headings and the rules in #1F4E3D, the header row of every table filled
+# #DCEFE6. It is the same green as the messages in the exhibits and the same
+# green as the company's mark, which is the point - a document with a colour
+# in it belongs to somebody, and one set entirely in black and grey reads as
+# generated rather than as sent.
+#
+# One colour and one tint. Two would be decoration, and this is going to an
+# acquirer rather than to a client.
+HOUSE = (0x1F, 0x4E, 0x3D)
+HOUSE_HEX = "1F4E3D"
+TINT = "DCEFE6"
+
 # What each proof's images are captioned, when the reading did not work one out.
 CAPTIONS = {
     "contract": "Signed agreement",
@@ -243,9 +256,10 @@ def _message_table(doc, messages, Pt, RGBColor, Inches) -> None:
     _hairlines(table)
     head = table.add_row().cells
     for cell, title in zip(head, ("Date / Time", "Sender", "Message")):
+        _fill(cell, TINT)
         cell.paragraphs[0].paragraph_format.space_after = Pt(2)
         _ink(cell.paragraphs[0].add_run(title), Pt, RGBColor, size=9,
-             bold=True, colour=QUIET)
+             bold=True, colour=HOUSE)
     for when, who, what in rows:
         cells = table.add_row().cells
         for cell, said, bold in ((cells[0], when, False), (cells[1], who, True),
@@ -307,7 +321,7 @@ def _set_up(doc, Pt, RGBColor, Inches) -> None:
         except KeyError:  # pragma: no cover - depends on the template
             continue
         style.font.name = FACE
-        style.font.color.rgb = RGBColor(*INK)
+        style.font.color.rgb = RGBColor(*HOUSE)
         style.font.bold = True
         style.font.size = Pt(12 if level == 1 else 11)
 
@@ -332,7 +346,7 @@ def _title(doc, dispute, Pt, RGBColor, ALIGN) -> None:
     line.paragraph_format.space_after = Pt(1)
     _ink(
         line.add_run("CHARGEBACK REBUTTAL / REPRESENTMENT"),
-        Pt, RGBColor, size=17, bold=True,
+        Pt, RGBColor, size=17, bold=True, colour=HOUSE,
     )
     under = doc.add_paragraph()
     under.paragraph_format.space_after = Pt(10)
@@ -340,7 +354,7 @@ def _title(doc, dispute, Pt, RGBColor, ALIGN) -> None:
         under.add_run(rebuttal.answering(dispute)),
         Pt, RGBColor, size=10.5, colour=QUIET,
     )
-    _rule(under)
+    _rule(under, HOUSE_HEX)
 
 
 def _hairlines(table) -> None:
@@ -369,7 +383,19 @@ def _hairlines(table) -> None:
     marks.append(borders)
 
 
-def _rule(paragraph) -> None:
+def _fill(cell, colour: str) -> None:
+    """Fill one table cell. Word has no API for it; it is a shading element."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    shade = OxmlElement("w:shd")
+    shade.set(qn("w:val"), "clear")
+    shade.set(qn("w:color"), "auto")
+    shade.set(qn("w:fill"), colour)
+    cell._tc.get_or_add_tcPr().append(shade)
+
+
+def _rule(paragraph, colour: str = RULE) -> None:
     """A hairline under a paragraph, drawn as a bottom border."""
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
@@ -380,7 +406,7 @@ def _rule(paragraph) -> None:
     bottom.set(qn("w:val"), "single")
     bottom.set(qn("w:sz"), "6")
     bottom.set(qn("w:space"), "6")
-    bottom.set(qn("w:color"), RULE)
+    bottom.set(qn("w:color"), colour)
     borders.append(bottom)
     marks.append(borders)
 
@@ -396,7 +422,8 @@ def _heading(doc, text, Pt, RGBColor, *, level: int = 1) -> None:
     line.paragraph_format.space_before = Pt(15)
     line.paragraph_format.space_after = Pt(4)
     line.paragraph_format.keep_with_next = True
-    _ink(line.add_run(text), Pt, RGBColor, size=12 if level == 1 else 11, bold=True)
+    _ink(line.add_run(text), Pt, RGBColor, size=12 if level == 1 else 11,
+         bold=True, colour=HOUSE)
 
 
 def _facts(doc, dispute, found, Pt, RGBColor) -> None:
@@ -549,10 +576,12 @@ def _grid(doc, head, rows, Pt, RGBColor, Inches) -> None:
     def _write(said, *, bold):
         cells = table.add_row().cells
         for cell, text in zip(cells, list(said) + [""] * wide):
+            if bold:
+                _fill(cell, TINT)
             cell.paragraphs[0].paragraph_format.space_after = Pt(2)
             _ink(
                 cell.paragraphs[0].add_run(text), Pt, RGBColor,
-                size=9, bold=bold, colour=QUIET if bold else INK,
+                size=9, bold=bold, colour=HOUSE if bold else INK,
             )
 
     _write(head, bold=True)

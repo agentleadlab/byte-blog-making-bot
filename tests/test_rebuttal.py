@@ -2081,3 +2081,109 @@ def test_another_customers_notice_cannot_fill_this_ones_blanks():
 
     assert hers.customer_email == ""
     assert hers.card == ""
+
+
+# ---------------------------------------- the document has a colour in it
+
+
+def test_the_house_green_is_the_one_on_franklins_own_rebuttal():
+    """#1F4E3D headings and rules, #DCEFE6 behind every table's header row -
+    read off the PDF he wrote himself for this dispute."""
+    from wilbyte import rebuttaldoc
+
+    assert rebuttaldoc.HOUSE == (0x1F, 0x4E, 0x3D)
+    assert rebuttaldoc.HOUSE_HEX == "1F4E3D"
+    assert rebuttaldoc.TINT == "DCEFE6"
+
+
+def test_the_headings_and_the_title_are_in_the_house_colour(tmp_path):
+    """Set entirely in black and grey it reads as generated rather than sent."""
+    from wilbyte import rebuttal as rules, rebuttaldoc
+    import docx
+
+    where = tmp_path / "r.docx"
+    rebuttaldoc.build(
+        rules.read_facts("Customer Name: X\nDispute Amount: $1\n"
+                         "Transaction Date: 8/28/2026\ncode: 37"),
+        {"body": "SUMMARY:\nShe paid it.", "messages": ""},
+        rules.Gathered(), [], into=where,
+    )
+    made = docx.Document(str(where))
+    green = str(rebuttaldoc.HOUSE_HEX)
+
+    title = made.paragraphs[0].runs[0]
+    assert str(title.font.color.rgb) == green
+    headings = [p for p in made.paragraphs if p.style.name == "Heading 1"]
+    assert headings
+    assert all(str(run.font.color.rgb) == green
+               for p in headings for run in p.runs if run.text.strip())
+
+
+def test_every_tables_header_row_is_filled(tmp_path):
+    from wilbyte import rebuttal as rules, rebuttaldoc
+    from docx.oxml.ns import qn
+    import docx
+
+    where = tmp_path / "r.docx"
+    rebuttaldoc.build(
+        rules.read_facts("Customer Name: X\nDispute Amount: $1\n"
+                         "Transaction Date: 8/28/2026\ncode: 37"),
+        {"body": "SUMMARY:\nShe paid it.\nTABLE: Field | Value\nAVS | Y",
+         "messages": ""},
+        rules.Gathered(), [], into=where,
+    )
+    made = docx.Document(str(where))
+    wrote = [t for t in made.tables if t.rows[0].cells[0].text.strip() == "Field"]
+
+    assert wrote, [t.rows[0].cells[0].text for t in made.tables]
+    head = wrote[0].rows[0]
+    for cell in head.cells:
+        marks = cell._tc.find(qn("w:tcPr"))
+        shade = marks is not None and marks.find(qn("w:shd"))
+        assert shade is not None and shade.get(qn("w:fill")) == rebuttaldoc.TINT
+    # And the rows under it are not.
+    body = wrote[0].rows[1].cells[0]._tc.find(qn("w:tcPr"))
+    assert body is None or body.find(qn("w:shd")) is None
+
+
+# ------------------------------------------ the same screenshot twice is one
+
+
+def test_the_same_screenshot_attached_twice_is_filed_once():
+    """It is two taps on a phone. Juliana's rebuttal went out with the same
+    text conversation as Exhibit A screenshot 1 of 2 and screenshot 2 of 2,
+    and RYTE captioned the second one "Duplicate SMS thread" and filed it."""
+    from wilbyte import rebuttal as rules
+
+    kept = rules.only_once([
+        rules.Exhibit(name="one.png", data=b"same"),
+        rules.Exhibit(name="two.png", data=b"same"),
+        rules.Exhibit(name="three.png", data=b"different"),
+    ])
+
+    assert [one.name for one in kept] == ["one.png", "three.png"]
+
+
+def test_two_different_screenshots_are_both_kept():
+    from wilbyte import rebuttal as rules
+
+    kept = rules.only_once([
+        rules.Exhibit(name="a.png", data=b"one"),
+        rules.Exhibit(name="b.png", data=b"two"),
+    ])
+
+    assert len(kept) == 2
+
+
+def test_the_duplicate_is_dropped_where_the_exhibits_are_lettered():
+    """`only_once` exists; this is it being used. Lettering happens before the
+    writing, so a duplicate left in becomes "screenshot 2 of 2" in the prompt
+    as well as in the file."""
+    import inspect
+
+    from wilbyte.bot import jobs
+
+    source = inspect.getsource(jobs.write_rebuttal)
+
+    assert "only_once(" in source
+    assert source.index("only_once(") < source.index("client.messages.create")

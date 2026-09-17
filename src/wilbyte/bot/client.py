@@ -1988,6 +1988,10 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     if came_from:
         await responder.send(f"-# Facts off [the notice above](<{came_from}>).")
 
+    # Before anything looks at them: the same screenshot twice costs a second
+    # trip to Claude to be described, and comes back described as a duplicate.
+    exhibits = rules_doc.only_once(exhibits)
+
     await responder.send(
         f"Building the rebuttal for **{dispute.customer_name}** — reading the "
         f"board, their setup and the delivered sheet"
