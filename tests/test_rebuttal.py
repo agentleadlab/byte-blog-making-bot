@@ -1592,3 +1592,38 @@ def test_the_tracker_write_says_which_row_it_landed_on():
     assert not trouble, trouble
     assert written["span"] == "'Sept 2026'!A3:E3"
     assert where == "Sept 2026, row 3"
+
+
+# ------------------------------- what Juliana's first draft got wrong in prose
+
+
+def _prompt():
+    from wilbyte import rebuttal as rules
+
+    return rules.writing_prompt(rules.read_facts("code: 37"), rules.Gathered(), [])
+
+
+def test_two_counts_of_the_same_thing_have_to_be_reconciled():
+    """Her rebuttal said "25 leads requested" in the summary and "35 delivered"
+    in section 4, in the same document, unexplained."""
+    said = _prompt()
+
+    assert "two different counts" in said and "more were delivered" in said
+
+
+def test_words_are_only_put_in_the_cardholders_mouth_when_she_wrote_them():
+    """It listed lead names - "Alma R. Aguirre", "Hector anguiano" - among the
+    notes she typed. If those are delivered rows rather than her handwriting,
+    the cardholder contradicts the sentence and the paragraph goes with it."""
+    said = _prompt()
+
+    assert "not their handwriting" in said
+    assert "unmistakably theirs" in said
+
+
+def test_our_own_records_are_not_described_as_thin():
+    """"our record of that delivery is the word delivered alongside the sheet
+    link" is an opinion about our evidence, volunteered to the acquirer."""
+    said = _prompt()
+
+    assert "never how much of it there is" in said
