@@ -1622,6 +1622,7 @@ def check_recordings(config: Config) -> list[tuple[bool, str]]:
     results.extend(_check_google_scopes(config))
     results.extend(_check_gmail(config))
     results.extend(_check_docs(config))
+    results.extend(_check_tracker(config))
     return results
 
 
@@ -1682,6 +1683,44 @@ def _check_gmail(config: Config) -> list[tuple[bool, str]]:
     except Exception as exc:
         return [(False, f"Gmail - {_short(exc, 480)}")]
     return [(True, f"Gmail - reading **{who}** ({many:,} messages)")]
+
+
+def _check_tracker(config: Config) -> list[tuple[bool, str]]:
+    """Whether the chargeback tracker can be read, and what its columns are.
+
+    Reads the heading row and says it back. The headings are how the row is
+    laid out, so seeing them is seeing what a chargeback will actually fill -
+    and the alternative is finding out in the middle of one.
+
+    Reads only. Nothing is appended by a check.
+    """
+    from .. import rebuttal as rules_doc
+
+    if not (getattr(config.secrets, "tracker_sheet_id", "") or "").strip():
+        return [(None, "Chargeback tracker not configured - rows stay unwritten")]
+    headings, tab, problems = tracker_headings(config)
+    if problems:
+        return [(False, f"Chargeback tracker - {_short('; '.join(problems), 300)}")]
+    if not headings:
+        return [(False, "Chargeback tracker - no columns in its first row")]
+
+    # Which of them RYTE will actually fill, which is the useful half.
+    filled = [
+        one for one, cell in zip(
+            headings,
+            rules_doc.row_for_tracker(
+                headings, rules_doc.Dispute(customer_name="x", amount="$1"),
+                rules_doc.Gathered(), when=date.today(),
+            ),
+        ) if cell
+    ]
+    return [(
+        True,
+        f"Chargeback tracker - **{tab}**, {len(headings)} column(s), "
+        f"{len(filled)} filled by RYTE: " + ", ".join(filled)
+        + (f" · left for you: {', '.join(one for one in headings if one not in filled)}"
+           if len(filled) < len(headings) else ""),
+    )]
 
 
 def _check_docs(config: Config) -> list[tuple[bool, str]]:

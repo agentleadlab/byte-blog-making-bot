@@ -248,3 +248,63 @@ def test_a_column_called_closer_is_left_for_a_person():
     assert rebuttal.row_for_tracker(
         ["Closer"], JULIANA, FOUND, when=date(2026, 9, 17),
     ) == [""]
+
+
+# ------------------------ checking it without running a whole chargeback
+
+
+def _checked(monkeypatch, *, sheet_id="1BSU", sheet=None):
+    from wilbyte import gsheets
+
+    paper = sheet or Sheet()
+    monkeypatch.setattr(gsheets, "SheetsClient", lambda creds, **kw: paper)
+    monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
+    return paper, jobs._check_tracker(
+        SimpleNamespace(secrets=SimpleNamespace(tracker_sheet_id=sheet_id))
+    )
+
+
+def test_the_check_names_the_tab_and_the_columns(monkeypatch):
+    _, ((ok, said),) = _checked(monkeypatch)
+
+    assert ok is True
+    assert "Chargebacks" in said
+    assert "13 column(s)" in said
+
+
+def test_it_says_which_columns_are_left_for_a_person(monkeypatch):
+    """Seeing that before a dispute lands beats finding it during one."""
+    _, ((_, said),) = _checked(monkeypatch)
+
+    assert "left for you" in said
+    assert "Outcome" in said.split("left for you")[1]
+    assert "Notes" in said.split("left for you")[1]
+
+
+def test_the_ones_ryte_fills_are_named_too(monkeypatch):
+    _, ((_, said),) = _checked(monkeypatch)
+
+    filled = said.split("filled by RYTE:")[1].split("· left for you")[0]
+    assert "Client Name" in filled
+    assert "Amount" in filled
+    assert "Outcome" not in filled
+
+
+def test_not_configured_is_neither_pass_nor_fail(monkeypatch):
+    _, ((ok, said),) = _checked(monkeypatch, sheet_id="")
+
+    assert ok is None
+    assert "not configured" in said
+
+
+def test_a_tracker_it_cannot_read_fails_loudly(monkeypatch):
+    _, ((ok, said),) = _checked(monkeypatch, sheet=Sheet(blows_up=RuntimeError("403")))
+
+    assert ok is False
+    assert "Chargeback tracker" in said
+
+
+def test_checking_writes_nothing(monkeypatch):
+    paper, _ = _checked(monkeypatch)
+
+    assert paper.written == []
