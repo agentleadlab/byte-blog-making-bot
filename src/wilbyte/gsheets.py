@@ -2,14 +2,21 @@
 
 Deliberately small. An earlier version of this file read and rewrote dozens of
 lead masterlists, and it was taken out at the request of the person whose lead
-sheets they were. What is here now reads a tab's headings and appends rows to
-the bottom of it. There is no update, no clear, no delete, and no way to reach
-a spreadsheet other than the one named in the config - not as a matter of
-intent but because the methods do not exist.
+sheets they were. What is here now reads a tab's headings and writes rows to
+it. There is no clear, no delete, and no way to reach a spreadsheet other than
+the one named in the config - not as a matter of intent but because the methods
+do not exist.
 
 Appending is the safe write. It cannot overwrite a row somebody typed, it
 cannot reorder anything, and the worst case for a bug is a row too many at the
 bottom, which anybody can delete.
+
+`put` is the one exception and it is not safe in that way: it writes where it
+is told and overwrites what is there. It exists because appending is Google
+deciding where a row goes, and on the chargeback tracker - a list of disputes
+in columns A-E and a deductions-by-closer summary from column G - Google chose
+the summary and put the dispute underneath it. Whatever calls `put` is
+responsible for having established that the range is empty.
 """
 
 from __future__ import annotations
@@ -241,6 +248,22 @@ class SheetsClient:
             json={"values": rows},
         )
         return str((got.get("updates") or {}).get("updatedRange") or "")
+
+    def put(self, sheet_id: str, span: str, rows: list[list[str]]) -> str:
+        """Write rows into an exact range. Returns what was written to.
+
+        `append` is told a tab and lets Google decide where the row goes, and
+        on a tab with two tables side by side Google picks the wrong one. When
+        the row belongs in a particular place, say the place.
+        """
+        if not rows:
+            return ""
+        got = self._request(
+            "PUT",
+            f"/{sheet_id}/values/{quoted(span)}?valueInputOption=USER_ENTERED",
+            json={"values": rows},
+        )
+        return str(got.get("updatedRange") or "")
 
     def add_tab(self, sheet_id: str, title: str) -> int | None:
         """A new empty tab, and its id. None if one by that name already exists."""

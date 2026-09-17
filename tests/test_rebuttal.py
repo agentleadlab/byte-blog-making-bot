@@ -1488,3 +1488,107 @@ def test_the_gaps_are_still_named_with_no_dispute_at_all():
     from wilbyte import rebuttal as rules
 
     assert rules.what_is_missing(rules.Gathered(), []) is not None
+
+
+# ------------------------------- the tracker tab has two tables on it
+
+
+SEPT_ROW_ONE = [
+    "Name of Disputer", "Date of Transaction", "Amount", "Closer", "Status",
+    "", "Sep 2026 chargebacks — deductions by closer",
+]
+
+
+def test_only_the_lists_own_columns_are_read():
+    """The month tab holds the disputes in A-E and a deductions-by-closer
+    summary from column G. Reading all of row 1 made a seven-wide row out of
+    five headings, an empty column F and the summary's title - and the preview
+    offered a column called "(unnamed)"."""
+    from wilbyte.bot import jobs
+
+    assert jobs._the_list_columns(SEPT_ROW_ONE) == [
+        "Name of Disputer", "Date of Transaction", "Amount", "Closer", "Status",
+    ]
+
+
+def test_the_row_goes_under_the_list_not_under_the_other_table():
+    """Google's append was handed the tab and chose the summary, writing
+    Juliana Hernandez below it in the summary's columns - under headings that
+    every one of them meant something else."""
+    from wilbyte.bot import jobs
+
+    asked = []
+
+    class Reading:
+        def rows(self, sheet, span):
+            asked.append(span)
+            return [SEPT_ROW_ONE[:5], ["a"] * 5, ["b"] * 5, ["c"] * 5]
+
+    where, at = jobs._a_free_row(Reading(), "sid", "Sept 2026", 5)
+
+    assert asked == ["'Sept 2026'!A:E"]
+    assert (where, at) == ("'Sept 2026'!A5:E5", 5)
+
+
+def test_the_free_row_is_read_rather_than_assumed():
+    """`put` overwrites. A dispute written over another dispute is the one
+    thing that must never happen to somebody's tracker."""
+    from wilbyte.bot import jobs
+
+    class Reading:
+        def rows(self, sheet, span):
+            return [["h"]] + [["x"]] * 40
+
+    where, at = jobs._a_free_row(Reading(), "sid", "Sept 2026", 5)
+
+    assert at == 42 and where == "'Sept 2026'!A42:E42"
+
+
+@pytest.mark.parametrize(
+    "wide, letter", [(1, "A"), (5, "E"), (7, "G"), (26, "Z"), (27, "AA")]
+)
+def test_the_last_column_is_named_correctly(wide, letter):
+    from wilbyte.bot import jobs
+
+    assert jobs._column_letter(wide) == letter
+
+
+def test_the_tracker_write_says_which_row_it_landed_on():
+    """A write nobody can check is a write nobody trusts - and this one went
+    to the wrong table once already."""
+    from wilbyte.bot import jobs
+
+    written = {}
+
+    class Writing:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def rows(self, sheet, span):
+            return [["h"] * 5, ["a"] * 5]
+
+        def put(self, sheet, span, rows):
+            written["span"] = span
+            return span
+
+        def append(self, *a, **kw):  # pragma: no cover - must not be used
+            raise AssertionError("append picks the wrong table on this sheet")
+
+    from wilbyte import gsheets
+
+    class Config:
+        class secrets:
+            tracker_sheet_id = "sid"
+
+    import unittest.mock as mock
+
+    with mock.patch.object(gsheets, "SheetsClient", lambda creds: Writing()), \
+            mock.patch.object(gsheets, "credentials", lambda s: None):
+        where, trouble = jobs.track_chargeback(Config(), "Sept 2026", ["a"] * 5)
+
+    assert not trouble, trouble
+    assert written["span"] == "'Sept 2026'!A3:E3"
+    assert where == "Sept 2026, row 3"

@@ -4385,7 +4385,7 @@ def tracker_headings(config: Config, *, day=None) -> tuple[list[str], str, list[
     except Exception as exc:
         return [], "", [f"Couldn't read the tracker: {_short(exc, 200)}"]
 
-    headings = [str(one).strip() for one in (rows[0] if rows else [])]
+    headings = _the_list_columns([str(one) for one in (rows[0] if rows else [])])
     if not headings:
         return [], tab, [
             "The tracker's first row is empty, so there are no columns to fill."
@@ -4393,12 +4393,59 @@ def tracker_headings(config: Config, *, day=None) -> tuple[list[str], str, list[
     return headings, tab, []
 
 
-def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str]]:
-    """Append one row to the tracker. (what it was added to, problems).
+def _the_list_columns(row: list[str]) -> list[str]:
+    """The list's own headings, stopping at the first empty column.
 
-    Writes. Appends only - it never edits a row somebody has already filled
-    in, because the column that gets filled in weeks later is the outcome and
-    that is not RYTE's to touch.
+    The tracker's month tab holds two tables side by side: the disputes
+    themselves in columns A-E, and a deductions-by-closer summary from column
+    G. Reading the whole of row 1 made a seven-wide row out of the list's five
+    headings, an empty column F and the summary's title - which showed up in
+    the preview as a column called "(unnamed)" and one called "Sep 2026
+    chargebacks - deductions by closer", both of them always blank.
+    """
+    found = []
+    for one in row:
+        if not one.strip():
+            break
+        found.append(one.strip())
+    return found
+
+
+def _a_free_row(reading, sheet: str, tab: str, wide: int) -> tuple[str, int]:
+    """(the range of the first free row under the list, which row it is).
+
+    Read rather than assumed: `put` overwrites, and the one thing that must
+    not happen to somebody's tracker is a dispute written over another one.
+    Google trims trailing empty rows off a read, so the row after the last one
+    it hands back is the first free row of the list - and only the list, since
+    the range stops at the list's own last column.
+    """
+    last = _column_letter(wide)
+    used = reading.rows(sheet, f"'{tab}'!A:{last}")
+    at = len(used) + 1
+    return f"'{tab}'!A{at}:{last}{at}", at
+
+
+def _column_letter(how_many: int) -> str:
+    """The letter of the nth column, counting from 1. 1 is A, 27 is AA."""
+    name = ""
+    while how_many > 0:
+        how_many, over = divmod(how_many - 1, 26)
+        name = chr(ord("A") + over) + name
+    return name
+
+
+def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str]]:
+    """Write one row into the tracker's list. (where it landed, problems).
+
+    Into the first free row under the list, never over one - the column that
+    gets filled in weeks later is the outcome, and that is not RYTE's to touch.
+
+    Not `append`. Appending hands Google a tab and lets it decide where the row
+    belongs, and the month tab has two tables on it: the disputes in columns
+    A-E and a deductions-by-closer summary from column G. Google picked the
+    summary and wrote Juliana Hernandez underneath it, in the summary's
+    columns, where every heading above her row meant something else.
     """
     from .. import gsheets
 
@@ -4408,10 +4455,11 @@ def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str
     sheet = gsheets.sheet_id_in(sheet) or sheet
     try:
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as writing:
-            writing.append(sheet, tab, [[str(one) for one in row]])
+            where, at = _a_free_row(writing, sheet, tab, len(row))
+            writing.put(sheet, where, [[str(one) for one in row]])
     except Exception as exc:
         return "", [f"Couldn't write to the tracker: {_short(exc, 200)}"]
-    return tab, []
+    return f"{tab}, row {at}", []
 
 
 def who_to_blacklist(config: Config, asked: str) -> tuple[list[dict], str, list[str]]:

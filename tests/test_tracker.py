@@ -135,9 +135,14 @@ class Sheet:
             raise self.blows_up
         return [list(self.headings)]
 
-    def append(self, sheet_id, tab, rows):
-        self.written.append((tab, rows))
-        return "ok"
+    def put(self, sheet_id, span, rows):
+        self.written.append((span, rows))
+        return span
+
+    def append(self, sheet_id, tab, rows):  # pragma: no cover - must not run
+        raise AssertionError(
+            "append lets Google pick the table, and the month tab has two"
+        )
 
     def __enter__(self):
         return self
@@ -193,10 +198,27 @@ def test_pressing_it_writes_one_row(monkeypatch):
     paper, said = _offered(monkeypatch)
 
     assert len(paper.written) == 1
-    tab, rows = paper.written[0]
-    assert tab == "Sept 2026"
+    span, rows = paper.written[0]
     assert rows[0][1] == "Juliana Hernandez"
-    assert "Added to **Sept 2026**" in said[-1]
+    assert "Added to **Sept 2026, row 2**" in said[-1]
+
+
+def test_the_row_goes_in_the_lists_own_columns(monkeypatch):
+    """Google's append was handed the tab and chose the deductions-by-closer
+    summary, writing Juliana Hernandez underneath it in that table's
+    columns."""
+    paper, _ = _offered(monkeypatch)
+
+    span, _rows = paper.written[0]
+
+    assert span == "'Sept 2026'!A2:M2"
+
+
+def test_the_free_row_is_read_before_it_is_written_to(monkeypatch):
+    """`put` overwrites. Where it writes is read first, every time."""
+    paper, _ = _offered(monkeypatch)
+
+    assert "'Sept 2026'!A:M" in paper.asked
 
 
 def test_nothing_is_written_without_the_press(monkeypatch):
@@ -402,7 +424,7 @@ def test_no_tabs_at_all_is_said():
 def test_the_headings_are_read_off_that_month_s_tab(monkeypatch):
     paper, _ = _offered(monkeypatch, press=False)
 
-    assert paper.asked == ["'Sept 2026'!1:1"]
+    assert paper.asked == ["'Sept 2026'!1:1"]  # nothing written, nothing else read
 
 
 def test_a_missing_month_stops_before_any_row_is_offered(monkeypatch):
