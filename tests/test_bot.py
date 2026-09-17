@@ -3425,7 +3425,7 @@ class Button:
 
 
 def _watching(monkeypatch, *, tasks, press=True, answered=True, remember=False,
-              problems=()):
+              problems=(), presses=None):
     """One tick of what the watcher shows, with the board and button stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -3438,6 +3438,17 @@ def _watching(monkeypatch, *, tasks, press=True, answered=True, remember=False,
         pass
 
     Pressed.press, Pressed.answered = press, answered
+
+    if presses is not None:
+        # One answer per list, in the order the lists were offered.
+        left = list(presses)
+
+        class Pressed(Button):  # noqa: F811
+            def __init__(self, **kw):
+                super().__init__(**kw)
+                self.confirmed = left.pop(0) if left else False
+
+        Pressed.answered = answered
 
     monkeypatch.setattr(
         bot_client.jobs, "tags_to_file",
@@ -6120,3 +6131,75 @@ def test_no_setup_card_falls_back_to_reading_the_agent_cards(config, monkeypatch
 
     assert [one["agent"] for one in found] == ["Jay Rodriguez", "Kahlil Jackson II"]
     assert undated == 1
+
+
+# --------------------- the description and the comments are asked separately
+
+# Seven items came as one list: Elisa's three and Jenn's two and Kath's two,
+# all "in the description", with Kenneth's comments nowhere. A description
+# line is the card's own standing list of who does what; a comment is somebody
+# handing over a job during the day. Saying yes to one meant saying yes to
+# both.
+
+
+def _a_tagged(*, described, person="Elisa", what="Spanish SMS Send okay?"):
+    from wilbyte import tagged
+
+    return tagged.Task(
+        note=tagged.Note(
+            comment_id="n1" if not described else "",
+            text=what, card_short="IU4PM7wJ", described=described,
+        ),
+        kind="general", checklist=person, card_id="a",
+        card_title="💎 General 09/17/26", summary=what,
+    )
+
+
+def test_both_kinds_are_offered_at_the_same_time(config, monkeypatch):
+    """Not one after the other — a button waits up to twelve hours, and the
+    comments would be hidden behind the description for all of it."""
+    filed, said = _watching(
+        monkeypatch,
+        tasks=[_a_tagged(described=True), _a_tagged(described=False)],
+        press=False,
+    )
+
+    whole = "\n".join(str(one) for one in said)
+    assert "in the description" in whole
+    assert "in the comments" in whole
+    assert len(said) == 2, "they came as one list again"
+
+
+def test_only_one_list_when_there_is_only_one_kind(config, monkeypatch):
+    _, said = _watching(
+        monkeypatch, tasks=[_a_tagged(described=True)], press=False,
+    )
+
+    assert len(said) == 1
+    assert "in the description" in said[0]
+
+
+def test_saying_yes_to_one_does_not_file_the_other(config, monkeypatch):
+    """The whole point of splitting them."""
+    filed, _ = _watching(
+        monkeypatch,
+        tasks=[
+            _a_tagged(described=True, what="Collin Affiliate GSheet"),
+            _a_tagged(described=False, what="Check EOD zap for AB"),
+        ],
+        presses=[True, False],
+    )
+
+    assert [one.summary for one in filed] == ["Collin Affiliate GSheet"]
+
+
+def test_the_warnings_are_not_repeated_under_both(config, monkeypatch):
+    _, said = _watching(
+        monkeypatch,
+        tasks=[_a_tagged(described=True), _a_tagged(described=False)],
+        problems=["@tysonlindquist is in the general card's description"],
+        press=False,
+    )
+
+    whole = "\n".join(str(one) for one in said)
+    assert whole.count("@tysonlindquist") == 1

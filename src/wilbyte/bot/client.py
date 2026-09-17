@@ -4474,19 +4474,6 @@ async def _offer_tags_now(
                 await asyncio.to_thread(alreadysaid.remember, day, problems)
         return
 
-    view = views.ConfirmView(
-        requester_id=None,
-        timeout=config.discord.approval_timeout_seconds,
-        label=f"Add {len(tasks)} item(s)",
-        emoji="📌",
-    )
-    listed = "\n".join(f"• {tagged.describe(one)}" for one in tasks[:TAGS_SHOWN])
-    if len(tasks) > TAGS_SHOWN:
-        listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
-    note = f"📌 {len(tasks)} new item(s) on today's cards, not on a checklist yet:\n{listed}"
-    if problems:
-        note += "\n⚠ " + "\n⚠ ".join(problems)
-    await responder.send(note, view=view)
     # Written down as it is posted rather than after the button, so a tick
     # while somebody is still looking at it does not post the same list
     # underneath, and neither does a restart.
@@ -4494,6 +4481,58 @@ async def _offer_tags_now(
         await asyncio.to_thread(
             alreadysaid.remember, day, _said_keys(tasks) + list(problems),
         )
+
+    # A description line and a comment are two different things and get asked
+    # about separately. The description is the card's own standing list of who
+    # is doing what; a comment is somebody handing over a job during the day.
+    # Mixed into one list of seven they read as one pile of work, and saying
+    # yes to today's handovers meant saying yes to the standing plan as well.
+    written = [one for one in tasks if getattr(one.note, "described", False)]
+    spoken = [one for one in tasks if not getattr(one.note, "described", False)]
+    both = [
+        (these, emoji, what)
+        for these, emoji, what in (
+            (written, "📋", "in the description"),
+            (spoken, "💬", "in the comments"),
+        )
+        if these
+    ]
+    # Together, not one after the other. Each list waits on its own button and
+    # a button waits up to `approval_timeout_minutes` - so asking in sequence
+    # would hide the comments until somebody had answered the description,
+    # which on a quiet afternoon is half a day.
+    await asyncio.gather(*(
+        _offer_these(
+            responder, config, these, emoji=emoji, what=what,
+            # The warnings belong under one list, not repeated under both.
+            problems=problems if at == 0 else [],
+        )
+        for at, (these, emoji, what) in enumerate(both)
+    ))
+
+
+async def _offer_these(
+    responder: Responder, config: Config, tasks, *, problems, emoji: str, what: str
+) -> None:
+    """One list, one button. Nothing is written until it is pressed."""
+    from .. import tagged
+
+    view = views.ConfirmView(
+        requester_id=None,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add {len(tasks)} item(s)",
+        emoji=emoji,
+    )
+    listed = "\n".join(f"• {tagged.describe(one)}" for one in tasks[:TAGS_SHOWN])
+    if len(tasks) > TAGS_SHOWN:
+        listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
+    note = (
+        f"{emoji} {len(tasks)} new item(s) {what} on today's cards, "
+        f"not on a checklist yet:\n{listed}"
+    )
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
+    await responder.send(note, view=view)
     await view.wait()
     if not view.confirmed:
         # A list that timed out is a list nobody saw, and the work is still
