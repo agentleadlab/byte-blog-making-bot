@@ -1498,6 +1498,43 @@ async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
     await message.reply(f"Said it on **{title}** — <{url}>", mention_author=False)
 
 
+def _fuller_dispute(rules_doc, dispute, said: str, paid_with: str, older):
+    """(dispute, text, payment record) off an older message, if it says more.
+
+    Only when it genuinely fills more of the notice than what was typed, so a
+    message that happens to be nearby cannot overwrite facts somebody gave.
+
+    The reason code is the one thing the older message is least likely to have
+    and the newer one most likely to: it lives in the ElevateQS portal rather
+    than on the notice, so Franklin types it when he asks. Taking the fuller
+    message must not throw away the half he added.
+    """
+    text = (getattr(older, "content", "") or "").strip()
+    if not text:
+        return None
+    older_said, older_paid = rules_doc.split_payment(text)
+    found = rules_doc.read_facts(older_said)
+    if len(found.missing()) >= len(dispute.missing()):
+        return None
+    if not found.code:
+        found.raw = f"{found.raw}\n{said}"
+    return found, (older_said or said), (paid_with or older_paid)
+
+
+async def _said_before(message, *, howmany: int = 30):
+    """The messages above this one, newest first - RYTE's own included.
+
+    Unlike `_the_one_before`, this one keeps RYTE's messages: the chargeback
+    flag card is RYTE's, it carries every fact off the notice, and it is
+    usually the last thing said before somebody asks for the rebuttal.
+    """
+    try:
+        async for older in message.channel.history(limit=howmany, before=message):
+            yield older
+    except Exception:  # no history permission, or Discord having a moment
+        return
+
+
 async def _the_one_before(message):
     """The message just above this one, from anybody but RYTE.
 
@@ -1763,25 +1800,35 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
     # is read as itself rather than parsed for labelled fields.
     said, paid_with = rules_doc.split_payment(said)
     dispute = rules_doc.read_facts(said)
+    from_elsewhere = None
     if dispute.missing():
         replied = await _replied_to(message)
-        if replied is not None and (replied.content or "").strip():
-            older_said, older_paid = rules_doc.split_payment(replied.content or "")
-            older = rules_doc.read_facts(older_said)
-            if len(older.missing()) < len(dispute.missing()):
-                # The reason code is the one thing the older message is least
-                # likely to have and the newer one most likely to: it lives in
-                # the ElevateQS portal rather than on the notice, so Franklin
-                # types it when he asks. Taking the fuller message must not
-                # throw away the half he added.
-                if not older.code:
-                    older.raw = f"{older.raw}\n{said}"
-                dispute = older
-                said = older_said or said
-                paid_with = paid_with or older_paid
-                # The screenshots were attached to that message too.
-                if not getattr(message, "attachments", None):
-                    message = replied
+        fuller = _fuller_dispute(rules_doc, dispute, said, paid_with, replied)
+        if fuller is not None:
+            dispute, said, paid_with = fuller
+            from_elsewhere = replied
+            # The screenshots were attached to that message too.
+            if not getattr(message, "attachments", None):
+                message = replied
+
+    # Nobody replies to the notice every time. "@RYTE code: 37 - No Cardholder
+    # Authorization rebuttal", typed fresh in the dispute channel with the
+    # notice and RYTE's own flag card a few lines above it, asked Franklin to
+    # paste a block that was already on the screen twice. Both of those parse
+    # whole, so read back for them rather than asking for them again.
+    if dispute.missing():
+        async for older in _said_before(message):
+            fuller = _fuller_dispute(rules_doc, dispute, said, paid_with, older)
+            if fuller is None:
+                continue
+            dispute, said, paid_with = fuller
+            from_elsewhere = older
+            if not getattr(message, "attachments", None) and getattr(
+                older, "attachments", None
+            ):
+                message = older
+            if not dispute.missing():
+                break
 
     if not dispute.customer_name:
         dispute.customer_name = rules_doc.named_in(said)
@@ -1812,6 +1859,14 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
             ))
         except Exception as exc:
             skipped.append(f"{attachment.filename} ({jobs._short(exc, 60)})")
+
+    # Which message the facts came off, when they did not come off the ask.
+    # Reading back is a guess about what somebody meant, and a rebuttal built
+    # for the wrong customer is not a mistake anybody wants to find inside the
+    # finished document.
+    came_from = getattr(from_elsewhere, "jump_url", "") if from_elsewhere else ""
+    if came_from:
+        await responder.send(f"-# Facts off [the notice above](<{came_from}>).")
 
     await responder.send(
         f"Building the rebuttal for **{dispute.customer_name}** — reading the "

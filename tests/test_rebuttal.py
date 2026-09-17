@@ -1280,3 +1280,144 @@ def test_a_dash_in_prose_is_not_a_labelled_field():
 
     assert one.missing() == ["Customer Name", "Dispute Dollar Amount",
                              "Transaction Date"]
+
+
+# ------------------------------------- finding the notice without being replied to
+
+
+HER_FLAG_CARD = """⚖️ **Chargeback**
+• **Customer** — Juliana Hernandez
+• **Amount** — $129.37
+• **Transaction** — 8/28/2026
+• **ARN** — 7230762624180957424478
+[The notice](https://discord.com/x)"""
+
+HER_NOTICE = """Disputed Payment | Elevateqs ❌
+
+ARN: 7230762624180957424478
+Customer Name: Juliana Hernandez
+Customer Email: hjuliana650@gmail.com
+Card Number (Last 4): 7543
+Transaction Date: 8/28/2026
+Dispute Amount: $ 129.37"""
+
+
+def _asked(said, above, monkeypatch, *, reference=None):
+    """Run the rebuttal handler with `above` sitting in the channel already."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    spoke = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            spoke.append(str(content or kwargs.get("embed") or ""))
+
+    class Older:
+        attachments: list = []
+        jump_url = "https://discord.com/above"
+
+        def __init__(self, content):
+            self.content = content
+
+    class Channel:
+        async def history(self, limit=0, before=None):  # pragma: no cover - shape
+            raise NotImplementedError
+
+    class Message:
+        attachments: list = []
+        channel = Channel()
+
+    # discord.py's history() is an async iterator, not a coroutine.
+    async def history(limit=0, before=None):
+        for one in above:
+            yield Older(one)
+
+    Message.channel.history = history
+    Message.reference = reference
+
+    def stop(*args, **kwargs):
+        raise TypeError("far enough")
+
+    monkeypatch.setattr(jobs, "rebuttal_evidence", stop)
+    monkeypatch.setattr(bot_client.embeds, "error", lambda text, **kw: f"ERROR: {text}")
+
+    class Config:
+        class secrets:
+            anthropic_api_key = "x"
+
+    asyncio.run(bot_client._rebuttal(Responder(), Config(), Message(), said))
+    return spoke
+
+
+def test_the_code_on_its_own_reads_the_notice_already_in_the_channel(monkeypatch):
+    """Franklin typed "@RYTE code: 37 - No Cardholder Authorization rebuttal"
+    in the dispute channel, with the notice and RYTE's own flag card a few
+    lines above it, and RYTE asked him to paste a block that was on the screen
+    twice. Both parse whole - it just never looked."""
+    spoke = _asked(
+        "code: 37 — No Cardholder Authorization rebuttal",
+        [HER_FLAG_CARD, HER_NOTICE],
+        monkeypatch,
+    )
+
+    assert not any("I need a bit more" in one for one in spoke), spoke
+    assert any("Juliana Hernandez" in one for one in spoke), spoke
+
+
+def test_the_code_he_typed_survives_the_notice_it_reads_back(monkeypatch):
+    """Neither the notice nor the flag card carries the reason code - it is on
+    the ElevateQS portal. Taking the fuller message must not drop the half he
+    added, or the rebuttal argues the wrong question."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    class Older:
+        content = HER_FLAG_CARD
+
+    fuller = bot_client._fuller_dispute(
+        rules, rules.read_facts("code: 37"), "code: 37", "", Older()
+    )
+
+    assert fuller is not None
+    assert fuller[0].code == "37"
+    assert fuller[0].customer_name == "Juliana Hernandez"
+
+
+def test_a_message_nearby_cannot_overwrite_what_he_typed(monkeypatch):
+    """A fuller message wins; a thinner one is left alone. Otherwise the last
+    dispute in the channel quietly replaces the one being asked about."""
+    from wilbyte.bot import client as bot_client
+    from wilbyte import rebuttal as rules
+
+    class Older:
+        content = "Customer Name: Someone Else"
+
+    whole = rules.read_facts(HER_NOTICE)
+
+    assert bot_client._fuller_dispute(rules, whole, HER_NOTICE, "", Older()) is None
+
+
+def test_it_says_which_message_the_facts_came_off(monkeypatch):
+    """Reading back is a guess about what somebody meant. A rebuttal built for
+    the wrong customer is not a thing to find inside the finished document."""
+    spoke = _asked(
+        "code: 37 — No Cardholder Authorization rebuttal",
+        [HER_FLAG_CARD],
+        monkeypatch,
+    )
+
+    assert any("discord.com/above" in one for one in spoke), spoke
+
+
+def test_a_reason_code_line_is_not_a_customer_name():
+    """`named_in` read "code" out of "code: 37 - No Cardholder Authorization"
+    and addressed the rebuttal to a customer called code."""
+    from wilbyte import rebuttal as rules
+
+    assert rules.named_in("code: 37 — No Cardholder Authorization rebuttal") == ""
+    assert rules.named_in("rebuttal Jose Zambrano") == "Jose Zambrano"

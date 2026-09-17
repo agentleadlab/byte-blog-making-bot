@@ -325,7 +325,15 @@ def read_facts(text: str) -> Dispute:
 
 
 def named_in(text: str) -> str:
-    """The customer's name off the command line - `rebuttal Jose Zambrano`."""
+    """The customer's name off the command line - `rebuttal Jose Zambrano`.
+
+    Nothing off a line that is telling RYTE the reason code. "code: 37 - No
+    Cardholder Authorization rebuttal" is an instruction, and reading a name
+    out of it addressed a rebuttal to a customer called "code".
+    """
+    first = ((text or "").splitlines() or [""])[0]
+    if code_in(first) and _CODE_LINE.match(first):
+        return ""
     said = re.sub(
         r"^\s*(?:trello\s+)?(?:rebuttal|chargeback|dispute)\b", "",
         (text or "").splitlines()[0] if text else "", count=1, flags=re.IGNORECASE,
