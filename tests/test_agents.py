@@ -3851,3 +3851,42 @@ def test_an_aged_leads_order_is_untouched_by_any_of_this():
 def test_a_daily_card_is_not_a_misspelled_agent():
     for title in ("Lead Order 09/17", "💎 General 09/17/26", "Agent Setup Going Live Thursday 09/17"):
         assert agents.misspelled_agent(title) == "", title
+
+
+def test_a_stray_weekday_in_the_launch_sentence_is_not_an_argument():
+    """Davis Swenson's card, verbatim. It names Tuesday, then monday, then
+    Tuesday again beside the date. September 22 2026 is a Tuesday, so the
+    writer said the day right and the other two are about when he is back.
+    RYTE read the week in order rather than the sentence, reached monday
+    first and asked which day he goes live."""
+    said = agents.launch_conflict(
+        "He may be back before Tuesday mid day monday can turn on as well"
+        " - launch date is Tuesday, September 22",
+        today=date(2026, 9, 17),
+    )
+
+    assert said == ""
+
+
+def test_the_day_beside_the_date_is_the_one_that_argues():
+    """The stray day is the one written first here, so taking the first day
+    named would let a wrong launch day through."""
+    said = agents.launch_conflict(
+        "back monday, launch date is Wednesday, September 22",
+        today=date(2026, 9, 17),
+    )
+
+    assert "Wednesday" in said and "September 22" in said and "Tuesday" in said
+
+
+def test_a_right_day_elsewhere_does_not_excuse_a_wrong_one():
+    """August 27 2026 is a Thursday, and the sentence says Thursday - but
+    about coming back, not about going live. "fri" is beside the date."""
+    said = agents.launch_conflict("live fri, aug 27, back thursday", today=TUESDAY)
+
+    assert "Friday" in said and "August 27" in said
+
+
+def test_the_days_named_are_read_in_the_order_written():
+    """Friday is later in the week than Monday but earlier in the sentence."""
+    assert [day for _, day in agents._weekdays_named("friday, then monday")] == [4, 0]

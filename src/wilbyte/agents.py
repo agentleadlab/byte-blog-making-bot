@@ -1632,12 +1632,36 @@ def _written_date_in(sentence: str, *, today: date) -> date | None:
     return None
 
 
-def _weekday_named(sentence: str) -> int | None:
-    """Which day of the week a sentence names, if it names one."""
+def _weekdays_named(sentence: str) -> list[tuple[int, int]]:
+    """(where it is written, which day) for every day of the week named."""
     said = (sentence or "").lower()
+    found = []
     for index, name in enumerate(_WEEKDAYS):
-        if re.search(rf"\b{name}\b|\b{_SHORT_DAYS[index]}\b", said):
-            return index
+        for hit in re.finditer(rf"\b{name}\b|\b{_SHORT_DAYS[index]}\b", said):
+            found.append((hit.start(), index))
+    return sorted(found)
+
+
+def _day_beside(sentence: str, *, at: tuple[int, int]) -> int | None:
+    """The day of the week written closest to the date in a sentence.
+
+    A sentence can name days that have nothing to do with the launch. The one
+    that is an argument with the date is the one the writer put next to it.
+    """
+    named = _weekdays_named(sentence)
+    if not named:
+        return None
+    start, end = at
+    return min(named, key=lambda hit: min(abs(hit[0] - start), abs(hit[0] - end)))[1]
+
+
+def _where_the_date_is(sentence: str) -> tuple[int, int] | None:
+    """Where in a sentence the date is written, read the way `_date_in` reads
+    it: a numeric date first, then a written-out one."""
+    for pattern in (_NUMERIC, _MONTH_DAY):
+        found = pattern.search(sentence or "")
+        if found:
+            return found.span()
     return None
 
 
@@ -1652,13 +1676,22 @@ def launch_conflict(text: str, *, today: date) -> str:
 
     Only the sentence the launch date was read out of, so a "see you Friday"
     somewhere else on the card is not an argument with anything.
+
+    One sentence can name several days without arguing with itself either.
+    Davis Swenson's card says "he may be back before Tuesday mid day monday can
+    turn on as well - launch date is Tuesday, September 22". Three weekdays,
+    two of them about when he is back rather than when he goes live, and the
+    day the writer put beside the date is right. RYTE read the week in order
+    instead of the sentence, reached monday first and asked a question the card
+    had already answered.
     """
     for pattern in _WHEN_SAID:
         for sentence in pattern.findall(text or ""):
             found = _date_in(sentence, today=today)
             if found is None:
                 continue
-            named = _weekday_named(sentence)
+            where = _where_the_date_is(sentence)
+            named = None if where is None else _day_beside(sentence, at=where)
             if named is None or named == found.weekday():
                 return ""
             return (
