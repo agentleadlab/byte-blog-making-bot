@@ -34,14 +34,36 @@ FIELDS = (
     ("amount", r"dollar\s*amount|dispute\s*amount|\bamount\b"),
     ("arn", r"\barn\b|acquirer.?s?\s*reference"),
     ("card", r"card\s*(?:number|no)|\bcard\b"),
-    ("transaction_date", r"transaction\s*date|sale\s*date|purchase\s*date"),
-    ("customer_name", r"customer\s*name|cardholder(?:\s*name)?|client\s*name"),
+    # The bare words too, because RYTE's own flag card says "Customer" and
+    # "Transaction" where the acquirer's notice says "Customer Name" and
+    # "Transaction Date" - and replying to that card is the obvious way to ask
+    # for a rebuttal.
+    #
+    # "Transaction ID" is not a date, and "Customer Email" is claimed by the
+    # field below this one, which is only reached if this one lets it past.
+    ("transaction_date", r"transaction(?!\s*id)|sale\s*date|purchase\s*date"),
+    ("customer_name",
+     r"customer\s*name|customer\b(?!\s*e-?mail)|cardholder(?:\s*name)?|client\s*name"),
     ("customer_email", r"customer\s*email|cardholder\s*email|\bemail\b"),
 )
 
 _MONEY = re.compile(r"\$?\s*([\d,]+(?:\.\d{1,2})?)")
 _DATE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b")
 _LINE = re.compile(r"^\s*(?P<label>[^:]{2,60}?)\s*:\s*(?P<value>.+?)\s*$")
+
+# The shape RYTE writes when it flags a chargeback of its own:
+#
+#     • Customer — Juliana Hernandez
+#     • Amount — $129.37
+#
+# Replying to that card is the obvious way to ask for the rebuttal - it is the
+# message in front of you, and it carries every fact - and it parsed as
+# nothing at all, because the fields are bulleted and separated by a dash
+# rather than a colon. The bullet is required: prose is full of dashes, and
+# "the leads - all 25 of them - arrived" is not a labelled field.
+_BULLETED = re.compile(
+    r"^\s*[•·*+\-\u2022]\s*(?P<label>[^—–:]{2,60}?)\s*[—–]\s*(?P<value>.+?)\s*$"
+)
 
 # The notification arrives as a Discord embed with its labels in bold, so the
 # line is "**ARN:** 2455640616780894270" - the label match stops at the first
@@ -284,7 +306,8 @@ def read_facts(text: str) -> Dispute:
     found = Dispute()
     seen = set()
     for line in (text or "").splitlines():
-        matched = _LINE.match(_unbolded(line))
+        said = _unbolded(line)
+        matched = _LINE.match(said) or _BULLETED.match(said)
         if not matched:
             continue
         label = matched.group("label").strip().casefold()

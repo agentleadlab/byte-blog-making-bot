@@ -1218,3 +1218,65 @@ def test_pasting_it_still_wins_over_a_screenshot(monkeypatch):
     ) else ""
     # The wiring: the pasted block is only replaced when there wasn't one.
     assert "if not paid_with:" in inspect.getsource(bot_client)
+
+
+# ------------------- replying to RYTE's own flag card is how you ask
+
+# "@Ryte code: 37 — No Cardholder Authorization rebuttal", in reply to the
+# chargeback card RYTE had just posted, came back "I need a bit more of the
+# dispute notice". Every fact was in the message being replied to — RYTE's
+# own — and it could not read its own handwriting.
+
+FLAG_CARD = """⚖ Chargeback
+• Customer — Juliana Hernandez
+• Amount — $129.37
+• Transaction — 8/28/2026
+• ARN — 72307626241809574244780"""
+
+
+def test_ryte_can_read_its_own_flag_card():
+    one = rebuttal.read_facts(FLAG_CARD)
+
+    assert one.missing() == []
+    assert one.customer_name == "Juliana Hernandez"
+    assert one.amount == "$129.37"
+    assert one.transaction_date == "8/28/2026"
+    assert one.arn == "72307626241809574244780"
+
+
+def test_the_portal_notice_still_reads_the_same():
+    """The bullet form is additional, not a replacement."""
+    one = rebuttal.read_facts(JULIANA)
+
+    assert one.customer_name == "Juliana Hernandez"
+    assert one.customer_email == "hjuliana650@gmail.com"
+    assert one.transaction_date == "8/28/2026"
+    assert one.missing() == []
+    assert rebuttal.read_facts(
+        JULIANA + "\nCode: 37 - No Cardholder Authorization"
+    ).code == "37"
+
+
+def test_customer_email_is_not_claimed_by_the_name():
+    """"Customer" now matches the name field, and it must let "Customer
+    Email" past to the one below it."""
+    one = rebuttal.read_facts(
+        "Customer Email: hjuliana650@gmail.com\nCustomer Name: Juliana Hernandez"
+    )
+
+    assert one.customer_email == "hjuliana650@gmail.com"
+    assert one.customer_name == "Juliana Hernandez"
+
+
+def test_a_transaction_id_is_not_a_transaction_date():
+    one = rebuttal.read_facts("Transaction ID: da8ro570i476liker12g")
+
+    assert one.transaction_date == ""
+
+
+def test_a_dash_in_prose_is_not_a_labelled_field():
+    """The bullet is what makes it a field. Prose is full of dashes."""
+    one = rebuttal.read_facts("the leads — all 25 of them — arrived on time")
+
+    assert one.missing() == ["Customer Name", "Dispute Dollar Amount",
+                             "Transaction Date"]

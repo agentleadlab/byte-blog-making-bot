@@ -1769,6 +1769,13 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
             older_said, older_paid = rules_doc.split_payment(replied.content or "")
             older = rules_doc.read_facts(older_said)
             if len(older.missing()) < len(dispute.missing()):
+                # The reason code is the one thing the older message is least
+                # likely to have and the newer one most likely to: it lives in
+                # the ElevateQS portal rather than on the notice, so Franklin
+                # types it when he asks. Taking the fuller message must not
+                # throw away the half he added.
+                if not older.code:
+                    older.raw = f"{older.raw}\n{said}"
                 dispute = older
                 said = older_said or said
                 paid_with = paid_with or older_paid
