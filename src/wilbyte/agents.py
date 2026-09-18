@@ -965,6 +965,39 @@ def an_order(part: str) -> bool:
     return not _WHO_NOT_WHAT.match(said)
 
 
+# A checklist line that says when rather than what. The setup card for
+# Saturday to Monday carries a line per day beside the agents' own lines, and
+# those get joined onto the agent the same way a second order would be.
+_DAY_WORDS = (
+    r"(?:mon|tues?|wed(?:nes|s)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?"
+    r"|today|tomorrow|yesterday"
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"|\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+)
+_HAS_A_DAY = re.compile(rf"\b(?:{_DAY_WORDS})\b", re.IGNORECASE)
+_ONLY_DAYS = re.compile(
+    rf"^(?:\s*(?:{_DAY_WORDS}|live|going|goes|on|the|and"
+    r"|\d{1,2}(?:st|nd|rd|th)?|[-–—,/&.]))+\s*$",
+    re.IGNORECASE,
+)
+
+
+def just_a_day(text: str) -> bool:
+    """Whether a line says when rather than what.
+
+    "MONDAY" is not a lead type, and treating it as one asked Franklin to
+    define it: `@RYTE words MONDAY = standard`, which would have taught RYTE
+    that Monday is a product and put agents under it. A day names no order, so
+    it is dropped rather than reported.
+
+    A day word is required, not just day-shaped punctuation: "25" on its own
+    is not an order either, but it is also not a day, and something RYTE
+    cannot read has to keep being said out loud.
+    """
+    said = " ".join((text or "").split())
+    return bool(said) and bool(_HAS_A_DAY.search(said)) and bool(_ONLY_DAYS.fullmatch(said))
+
+
 def order_parts(label: str) -> list[str]:
     """A checklist line back into the orders it names.
 
@@ -977,6 +1010,14 @@ def order_parts(label: str) -> list[str]:
     by hand is left exactly as it was typed.
     """
     parts = [part.strip() for part in (label or "").split(ORDER_JOIN) if part.strip()]
+    # A day is dropped whether or not there is an order beside it. Unlike an
+    # unreadable line, there is nothing to report: the setup card said when,
+    # the Lead Order card is filed by what, and no wording of Monday will ever
+    # be a lead type.
+    days = [part for part in parts if just_a_day(part)]
+    parts = [part for part in parts if not just_a_day(part)]
+    if days and not parts:
+        return []
     # An agency note alongside a real order is dropped; on its own it is left
     # alone, so a line RYTE can't read still gets reported rather than vanish.
     ordered = [part for part in parts if an_order(part)]

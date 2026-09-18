@@ -3928,3 +3928,38 @@ def test_the_conflict_check_reads_the_shorthand_too():
     comma = agents.launch_conflict("live fri, aug 27", today=date(2026, 9, 18))
 
     assert "Thursday" in dotted and dotted == comma
+
+
+# ------------------------------------- a day on a setup card is not an order
+
+
+def test_a_day_is_never_a_lead_type():
+    """The Saturday-to-Monday setup card carries a line saying which day
+    beside the agents' own lines, and `setup_agents` joins both onto the same
+    agent. "MONDAY" then came back as an order nobody could place, and RYTE
+    asked Franklin to define it - `@RYTE words MONDAY = standard` - which
+    would have taught it that Monday is a product."""
+    assert agents.order_parts("OTP VET Plus + MONDAY") == ["OTP VET Plus"]
+    assert agents.order_parts("MONDAY") == []
+
+
+@pytest.mark.parametrize(
+    "said", ["MONDAY", "sat", "SATURDAY LIVE", "09/21", "Sept 21", "Mon-Wed",
+             "going live friday"],
+)
+def test_the_ways_a_line_says_when_rather_than_what(said):
+    assert agents.just_a_day(said)
+
+
+@pytest.mark.parametrize(
+    "said", ["OTP VET Plus", "25 OTP VETS", "25", "march madness leads",
+             "Text-Verified Final Expense and Vets", "OTP TRUCKER"],
+)
+def test_a_real_order_is_not_mistaken_for_a_day(said):
+    assert not agents.just_a_day(said)
+
+
+def test_something_unreadable_that_is_not_a_day_is_still_reported():
+    """"25" on its own is not an order either, but it is also not a day, and
+    something RYTE cannot read has to keep being said out loud."""
+    assert agents.order_parts("25") == ["25"]

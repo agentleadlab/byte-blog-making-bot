@@ -4184,7 +4184,12 @@ def spread_to_lead_order(
         # The setup card carries a line per person who worked on them, and
         # Therese writing "OTP IUL Plus" where Nicole writes "Ascend" is one
         # agent, done, with a second wording nobody can match.
-        stuck: list[tuple[str, str]] = []
+        # (agent's card, what to say, the wording that could not be placed).
+        # The wording is carried rather than cut back out of the sentence
+        # afterwards: doing that took “MONDAY” doesn't match any checklist on
+        # Lead Order 09/19/26-09/21/26, stripped the opening quote off it, and
+        # printed the rest of the sentence as though it were the lead type.
+        stuck: list[tuple[str, str, str]] = []
         placed: set[str] = set()
         # The days this Lead Order card is for. An agent whose own card names a
         # different day does not belong on it, whichever setup card they were
@@ -4212,7 +4217,7 @@ def spread_to_lead_order(
                 stuck.append((spread.url, (
                     f"{who} — their card says live {goes:%a %b %d} and "
                     f"{order.get('name')} doesn't reach it, so I left it off"
-                )))
+                ), spread.label))
                 continue
             if key not in by_name:
                 # Never invent one. The checklists on a Lead Order card are the
@@ -4235,12 +4240,14 @@ def spread_to_lead_order(
                     stuck.append((spread.url,
                         f"{who} — “{spread.label}” could be "
                         + " or ".join(f"“{one}”" for one in could_be)
-                        + f" on {order.get('name')}. It doesn't say which."))
+                        + f" on {order.get('name')}. It doesn't say which.",
+                        spread.label))
                 else:
                     stuck.append((spread.url,
                         f"{who} — “{spread.label}” doesn't match any checklist on "
                         f"{order.get('name')}"
-                        + _teach_me(spread.label)))
+                        + _teach_me(spread.label),
+                        spread.label))
                 continue
             try:
                 client.add_check_item(
@@ -4281,16 +4288,13 @@ def spread_to_lead_order(
         # Said quietly, because the wording is still drifting and that is
         # worth knowing; but not under "something went wrong", which sends
         # somebody looking for an agent who is already there.
-        problems.extend(said for url, said in stuck if url not in placed)
-        also = [said for url, said in stuck if url in placed]
+        problems.extend(said for url, said, _ in stuck if url not in placed)
+        also = [label for url, _said, label in stuck if url in placed]
         if also:
             problems.append(
                 f"{len(also)} line(s) I couldn't read were for agents already "
                 "placed from another line on the setup card, so I left them: "
-                + "; ".join(
-                    said.split(" — ", 1)[-1].split(" could be")[0].strip("“”")
-                    for said in also
-                )
+                + "; ".join(f"“{one}”" for one in also)
             )
         return added, conflicts, problems
     finally:

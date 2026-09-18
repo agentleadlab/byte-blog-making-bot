@@ -6440,3 +6440,65 @@ def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
     assert not problems, problems
     assert posted["text"] == "@nic0l3\nhttps://a https://b"
     assert url == "https://trello.com/c/C"
+
+
+def test_the_lines_it_could_not_place_are_named_by_their_wording(monkeypatch):
+    """The summary used to cut the wording back out of the sentence it had
+    just written, so “MONDAY” doesn't match any checklist on Lead Order
+    09/19/26-09/21/26 lost its opening quote and the rest of the sentence was
+    printed as though it were the lead type."""
+    from datetime import date
+
+    from wilbyte import agents as rules
+    from wilbyte.bot import jobs
+
+    class Client:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [
+                {"id": "S", "name": "Agent Setup Going Live Monday 09/21",
+                 "url": "https://trello.com/c/S"},
+                {"id": "O", "name": "Lead Order 09/21/26",
+                 "url": "https://trello.com/c/O"},
+                {"id": "A", "name": "New Agent - Alex Olsen",
+                 "url": "https://trello.com/c/AAAAAAAA", "desc": ""},
+            ]
+
+        def card_checklists(self, card_id):
+            if card_id == "S":
+                return [{"name": "Therese", "checkItems": [
+                    {"name": "[New Agent - Alex Olsen](https://trello.com/c/AAAAAAAA)"
+                             " OTP VET Plus"},
+                    {"name": "[New Agent - Alex Olsen](https://trello.com/c/AAAAAAAA)"
+                             " ASCEND"},
+                ]}]
+            return [{"id": "CL", "name": "OTP VET Plus", "checkItems": []}]
+
+        def add_check_item(self, checklist_id, name):
+            return {}
+
+        def card_notes(self, card_id):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
+
+    class Config:
+        class secrets:
+            trello_board_id = "B"
+
+        class schedule:
+            timezone = "America/Chicago"
+
+    added, _conflicts, problems = jobs.spread_to_lead_order(
+        Config(), day=date(2026, 9, 21)
+    )
+
+    assert added, added
+    said = "\n".join(problems)
+    assert "“ASCEND”" in said, said
+    assert "doesn't match any checklist" not in said.split("so I left them:")[-1], said
