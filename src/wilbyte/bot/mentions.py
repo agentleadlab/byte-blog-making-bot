@@ -268,6 +268,19 @@ PAYMENT_WORDS = (
 # deliberately not here - it is what the blog pipeline does.
 COMMENT_WORDS = ("comment", "note")
 
+
+def _names_a_day_card(text: str) -> bool:
+    """Whether a sentence says which of the four day cards it means.
+
+    Asked of `dailyops`, which is what actually finds the card afterwards, so
+    the two cannot come to different answers about the same sentence.
+    """
+    from datetime import date
+
+    from .. import dailyops
+
+    return dailyops.comment_target(text, today=date.today())[1] is not None
+
 # The same thing said the other way round: "add on trello", "remind on trello".
 # Naming the board is what makes these safe to read as a command - "add the
 # price" and "remind them about the webinar" are ordinary copy briefs, and
@@ -622,6 +635,16 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if _opens_with(text, COMMENT_WORDS):
         return MentionRequest(action="comment", brief=_strip_word(text, COMMENT_WORDS))
+
+    # "add to general card today and tag nicole: <three card links>". Naming
+    # one of the four day cards is saying "trello" - the word "trello" itself
+    # is how RYTE was told the board was meant, and nobody says it when they
+    # have already said which card. Without this, "add" opened nothing and the
+    # whole message came back as help.
+    if _opens_with(text, TRELLO_COMMENT_WORDS) and _names_a_day_card(text):
+        return MentionRequest(
+            action="comment", brief=_strip_word(text, TRELLO_COMMENT_WORDS)
+        )
 
     if _opens_with(text, HOST_WORDS):
         return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))

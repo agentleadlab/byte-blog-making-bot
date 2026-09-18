@@ -267,23 +267,32 @@ def day_named(text: str, *, today: date) -> date | None:
         return None
 
 
-_ON = re.compile(r"\s+on\s+", re.IGNORECASE)
+# "on the monday general card", and the two other words people reach for
+# without thinking about it. Franklin wrote "comment to general card today"
+# three times in a row and got the help text three times.
+#
+# Not "in" or "into": "we are behind in lead order" would be read as a comment
+# on the lead order card, and the half of the sentence before it thrown away.
+_ONTO = "on|onto|to"
+_ON = re.compile(rf"\s+(?:{_ONTO})\s+", re.IGNORECASE)
+_OPENERS = frozenset(_ONTO.split("|"))
 
 # The words a card can be named with, and nothing else. Everything from "on"
 # up to the first word that isn't one of these is the card; the rest is what
 # to say. "card" ends the phrase itself, so "on monday general card general
 # cleanup" doesn't swallow the first word of the comment.
 _CARD_WORDS = {
-    "on", "the", "for", "general", "ops", "ads", "lead", "order", "orders",
-    "today", "tomorrow", "yesterday", *WEEKDAYS,
+    *_OPENERS, "the", "for", "general", "ops", "ads", "lead", "order",
+    "orders", "today", "tomorrow", "yesterday", *WEEKDAYS,
 }
 _ENDS_IT = {"card", "cards"}
+_PLAIN_DAYS = {"today", "tomorrow", "yesterday"}
 
 
 def _leading_card(said: str) -> tuple[str, str] | None:
     """("on monday general card", "the rest"), when the card is named first."""
     words = said.split()
-    if not words or words[0].lower() != "on":
+    if not words or words[0].lower() not in _OPENERS:
         return None
 
     taken = 0
@@ -293,6 +302,21 @@ def _leading_card(said: str) -> tuple[str, str] | None:
             taken += 1
             break
         if plain in _CARD_WORDS or _DAY_SAID.fullmatch(plain):
+            taken += 1
+            continue
+        break
+
+    # "general card today" - the day said after the card instead of before it,
+    # which is how Franklin says it. Only the three unambiguous ones and a
+    # written date: a weekday here is far more likely to be the first word of
+    # the comment ("on general card monday meeting went well") than the day
+    # the card belongs to, and taking it costs the comment its subject.
+    #
+    # And never the last word, or "comment on general card today" would post
+    # an empty comment instead of asking what to say.
+    while taken < len(words) - 1:
+        plain = words[taken].lower().strip(".,:;").removesuffix("'s").removesuffix("s'")
+        if plain in _PLAIN_DAYS or _DAY_SAID.fullmatch(plain):
             taken += 1
             continue
         break
@@ -308,6 +332,7 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
 
         comment leads went out late on monday general
         comment on monday general card Spanish lead discount 15% off
+        comment to general card today <links>
 
     Said last, the split is at the *rightmost* "on" whose tail actually names
     one of the four cards, so a comment carrying an "on" of its own survives -
@@ -336,6 +361,77 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
                 day_named(tail, today=today) or today,
             )
     return said, None, day_named(said, today=today) or today
+
+
+# "and tag nicole:", "tag nicole and therese", "please tag nic0l3". The names
+# run to a colon or to the end of the line, because what comes after the colon
+# is the thing being handed over.
+_TAG_ASKED = re.compile(
+    r"(?:\band\s+)?(?:\bplease\s+)?\btags?\s+"
+    r"(?P<who>[A-Za-z0-9_. ]+?(?:\s*(?:,|&|\band\b)\s*[A-Za-z0-9_. ]+?)*)"
+    r"\s*(?::|$)",
+    re.IGNORECASE,
+)
+_AND_ALSO = re.compile(r"\s*(?:,|&|\band\b)\s*", re.IGNORECASE)
+
+
+def who_is_known(members) -> dict:
+    """{what somebody might be called: their Trello username}.
+
+    Usernames, full names, and first names that belong to only one person on
+    the board - two Nicoles and the first name is not a way of saying either.
+    """
+    found: dict[str, str] = {}
+    firsts: dict[str, set] = {}
+    for one in members or []:
+        username = " ".join(str((one or {}).get("username") or "").split())
+        if not username:
+            continue
+        full = " ".join(str((one or {}).get("fullName") or "").split())
+        found[username.casefold()] = username
+        if full:
+            found[full.casefold()] = username
+            firsts.setdefault(full.split()[0].casefold(), set()).add(username)
+    for first, who in firsts.items():
+        if len(who) == 1 and first not in found:
+            found[first] = next(iter(who))
+    return found
+
+
+def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:
+    """(what is left to say, who to tag, who was not recognised).
+
+    "add to general card today and tag nicole: <three card links>" is a
+    comment carrying an instruction, and posting it whole puts the words "and
+    tag nicole" on the board and tags nobody. The instruction comes out and
+    the names become real mentions, which is the only thing that reaches her.
+
+    `known` maps a name to a Trello username - usernames, full names and first
+    names that belong to only one person. Checked against it rather than
+    guessed at by shape, because "tag the card as done" is a comment with the
+    word tag in it, and a shape rule read "the card as done" as somebody's
+    name and posted an empty comment. Nothing recognised leaves the sentence
+    exactly as it was: nobody should have to know this exists to write it.
+    """
+    said = " ".join((text or "").split())
+    found = _TAG_ASKED.search(said)
+    if not found:
+        return text, [], []
+    names = [
+        " ".join(one.split()) for one in _AND_ALSO.split(found.group("who"))
+        if one and one.strip()
+    ]
+    handles, strangers = [], []
+    for one in names:
+        who = (known or {}).get(one.casefold())
+        if who and who not in handles:
+            handles.append(who)
+        elif not who:
+            strangers.append(one)
+    if not handles:
+        return text, [], []
+    left = (said[:found.start()] + " " + said[found.end():]).strip(" -–—:,")
+    return " ".join(left.split()), handles, strangers
 
 
 # "rollover all" - every card at once, which is not what a bare rollover does

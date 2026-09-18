@@ -6224,3 +6224,219 @@ def test_a_misspelled_title_does_not_stop_everybody_being_filed(config, monkeypa
     whole = "\n".join(str(one) for one in heard.messages)
     assert "AGEND" in whole, "the typo was never mentioned"
     assert "No new agents" in whole, "it stopped instead of carrying on"
+
+
+# ------------------------------- "add to general card today and tag nicole"
+
+
+def test_the_way_franklin_says_it_names_the_card():
+    """He typed it three times and got the help text three times: "add to
+    trello and tag nicole", then "add to general card today", then "comment to
+    general card today". Only "on" was accepted, and only after the word
+    trello."""
+    from wilbyte.bot import mentions
+
+    for said in (
+        "add to general card today and tag nicole: https://trello.com/c/a/1-x",
+        "comment to general card today and tag nicole: https://trello.com/c/a/1-x",
+        "put on monday ops card call sheet is late",
+    ):
+        asked = mentions.parse("<@1> " + said)
+        assert asked.action == "comment", said
+
+
+def test_add_without_a_card_named_is_still_not_a_comment():
+    """"add" is an ordinary word. Naming one of the four cards is what says
+    the board was meant."""
+    from wilbyte.bot import mentions
+
+    for said in ("add 25 leads to steve dass order", "add a checklist to the card"):
+        assert mentions.parse("<@1> " + said).action != "comment", said
+
+
+def test_the_day_said_after_the_card_is_the_day_not_the_comment():
+    """"general card today and tag nicole" - the day comes after the word
+    card, which is how he writes it, and "today" was being posted as the
+    first word of the comment."""
+    from datetime import date
+
+    from wilbyte import dailyops
+
+    text, kind, day = dailyops.comment_target(
+        "to general card today and tag nicole: https://a", today=date(2026, 9, 18)
+    )
+
+    assert (kind, day) == ("general", date(2026, 9, 18))
+    assert text == "and tag nicole: https://a"
+
+
+def test_a_weekday_after_the_card_is_left_in_the_comment():
+    """"on general card monday meeting went well" - taking monday as the day
+    costs the comment its subject."""
+    from datetime import date
+
+    from wilbyte import dailyops
+
+    text, _kind, _day = dailyops.comment_target(
+        "on general card monday meeting went well", today=date(2026, 9, 18)
+    )
+
+    assert text == "monday meeting went well"
+
+
+def test_in_is_not_read_as_naming_a_card():
+    """"we are behind in lead order" is a sentence, not a card."""
+    from datetime import date
+
+    from wilbyte import dailyops
+
+    text, kind, _day = dailyops.comment_target(
+        "we are behind in lead order", today=date(2026, 9, 18)
+    )
+
+    assert kind is None and text == "we are behind in lead order"
+
+
+def test_tag_nicole_becomes_a_mention_and_leaves_the_comment():
+    """Posting the words "and tag nicole" puts them on the board and tags
+    nobody, which is the whole reason for saying it."""
+    from wilbyte import dailyops
+
+    known = dailyops.who_is_known([
+        {"username": "nic0l3", "fullName": "Nicole Ramos"},
+        {"username": "theresea", "fullName": "Therese Ann"},
+    ])
+    said, handles, strangers = dailyops.tag_asked(
+        "and tag nicole: https://a https://b", known
+    )
+
+    assert said == "https://a https://b"
+    assert handles == ["nic0l3"] and strangers == []
+
+
+def test_a_comment_with_the_word_tag_in_it_is_left_alone():
+    """"tag the card as done" read "the card as done" as somebody's name and
+    posted an empty comment. Names are checked against the board, not guessed
+    at by shape."""
+    from wilbyte import dailyops
+
+    known = dailyops.who_is_known([{"username": "nic0l3", "fullName": "Nicole Ramos"}])
+
+    assert dailyops.tag_asked("tag the card as done", known) == (
+        "tag the card as done", [], [],
+    )
+
+
+def test_a_first_name_two_people_share_is_not_a_way_of_naming_either():
+    from wilbyte import dailyops
+
+    known = dailyops.who_is_known([
+        {"username": "nic0l3", "fullName": "Nicole Ramos"},
+        {"username": "nicoleb", "fullName": "Nicole Barnes"},
+    ])
+
+    assert "nicole" not in known
+    assert known["nicole ramos"] == "nic0l3"
+
+
+def test_an_unknown_name_does_not_hide_a_comment_that_posted(monkeypatch):
+    """A url means it went on the board. Reporting the warning as a failure
+    would leave somebody believing it had not."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client, jobs
+
+    spoke = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            spoke.append(str(content or kwargs.get("embed") or ""))
+
+    monkeypatch.setattr(
+        jobs, "comment_on_daily",
+        lambda config, **kw: ("General 09/18/26", "https://trello.com/c/x",
+                              ["Nobody on the board is called bob — not tagged."]),
+    )
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: __import__("datetime").date(2026, 9, 18))
+    monkeypatch.setattr(bot_client.embeds, "error", lambda text, **kw: f"ERROR: {text}")
+
+    asyncio.run(bot_client._comment_on_card(
+        Responder(), SimpleNamespace(), "on general card today hello",
+    ))
+
+    assert any("Said it on" in one for one in spoke), spoke
+    assert not any(one.startswith("ERROR") for one in spoke), spoke
+    assert any("called bob" in one for one in spoke), spoke
+
+
+def test_a_real_failure_is_still_reported_as_one(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client, jobs
+
+    spoke = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            spoke.append(str(content or kwargs.get("embed") or ""))
+
+    monkeypatch.setattr(
+        jobs, "comment_on_daily",
+        lambda config, **kw: ("", "", ["No General card dated 09/18/26 anywhere."]),
+    )
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: __import__("datetime").date(2026, 9, 18))
+    monkeypatch.setattr(bot_client.embeds, "error", lambda text, **kw: f"ERROR: {text}")
+
+    asyncio.run(bot_client._comment_on_card(
+        Responder(), SimpleNamespace(), "on general card today hello",
+    ))
+
+    assert any(one.startswith("ERROR") for one in spoke), spoke
+    assert not any("Said it on" in one for one in spoke), spoke
+
+
+def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
+    """`tag_asked` finds the name; this is the @ reaching Trello."""
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    posted = {}
+
+    class Client:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "C", "name": "General 09/18/26",
+                     "url": "https://trello.com/c/C", "due": "2026-09-18T12:00:00.000Z"}]
+
+        def board_members(self, board_id):
+            return [{"username": "nic0l3", "fullName": "Nicole Ramos"}]
+
+        def add_comment(self, card_id, text):
+            posted["text"] = text
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
+
+    class Config:
+        class secrets:
+            trello_board_id = "B"
+
+    title, url, problems = jobs.comment_on_daily(
+        Config(), kind="general", day=date(2026, 9, 18),
+        text="and tag nicole: https://a https://b",
+    )
+
+    assert not problems, problems
+    assert posted["text"] == "@nic0l3\nhttps://a https://b"
+    assert url == "https://trello.com/c/C"

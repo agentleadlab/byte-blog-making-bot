@@ -1696,10 +1696,15 @@ async def _comment_on_card(
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
         return
 
-    if problems:
+    # A url means it went on the board. Anything said alongside one is a
+    # warning about part of it - a name nobody on the board answers to - and
+    # reporting that as a failure would hide a comment that posted.
+    if problems and not url:
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
     note = f"Said it on **{title}** — <{url}>"
+    if problems:
+        note += "\n⚠ " + "\n⚠ ".join(problems)
     if guessed:
         note += "\n-# Nobody said which card. `on ops`, `on ads` or `on lead order` puts it there instead."
     await responder.send(note)

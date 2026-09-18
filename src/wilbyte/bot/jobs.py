@@ -4063,6 +4063,11 @@ def comment_on_daily(
     Wherever the card has got to. A comment is about the day's work, and the
     day's work is on that card whether it is still in Today or already in
     Quality Check.
+
+    "and tag nicole" inside the comment is an instruction rather than
+    something to say, and it is turned into a real @mention here - where the
+    board's member list is already open - because posting the words tags
+    nobody and the tag is the whole reason for saying it.
     """
     from .. import dailyops
 
@@ -4075,12 +4080,20 @@ def comment_on_daily(
             named = dailyops.CARD_KINDS.get(kind, kind)
             return "", "", [f"No {named} card dated {day:%m/%d/%y} anywhere on the board."]
 
+        said, handles, strangers = dailyops.tag_asked(
+            text, dailyops.who_is_known(client.board_members(config.secrets.trello_board_id))
+        )
+        if handles:
+            said = " ".join(f"@{one}" for one in handles) + ("\n" + said if said else "")
+
         title = str(card.get("name") or "")
         try:
-            client.add_comment(str(card.get("id") or ""), text)
+            client.add_comment(str(card.get("id") or ""), said)
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
-        return title, str(card.get("url") or ""), []
+        return title, str(card.get("url") or ""), [
+            f"Nobody on the board is called {one} — not tagged." for one in strangers
+        ]
     finally:
         client.close()
 
