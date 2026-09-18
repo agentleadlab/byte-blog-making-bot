@@ -1522,6 +1522,12 @@ _SHORTHAND = (
     # the end of what somebody was saying.
     (re.compile(r"\b(jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.", re.IGNORECASE),
      r"\1"),
+    # And the days, for the same reason and at the same cost. "LIVE TUES. SEPT
+    # 22" was read as the sentence "LIVE TUES", and Eliana Valentin's card came
+    # back with no launch date at all - so she was neither filed nor moved,
+    # while the date sat two words further along.
+    (re.compile(r"\b(mon|tues?|wed(?:nes|s)?|thur?s?|fri|sat(?:ur)?|sun)\.",
+                re.IGNORECASE), r"\1"),
 )
 
 
@@ -1685,6 +1691,11 @@ def launch_conflict(text: str, *, today: date) -> str:
     instead of the sentence, reached monday first and asked a question the card
     had already answered.
     """
+    # The same expansion `find_launch` does, for the same reason and with more
+    # at stake: without it "live fri. aug 27" is the sentence "live fri", has
+    # no date in it to disagree with, and the card goes live on the wrong day
+    # having been checked and passed.
+    text = spelled_out(text)
     for pattern in _WHEN_SAID:
         for sentence in pattern.findall(text or ""):
             found = _date_in(sentence, today=today)

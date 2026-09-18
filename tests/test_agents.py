@@ -3890,3 +3890,41 @@ def test_a_right_day_elsewhere_does_not_excuse_a_wrong_one():
 def test_the_days_named_are_read_in_the_order_written():
     """Friday is later in the week than Monday but earlier in the sentence."""
     assert [day for _, day in agents._weekdays_named("friday, then monday")] == [4, 0]
+
+
+def test_an_abbreviated_weekday_does_not_end_the_sentence():
+    """Eliana Valentin's card says "LIVE TUES. SEPT 22". The stop belongs to
+    Tuesday, not to the end of what somebody was saying - so the sentence read
+    as "LIVE TUES", the card came back with no launch date, and she was
+    neither filed nor moved while the date sat two words further along.
+
+    The same fix was already here for "Sept." and "TOM." and never made for
+    the days."""
+    assert agents.find_launch("LIVE TUES. SEPT 22", today=date(2026, 9, 18)) == (
+        date(2026, 9, 22)
+    )
+
+
+@pytest.mark.parametrize(
+    "said, expected",
+    [
+        ("LIVE MON. SEPT 21", date(2026, 9, 21)),
+        ("live weds. oct 1", date(2026, 10, 1)),
+        ("Live Thurs. Sept 24", date(2026, 9, 24)),
+        ("live wed. sept 23", date(2026, 9, 23)),
+        ("live sat. sept 26", date(2026, 9, 26)),
+    ],
+)
+def test_every_short_day_keeps_the_date_after_it(said, expected):
+    assert agents.find_launch(said, today=date(2026, 9, 18)) == expected
+
+
+def test_the_conflict_check_reads_the_shorthand_too():
+    """August 27 2026 is a Thursday. With a comma the card was questioned;
+    with a full stop the sentence ended at "live fri", there was no date left
+    in it to disagree with, and the card passed the check and went live on the
+    wrong day."""
+    dotted = agents.launch_conflict("live fri. aug 27", today=date(2026, 9, 18))
+    comma = agents.launch_conflict("live fri, aug 27", today=date(2026, 9, 18))
+
+    assert "Thursday" in dotted and dotted == comma
