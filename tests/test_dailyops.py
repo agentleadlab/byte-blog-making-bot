@@ -695,10 +695,12 @@ WORKING = MORNING + ["to_today"]
 MIDDAY = WORKING + ["link_setup"]
 CHASE_1 = MIDDAY + [dailyops.UNMARKED[0]]
 CHASE_2 = CHASE_1 + [dailyops.UNMARKED[1]]
-EVENING = CHASE_2 + ["to_quality_check"]
+EVENING = CHASE_2 + ["to_quality_check", dailyops.SPREAD[0]]
 CHASE_3 = EVENING + [dailyops.UNMARKED[2]]
-CHASE_4 = CHASE_3 + [dailyops.UNMARKED[3]]
-NIGHT = CHASE_4 + ["rollover", "to_done"]
+SWEEP_2 = CHASE_3 + [dailyops.SPREAD[1]]
+CHASE_4 = SWEEP_2 + [dailyops.UNMARKED[3]]
+SWEEP_3 = CHASE_4 + [dailyops.SPREAD[2]]
+NIGHT = SWEEP_3 + [dailyops.SPREAD[3], "rollover", "to_done"]
 # Ten o'clock: Ads and Lead Order are carried and finished then, because both
 # are still worked after the board has been put to bed.
 LATE_NIGHT = NIGHT + [
@@ -725,9 +727,13 @@ LATE_NIGHT = NIGHT + [
         (18, 0, EVENING),
         (18, 29, EVENING),
         (18, 30, CHASE_3),
-        (19, 29, CHASE_3),
+        (18, 59, CHASE_3),
+        (19, 0, SWEEP_2),
+        (19, 29, SWEEP_2),
         (19, 30, CHASE_4),
-        (20, 29, CHASE_4),
+        (19, 59, CHASE_4),
+        (20, 0, SWEEP_3),
+        (20, 29, SWEEP_3),
         (20, 30, NIGHT),
         (22, 0, LATE_NIGHT),
         (23, 0, LATE_NIGHT),
@@ -745,18 +751,55 @@ def test_the_carry_happens_before_the_cards_leave_for_done():
     assert due.index("rollover") < due.index("to_done")
 
 
-def test_the_spread_does_not_run_on_its_own():
-    """Asked for only, until it has been watched getting a few real days right.
-    It wrote onto the wrong Lead Order card and invented checklists on it."""
+def test_the_spread_runs_four_times_an_evening():
+    """"we can do trello spread automatic every weekday now at 6pm ... we
+    received new agent until 8pm so it has to spread every time after the 6pm
+    and spread those remaining". An agent whose card lands at ten to eight
+    goes live tomorrow with no leads if the only sweep was at six."""
+    assert [dailyops.time_of(step) for step in dailyops.SPREAD] == [
+        (18, 0), (19, 0), (20, 0), (20, 30),
+    ]
+
+
+def test_the_last_sweep_beats_the_rollover_to_it():
+    """Once the board has been carried, today's Lead Order card is not where
+    a new agent belongs any more."""
+    due = dailyops.steps_due(at_hour(20, 30), set())
+
+    assert due.index(dailyops.SPREAD[3]) < due.index("rollover")
+
+
+def test_the_spread_does_not_run_at_the_weekend():
+    """"every weekday at 6pm". Friday's setup card is the one that covers
+    Saturday, Sunday and Monday, so the weekend is already done."""
+    from datetime import datetime as _dt
+
+    for day in (_dt(2026, 8, 22, 20, 30), _dt(2026, 8, 23, 20, 30)):
+        assert not [
+            step for step in dailyops.steps_due(day, set())
+            if step in dailyops.SPREAD
+        ], day.strftime("%A")
+
+
+def test_the_rest_of_the_evening_still_runs_at_the_weekend():
+    """Only the spread is weekday-only. Carrying the board is not."""
+    from datetime import datetime as _dt
+
+    assert "rollover" in dailyops.steps_due(_dt(2026, 8, 22, 20, 30), set())
+
+
+def test_the_asked_for_spread_keeps_its_own_name():
+    """`@RYTE trello spread` is still a thing somebody types, and it is not
+    one of the four the clock runs - typing it must not mark the evening's
+    sweep as done."""
+    assert "to_lead_order" not in dailyops.SPREAD
     assert "to_lead_order" not in [step for _h, _m, step in dailyops.STEPS]
-    assert dailyops.time_of("to_lead_order") is None
-    assert "to_lead_order" not in dailyops.steps_due(at_hour(23, 59), set())
 
 
 def test_a_step_already_done_is_not_done_again():
     """Moving cards that already moved puts them somewhere nobody expects."""
-    assert dailyops.steps_due(at_hour(20, 30), set(CHASE_4)) == [
-        "rollover", "to_done",
+    assert dailyops.steps_due(at_hour(20, 30), set(SWEEP_3)) == [
+        dailyops.SPREAD[3], "rollover", "to_done",
     ]
     assert dailyops.steps_due(at_hour(20, 30), set(NIGHT)) == []
 

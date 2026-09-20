@@ -6502,3 +6502,58 @@ def test_the_lines_it_could_not_place_are_named_by_their_wording(monkeypatch):
     said = "\n".join(problems)
     assert "“ASCEND”" in said, said
     assert "doesn't match any checklist" not in said.split("so I left them:")[-1], said
+
+
+# ------------------------------- the evening spread, four times and quietly
+
+
+def _ran_the_step(monkeypatch, step, *, added):
+    """One board step, with the spread stubbed. Returns what RYTE said."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte import boardclock
+    from wilbyte.bot import client as bot_client, jobs
+
+    spoke = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, content=None, **kwargs):
+            spoke.append(str(content or "") + str(kwargs.get("embed") or ""))
+
+    monkeypatch.setattr(bot_client, "_board_responder", lambda bot: Responder())
+    monkeypatch.setattr(
+        jobs, "spread_to_lead_order", lambda config, **kw: (added, [], []),
+    )
+    monkeypatch.setattr(boardclock, "mark", lambda *a, **kw: None)
+
+    bot = SimpleNamespace(config=SimpleNamespace(
+        schedule=SimpleNamespace(timezone="America/Chicago"),
+        secrets=SimpleNamespace(discord_board_channel_id="", discord_notify_user_id=""),
+    ))
+    asyncio.run(bot_client._board_step(bot, step, __import__("datetime").date(2026, 9, 21)))
+    return spoke
+
+
+@pytest.mark.parametrize("step", list(__import__(
+    "wilbyte.dailyops", fromlist=["x"]).SPREAD))
+def test_each_evening_sweep_places_agents(monkeypatch, step):
+    spoke = _ran_the_step(
+        monkeypatch, step,
+        added=["**Setup** → **Lead Order**", "New Agent - Alex Olsen — OTP VET Plus"],
+    )
+
+    assert any("Lead Order card" in one for one in spoke), spoke
+
+
+@pytest.mark.parametrize("step", list(__import__(
+    "wilbyte.dailyops", fromlist=["x"]).SPREAD))
+def test_a_sweep_that_placed_nobody_says_nothing(monkeypatch, step):
+    """Seven, eight and half eight exist for the agent whose card lands at ten
+    to eight. Four lines a night saying the six o'clock one already did the
+    work is how the one that matters stops being read."""
+    spoke = _ran_the_step(monkeypatch, step, added=[])
+
+    assert spoke == [], spoke

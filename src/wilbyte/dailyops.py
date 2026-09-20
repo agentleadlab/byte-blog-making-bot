@@ -57,6 +57,22 @@ UNMARKED = (
     "unmarked_agents_1930",
 )
 
+# The spread, run four times rather than once. "we received new agent until
+# 8pm so it has to spread every time after the 6pm and spread those
+# remaining" - an agent whose card lands at ten to eight goes live tomorrow
+# with no leads if the only sweep was at six. Each one places whoever is new
+# and skips whoever is already on the card, so the later three are usually
+# silent.
+#
+# The last is at half eight, immediately before the board rolls over, which is
+# the last moment a line can reach today's Lead Order card.
+SPREAD = (
+    "spread_1800",
+    "spread_1900",
+    "spread_2000",
+    "spread_2030",
+)
+
 # The one list the nightly archive is allowed to touch, by name. Nothing else
 # on the board is read by it, let alone archived - see `jobs.aged_to_archive`.
 AGED_DONE = "Aged Leads Order Done"
@@ -93,14 +109,16 @@ STEPS = (
     (15, 30, UNMARKED[0]),
     (17, 30, UNMARKED[1]),
     (18, 0, "to_quality_check"),
+    (18, 0, SPREAD[0]),
     (18, 30, UNMARKED[2]),
+    (19, 0, SPREAD[1]),
     (19, 30, UNMARKED[3]),
+    (20, 0, SPREAD[2]),
+    # Before the rollover, which is the point of running it at half eight at
+    # all: once the board has been carried, today's Lead Order card is not
+    # where a new agent belongs any more.
+    (20, 30, SPREAD[3]),
     (20, 30, "rollover"),
-    # to_lead_order is deliberately not here. It runs only when asked -
-    # `@RYTE trello spread` - until it has been watched getting the pairing
-    # and the matching right on a few real days. It wrote onto the wrong Lead
-    # Order card and invented checklists on it, and an unattended step that
-    # does that at half eight is one nobody sees until morning.
     (20, 30, "to_done"),
     # Ads and Lead Order are carried and finished at ten, not with the other
     # two at half eight: both are still being worked after the board has been
@@ -123,6 +141,10 @@ STEP_NAMES = {
     "rollover": "carry the unfinished General and Ops items to tomorrow",
     LATE_ROLLOVER: "carry the unfinished Ads and Lead Order items to tomorrow",
     "to_lead_order": "put today's setup-card agents on today's Lead Order card",
+    **{
+        step: "put today's setup-card agents on today's Lead Order card"
+        for step in SPREAD
+    },
     **{
         step: f"the New Agent cards in {DONE} nobody has ticked"
         for step in UNMARKED
@@ -149,6 +171,13 @@ DONE_STEPS = ("to_done", LATE_DONE)
 # somebody schedules overnight will want it.
 NIGHT_STEPS: tuple[str, ...] = ()
 CATCH_UP_UNTIL = 6
+
+# Steps that only run Monday to Friday. The spread, because that is what was
+# asked for - "every weekday at 6pm" - and because Friday's setup card is the
+# one that covers Saturday, Sunday and Monday, so the weekend is already done
+# by the time it arrives.
+WEEKDAY_STEPS = frozenset(SPREAD)
+SATURDAY = 5
 
 # What somebody types to ask for a move, by where they want the cards to end
 # up. Named for the destination because that is how anybody says it: "move
@@ -199,10 +228,12 @@ def steps_due(now, done_today: set[str]) -> list[str]:
 
     Ordered, because the 6pm move takes cards the 9am move put there.
     """
+    weekend = now.weekday() >= SATURDAY
     return [
         step for hour, minute, step in STEPS
         if (now.hour, now.minute) >= (hour, minute) and step not in done_today
         and not (step in NIGHT_STEPS and now.hour >= CATCH_UP_UNTIL)
+        and not (weekend and step in WEEKDAY_STEPS)
     ]
 
 

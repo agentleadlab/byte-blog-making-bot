@@ -2741,10 +2741,14 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
                 f"📦 {dailyops.said_at(step)} — archived {len(gone)} card(s) from "
                 f"{dailyops.AGED_DONE}."
             ) if gone else ""
-        elif step == "to_lead_order":
+        elif step == "to_lead_order" or step in dailyops.SPREAD:
             added, conflicts, problems = await asyncio.to_thread(
                 jobs.spread_to_lead_order, bot.config
             )
+            # Silent when it placed nobody, which is what the seven, eight and
+            # half-eight sweeps usually do - they exist for the agent whose
+            # card lands at ten to eight, not to report four times a night
+            # that the six o'clock one already did the work.
             note = (
                 f"📋 {dailyops.said_at(step)} — put {len(added) - 1} setup-card "
                 f"agent(s) on the Lead Order card.\n" + "\n".join(added)
