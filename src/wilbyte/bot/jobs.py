@@ -4927,65 +4927,6 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
     return tab, []
 
 
-def keep_the_picture(config: Config, page: str, called: str) -> tuple[str, list[str]]:
-    """Photograph a conversation and put it in Drive. (link, problems).
-
-    The channel is about to stop existing, so this is the only copy there will
-    be of what was said in it - which is why it is a picture rather than a
-    paragraph somebody wrote about it.
-    """
-    import tempfile
-
-    from .. import drive
-
-    with tempfile.TemporaryDirectory() as folder:
-        where = Path(folder)
-        html_path, png_path = where / "convo.html", where / "convo.png"
-        html_path.write_text(page, encoding="utf-8")
-        try:
-            _photograph(html_path, png_path)
-        except Exception as exc:
-            return "", [f"Couldn't render the conversation: {_short(exc, 140)}"]
-
-        try:
-            with drive.open_drive(config.secrets) as uploading:
-                got = uploading.put(png_path, name=called)
-        except drive.DriveError as exc:
-            return "", [str(exc)]
-        except Exception as exc:
-            return "", [f"Couldn't upload to Drive: {_short(exc, 140)}"]
-    return got.link(), []
-
-
-#: Wide enough that a line of conversation is not wrapped into noise, and the
-#: height is whatever the messages come to.
-PICTURE_WIDTH = 900
-
-
-def _photograph(html_path: Path, png_path: Path) -> None:
-    """One page, full height, as a PNG."""
-    from playwright.sync_api import sync_playwright
-
-    from .. import cover
-
-    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
-    found = cover._chromium_executable()
-    if found:
-        launch["executable_path"] = found
-
-    with sync_playwright() as playing:
-        browser = playing.chromium.launch(**launch)
-        try:
-            page = browser.new_page(viewport={"width": PICTURE_WIDTH, "height": 1200})
-            page.goto(html_path.resolve().as_uri())
-            page.wait_for_function(
-                "document.documentElement.dataset.ready === '1'", timeout=10_000
-            )
-            page.screenshot(path=str(png_path), full_page=True)
-        finally:
-            browser.close()
-
-
 def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     """Payra's confirmation for this customer. (what it says, a problem or "").
 

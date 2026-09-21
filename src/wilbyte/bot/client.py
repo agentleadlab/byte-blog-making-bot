@@ -2273,12 +2273,13 @@ async def _clear_out(
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
-        label="Keep the sheet and the picture",
+        label="Keep the sheet and show me the messages",
         emoji="🧹",
     )
     await responder.send(
         clearout.describe(plan)
-        + "\n-# Nothing is deleted by this. I'll ask again before anything goes.",
+        + "\n-# Nothing is deleted by this. I'll put the conversation here for "
+        "you to screenshot, and ask again before anything goes.",
         view=view,
     )
     await view.wait()
@@ -2294,18 +2295,21 @@ async def _clear_out(
     kept.append(f"✅ Sheet link → **{tab}**" if tab else "❌ " + "; ".join(trouble))
 
     # What they said, wherever they said it - their own channel and the ones
-    # the whole server shares - and not the lead feed.
+    # the whole server shares - and not the lead feed. Posted here rather than
+    # photographed into Drive: "just forward them to me, then ill screenshot
+    # then you collect sheet and delete". The person screenshotting knows what
+    # is worth keeping in a way a rule about the last forty messages does not.
     elsewhere = await _also_said(guild, member, channels)
     shown = clearout.for_the_picture(messages, elsewhere)
-    picture, trouble = await asyncio.to_thread(
-        jobs.keep_the_picture, config,
-        clearout.as_page(plan, shown),
-        clearout.picture_name(plan, when=today),
-    )
-    kept.append(
-        f"✅ {len(shown)} message(s) → <{picture}>" if picture
-        else "❌ " + "; ".join(trouble)
-    )
+    forwarded = True
+    try:
+        for page in clearout.to_screenshot(plan, shown):
+            await responder.send(page)
+    except Exception as exc:
+        forwarded = False
+        kept.append(f"❌ Couldn't post the conversation: {_readable(exc)}")
+    if forwarded:
+        kept.append(f"✅ {len(shown)} message(s) posted above — screenshot them now.")
 
     # Only once both are kept. The whole point of the order is that a channel
     # is never deleted with the only copy of something still inside it - and a
@@ -2317,7 +2321,7 @@ async def _clear_out(
             + "\n\n**Nothing deleted.** " + " ".join(unread)
         )
         return
-    if not picture or not tab:
+    if not forwarded or not tab:
         await responder.send(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** One of those didn't work, and the "
@@ -2346,7 +2350,9 @@ async def _clear_out(
     )
     await going.wait()
     if not going.confirmed:
-        await responder.send("Left alone. The sheet and the picture are kept either way.")
+        await responder.send(
+            "Left alone. The sheet row and the messages above stay either way."
+        )
         return
 
     done, trouble = [], []

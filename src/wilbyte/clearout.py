@@ -9,18 +9,23 @@ The process, as it is actually done by hand:
     4. And delete the channel once saved na lahat
 
 Everything here is pure: matching a name to a channel, deciding what a row
-says, and turning messages into something that can be screenshotted. Finding
-the channel, writing the row, uploading the picture, banning anybody and
-deleting anything all live in `bot.jobs`, behind their own buttons.
+says, and laying the conversation out to be posted back. Finding the channel,
+writing the row, banning anybody and deleting anything all live in `bot.jobs`
+and `bot.client`, behind their own buttons.
 
-The order matters and is not negotiable: the sheet and the picture are kept
-*before* the channel goes, because a channel deleted with the sheet link still
-only in it is a client nobody can prove anything about afterwards.
+RYTE photographed the conversation into Drive for a while. It was not good
+enough - "just forward them to me, then ill screenshot then you collect sheet
+and delete" - and the person doing the screenshotting knows what is worth
+keeping in a way a rule about the last forty messages never will.
+
+The order matters and is not negotiable: the sheet is written and the
+conversation is posted *before* the channel goes, because a channel deleted
+with the sheet link still only in it is a client nobody can prove anything
+about afterwards.
 """
 
 from __future__ import annotations
 
-import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -282,22 +287,16 @@ def row_for(plan: Plan, *, when: datetime, headings=None) -> list:
     return row if used else list(have.values())
 
 
-def picture_name(plan: Plan, *, when: datetime) -> str:
-    """What the screenshot is called in Drive."""
-    safe = re.sub(r"[^\w .-]+", "", plan.name).strip() or "agent"
-    return f"{safe} — {when:%Y-%m-%d}.png"
-
-
 def for_the_picture(theirs: list, elsewhere: list = ()) -> list:
-    """The messages worth photographing: what people said, in order.
+    """The messages worth keeping: what people said, in order.
 
     Bots left out. The lead feeds post every lead into the client's own
-    channel, so a picture of the last forty messages there was forty lead
-    records - the goods, not the conversation, and none of it in their words.
+    channel, so the last forty messages there were forty lead records - the
+    goods, not the conversation, and none of it in their words.
 
     What they said in the channels the whole server shares goes in too: a sale
     posted in ring-da-bell is the client saying the leads worked, which is
-    exactly what a picture kept before closing them down is for.
+    exactly what is worth keeping before closing them down.
     """
     found = [one for one in list(theirs) + list(elsewhere) if not one.by_bot]
     dated = [one for one in found if one.at is not None]
@@ -306,54 +305,45 @@ def for_the_picture(theirs: list, elsewhere: list = ()) -> list:
     return (undated + dated)[-KEEP_MESSAGES:]
 
 
-def as_page(plan: Plan, messages: list) -> str:
-    """The conversation as a page Chromium can photograph.
+def to_screenshot(plan: Plan, messages: list) -> list:
+    """The conversation as messages to post, for somebody to screenshot.
 
-    Discord's own colours, because the picture is evidence of a conversation
-    and one that looks like the thing it is a picture of is read without
-    anybody having to be told what they are looking at.
+    RYTE used to photograph this itself, into Drive. It was not good enough -
+    "just forward them to me, then ill screenshot then you collect sheet and
+    delete" - and the person doing the screenshotting knows what is worth
+    keeping in a way a rule about the last forty messages never will.
+
+    Quoted rather than plain, so a screenshot of it reads as a conversation
+    that was had rather than as something RYTE wrote.
     """
+    where = plan.channel.name if plan.channel else plan.name
+    head = (
+        f"🧹 **#{where}** — {len(messages)} message"
+        f"{'s' if len(messages) != 1 else ''}. Screenshot what you want."
+    )
+    if not messages:
+        return [
+            f"🧹 **#{where}** — nothing anybody said, so there is nothing to "
+            "screenshot. Everything in it was the lead feed."
+        ]
+
     lines = []
     for one in messages:
-        text = html.escape(one.text or "")
-        if one.attachments:
-            text += (
-                f"<div class='files'>{one.attachments} attachment"
-                f"{'s' if one.attachments != 1 else ''}</div>"
-            )
-        said_in = ""
-        if one.where and plan.channel and one.where != plan.channel.name:
-            said_in = f"<span class='where'>#{html.escape(one.where)}</span>"
+        said_in = f" · #{one.where}" if one.where and one.where != where else ""
         lines.append(
-            "<div class='msg'>"
-            f"<div class='who'>{html.escape(one.who or 'somebody')}"
-            f"<span class='when'>{html.escape(one.when or '')}</span>{said_in}</div>"
-            f"<div class='what'>{text or '<em>no text</em>'}</div>"
-            "</div>"
+            f"> **{one.who or 'somebody'}** · {one.when}{said_in}\n"
+            + "\n".join(f"> {row}" for row in (one.text or "—").splitlines())
+            + (
+                f"\n> -# {one.attachments} attachment"
+                f"{'s' if one.attachments != 1 else ''}"
+                if one.attachments else ""
+            )
+            # A blank line after each, or Discord runs consecutive quoted
+            # lines into one block and the whole conversation reads as having
+            # been said by whoever is at the top of it.
+            + "\n"
         )
-
-    where = html.escape(plan.channel.name if plan.channel else plan.name)
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  body {{ margin: 0; background: #313338; color: #dbdee1;
-         font: 15px/1.45 "Helvetica Neue", Helvetica, Arial, sans-serif; }}
-  .head {{ padding: 14px 20px; background: #2b2d31; color: #f2f3f5;
-           font-weight: 600; border-bottom: 1px solid #1f2023; }}
-  .head span {{ color: #949ba4; font-weight: 400; margin-left: 8px; }}
-  .wrap {{ padding: 12px 20px 20px; }}
-  .msg {{ padding: 7px 0; }}
-  .who {{ color: #f2f3f5; font-weight: 600; }}
-  .when {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px; }}
-  .where {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px;
-            background: #404249; border-radius: 4px; padding: 1px 6px; }}
-  .what {{ white-space: pre-wrap; word-break: break-word; }}
-  .files {{ color: #949ba4; font-size: 13px; font-style: italic; }}
-</style></head>
-<body>
-  <div class="head">#{where}<span>{len(messages)} message(s)</span></div>
-  <div class="wrap">{"".join(lines) or "<em>Nothing was said in this channel.</em>"}</div>
-  <script>document.documentElement.dataset.ready = '1';</script>
-</body></html>"""
+    return _pages(head, lines, [])
 
 
 def describe(plan: Plan) -> str:

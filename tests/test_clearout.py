@@ -121,51 +121,64 @@ def test_the_tab_is_the_one_named_for_ryte():
     assert clearout.COLLECTION_TAB == "Ryte Collection"
 
 
-def test_the_picture_is_named_after_them_and_the_day():
-    said = clearout.picture_name(_plan(), when=datetime(2026, 9, 15))
-
-    assert said == "Jay Rodriguez — 2026-09-15.png"
+# --------------------------------------- what comes back to be screenshotted
 
 
-def test_a_name_with_awkward_characters_still_makes_a_filename():
-    said = clearout.picture_name(
-        _plan(name="Jay / Rodriguez: the 2nd"), when=datetime(2026, 9, 15),
-    )
-
-    assert "/" not in said
-    assert said.endswith(".png")
-
-
-# ------------------------------------------------------- the picture itself
-
-
-def test_the_conversation_becomes_a_page_that_can_be_photographed():
-    page = clearout.as_page(_plan(), [
+def test_the_conversation_comes_back_as_messages_to_screenshot():
+    """RYTE photographed this into Drive for a while. Screenshotting it is
+    somebody's own job now, and this is what they screenshot."""
+    pages = clearout.to_screenshot(_plan(), [
         clearout.Said(who="Jay Rodriguez", when="Sep 3", text="got the leads thanks"),
         clearout.Said(who="Therese", when="Sep 3", text="great", attachments=2),
     ])
+    whole = "\n".join(pages)
 
-    assert "got the leads thanks" in page
-    assert "2 attachments" in page
-    assert "#jay-rodriguez" in page
-    assert "dataset.ready" in page
+    assert "got the leads thanks" in whole
+    assert "2 attachments" in whole
+    assert "#jay-rodriguez" in whole
+    assert "Screenshot what you want" in whole
 
 
-def test_what_somebody_typed_cannot_become_markup():
-    """A client who writes "<script>" in a channel does not get to write the
-    evidence of their own conversation."""
-    page = clearout.as_page(_plan(), [
-        clearout.Said(who="<b>Jay", when="", text="<script>alert(1)</script>"),
+def test_each_message_is_its_own_quote():
+    """Discord runs consecutive quoted lines into one block, and the whole
+    conversation then reads as having been said by whoever is at the top."""
+    whole = "\n".join(clearout.to_screenshot(_plan(), [
+        clearout.Said(who="Jay Rodriguez", when="Sep 3", text="first"),
+        clearout.Said(who="Therese", when="Sep 3", text="second"),
+    ]))
+
+    assert "\n\n> **Therese**" in whole
+
+
+def test_a_message_from_another_channel_says_where():
+    whole = "\n".join(clearout.to_screenshot(_plan(), [
+        clearout.Said(who="Artur | NOVA |", when="May 8",
+                      text="$1548 ethos aged 6/7", where="ring-da-bell"),
+        clearout.Said(who="Jay Rodriguez", when="Sep 3", text="thanks",
+                      where="jay-rodriguez"),
+    ]))
+
+    assert "#ring-da-bell" in whole
+    assert whole.count("#jay-rodriguez") == 1, "their own channel, once, at the top"
+
+
+def test_a_channel_of_nothing_but_the_lead_feed_says_so():
+    """Not an empty message with a button under it: there is genuinely
+    nothing to screenshot, and that is worth being told."""
+    pages = clearout.to_screenshot(_plan(), [])
+
+    assert len(pages) == 1
+    assert "nothing to screenshot" in pages[0]
+
+
+def test_a_long_conversation_is_paged_rather_than_cut_off():
+    pages = clearout.to_screenshot(_plan(), [
+        clearout.Said(who="Jay Rodriguez", when="Sep 3", text="x" * 300)
+        for _ in range(20)
     ])
 
-    assert "<script>alert(1)</script>" not in page
-    assert "&lt;script&gt;" in page
-
-
-def test_an_empty_channel_still_makes_a_picture():
-    page = clearout.as_page(_plan(), [])
-
-    assert "Nothing was said in this channel" in page
+    assert len(pages) > 1
+    assert all(len(one) <= 2000 for one in pages)
 
 
 # ---------------------------------------------- what is said before anything
@@ -379,16 +392,19 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
         return tab, [] if tab else ["the sheet refused that"]
 
     monkeypatch.setattr(bot_client.jobs, "collect_client", collecting)
-    monkeypatch.setattr(
-        bot_client.jobs, "keep_the_picture",
-        lambda config, page, called: (
-            picture, [] if picture else ["Chromium isn't installed"]
-        ),
-    )
+    if not picture:
+        async def refuse(content=None, **kw):
+            raise RuntimeError("Discord said no")
+
+        heard_send = refuse
+    else:
+        heard_send = None
 
     heard = SimpleNamespace(requester_id=1, messages=[])
 
     async def send(content=None, *, embed=None, file=None, view=None):
+        if heard_send is not None and str(content or "").startswith("🧹 **#"):
+            await heard_send(content)
         heard.messages.append(content or "")
 
     heard.send = send
@@ -469,7 +485,7 @@ def test_a_sheet_that_did_not_save_never_offers_the_delete(monkeypatch):
     assert "**Nothing deleted.**" in said[-1]
 
 
-def test_a_picture_that_did_not_upload_never_offers_the_delete(monkeypatch):
+def test_a_conversation_that_would_not_post_never_offers_the_delete(monkeypatch):
     guild, channel, said, buttons = _closing(monkeypatch, says=[True, True], picture="")
 
     assert len(buttons) == 1
@@ -1299,10 +1315,6 @@ def test_the_delete_is_refused_out_loud_rather_than_skipped(monkeypatch):
         bot_client.jobs, "collect_client",
         lambda config, plan, *, when: ("ALL CLIENTS", []),
     )
-    monkeypatch.setattr(
-        bot_client.jobs, "keep_the_picture",
-        lambda config, page, called: ("https://drive/p.png", []),
-    )
 
     async def nothing(_channel):
         return [], []
@@ -1357,10 +1369,6 @@ def test_a_channel_that_changed_under_it_is_not_deleted(monkeypatch):
     monkeypatch.setattr(
         bot_client.jobs, "collect_client",
         lambda config, plan, *, when: ("ALL CLIENTS", []),
-    )
-    monkeypatch.setattr(
-        bot_client.jobs, "keep_the_picture",
-        lambda config, page, called: ("https://drive/p.png", []),
     )
 
     async def nothing(_channel):
@@ -1439,10 +1447,22 @@ def test_the_picture_is_still_capped():
 
 def test_a_message_said_elsewhere_is_labelled_with_where():
     plan = _plan(channel=channel("artur_rushiti-vet"))
-    page = clearout.as_page(plan, [
+    whole = "\n".join(clearout.to_screenshot(plan, [
         _person_said("$1548 ethos aged 6/7", where="ring-da-bell"),
         _person_said("got them, thanks"),
-    ])
+    ]))
 
-    assert "#ring-da-bell" in page
-    assert page.count("class='where'") == 1, "their own channel is not labelled"
+    assert "· #ring-da-bell" in whole
+    assert whole.count("· #") == 1, "their own channel is not labelled on each line"
+
+
+def test_the_messages_are_posted_before_the_delete_is_offered(monkeypatch):
+    """"just forward them to me, then ill screenshot then you collect sheet
+    and delete" - the screenshotting happens between the two buttons, so the
+    conversation has to be on screen before the red one appears."""
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+
+    posted = next(i for i, one in enumerate(said) if str(one).startswith("🧹 **#"))
+    red = next(i for i, one in enumerate(said) if "cannot be undone" in str(one))
+
+    assert posted < red, "the delete was offered before the messages were up"
