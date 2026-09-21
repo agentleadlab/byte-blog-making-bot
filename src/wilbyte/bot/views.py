@@ -192,3 +192,66 @@ class ConfirmView(discord.ui.View):
         self.confirmed = False
         for child in self.children:
             child.disabled = True
+
+
+class ChannelPicker(discord.ui.View):
+    """Pick one of the quiet channels to clear out.
+
+    A dropdown rather than twenty-five buttons: buttons would fill every row
+    Discord allows and arrive as a wall of channel names with no room to say
+    how long each has been quiet. An option carries that underneath the name.
+
+    Picking one starts a clear-out and nothing more. The two questions that
+    follow are the same two as when the name is typed by hand, and the one
+    that cannot be undone is still the second of them.
+    """
+
+    def __init__(
+        self,
+        choices: list[tuple[str, str]],
+        *,
+        requester_id: int | None,
+        timeout: float,
+    ):
+        super().__init__(timeout=timeout)
+        self.chosen: str | None = None
+        self.answered = False
+        self.requester_id = requester_id
+
+        # Discord's limits: 25 options, 100 characters of label and of
+        # description.
+        self._select = discord.ui.Select(
+            placeholder="Clear one of these out…",
+            options=[
+                discord.SelectOption(label=name[:100], description=note[:100], value=name[:100])
+                for name, note in choices[:25]
+            ],
+            min_values=1,
+            max_values=1,
+        )
+        self._select.callback = self._picked
+        self.add_item(self._select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.requester_id is None or interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            "Only the person who asked for the list can clear one out.",
+            ephemeral=True,
+        )
+        return False
+
+    async def _picked(self, interaction: discord.Interaction) -> None:
+        self.chosen = self._select.values[0]
+        self.answered = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content=f"🧹 **#{self.chosen}** — looking at what to keep…", view=self
+        )
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        self.chosen = None
+        for child in self.children:
+            child.disabled = True

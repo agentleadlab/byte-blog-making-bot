@@ -490,18 +490,60 @@ def test_an_empty_list_reads_as_an_answer_not_a_failure():
     assert "every channel has been used" in said[0]
 
 
-def test_a_long_list_is_paged_rather_than_cut_off():
-    """"and 40 more" is the half nobody closes down."""
-    many = [quiet_channel(f"a-long-agent-name-number-{i}", days=100 + i) for i in range(120)]
-    quiet, _, _ = clearout.quiet_ones(many, since=NOW - timedelta(days=60))
-    said = clearout.describe_quiet(
+def _long_list(many=120):
+    # Zero-padded so no name is a prefix of another: "#agent-002" would
+    # otherwise be found inside "#agent-0020".
+    channels = [quiet_channel(f"agent-{i:03d}", days=100 + i) for i in range(many)]
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+    return channels, clearout.describe_quiet(
         quiet, [], [], since=NOW - timedelta(days=60), now=NOW
     )
 
-    assert len(said) > 1, "120 channels fitted in one Discord message?"
+
+def test_the_list_offers_as_many_as_can_be_picked_and_counts_the_rest():
+    """"then do 25 each quiet? then i run again". Naming a channel the list
+    cannot offer is naming one somebody has to type out after all, so the cap
+    is the dropdown's own limit rather than the message's."""
+    channels, said = _long_list()
+    whole = "\n".join(said)
+
+    listed = [one for one in channels if f"#{one.name}" in whole]
+    assert len(listed) == clearout.PICKABLE
     assert all(len(one) <= 2000 for one in said)
-    for one in many:
-        assert any(f"#{one.name}" in page for page in said), f"{one.name} fell off"
+
+
+def test_the_ones_it_did_not_list_are_counted_not_dropped():
+    """A list quietly cut short reads as if that was all of them."""
+    _channels, said = _long_list()
+    whole = "\n".join(said)
+
+    assert f"and {120 - clearout.PICKABLE} more" in whole
+    assert "run `@RYTE quiet` again" in whole
+
+
+def test_a_short_list_says_nothing_about_more():
+    channels = [quiet_channel(f"agent-{i}", days=100) for i in range(4)]
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+    whole = "\n".join(clearout.describe_quiet(
+        quiet, [], [], since=NOW - timedelta(days=60), now=NOW
+    ))
+
+    assert "more" not in whole.split("Nothing here is deleted")[0]
+
+
+def test_what_is_offered_is_exactly_what_was_listed():
+    """The dropdown and the lines above it have to be the same channels, or
+    the list names one thing and offers another."""
+    channels, said = _long_list()
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+    whole = "\n".join(said)
+
+    offered = clearout.pick_from(quiet, now=NOW)
+
+    assert len(offered) == clearout.PICKABLE
+    for name, note in offered:
+        assert f"#{name}" in whole
+        assert note, name
 
 
 def test_quiet_is_a_word_ryte_knows():
@@ -553,7 +595,29 @@ def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
     config = SimpleNamespace(
         secrets=SimpleNamespace(discord_clients_guild_id="1291897127882195056"),
         schedule=SimpleNamespace(timezone="America/Chicago"),
+        discord=SimpleNamespace(approval_timeout_seconds=1),
     )
+
+    # Nobody picks anything. The list on its own still has to do nothing.
+    offered = []
+
+    class Nobody:
+        chosen = None
+
+        def __init__(self, choices, **kw):
+            offered.extend(choices)
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.views, "ChannelPicker", Nobody)
+
+    cleared = []
+
+    async def never(*args, **kwargs):
+        cleared.append(args)
+
+    monkeypatch.setattr(bot_client, "_clear_out", never)
 
     asyncio.run(bot_client._quiet_channels(
         bot, SimpleNamespace(send=send, requester_id=1), config, "",
@@ -566,6 +630,11 @@ def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
     assert "#connor-knudsen" not in whole, "a channel used yesterday is not quiet"
     assert "Left out 1 of the server's own" in whole
     assert "Nothing here is deleted" in whole
+    assert cleared == [], "the list itself cleared somebody out"
+    # Quietest first, the same order the lines above it are in.
+    assert [name for name, _note in offered] == ["never-used", "jay-rodriguez"]
+    assert "general" not in [name for name, _note in offered]
+    assert all(note for _name, note in offered), "no sense of how long"
 
 
 def test_the_command_will_not_list_a_server_that_is_not_the_clients_one(monkeypatch):
@@ -590,3 +659,83 @@ def test_the_command_will_not_list_a_server_that_is_not_the_clients_one(monkeypa
     ))
 
     assert "DISCORD_CLIENTS_GUILD_ID" in said[0]
+
+
+def test_picking_one_starts_that_one_clear_out(monkeypatch):
+    """"then i run again that way we have button". Picking is the same path
+    as typing the name, so the irreversible half is the one that has already
+    been watched rather than a second copy of it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import discord
+
+    from wilbyte.bot import client as bot_client
+
+    def snowflake(when):
+        return (int(when.timestamp() * 1000) - 1420070400000) << 22
+
+    old = datetime(2026, 5, 1, tzinfo=discord.utils.utcnow().tzinfo)
+    guild = SimpleNamespace(
+        name="Clients",
+        text_channels=[SimpleNamespace(
+            id=1, name="jay-rodriguez", category=None,
+            last_message_id=snowflake(old), created_at=old,
+        )],
+    )
+
+    class Picked:
+        chosen = "jay-rodriguez"
+
+        def __init__(self, choices, **kw):
+            pass
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.views, "ChannelPicker", Picked)
+
+    cleared = []
+
+    async def clearing(bot, responder, config, name):
+        cleared.append(name)
+
+    monkeypatch.setattr(bot_client, "_clear_out", clearing)
+
+    async def send(content=None, **kw):
+        return None
+
+    config = SimpleNamespace(
+        secrets=SimpleNamespace(discord_clients_guild_id="7"),
+        schedule=SimpleNamespace(timezone="America/Chicago"),
+        discord=SimpleNamespace(approval_timeout_seconds=1),
+    )
+    asyncio.run(bot_client._quiet_channels(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1), config, "",
+    ))
+
+    assert cleared == ["jay-rodriguez"], "one channel, and only the one picked"
+
+
+def test_the_picker_is_only_for_whoever_asked():
+    """A list of things to delete is not a thing for anybody passing to press."""
+    import inspect
+
+    from wilbyte.bot import views
+
+    source = inspect.getsource(views.ChannelPicker)
+
+    assert "interaction_check" in source
+    assert "requester_id" in source
+
+
+def test_the_picker_holds_no_more_than_discord_allows():
+    from wilbyte.bot import views
+
+    picker = views.ChannelPicker(
+        [(f"agent-{i:03d}", "3 months") for i in range(60)],
+        requester_id=1, timeout=1,
+    )
+
+    assert len(picker._select.options) == 25

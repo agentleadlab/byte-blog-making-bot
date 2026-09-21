@@ -2477,9 +2477,15 @@ async def _quiet_channels(
     """Which of the clients server's channels nobody has used lately.
 
     The other end of the clear-out: `clearout` needs a name, and this is how
-    you find out whose names to type. It only ever lists - there is no button
-    on it, nothing is deleted, and the way to act on it is still to run
-    `clearout` on one name at a time and press through the two questions.
+    you find out whose to clear. The list itself deletes nothing. Picking one
+    from it starts a clear-out on that one channel and nothing else, and the
+    two questions after it are the same two as when the name is typed by hand
+    - the one that cannot be undone is still the second of them.
+
+    Capped at what the dropdown can hold, and the rest counted: "then do 25
+    each quiet? then i run again". Clearing some and running it again is how
+    the rest are reached, and the channels that went are not in the list the
+    second time because they are not there any more.
 
     One server, the one in DISCORD_CLIENTS_GUILD_ID, because that is the only
     one the agents' own channels are in and listing another server's is how a
@@ -2511,10 +2517,32 @@ async def _quiet_channels(
         ))
 
     quiet, ours, unknown = clearout.quiet_ones(channels, since=since)
-    for page in clearout.describe_quiet(
-        quiet, ours, unknown, since=since, now=now
-    ):
+    pages = clearout.describe_quiet(quiet, ours, unknown, since=since, now=now)
+    offered = clearout.pick_from(quiet, now=now)
+
+    # The picker goes on the last message, under the names it offers.
+    for page in pages[:-1]:
         await responder.send(page)
+
+    if not offered:
+        await responder.send(pages[-1])
+        return
+
+    picker = views.ChannelPicker(
+        offered,
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+    )
+    await responder.send(pages[-1], view=picker)
+    await picker.wait()
+    if not picker.chosen:
+        return
+
+    # By name, down the same path as a typed one. A picked channel could be
+    # passed by id and skip the looking-up, but then the picked route and the
+    # typed route would be two different pieces of code doing the irreversible
+    # thing, and only one of them would have been watched.
+    await _clear_out(bot, responder, config, picker.chosen)
 
 
 def _last_used(channel):

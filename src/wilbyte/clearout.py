@@ -299,13 +299,31 @@ def quiet_ones(channels, *, since: datetime) -> tuple:
     return quiet, ours, unknown
 
 
-def describe_quiet(quiet, ours, unknown, *, since: datetime, now: datetime) -> list:
+#: How many of them can be offered at once. Discord's own limit on a dropdown
+#: - and on buttons, which is what it was going to be - so the list is capped
+#: to match rather than listing forty and letting fifteen of them sit there
+#: unpickable: "then do 25 each quiet? then i run again".
+PICKABLE = 25
+
+
+def pick_from(quiet, *, now: datetime, most: int = PICKABLE) -> list:
+    """(channel name, how long it has been quiet) for the ones on offer."""
+    return [(one.name, how_long(one, now=now)) for one in quiet[:most]]
+
+
+def describe_quiet(
+    quiet, ours, unknown, *, since: datetime, now: datetime, most: int = PICKABLE
+) -> list:
     """The list, as however many messages Discord will take.
 
-    Pages rather than a truncated list: the whole point is to act on it, and
-    "and 40 more" is the half nobody closes down.
+    Capped at what can be offered in one go, and the rest counted rather than
+    listed. An earlier version listed all of them over several messages, which
+    was right when the only way to act on one was to type its name; now that
+    the list carries a picker, naming a channel it cannot offer is naming one
+    somebody has to type out after all.
     """
     days = max(0, (now - since).days)
+    shown, over = list(quiet[:most]), max(0, len(quiet) - most)
     head = (
         f"🕸 **{len(quiet)} channel{'s' if len(quiet) != 1 else ''}** with nothing "
         f"said since **{since:%d %b %Y}** ({days // DAYS_A_MONTH} months)"
@@ -319,10 +337,15 @@ def describe_quiet(quiet, ours, unknown, *, since: datetime, now: datetime) -> l
     lines = [
         f"• **#{one.name}** — {how_long(one, now=now)}"
         + (f", {one.category}" if one.category else "")
-        for one in quiet
+        for one in shown
     ]
 
     tail = []
+    if over:
+        tail.append(
+            f"-# …and {over} more. Clear some of these and run `@RYTE quiet` "
+            "again for the rest."
+        )
     if ours:
         tail.append(
             f"-# Left out {len(ours)} of the server's own: "
@@ -337,7 +360,10 @@ def describe_quiet(quiet, ours, unknown, *, since: datetime, now: datetime) -> l
             + ", ".join(f"#{one.name}" for one in unknown[:6])
             + (", …" if len(unknown) > 6 else "")
         )
-    tail.append("-# Nothing here is deleted. `@RYTE clearout <name>` does that, and asks twice.")
+    tail.append(
+        "-# Nothing here is deleted. Pick one below, or `@RYTE clearout "
+        "<name>` — either way it asks twice."
+    )
 
     return _pages(head, lines, tail)
 
