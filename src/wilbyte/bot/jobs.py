@@ -4868,14 +4868,20 @@ def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
     return links[-1][1], []
 
 
-def collect_client(config: Config, row: list) -> tuple[str, list[str]]:
-    """Put one line in the ALL CLIENTS tab. (what tab it went on, problems).
+def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
+    """Put one line in the Ryte Collection tab. (what tab it went on, problems).
 
-    Appended, never written over: the tab is a record of every client who has
-    been closed down, and nothing here has any business changing a line that
-    is already in it.
+    That tab by name, not by whichever one happened to be open when the link
+    was copied. It is named for RYTE on purpose - "that way we know if hes the
+    one deleting stuff" - so a row in it is a row RYTE put there, and the gid
+    in a pasted link is exactly the sort of thing that quietly points at the
+    Masterlist instead.
+
+    Laid out against the tab's own headings. Appended, never written over: the
+    tab is a record of every client who has been closed down, and nothing here
+    has any business changing a line already in it.
     """
-    from .. import gsheets
+    from .. import clearout, gsheets
 
     link = (getattr(config.secrets, "clients_sheet_link", "") or "").strip()
     sheet_id = gsheets.sheet_id_in(link)
@@ -4887,14 +4893,35 @@ def collect_client(config: Config, row: list) -> tuple[str, list[str]]:
 
     try:
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
-            tab = client.tab_named(sheet_id, gsheets.gid_in(link))
+            titles = [
+                str((one.get("properties") or one).get("title") or "")
+                for one in client.tabs(sheet_id)
+            ]
+            wanted = clearout.COLLECTION_TAB.casefold()
+            tab = next(
+                (one for one in titles if " ".join(one.split()).casefold() == wanted),
+                "",
+            )
+            # Whatever the link pointed at, when there is no tab by that name.
+            # A spreadsheet somebody set up before the tab was named should
+            # still collect rather than refuse.
+            tab = tab or client.tab_named(sheet_id, gsheets.gid_in(link))
             if not tab:
                 return "", [
-                    "No tab in that spreadsheet with the gid in "
-                    "CLIENTS_SHEET_LINK - paste the link again with the right "
-                    "tab open."
+                    f"No tab called “{clearout.COLLECTION_TAB}” in that "
+                    "spreadsheet, and the gid in CLIENTS_SHEET_LINK doesn't "
+                    "match one either. It has: "
+                    + ", ".join(f"“{one}”" for one in titles[:10])
                 ]
-            client.append(sheet_id, tab, [row])
+            headings = [
+                str(one).strip() for one in (
+                    client.rows(sheet_id, f"'{tab}'!1:1") or [[]]
+                )[0]
+            ]
+            client.append(
+                sheet_id, tab,
+                [clearout.row_for(plan, when=when, headings=headings)],
+            )
     except Exception as exc:
         return "", [f"Couldn't write the sheet: {_short(exc, 140)}"]
     return tab, []

@@ -171,19 +171,59 @@ def sheet_in(messages) -> str:
     return ""
 
 
-def row_for(plan: Plan, *, when: datetime) -> list:
-    """The line that goes in the ALL CLIENTS tab before the channel goes.
+#: The tab a clear-out writes to, by name. Named for RYTE on purpose - "that
+#: way we know if hes the one deleting stuff" - so a row in it is a row RYTE
+#: put there and a row anywhere else in that spreadsheet is somebody's own.
+COLLECTION_TAB = "Ryte Collection"
+
+#: What each column of it wants, by what its heading sounds like. Against the
+#: tab's own headings rather than in a fixed order: the chargeback tracker
+#: taught that lesson the expensive way, writing a name under "Closer".
+COLLECTS = (
+    ("name", r"name|client|agent|who"),
+    ("sheet", r"sheet|link|drive|doc"),
+    ("channel", r"channel|discord"),
+    ("when", r"date|closed|cleared|removed|when|added"),
+)
+
+
+def collected(plan: Plan, *, when: datetime) -> dict:
+    """What is known about one clear-out, by what each thing is.
 
     The sheet link is the point of it: after the channel is deleted that link
     is the only way back to what was delivered, and it lives in a comment on a
     Trello card that nobody is going to think to look at.
     """
-    return [
-        plan.name,
-        plan.sheet,
-        plan.channel.name if plan.channel else "",
-        f"{when:%Y-%m-%d}",
-    ]
+    return {
+        "name": plan.name,
+        "sheet": plan.sheet,
+        "channel": plan.channel.name if plan.channel else "",
+        "when": f"{when:%Y-%m-%d}",
+    }
+
+
+def row_for(plan: Plan, *, when: datetime, headings=None) -> list:
+    """That, as a row laid out for the tab it is going in.
+
+    No headings, or none of them recognised, and it goes in the order it has
+    always gone in - a tab with nothing at the top of it is still a tab
+    somebody reads, and refusing to write is worse than writing four cells in
+    the obvious order.
+    """
+    have = collected(plan, when=when)
+    if not headings:
+        return list(have.values())
+    row, used = [], False
+    for heading in headings:
+        said = " ".join(str(heading or "").split()).casefold()
+        name = next(
+            (name for name, pattern in COLLECTS
+             if said and re.search(pattern, said, re.IGNORECASE)),
+            "",
+        )
+        row.append(have.get(name, ""))
+        used = used or bool(name)
+    return row if used else list(have.values())
 
 
 def picture_name(plan: Plan, *, when: datetime) -> str:

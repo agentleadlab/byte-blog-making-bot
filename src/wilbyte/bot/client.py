@@ -2289,7 +2289,7 @@ async def _clear_out(
     kept = []
 
     tab, trouble = await asyncio.to_thread(
-        jobs.collect_client, config, clearout.row_for(plan, when=today)
+        partial(jobs.collect_client, config, plan, when=today)
     )
     kept.append(f"✅ Sheet link → **{tab}**" if tab else "❌ " + "; ".join(trouble))
 

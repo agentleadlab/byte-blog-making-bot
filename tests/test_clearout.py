@@ -88,6 +88,39 @@ def test_the_row_keeps_the_sheet_link_above_all():
     ]
 
 
+# ------------------------------- the tab that says RYTE did it
+
+
+def test_the_row_is_laid_out_against_the_tabs_own_headings():
+    """The chargeback tracker taught this the expensive way, writing a name
+    under "Closer"."""
+    row = clearout.row_for(
+        _plan(sheet="https://sheet"), when=datetime(2026, 9, 15),
+        headings=["Date Cleared", "Client", "Discord Channel", "Sheet Link", "Notes"],
+    )
+
+    assert row == [
+        "2026-09-15", "Jay Rodriguez", "jay-rodriguez", "https://sheet", "",
+    ]
+
+
+@pytest.mark.parametrize("headings", [[], ["", "", ""], ["a", "b", "c", "d"]])
+def test_headings_nobody_recognises_fall_back_to_the_order_it_always_used(headings):
+    """A tab with nothing at the top of it is still a tab somebody reads, and
+    refusing to write is worse than four cells in the obvious order."""
+    row = clearout.row_for(
+        _plan(sheet="https://sheet"), when=datetime(2026, 9, 15), headings=headings,
+    )
+
+    assert row == ["Jay Rodriguez", "https://sheet", "jay-rodriguez", "2026-09-15"]
+
+
+def test_the_tab_is_the_one_named_for_ryte():
+    """"that way we know if hes the one deleting stuff" - a row in it is a row
+    RYTE put there, and a row anywhere else is somebody's own."""
+    assert clearout.COLLECTION_TAB == "Ryte Collection"
+
+
 def test_the_picture_is_named_after_them_and_the_day():
     said = clearout.picture_name(_plan(), when=datetime(2026, 9, 15))
 
@@ -340,9 +373,9 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
 
     monkeypatch.setattr(bot_client, "_last_said", said_in_there)
 
-    def collecting(config, row):
+    def collecting(config, plan, *, when):
         if rows is not None:
-            rows.append(row)
+            rows.append(clearout.row_for(plan, when=when))
         return tab, [] if tab else ["the sheet refused that"]
 
     monkeypatch.setattr(bot_client.jobs, "collect_client", collecting)
@@ -1086,3 +1119,95 @@ def test_the_small_note_is_on_a_line_of_its_own():
         "-#" in line and not line.startswith("-#") for line in said.splitlines()
     ), said
     assert any(line.startswith("-#") for line in said.splitlines())
+
+
+def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, link="x"):
+    """One `collect_client`, with Sheets stubbed. Returns (tab, rows, problems)."""
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+
+    written = []
+
+    class Sheet:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def tabs(self, sheet_id):
+            return [{"title": one, "sheetId": i} for i, one in enumerate(titles)]
+
+        def tab_named(self, sheet_id, gid):
+            return gid_tab
+
+        def rows(self, sheet_id, span):
+            return [list(headings)] if headings else []
+
+        def append(self, sheet_id, tab, rows):
+            written.append((tab, rows[0]))
+
+    monkeypatch.setattr(gsheets, "SheetsClient", lambda creds, **kw: Sheet())
+    monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
+    monkeypatch.setattr(gsheets, "sheet_id_in", lambda one: "sid" if link else "")
+    monkeypatch.setattr(gsheets, "gid_in", lambda one: "1")
+
+    from types import SimpleNamespace as NS
+
+    tab, problems = jobs.collect_client(
+        NS(secrets=NS(clients_sheet_link=link)),
+        _plan(sheet="https://sheet"), when=datetime(2026, 9, 15),
+    )
+    return tab, written, problems
+
+
+def test_it_writes_to_the_ryte_tab_not_whichever_one_the_link_had_open(monkeypatch):
+    """The gid in a pasted link is exactly the sort of thing that quietly
+    points at the Masterlist instead."""
+    tab, written, problems = _collecting(
+        monkeypatch, titles=["Ryte Collection", "Masterlist", "UPRISE"],
+    )
+
+    assert not problems, problems
+    assert tab == "Ryte Collection"
+    assert written[0][0] == "Ryte Collection"
+
+
+def test_the_tab_is_found_however_it_is_spaced(monkeypatch):
+    tab, _written, _problems = _collecting(
+        monkeypatch, titles=["Masterlist", " ryte   collection "],
+    )
+
+    assert tab.strip().casefold().startswith("ryte")
+
+
+def test_without_that_tab_it_falls_back_to_the_link(monkeypatch):
+    """A spreadsheet set up before the tab was named should still collect
+    rather than refuse."""
+    tab, written, problems = _collecting(
+        monkeypatch, titles=["Masterlist", "UPRISE"], gid_tab="Masterlist",
+    )
+
+    assert not problems
+    assert tab == "Masterlist" and written[0][0] == "Masterlist"
+
+
+def test_no_tab_at_all_says_which_ones_there_are(monkeypatch):
+    tab, written, problems = _collecting(
+        monkeypatch, titles=["Masterlist", "UPRISE"], gid_tab="",
+    )
+
+    assert tab == "" and written == []
+    assert "Ryte Collection" in problems[0]
+    assert "Masterlist" in problems[0] and "UPRISE" in problems[0]
+
+
+def test_the_row_goes_in_under_the_headings_that_are_there(monkeypatch):
+    _tab, written, _problems = _collecting(
+        monkeypatch, titles=["Ryte Collection"],
+        headings=["Date Cleared", "Client", "Discord Channel", "Sheet Link"],
+    )
+
+    assert written[0][1] == [
+        "2026-09-15", "Jay Rodriguez", "jay-rodriguez", "https://sheet",
+    ]
