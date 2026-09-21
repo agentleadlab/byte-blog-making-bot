@@ -2332,20 +2332,23 @@ async def _clear_out(
     going = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Ban and delete #{plan.channel.name}",
-        emoji="⛔",
+        label=f"Delete #{plan.channel.name}",
+        emoji="🗑",
         danger=True,
     )
+    # Nobody is banned by a clear-out. "WERE ONLY BANNING PEOPLE IF THEY
+    # DISPUTED" - an agent whose channel has gone quiet has simply stopped
+    # buying, and banning them from the server for it is a different thing
+    # entirely. The chargeback run is where a ban belongs.
     await responder.send(
         "\n".join(kept)
         + f"\n\n**This cannot be undone.**\n"
         + ("" if plan.sheet else
            "• ⚠ **No sheet link was found** — not on the board, not in the "
-           "channel. The row in ALL CLIENTS has an empty cell, and whatever "
-           "is in the channel goes with it.\n")
-        + (f"• Ban **{plan.member_name}** from {guild.name}\n"
-           if plan.member_id else "• Nobody to ban — they've already left\n")
-        + f"• Delete **#{plan.channel.name}**",
+           "channel. The row in Ryte Collection has an empty cell, and "
+           "whatever is in the channel goes with it.\n")
+        + f"• Delete **#{plan.channel.name}**\n"
+        + "-# Nobody is banned by this. That is the chargeback run's job.",
         view=going,
     )
     await going.wait()
@@ -2356,12 +2359,6 @@ async def _clear_out(
         return
 
     done, trouble = [], []
-    if member is not None:
-        try:
-            await guild.ban(member, reason=f"Closed down by RYTE for {name}", delete_message_days=0)
-            done.append(f"⛔ Banned **{plan.member_name}**")
-        except Exception as exc:
-            trouble.append(f"Couldn't ban them: {_readable(exc)}")
     channel = guild.get_channel(int(plan.channel.channel_id))
     # Asked again here rather than trusted from the looking-up: one channel,
     # the one this clear-out was for, in this server, and never one of the
@@ -2730,13 +2727,19 @@ async def _also_said(guild, member, channels) -> list:
     return found
 
 
-async def _last_said(channel) -> tuple[list, list[str]]:
+async def _last_said(channel, *, howmany: int = 0) -> tuple[list, list[str]]:
     """The last of the conversation, oldest first. (messages, problems).
 
     The problem comes back rather than being logged and swallowed. A channel
     RYTE is not allowed to read looked exactly like an empty one, which meant
-    the picture kept before a delete was a picture of nothing and was reported
-    as kept.
+    what was kept before a delete was nothing at all, and was reported as
+    kept.
+
+    Three hundred rather than forty. Forty was how many were wanted, and in a
+    channel carrying a lead feed all forty are the bot: Artur Rushiti's came
+    back as "nothing anybody said" while the conversation sat just above the
+    window. What is wanted is forty of what people said, which means reading
+    past what they didn't.
     """
     from .. import clearout
 
@@ -2745,7 +2748,7 @@ async def _last_said(channel) -> tuple[list, list[str]]:
     where = str(getattr(channel, "name", "") or "")
     found = []
     try:
-        async for said in channel.history(limit=clearout.KEEP_MESSAGES):
+        async for said in channel.history(limit=howmany or clearout.LOOK_BACK):
             found.append(_as_said(said, where))
     except Exception as exc:
         log.exception("Couldn't read that channel's history")

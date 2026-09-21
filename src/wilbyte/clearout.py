@@ -323,8 +323,9 @@ def to_screenshot(plan: Plan, messages: list) -> list:
     )
     if not messages:
         return [
-            f"🧹 **#{where}** — nothing anybody said, so there is nothing to "
-            "screenshot. Everything in it was the lead feed."
+            f"🧹 **#{where}** — nothing anybody said in the last {LOOK_BACK} "
+            "messages, so there is nothing to screenshot. All of it was the "
+            "lead feed."
         ]
 
     lines = []

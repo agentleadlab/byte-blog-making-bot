@@ -316,7 +316,8 @@ class SheetsClient:
         )
 
     def restyle(
-        self, sheet_id: str, tab_id: int, first: int, last: int, *, bold: bool
+        self, sheet_id: str, tab_id: int, first: int, last: int, *, bold: bool,
+        wrap: str = "",
     ) -> None:
         """Set bold and alignment on rows `first`..`last` (1-based, inclusive).
 
@@ -325,6 +326,10 @@ class SheetsClient:
         Sheets copies down. The agents' names came out looking like column
         titles, which on a document going to an agency reads as a mistake
         before anybody has read a word of it.
+
+        `wrap` is for a cell holding a URL. Left to wrap, a sheet link is six
+        lines tall and the row around it is six lines of white space; CLIP
+        keeps the whole link in the cell and the row one line high.
         """
         if tab_id is None or last < first:
             return
@@ -341,9 +346,11 @@ class SheetsClient:
                     "cell": {"userEnteredFormat": {
                         "horizontalAlignment": "LEFT",
                         "textFormat": {"bold": bold},
+                        **({"wrapStrategy": wrap} if wrap else {}),
                     }},
                     "fields": (
-                        "userEnteredFormat(horizontalAlignment,textFormat.bold)"
+                        "userEnteredFormat(horizontalAlignment,textFormat.bold"
+                        + (",wrapStrategy)" if wrap else ")")
                     ),
                 }
             }]},

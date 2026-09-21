@@ -457,22 +457,39 @@ def test_a_button_nobody_pressed_reads_as_a_no():
     assert view.answered is False, "a timeout is not somebody answering"
 
 
-def test_the_second_button_says_who_and_what_before_it_is_pressed(monkeypatch):
-    _, _, said, buttons = _closing(monkeypatch, says=[True, True])
+def test_the_second_button_says_what_before_it_is_pressed(monkeypatch):
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+    red = next(one for one in said if "cannot be undone" in one)
 
-    asked = said[-2]
-    assert "**This cannot be undone.**" in asked
-    assert "Ban **Jay Rodriguez**" in asked
-    assert "Delete **#jay-rodriguez**" in asked
-    assert buttons[-1].label == "Ban and delete #jay-rodriguez"
+    assert "Delete **#jay-rodriguez**" in red
 
 
-def test_the_irreversible_button_is_red_and_the_safe_one_is_not(monkeypatch):
-    """It should not look like the button that moves a blog post."""
-    _, _, _, buttons = _closing(monkeypatch, says=[True, True])
+def test_nobody_is_banned_by_a_clear_out(monkeypatch):
+    """"WERE ONLY BANNING PEOPLE IF THEY DISPUTED" - an agent whose channel
+    has gone quiet has simply stopped buying, and banning them from the server
+    for it is a different thing entirely."""
+    guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True])
+    whole = "\n".join(said)
 
-    assert buttons[0].danger is False
-    assert buttons[-1].danger is True
+    assert guild.banned == [], "it banned somebody for going quiet"
+    assert channel.deleted is True
+    assert "Ban" not in whole.replace("Nobody is banned", "")
+
+
+def test_both_presses_delete_the_channel(monkeypatch):
+    guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True])
+
+    assert channel.deleted is True
+    assert guild.banned == []
+    assert "🗑 Deleted **#jay-rodriguez**" in "\n".join(said)
+
+
+def test_somebody_who_already_left_changes_nothing(monkeypatch):
+    """Nothing here was ever about the member, now that nobody is banned."""
+    guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True], member=False)
+
+    assert channel.deleted is True
+    assert guild.banned == []
 
 
 def test_a_sheet_that_did_not_save_never_offers_the_delete(monkeypatch):
@@ -494,20 +511,20 @@ def test_a_conversation_that_would_not_post_never_offers_the_delete(monkeypatch)
     assert "**Nothing deleted.**" in said[-1]
 
 
-def test_both_presses_ban_them_and_delete_the_channel(monkeypatch):
+def test_both_presses_delete_the_channel_and_nothing_else(monkeypatch):
     """And the one path that does go through, so the asking isn't just a wall."""
     guild, channel, said, _ = _closing(monkeypatch, says=[True, True])
 
-    assert [str(one) for one in guild.banned] == ["Jay Rodriguez"]
+    assert guild.banned == []
     assert channel.deleted is True
     assert "Deleted **#jay-rodriguez**" in said[-1]
 
 
-def test_nobody_left_to_ban_still_asks_before_the_channel_goes(monkeypatch):
+def test_saying_no_still_leaves_the_channel_there(monkeypatch):
     guild, channel, said, buttons = _closing(monkeypatch, says=[True, False], member=False)
 
-    assert "Nobody to ban" in said[-2]
     assert channel.deleted is False
+    assert guild.banned == []
 
 
 # -------------------------------------------- which channels have gone quiet
@@ -932,9 +949,14 @@ class Embed:
 
 
 class Posted:
-    def __init__(self, content="", embeds=(), who="Artur_Rushiti BOT"):
+    def __init__(self, content="", embeds=(), who="Artur_Rushiti BOT", bot=None):
         self.content, self.embeds = content, list(embeds)
-        self.author = SimpleNamespace(display_name=who)
+        # As Discord marks them: the lead feeds are applications.
+        self.author = SimpleNamespace(
+            display_name=who,
+            bot=who.strip().upper().endswith("BOT") if bot is None else bot,
+            id=7,
+        )
         self.created_at = datetime(2026, 5, 24, 0, 7)
         self.attachments = []
 
@@ -1142,7 +1164,7 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
     from wilbyte import gsheets
     from wilbyte.bot import jobs
 
-    written = []
+    written, styled = [], []
 
     class Sheet:
         def __enter__(self):
@@ -1162,6 +1184,10 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
 
         def append(self, sheet_id, tab, rows):
             written.append((tab, rows[0]))
+            return f"'{tab}'!A2:D2"
+
+        def restyle(self, sheet_id, tab_id, first, last, *, bold, wrap=""):
+            styled.append((tab_id, first, last, bold, wrap))
 
     monkeypatch.setattr(gsheets, "SheetsClient", lambda creds, **kw: Sheet())
     monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
@@ -1174,13 +1200,13 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
         NS(secrets=NS(clients_sheet_link=link)),
         _plan(sheet="https://sheet"), when=datetime(2026, 9, 15),
     )
-    return tab, written, problems
+    return tab, written, problems, styled
 
 
 def test_it_writes_to_the_ryte_tab_not_whichever_one_the_link_had_open(monkeypatch):
     """The gid in a pasted link is exactly the sort of thing that quietly
     points at the Masterlist instead."""
-    tab, written, problems = _collecting(
+    tab, written, problems, _styled = _collecting(
         monkeypatch, titles=["Ryte Collection", "Masterlist", "UPRISE"],
     )
 
@@ -1190,7 +1216,7 @@ def test_it_writes_to_the_ryte_tab_not_whichever_one_the_link_had_open(monkeypat
 
 
 def test_the_tab_is_found_however_it_is_spaced(monkeypatch):
-    tab, _written, _problems = _collecting(
+    tab, _written, _problems, _styled = _collecting(
         monkeypatch, titles=["Masterlist", " ryte   collection "],
     )
 
@@ -1200,7 +1226,7 @@ def test_the_tab_is_found_however_it_is_spaced(monkeypatch):
 def test_without_that_tab_it_falls_back_to_the_link(monkeypatch):
     """A spreadsheet set up before the tab was named should still collect
     rather than refuse."""
-    tab, written, problems = _collecting(
+    tab, written, problems, _styled = _collecting(
         monkeypatch, titles=["Masterlist", "UPRISE"], gid_tab="Masterlist",
     )
 
@@ -1209,7 +1235,7 @@ def test_without_that_tab_it_falls_back_to_the_link(monkeypatch):
 
 
 def test_no_tab_at_all_says_which_ones_there_are(monkeypatch):
-    tab, written, problems = _collecting(
+    tab, written, problems, _styled = _collecting(
         monkeypatch, titles=["Masterlist", "UPRISE"], gid_tab="",
     )
 
@@ -1219,7 +1245,7 @@ def test_no_tab_at_all_says_which_ones_there_are(monkeypatch):
 
 
 def test_the_row_goes_in_under_the_headings_that_are_there(monkeypatch):
-    _tab, written, _problems = _collecting(
+    _tab, written, _problems, _styled = _collecting(
         monkeypatch, titles=["Ryte Collection"],
         headings=["Date Cleared", "Client", "Discord Channel", "Sheet Link"],
     )
@@ -1466,3 +1492,55 @@ def test_the_messages_are_posted_before_the_delete_is_offered(monkeypatch):
     red = next(i for i, one in enumerate(said) if "cannot be undone" in str(one))
 
     assert posted < red, "the delete was offered before the messages were up"
+
+
+def test_it_reads_past_the_lead_feed_to_find_the_conversation(monkeypatch):
+    """"HE HAS CONVO". Forty was how many messages were wanted, and in a
+    channel carrying a lead feed all forty are the bot - so it came back as
+    "nothing anybody said" while the conversation sat just above the window.
+    What is wanted is forty of what people said."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    asked = {}
+
+    class Feed:
+        async def history(self, limit=0):
+            asked["limit"] = limit
+            # The bot feed, and a conversation older than forty messages.
+            yield Posted(content="", embeds=[Embed(description=LEAD_POST)])
+            for _ in range(60):
+                yield Posted(content="--New VET Lead--", embeds=[])
+            yield Posted(content="got them, thanks", who="artur.rushiti")
+
+    found, trouble = asyncio.run(bot_client._last_said(Feed()))
+
+    assert not trouble
+    assert asked["limit"] == clearout.LOOK_BACK
+    kept = clearout.for_the_picture(found)
+    assert [one.text for one in kept] == ["got them, thanks"]
+
+
+def test_a_channel_with_genuinely_nothing_says_how_far_it_looked():
+    """"nothing anybody said" is a strong claim, and one somebody should be
+    able to check."""
+    pages = clearout.to_screenshot(_plan(), [])
+
+    assert str(clearout.LOOK_BACK) in pages[0]
+
+
+def test_the_written_row_is_tidied_up_after_it_lands(monkeypatch):
+    """"cant this look good any more?" A row appended under a heading row
+    arrives wearing the heading's clothes - bold and centred - and the sheet
+    link wraps to six lines, which takes the whole row with it."""
+    _tab, _written, problems, styled = _collecting(
+        monkeypatch, titles=["Ryte Collection"],
+    )
+
+    assert not problems
+    assert styled, "the row was left in the heading's clothes"
+    _tab_id, first, last, bold, wrap = styled[0]
+    assert (first, last) == (2, 2), "it restyled a row it did not write"
+    assert bold is False
+    assert wrap == "CLIP"

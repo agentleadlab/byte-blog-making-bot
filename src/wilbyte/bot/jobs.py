@@ -4918,10 +4918,23 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
                     client.rows(sheet_id, f"'{tab}'!1:1") or [[]]
                 )[0]
             ]
-            client.append(
+            where = client.append(
                 sheet_id, tab,
                 [clearout.row_for(plan, when=when, headings=headings)],
             )
+            # A row appended under a heading row arrives wearing the heading's
+            # clothes - bold and centred - and the sheet link wraps to six
+            # lines, which takes the whole row with it.
+            tab_id = next(
+                (
+                    (one.get("properties") or one).get("sheetId")
+                    for one in client.tabs(sheet_id)
+                    if str((one.get("properties") or one).get("title") or "") == tab
+                ),
+                None,
+            )
+            if tab_id is not None:
+                _restyle(client, sheet_id, tab_id, where, bold=False, wrap="CLIP")
     except Exception as exc:
         return "", [f"Couldn't write the sheet: {_short(exc, 140)}"]
     return tab, []
@@ -6960,7 +6973,9 @@ def _headings_anywhere(client, sheet_id: str, titles: list[str]) -> list[str]:
     return []
 
 
-def _restyle(client, sheet_id: str, tab_id, where: str, *, bold: bool) -> None:
+def _restyle(
+    client, sheet_id: str, tab_id, where: str, *, bold: bool, wrap: str = ""
+) -> None:
     """Make the rows just written look like rows rather than headings."""
     from .. import gsheets
 
@@ -6968,7 +6983,7 @@ def _restyle(client, sheet_id: str, tab_id, where: str, *, bold: bool) -> None:
     if tab_id is None or span is None:
         return
     first, last = span
-    client.restyle(sheet_id, int(tab_id), first, last, bold=bold)
+    client.restyle(sheet_id, int(tab_id), first, last, bold=bold, wrap=wrap)
 
 
 def _append_month(client, sheet_id: str, title: str, tab_id, lines: list):
