@@ -1211,3 +1211,238 @@ def test_the_row_goes_in_under_the_headings_that_are_there(monkeypatch):
     assert written[0][1] == [
         "2026-09-15", "Jay Rodriguez", "jay-rodriguez", "https://sheet",
     ]
+
+
+# ------------- nothing outside the one client channel, ever
+
+# "MAKE SURE HE DOESNT DELETING ANYTHING ELSE OUTSIDE THE CLIENTS CHANNEL."
+# RYTE now reads the shared channels to find what the client said in them, and
+# reading a channel must never be a step towards deleting it.
+
+
+def _theirs(channel_id="11", name="jay-rodriguez"):
+    return clearout.Plan(
+        name="Jay Rodriguez",
+        channel=clearout.Channel(channel_id=channel_id, name=name),
+    )
+
+
+def _real(channel_id=11, name="jay-rodriguez", guild=3):
+    return SimpleNamespace(id=channel_id, name=name, guild=SimpleNamespace(id=guild))
+
+
+def test_the_one_channel_it_was_for_may_be_deleted():
+    assert clearout.the_one_to_delete(_theirs(), _real(), guild_id=3) == ""
+
+
+def test_a_different_channel_may_not_be():
+    """Not by name, not by being nearby - by id, and only the one."""
+    said = clearout.the_one_to_delete(_theirs(), _real(channel_id=99), guild_id=3)
+
+    assert "not the channel this was for" in said
+
+
+def test_ring_da_bell_may_never_be_deleted():
+    """It is where the client's own words about the leads are, which is what
+    RYTE reads it for. Reading it must not make it deletable."""
+    said = clearout.the_one_to_delete(
+        _theirs(channel_id="11", name="ring-da-bell"),
+        _real(name="ring-da-bell"), guild_id=3,
+    )
+
+    assert "one of the server's own" in said
+    assert clearout.off_limits(channel("ring-da-bell")) is True
+    assert clearout.channels_for("ring da bell", [channel("ring-da-bell")]) == []
+
+
+@pytest.mark.parametrize(
+    "called", ["ring-da-bell", "🔔│ring-da-bell", "the-vault", "wins", "general-chat"],
+)
+def test_the_shared_channels_are_nobodys_to_clear(called):
+    assert clearout.off_limits(channel(called)) is True
+
+
+def test_a_channel_in_another_server_may_not_be():
+    said = clearout.the_one_to_delete(_theirs(), _real(guild=999), guild_id=3)
+
+    assert "in another server" in said
+
+
+def test_a_channel_that_went_away_is_not_deleted():
+    assert "not there any more" in clearout.the_one_to_delete(
+        _theirs(), None, guild_id=3
+    )
+
+
+def test_a_plan_with_no_channel_deletes_nothing():
+    assert "no channel on the plan" in clearout.the_one_to_delete(
+        clearout.Plan(name="Jay Rodriguez"), _real(), guild_id=3
+    )
+
+
+def test_the_delete_is_refused_out_loud_rather_than_skipped(monkeypatch):
+    """A silent skip on the irreversible step is the one nobody notices."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, True]
+    channel = Channel("ring-da-bell")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("ALL CLIENTS", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "keep_the_picture",
+        lambda config, page, called: ("https://drive/p.png", []),
+    )
+
+    async def nothing(_channel):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", nothing)
+
+    async def none_elsewhere(*a, **kw):
+        return []
+
+    monkeypatch.setattr(bot_client, "_also_said", none_elsewhere)
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(content or "")
+
+    asyncio.run(bot_client._clear_out(
+        NS(get_guild=lambda where: guild), NS(send=send, requester_id=1),
+        NS(secrets=NS(discord_clients_guild_id="3"),
+           discord=NS(approval_timeout_seconds=1),
+           schedule=NS(timezone="America/Chicago")),
+        "ring da bell",
+    ))
+
+    assert channel.deleted is False
+    whole = "\n".join(said)
+    assert "looks like" in whole or "Didn't delete" in whole, whole
+
+
+def test_a_channel_that_changed_under_it_is_not_deleted(monkeypatch):
+    """The look-up and the press are minutes apart, and a channel can be
+    renamed or replaced in between. The check at the press is what makes that
+    safe rather than a race."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, True]
+    theirs = Channel("jay-rodriguez")
+    guild = Guild(theirs, Member("Jay Rodriguez"))
+
+    # By the time the red button is pressed, that id is a different channel.
+    somebody_elses = Channel("general-chat")
+    somebody_elses.id = 404
+    guild.get_channel = lambda channel_id: somebody_elses
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("ALL CLIENTS", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "keep_the_picture",
+        lambda config, page, called: ("https://drive/p.png", []),
+    )
+
+    async def nothing(_channel):
+        return [], []
+
+    async def none_elsewhere(*a, **kw):
+        return []
+
+    monkeypatch.setattr(bot_client, "_last_said", nothing)
+    monkeypatch.setattr(bot_client, "_also_said", none_elsewhere)
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(content or "")
+
+    asyncio.run(bot_client._clear_out(
+        NS(get_guild=lambda where: guild), NS(send=send, requester_id=1),
+        NS(secrets=NS(discord_clients_guild_id="3"),
+           discord=NS(approval_timeout_seconds=1),
+           schedule=NS(timezone="America/Chicago")),
+        "Jay Rodriguez",
+    ))
+
+    assert somebody_elses.deleted is False, "it deleted a channel it was not for"
+    assert theirs.deleted is False
+    assert "Didn't delete anything" in "\n".join(said)
+
+
+# ------------------------------- what goes in the picture
+
+
+def _bot_said(text, at=None):
+    return clearout.Said(who="Artur_Rushiti BOT", when="May 24", text=text,
+                         by_bot=True, at=at, where="artur_rushiti-vet")
+
+
+def _person_said(text, at=None, where="artur_rushiti-vet"):
+    return clearout.Said(who="artur.rushiti", when="May 25", text=text,
+                         at=at, where=where)
+
+
+def test_the_bot_feed_is_not_the_conversation():
+    """"only the human messages, not the bot feed". A picture of the last
+    forty messages in a lead channel was forty lead records - the goods, not
+    the conversation, and none of it in their words."""
+    kept = clearout.for_the_picture([
+        _bot_said("--New VET Lead--\nName: Henri Harper"),
+        _person_said("got them, thanks"),
+        _bot_said("--New VET Lead--\nName: Dolores Ramirez"),
+    ])
+
+    assert [one.text for one in kept] == ["got them, thanks"]
+
+
+def test_what_they_said_elsewhere_goes_in_too():
+    """A sale posted in ring-da-bell is the client saying the leads worked."""
+    kept = clearout.for_the_picture(
+        [_person_said("got them, thanks", at=datetime(2026, 5, 25))],
+        [_person_said("$1548 ethos aged 6/7", at=datetime(2026, 5, 8),
+                      where="ring-da-bell")],
+    )
+
+    assert [one.text for one in kept] == ["$1548 ethos aged 6/7", "got them, thanks"]
+
+
+def test_the_picture_is_still_capped():
+    kept = clearout.for_the_picture([
+        _person_said(f"message {i}", at=datetime(2026, 5, 1, 0, i))
+        for i in range(60)
+    ])
+
+    assert len(kept) == clearout.KEEP_MESSAGES
+    assert kept[-1].text == "message 59", "it kept the oldest instead of the newest"
+
+
+def test_a_message_said_elsewhere_is_labelled_with_where():
+    plan = _plan(channel=channel("artur_rushiti-vet"))
+    page = clearout.as_page(plan, [
+        _person_said("$1548 ethos aged 6/7", where="ring-da-bell"),
+        _person_said("got them, thanks"),
+    ])
+
+    assert "#ring-da-bell" in page
+    assert page.count("class='where'") == 1, "their own channel is not labelled"

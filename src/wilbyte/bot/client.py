@@ -2293,13 +2293,17 @@ async def _clear_out(
     )
     kept.append(f"✅ Sheet link → **{tab}**" if tab else "❌ " + "; ".join(trouble))
 
+    # What they said, wherever they said it - their own channel and the ones
+    # the whole server shares - and not the lead feed.
+    elsewhere = await _also_said(guild, member, channels)
+    shown = clearout.for_the_picture(messages, elsewhere)
     picture, trouble = await asyncio.to_thread(
         jobs.keep_the_picture, config,
-        clearout.as_page(plan, messages),
+        clearout.as_page(plan, shown),
         clearout.picture_name(plan, when=today),
     )
     kept.append(
-        f"✅ {len(messages)} message(s) → <{picture}>" if picture
+        f"✅ {len(shown)} message(s) → <{picture}>" if picture
         else "❌ " + "; ".join(trouble)
     )
 
@@ -2353,7 +2357,13 @@ async def _clear_out(
         except Exception as exc:
             trouble.append(f"Couldn't ban them: {_readable(exc)}")
     channel = guild.get_channel(int(plan.channel.channel_id))
-    if channel is not None:
+    # Asked again here rather than trusted from the looking-up: one channel,
+    # the one this clear-out was for, in this server, and never one of the
+    # server's own.
+    refused = clearout.the_one_to_delete(plan, channel, guild_id=guild.id)
+    if refused:
+        trouble.append(f"Didn't delete anything — {refused}.")
+    else:
         try:
             await channel.delete(reason=f"Closed down by RYTE for {name}")
             done.append(f"🗑 Deleted **#{plan.channel.name}**")
@@ -2667,6 +2677,53 @@ def _all_of_it(message) -> str:
     return "\n".join(part for part in parts if str(part).strip())
 
 
+def _as_said(message, where: str):
+    """One Discord message as the picture's own shape."""
+    from .. import clearout
+
+    author = getattr(message, "author", None)
+    return clearout.Said(
+        who=str(getattr(author, "display_name", "") or author),
+        when=f"{message.created_at:%b %d, %Y %H:%M}" if message.created_at else "",
+        text=_all_of_it(message),
+        attachments=len(getattr(message, "attachments", []) or []),
+        by_bot=bool(getattr(author, "bot", False)),
+        at=getattr(message, "created_at", None),
+        where=where,
+    )
+
+
+async def _also_said(guild, member, channels) -> list:
+    """What this client said in the channels the whole server shares.
+
+    A sale posted in ring-da-bell is the client saying the leads worked, and
+    it is the half of the evidence their own channel does not have - theirs is
+    the bot's lead feed and a "thanks".
+
+    Only the shared ones, which are the channels a clear-out already refuses
+    to touch. Reading all hundred and eighty to find four messages is one
+    request per channel for every client closed down.
+    """
+    if member is None:
+        return []
+    from .. import clearout
+
+    found = []
+    for one in channels or []:
+        if not clearout.off_limits(one):
+            continue
+        channel = guild.get_channel(int(one.channel_id))
+        if channel is None or not _can_read(guild, channel):
+            continue
+        try:
+            async for said in channel.history(limit=clearout.LOOK_BACK):
+                if getattr(getattr(said, "author", None), "id", None) == member.id:
+                    found.append(_as_said(said, str(one.name)))
+        except Exception:
+            log.exception("Couldn't read #%s for what they said in it", one.name)
+    return found
+
+
 async def _last_said(channel) -> tuple[list, list[str]]:
     """The last of the conversation, oldest first. (messages, problems).
 
@@ -2679,15 +2736,11 @@ async def _last_said(channel) -> tuple[list, list[str]]:
 
     if channel is None:
         return [], ["There is no channel by that id to read."]
+    where = str(getattr(channel, "name", "") or "")
     found = []
     try:
         async for said in channel.history(limit=clearout.KEEP_MESSAGES):
-            found.append(clearout.Said(
-                who=str(getattr(said.author, "display_name", "") or said.author),
-                when=f"{said.created_at:%b %d, %Y %H:%M}" if said.created_at else "",
-                text=_all_of_it(said),
-                attachments=len(getattr(said, "attachments", []) or []),
-            ))
+            found.append(_as_said(said, where))
     except Exception as exc:
         log.exception("Couldn't read that channel's history")
         return [], [

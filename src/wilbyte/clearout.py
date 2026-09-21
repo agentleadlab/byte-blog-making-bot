@@ -30,6 +30,12 @@ from datetime import datetime
 #: it, which on a year-old channel is thousands of messages.
 KEEP_MESSAGES = 40
 
+#: How far back to look in a channel the whole server shares, for the handful
+#: of things this one client said in it. Further than their own channel,
+#: because ring-da-bell carries everybody's and their last post in it can be
+#: a long way down.
+LOOK_BACK = 300
+
 #: Words a channel of the server's own is made of. A channel whose name is
 #: nothing but these is never an agent's, whatever anybody typed - "admin-team"
 #: and "general" alike. Deleting one of them is the mistake this is built to
@@ -41,6 +47,10 @@ NEVER = {
     "test", "testing", "lounge", "off", "topic", "chat", "sales", "marketing",
     "leads", "internal", "customer", "service", "department", "payments",
     "payment", "dispute", "disputed", "new", "failed", "blogs", "records",
+    # The wins channel. Everybody posts their sales in it, so it is nobody's
+    # to delete - and it is where a client's own words about the leads are,
+    # which is what the picture before a clear-out is for.
+    "ring", "da", "bell", "wins", "win", "vault", "the",
 }
 
 
@@ -76,6 +86,19 @@ class Said:
     when: str
     text: str
     attachments: int = 0
+    #: Whether a bot wrote it. The lead feeds post every lead into the
+    #: client's own channel, so the last forty messages there are forty lead
+    #: records rather than anything the client said - "only the human
+    #: messages, not the bot feed". Kept on the message rather than filtered
+    #: on the way in, because the sheet link is only ever in a bot's post and
+    #: that still has to be read.
+    by_bot: bool = False
+    #: When it was said, for putting messages from several channels in order.
+    at: datetime | None = None
+    #: Which channel it was said in, named on the line when it was not this
+    #: client's own - a sale posted in ring-da-bell is worth showing as having
+    #: been posted there.
+    where: str = ""
 
 
 @dataclass
@@ -138,6 +161,39 @@ def off_limits(channel: Channel) -> bool:
     """Whether this channel is one nobody's clear-out should ever touch."""
     words = tidy_words(channel.name).split()
     return bool(words) and all(word in NEVER for word in words)
+
+
+def the_one_to_delete(plan: Plan, channel, *, guild_id) -> str:
+    """"" when this channel may be deleted, or why it may not.
+
+    Checked again here, at the moment of deleting, rather than trusted from
+    the looking-up half an hour earlier: "MAKE SURE HE DOESNT DELETING
+    ANYTHING ELSE OUTSIDE THE CLIENTS CHANNEL".
+
+    Four things, and all four have to hold: there is a plan with a channel on
+    it; this is that exact channel by id; it is in the clients server; and its
+    name is not one of the server's own. Nothing about what was read - RYTE
+    now reads ring-da-bell and the other shared channels to find what the
+    client said in them, and reading a channel must never be a step towards
+    deleting it.
+    """
+    if plan.channel is None:
+        return "there is no channel on the plan"
+    if channel is None:
+        return "that channel is not there any more"
+
+    was, now = str(plan.channel.channel_id or ""), str(getattr(channel, "id", "") or "")
+    if not was or was != now:
+        return f"#{getattr(channel, 'name', '?')} is not the channel this was for"
+
+    where = str(getattr(getattr(channel, "guild", None), "id", "") or "")
+    if where and str(guild_id or "") and where != str(guild_id):
+        return f"#{getattr(channel, 'name', '?')} is in another server"
+
+    called = str(getattr(channel, "name", "") or "")
+    if off_limits(Channel(channel_id=now, name=called)):
+        return f"#{called} is one of the server's own"
+    return ""
 
 
 def tidy_words(name: str) -> str:
@@ -232,6 +288,24 @@ def picture_name(plan: Plan, *, when: datetime) -> str:
     return f"{safe} — {when:%Y-%m-%d}.png"
 
 
+def for_the_picture(theirs: list, elsewhere: list = ()) -> list:
+    """The messages worth photographing: what people said, in order.
+
+    Bots left out. The lead feeds post every lead into the client's own
+    channel, so a picture of the last forty messages there was forty lead
+    records - the goods, not the conversation, and none of it in their words.
+
+    What they said in the channels the whole server shares goes in too: a sale
+    posted in ring-da-bell is the client saying the leads worked, which is
+    exactly what a picture kept before closing them down is for.
+    """
+    found = [one for one in list(theirs) + list(elsewhere) if not one.by_bot]
+    dated = [one for one in found if one.at is not None]
+    undated = [one for one in found if one.at is None]
+    dated.sort(key=lambda one: one.at)
+    return (undated + dated)[-KEEP_MESSAGES:]
+
+
 def as_page(plan: Plan, messages: list) -> str:
     """The conversation as a page Chromium can photograph.
 
@@ -247,10 +321,13 @@ def as_page(plan: Plan, messages: list) -> str:
                 f"<div class='files'>{one.attachments} attachment"
                 f"{'s' if one.attachments != 1 else ''}</div>"
             )
+        said_in = ""
+        if one.where and plan.channel and one.where != plan.channel.name:
+            said_in = f"<span class='where'>#{html.escape(one.where)}</span>"
         lines.append(
             "<div class='msg'>"
             f"<div class='who'>{html.escape(one.who or 'somebody')}"
-            f"<span class='when'>{html.escape(one.when or '')}</span></div>"
+            f"<span class='when'>{html.escape(one.when or '')}</span>{said_in}</div>"
             f"<div class='what'>{text or '<em>no text</em>'}</div>"
             "</div>"
         )
@@ -267,6 +344,8 @@ def as_page(plan: Plan, messages: list) -> str:
   .msg {{ padding: 7px 0; }}
   .who {{ color: #f2f3f5; font-weight: 600; }}
   .when {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px; }}
+  .where {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px;
+            background: #404249; border-radius: 4px; padding: 1px 6px; }}
   .what {{ white-space: pre-wrap; word-break: break-word; }}
   .files {{ color: #949ba4; font-size: 13px; font-style: italic; }}
 </style></head>
