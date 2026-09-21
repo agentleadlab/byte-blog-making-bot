@@ -6557,3 +6557,17 @@ def test_a_sweep_that_placed_nobody_says_nothing(monkeypatch, step):
     spoke = _ran_the_step(monkeypatch, step, added=[])
 
     assert spoke == [], spoke
+
+
+def test_the_clients_sheet_is_named_in_the_startup_report():
+    """Both halves of a clear-out are worth seeing before one is started.
+    Without the sheet link the first button fails after the picture has been
+    taken - safe, but a thing to find out beforehand."""
+    import inspect
+
+    from wilbyte.bot import client as bot_client
+
+    source = inspect.getsource(bot_client)
+    at = source.index("DISCORD_CLIENTS_GUILD_ID\",\n         \"the server")
+
+    assert "CLIENTS_SHEET_LINK" in source[at:at + 600]

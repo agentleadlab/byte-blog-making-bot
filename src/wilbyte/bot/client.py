@@ -6116,6 +6116,11 @@ def preflight(config: Config) -> list[str]:
          "say them in their own channel rather than with the board"),
         (config.secrets.discord_clients_guild_id, "DISCORD_CLIENTS_GUILD_ID",
          "the server the agents' own channels live in"),
+        # The other half of a clear-out. Without it the first button fails
+        # after the picture has been taken, which is safe but is a thing to
+        # find out before starting rather than halfway through.
+        (config.secrets.clients_sheet_link, "CLIENTS_SHEET_LINK",
+         "the ALL CLIENTS tab a closed-down agent's sheet link is kept in"),
         (config.secrets.trello_tags_auto, "TRELLO_TAGS_AUTO",
          "offer new comments and description lines as they are written"),
     ):
