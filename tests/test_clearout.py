@@ -1020,14 +1020,14 @@ def test_reading_a_channel_reports_why_it_could_not(monkeypatch):
     from wilbyte.bot import client as bot_client
 
     class Refused:
-        def history(self, limit=0):
+        def history(self, limit=0, oldest_first=False):
             raise PermissionError("403 Forbidden (Missing Access)")
 
     found, trouble = asyncio.run(bot_client._last_said(Refused()))
 
     assert found == []
     assert trouble and "403" in trouble[0]
-    assert "nothing to keep a picture of" in trouble[0]
+    assert "nothing to keep" in trouble[0]
 
 
 def test_an_empty_channel_is_not_a_failure():
@@ -1038,7 +1038,7 @@ def test_an_empty_channel_is_not_a_failure():
     from wilbyte.bot import client as bot_client
 
     class Quiet:
-        async def history(self, limit=0):
+        async def history(self, limit=0, oldest_first=False):
             return
             yield
 
@@ -1054,7 +1054,9 @@ def test_an_embed_only_channel_reads_through_to_the_end(monkeypatch):
     from wilbyte.bot import client as bot_client
 
     class Feed:
-        async def history(self, limit=0):
+        async def history(self, limit=0, oldest_first=False):
+            if oldest_first:
+                return
             yield Posted(embeds=[Embed(description=LEAD_POST)])
 
     found, trouble = asyncio.run(bot_client._last_said(Feed()))
@@ -1348,7 +1350,7 @@ def test_the_delete_is_refused_out_loud_rather_than_skipped(monkeypatch):
     monkeypatch.setattr(bot_client, "_last_said", nothing)
 
     async def none_elsewhere(*a, **kw):
-        return []
+        return [], []
 
     monkeypatch.setattr(bot_client, "_also_said", none_elsewhere)
 
@@ -1401,7 +1403,7 @@ def test_a_channel_that_changed_under_it_is_not_deleted(monkeypatch):
         return [], []
 
     async def none_elsewhere(*a, **kw):
-        return []
+        return [], []
 
     monkeypatch.setattr(bot_client, "_last_said", nothing)
     monkeypatch.setattr(bot_client, "_also_said", none_elsewhere)
@@ -1506,9 +1508,13 @@ def test_it_reads_past_the_lead_feed_to_find_the_conversation(monkeypatch):
     asked = {}
 
     class Feed:
-        async def history(self, limit=0):
-            asked["limit"] = limit
-            # The bot feed, and a conversation older than forty messages.
+        async def history(self, limit=0, oldest_first=False):
+            asked.setdefault("limits", []).append((limit, oldest_first))
+            if oldest_first:
+                # The start of the channel: the welcome, buried since.
+                yield Posted(content="hey Artur, welcome aboard",
+                             who="Therese", bot=False)
+                return
             yield Posted(content="", embeds=[Embed(description=LEAD_POST)])
             for _ in range(60):
                 yield Posted(content="--New VET Lead--", embeds=[])
@@ -1517,9 +1523,11 @@ def test_it_reads_past_the_lead_feed_to_find_the_conversation(monkeypatch):
     found, trouble = asyncio.run(bot_client._last_said(Feed()))
 
     assert not trouble
-    assert asked["limit"] == clearout.LOOK_BACK
+    assert (clearout.LOOK_BACK, False) in asked["limits"]
+    assert (clearout.FIRST_OF_IT, True) in asked["limits"], "it never read the start"
     kept = clearout.for_the_picture(found)
-    assert [one.text for one in kept] == ["got them, thanks"]
+    assert "got them, thanks" in [one.text for one in kept]
+    assert "hey Artur, welcome aboard" in [one.text for one in kept]
 
 
 def test_a_channel_with_genuinely_nothing_says_how_far_it_looked():
@@ -1544,3 +1552,84 @@ def test_the_written_row_is_tidied_up_after_it_lands(monkeypatch):
     assert (first, last) == (2, 2), "it restyled a row it did not write"
     assert bold is False
     assert wrap == "CLIP"
+
+
+def test_the_shared_channels_it_could_not_open_are_named(monkeypatch):
+    """Skipping a channel it is not allowed to open, and saying nothing, is
+    how "nothing anybody said" gets reported about somebody who has been
+    ringing the bell all year."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    shut = NS(id=1, name="ring-da-bell", guild=NS(id=3))
+    open_one = NS(id=2, name="general-chat", guild=NS(id=3))
+
+    class Chat:
+        async def history(self, limit=0, oldest_first=False):
+            return
+            yield
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: ch is not shut)
+    guild = NS(
+        id=3, me=object(),
+        get_channel=lambda cid: {1: shut, 2: Chat()}.get(cid),
+    )
+    for name in ("history",):
+        setattr(shut, name, Chat().history)
+
+    found, notes = asyncio.run(bot_client._also_said(
+        guild, NS(id=7),
+        [clearout.Channel(channel_id="1", name="ring-da-bell"),
+         clearout.Channel(channel_id="2", name="general-chat")],
+    ))
+
+    assert found == []
+    whole = "\n".join(notes)
+    assert "#ring-da-bell" in whole and "Couldn't open" in whole
+    assert "#general-chat" in whole
+
+
+def test_nobody_in_the_server_is_said_rather_than_skipped(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    found, notes = asyncio.run(bot_client._also_said(None, None, []))
+
+    assert found == []
+    assert "Nobody by that name" in "\n".join(notes)
+
+
+def test_what_it_searched_is_said_where_the_result_is(monkeypatch):
+    """"nothing anybody said" is only checkable next to where it looked."""
+    from wilbyte.bot import client as bot_client
+
+    async def some_notes(*a, **kw):
+        return [], ["Also read 2 shared channel(s) for what they said: #ring-da-bell"]
+
+    monkeypatch.setattr(bot_client, "_also_said", some_notes)
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+
+    assert "#ring-da-bell" in "\n".join(said)
+
+
+def test_a_message_read_from_both_ends_is_only_kept_once():
+    """A short channel is read twice over - newest first and oldest first -
+    and every message in it would otherwise be in the picture twice."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    only = Posted(content="got them, thanks", who="artur.rushiti", bot=False)
+    only.id = 99
+
+    class Short:
+        async def history(self, limit=0, oldest_first=False):
+            yield only
+
+    found, trouble = asyncio.run(bot_client._last_said(Short()))
+
+    assert not trouble
+    assert len(found) == 1, [one.text for one in found]

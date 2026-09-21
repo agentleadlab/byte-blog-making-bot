@@ -2299,7 +2299,7 @@ async def _clear_out(
     # photographed into Drive: "just forward them to me, then ill screenshot
     # then you collect sheet and delete". The person screenshotting knows what
     # is worth keeping in a way a rule about the last forty messages does not.
-    elsewhere = await _also_said(guild, member, channels)
+    elsewhere, looked = await _also_said(guild, member, channels)
     shown = clearout.for_the_picture(messages, elsewhere)
     forwarded = True
     try:
@@ -2310,6 +2310,7 @@ async def _clear_out(
         kept.append(f"❌ Couldn't post the conversation: {_readable(exc)}")
     if forwarded:
         kept.append(f"✅ {len(shown)} message(s) posted above — screenshot them now.")
+    kept += [f"-# {one}" for one in looked]
 
     # Only once both are kept. The whole point of the order is that a channel
     # is never deleted with the only copy of something still inside it - and a
@@ -2696,7 +2697,7 @@ def _as_said(message, where: str):
     )
 
 
-async def _also_said(guild, member, channels) -> list:
+async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
     """What this client said in the channels the whole server shares.
 
     A sale posted in ring-da-bell is the client saying the leads worked, and
@@ -2706,25 +2707,46 @@ async def _also_said(guild, member, channels) -> list:
     Only the shared ones, which are the channels a clear-out already refuses
     to touch. Reading all hundred and eighty to find four messages is one
     request per channel for every client closed down.
+
+    What it looked at comes back with what it found. Skipping a channel it is
+    not allowed to open, and saying nothing, is how "nothing anybody said"
+    gets reported about somebody who has been ringing the bell all year.
     """
     if member is None:
-        return []
+        return [], ["Nobody by that name is in the server, so only their own channel was read."]
     from .. import clearout
 
-    found = []
+    found, read, shut = [], [], []
     for one in channels or []:
         if not clearout.off_limits(one):
             continue
         channel = guild.get_channel(int(one.channel_id))
-        if channel is None or not _can_read(guild, channel):
+        if channel is None:
+            continue
+        if not _can_read(guild, channel):
+            shut.append(str(one.name))
             continue
         try:
             async for said in channel.history(limit=clearout.LOOK_BACK):
                 if getattr(getattr(said, "author", None), "id", None) == member.id:
                     found.append(_as_said(said, str(one.name)))
-        except Exception:
+            read.append(str(one.name))
+        except Exception as exc:
             log.exception("Couldn't read #%s for what they said in it", one.name)
-    return found
+            shut.append(f"{one.name} ({jobs._short(exc, 60)})")
+
+    notes = []
+    if read:
+        notes.append(
+            f"Also read {len(read)} shared channel(s) for what they said: "
+            + ", ".join(f"#{one}" for one in read[:6])
+        )
+    if shut:
+        notes.append(
+            f"⚠ Couldn't open {len(shut)} shared channel(s), so anything they "
+            "said in them is not here: " + ", ".join(f"#{one}" for one in shut[:6])
+        )
+    return found, notes
 
 
 async def _last_said(channel, *, howmany: int = 0) -> tuple[list, list[str]]:
@@ -2746,15 +2768,31 @@ async def _last_said(channel, *, howmany: int = 0) -> tuple[list, list[str]]:
     if channel is None:
         return [], ["There is no channel by that id to read."]
     where = str(getattr(channel, "name", "") or "")
-    found = []
-    try:
-        async for said in channel.history(limit=howmany or clearout.LOOK_BACK):
+    deep = howmany or clearout.LOOK_BACK
+    seen, found = set(), []
+
+    async def take(**how):
+        async for said in channel.history(**how):
+            mark = getattr(said, "id", None)
+            if mark is not None and mark in seen:
+                continue
+            if mark is not None:
+                seen.add(mark)
             found.append(_as_said(said, where))
+
+    try:
+        await take(limit=deep)
+        # And the other end. A client channel opens with the conversation -
+        # the welcome, the questions, what they wanted - and then a year of
+        # the lead feed buries it. Reading backwards from today never reaches
+        # it, however far back it goes, and that conversation is the one
+        # somebody would screenshot by hand.
+        await take(limit=clearout.FIRST_OF_IT, oldest_first=True)
     except Exception as exc:
         log.exception("Couldn't read that channel's history")
         return [], [
             "Couldn't read that channel's history, so there is nothing to "
-            f"keep a picture of: {jobs._short(exc, 140)}"
+            f"keep: {jobs._short(exc, 140)}"
         ]
     return list(reversed(found)), []
 

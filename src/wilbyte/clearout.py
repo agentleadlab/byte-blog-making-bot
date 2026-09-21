@@ -41,6 +41,13 @@ KEEP_MESSAGES = 40
 #: a long way down.
 LOOK_BACK = 300
 
+#: How much of the *start* of a channel to read. A client channel opens with
+#: the conversation - the welcome, the questions, what they wanted - and then
+#: a year of the lead feed buries it. Reading backwards from today never
+#: reaches that however far back it goes, and it is the part somebody would
+#: screenshot by hand.
+FIRST_OF_IT = 60
+
 #: Words a channel of the server's own is made of. A channel whose name is
 #: nothing but these is never an agent's, whatever anybody typed - "admin-team"
 #: and "general" alike. Deleting one of them is the mistake this is built to
