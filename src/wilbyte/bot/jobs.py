@@ -2949,6 +2949,14 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             if tagged.an_ongoing_order(note.text):
                 continue
 
+            # Somebody saying a setup has been done. A confirmation is not a
+            # job, and an afternoon of them arrived as forty-four offers to
+            # put the same line on the Ops checklist. What they are for is
+            # read by the check that watches for agents set up on leads they
+            # did not order, which is a different question from this one.
+            if tagged.a_setup_confirmation(note.text):
+                continue
+
             # A screenshot and a tag. Trello writes the attachment into the
             # comment as a link to it, so all the words say is "image.png",
             # which went onto KC's list looking exactly like that.

@@ -213,6 +213,44 @@ def an_ongoing_order(text: str) -> bool:
     return bool(ONGOING.search(text or ""))
 
 
+# Somebody reporting that a setup has been done. Therese and Nicole each write
+# one per agent as they finish - "TEXT VERIFIED VETERAN PLUS ON DISTRO HUB
+# setup is complete" - and an afternoon of them arrived as forty-four offers
+# to put the same line on the Ops checklist: "it should not flag this ask task
+# to be added on checklist".
+#
+# A confirmation is not a job. What these are for is read elsewhere, by the
+# check that watches for agents set up on leads they did not order.
+#
+# The words themselves, narrowly: the word for setting up and a word for
+# having finished, in that order and close together. "Set up Drago tomorrow"
+# is a job and has to stay one.
+_SETUP_DONE = re.compile(
+    r"\bset[\s-]?up\b[^.\n]{0,40}?\b(?:complete[ds]?|done|finished)\b"
+    r"|\b(?:complete[ds]?|done|finished)\s+(?:the\s+|their\s+|his\s+|her\s+)?"
+    r"set[\s-]?up\b"
+    r"|\b(?:is|are|was|were|has been|have been)\s+(?:now\s+)?set[\s-]?up\b",
+    re.IGNORECASE,
+)
+
+# "setup is not complete", "setup isn't done yet". The negative of a
+# confirmation is a job, and the word that makes it one sits just before the
+# word that would otherwise end it.
+_NOT_YET = re.compile(
+    r"\b(?:not|isn'?t|aren'?t|wasn'?t|weren'?t|never|no|needs?|need)\b",
+    re.IGNORECASE,
+)
+
+
+def a_setup_confirmation(text: str) -> bool:
+    """Whether the comment is somebody saying a setup has been done."""
+    said = " ".join((text or "").split())
+    found = _SETUP_DONE.search(said)
+    if not found:
+        return False
+    return not _NOT_YET.search(said[max(0, found.start() - 30):found.end()])
+
+
 # A bullet, of any of the shapes Trello writes or a person pastes. The glyphs
 # are what the rendered card shows - • then ◦ then ▪ going inwards - and they
 # carry the nesting on their own when somebody copies the rendered text back in

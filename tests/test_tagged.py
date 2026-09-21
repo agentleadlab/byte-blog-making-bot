@@ -1514,3 +1514,55 @@ def test_two_tags_on_one_block_is_a_job_for_both():
     assert [
         one.username for one in theirs if one.text.startswith("Call with Tyson")
     ] == ["jenniferhashisaki2", "kathleenmarie15"]
+
+
+# ------------------------------- a setup that is done is not a job to do
+
+
+CONFIRMATIONS = (
+    "TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete",
+    "PHOENIX STANDARD ON DISTRO HUB setup is complete",
+    "DISTRO HUB setup is complete for CRISITAN ALVAREZ",
+    "TEXT VERIFIED TRUCKER IUL ON DISTRO HUB setup is complete",
+    "setup complete",
+    "Marcos is now set up",
+    "finished the setup for Drago",
+    "Drago has been set up",
+)
+
+STILL_JOBS = (
+    "please set up Drago for trucker",
+    "setup is not complete for X",
+    "need to set up Mark tomorrow",
+    "add states for Drago",
+    "pause his drip until Monday",
+    "set up Marcos when you can",
+    "his setup isnt done yet",
+    "Drago needs to be set up",
+)
+
+
+@pytest.mark.parametrize("said", CONFIRMATIONS)
+def test_a_finished_setup_is_a_confirmation(said):
+    """"it should not flag this ask task to be added on checklist". Therese
+    and Nicole each write one per agent as they finish, and an afternoon of
+    them arrived as forty-four offers to put the same line on Ops."""
+    assert tagged.a_setup_confirmation(said) is True
+
+
+@pytest.mark.parametrize("said", STILL_JOBS)
+def test_asking_for_a_setup_is_still_a_job(said):
+    """"Set up Drago tomorrow" is work somebody has to do."""
+    assert tagged.a_setup_confirmation(said) is False
+
+
+def test_the_confirmation_is_skipped_where_the_ongoing_order_is():
+    """The rule exists; this is it being applied to the comments."""
+    import inspect
+
+    from wilbyte.bot import jobs
+
+    source = inspect.getsource(jobs._tags_on)
+
+    assert "a_setup_confirmation(note.text)" in source
+    assert source.index("an_ongoing_order") < source.index("a_setup_confirmation")
