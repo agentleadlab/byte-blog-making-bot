@@ -35,11 +35,11 @@ from datetime import datetime
 #: it, which on a year-old channel is thousands of messages.
 KEEP_MESSAGES = 40
 
-#: How far back to look in a channel the whole server shares, for the handful
-#: of things this one client said in it. Further than their own channel,
-#: because ring-da-bell carries everybody's and their last post in it can be
-#: a long way down.
-LOOK_BACK = 300
+#: How far back to look in a channel, for the handful of things this one
+#: client said in it. A thousand because three hundred was not enough:
+#: ring-da-bell carries the whole server's wins, and a client who stopped
+#: buying four months ago is a long way down it.
+LOOK_BACK = 1000
 
 #: How much of the *start* of a channel to read. A client channel opens with
 #: the conversation - the welcome, the questions, what they wanted - and then
@@ -324,15 +324,20 @@ def to_screenshot(plan: Plan, messages: list) -> list:
     that was had rather than as something RYTE wrote.
     """
     where = plan.channel.name if plan.channel else plan.name
+    link = f" — <#{plan.channel.channel_id}>" if plan.channel else ""
     head = (
         f"🧹 **#{where}** — {len(messages)} message"
         f"{'s' if len(messages) != 1 else ''}. Screenshot what you want."
     )
     if not messages:
+        # The channel itself, to go and look in. RYTE reading a thousand
+        # messages and finding none is not the same as there being none, and
+        # the person about to delete it should be able to check rather than
+        # take that on trust.
         return [
-            f"🧹 **#{where}** — nothing anybody said in the last {LOOK_BACK} "
-            "messages, so there is nothing to screenshot. All of it was the "
-            "lead feed."
+            f"🧹 **#{where}**{link} — nothing anybody said in the "
+            f"{LOOK_BACK} newest or the {FIRST_OF_IT} oldest messages, so "
+            "there is nothing to post. Open it and look before deleting it."
         ]
 
     lines = []

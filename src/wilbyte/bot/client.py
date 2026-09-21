@@ -2727,10 +2727,17 @@ async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
             shut.append(str(one.name))
             continue
         try:
+            oldest = None
             async for said in channel.history(limit=clearout.LOOK_BACK):
+                oldest = getattr(said, "created_at", None) or oldest
                 if getattr(getattr(said, "author", None), "id", None) == member.id:
                     found.append(_as_said(said, str(one.name)))
-            read.append(str(one.name))
+            # How far back it actually got. A thousand messages is a year in
+            # one channel and a fortnight in another, and "found nothing" only
+            # means something next to how far it looked.
+            read.append(
+                f"{one.name}" + (f" (back to {oldest:%d %b})" if oldest else "")
+            )
         except Exception as exc:
             log.exception("Couldn't read #%s for what they said in it", one.name)
             shut.append(f"{one.name} ({jobs._short(exc, 60)})")

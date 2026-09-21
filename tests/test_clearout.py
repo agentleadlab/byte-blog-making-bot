@@ -164,11 +164,17 @@ def test_a_message_from_another_channel_says_where():
 
 def test_a_channel_of_nothing_but_the_lead_feed_says_so():
     """Not an empty message with a button under it: there is genuinely
-    nothing to screenshot, and that is worth being told."""
+    nothing to post, and that is worth being told - with the channel to go
+    and check in, because RYTE finding none is not the same as there being
+    none."""
     pages = clearout.to_screenshot(_plan(), [])
 
     assert len(pages) == 1
-    assert "nothing to screenshot" in pages[0]
+    assert "nothing to post" in pages[0]
+    assert "Open it and look before deleting it" in pages[0]
+    assert "<#c1>" in pages[0], "no way to go and look"
+    assert str(clearout.LOOK_BACK) in pages[0]
+    assert str(clearout.FIRST_OF_IT) in pages[0]
 
 
 def test_a_long_conversation_is_paged_rather_than_cut_off():
@@ -1633,3 +1639,32 @@ def test_a_message_read_from_both_ends_is_only_kept_once():
 
     assert not trouble
     assert len(found) == 1, [one.text for one in found]
+
+
+def test_how_far_back_each_shared_channel_was_read_is_said(monkeypatch):
+    """A thousand messages is a year in one channel and a fortnight in
+    another, and "found nothing" only means something next to how far it
+    looked."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    class Busy:
+        async def history(self, limit=0, oldest_first=False):
+            for day in (25, 20, 14):
+                yield NS(
+                    id=day, author=NS(id=1, display_name="somebody else", bot=False),
+                    created_at=datetime(2026, 8, day), content="x", embeds=[],
+                    attachments=[],
+                )
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    guild = NS(id=3, me=object(), get_channel=lambda cid: Busy())
+
+    found, notes = asyncio.run(bot_client._also_said(
+        guild, NS(id=7), [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert found == []
+    assert "back to 14 Aug" in "\n".join(notes)
