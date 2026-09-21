@@ -151,7 +151,73 @@ def test_it_says_what_it_found_before_anything_irreversible():
 def test_a_missing_sheet_is_said_plainly_rather_than_left_out():
     said = clearout.describe(_plan())
 
-    assert "none found on their card" in said
+    assert "none found" in said
+    assert "not in the channel" in said, "where else it looked"
+
+
+def test_a_sheet_found_in_the_channel_says_so():
+    """It means the link is about to be deleted with the channel, and the row
+    in ALL CLIENTS is the only place it will live afterwards."""
+    said = clearout.describe(_plan(sheet="https://docs.google.com/spreadsheets/d/abc",
+                                   from_channel=True))
+
+    assert "spreadsheets/d/abc" in said
+    assert "out of the channel" in said
+
+
+def test_a_sheet_off_a_card_does_not_say_that():
+    said = clearout.describe(_plan(sheet="https://docs.google.com/spreadsheets/d/abc"))
+
+    assert "out of the channel" not in said
+
+
+# ------------------------------- the link the channel is carrying
+
+
+LEAD_POST = """--New VET Lead--
+
+Name: Henri Harper
+Age: 70
+State: IL
+
+Check it here:
+https://docs.google.com/spreadsheets/d/1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ/edit?usp=sharing"""
+
+
+def test_the_sheet_is_found_in_the_channel_when_no_card_has_it():
+    """Artur Rushiti has no New Agent card anywhere on the board, so the
+    clear-out said "none found on their card" and offered the buttons anyway -
+    while every lead in his channel ends "Check it here:" and the link."""
+    found = clearout.sheet_in([
+        clearout.Said(who="Artur_Rushiti BOT", when="May 24", text=LEAD_POST),
+    ])
+
+    assert found == (
+        "https://docs.google.com/spreadsheets/d/"
+        "1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ/edit?usp=sharing"
+    )
+
+
+def test_the_newest_sheet_in_the_channel_wins():
+    """A client set up twice has two, and the one that matters is the round
+    they were on when they stopped."""
+    found = clearout.sheet_in([
+        clearout.Said(who="bot", when="Jan", text="old https://docs.google.com/spreadsheets/d/aaaaaaaaaaaaaaaaaaaaaa/edit"),
+        clearout.Said(who="bot", when="May", text="new https://docs.google.com/spreadsheets/d/bbbbbbbbbbbbbbbbbbbbbb/edit"),
+    ])
+
+    assert "bbbbbbbbbbbbbbbbbbbbbb" in found
+
+
+@pytest.mark.parametrize(
+    "said", ["", "nothing here", "https://trello.com/c/abc", "a doc: https://docs.google.com/document/d/abcdefghijklmnopqrstuv/edit"],
+)
+def test_something_that_is_not_a_sheet_is_not_read_as_one(said):
+    assert clearout.sheet_in([clearout.Said(who="x", when="", text=said)]) == ""
+
+
+def test_no_messages_at_all_is_no_sheet():
+    assert clearout.sheet_in([]) == ""
 
 
 def test_somebody_who_already_left_has_nobody_to_ban():
@@ -239,7 +305,8 @@ class Guild:
 
 
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
-             name="Jay Rodriguez", called="jay-rodriguez", member=True):
+             name="Jay Rodriguez", called="jay-rodriguez", member=True,
+             on_card="https://sheet", in_channel="", rows=None):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -259,12 +326,23 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
 
     monkeypatch.setattr(bot_client.views, "ConfirmView", Watched)
     monkeypatch.setattr(
-        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://sheet", [])
+        bot_client.jobs, "sheet_for_agent",
+        lambda config, who: (on_card, [] if on_card else ["No New Agent card"]),
     )
-    monkeypatch.setattr(
-        bot_client.jobs, "collect_client",
-        lambda config, row: (tab, [] if tab else ["the sheet refused that"]),
-    )
+
+    async def said_in_there(_channel):
+        if not in_channel:
+            return []
+        return [clearout.Said(who="bot", when="May 24", text=in_channel)]
+
+    monkeypatch.setattr(bot_client, "_last_said", said_in_there)
+
+    def collecting(config, row):
+        if rows is not None:
+            rows.append(row)
+        return tab, [] if tab else ["the sheet refused that"]
+
+    monkeypatch.setattr(bot_client.jobs, "collect_client", collecting)
     monkeypatch.setattr(
         bot_client.jobs, "keep_the_picture",
         lambda config, page, called: (
@@ -739,3 +817,50 @@ def test_the_picker_holds_no_more_than_discord_allows():
     )
 
     assert len(picker._select.options) == 25
+
+
+def test_the_channels_own_link_is_what_gets_kept(monkeypatch):
+    """No card on the board, and the link in every lead the channel carries.
+    Writing an empty cell into ALL CLIENTS and then deleting the only copy is
+    the exact thing this is built to prevent."""
+    rows = []
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False],
+        on_card="", in_channel=LEAD_POST, rows=rows,
+        name="artur_rushiti-vet", called="artur_rushiti-vet",
+    )
+
+    assert rows, "nothing was written to ALL CLIENTS"
+    assert "1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ" in rows[0][1]
+    assert "out of the channel" in "\n".join(said)
+
+
+def test_a_card_link_still_wins_over_the_channels(monkeypatch):
+    """A link somebody put on the card is the one they chose."""
+    rows = []
+    _closing(
+        monkeypatch, says=[True, False],
+        on_card="https://docs.google.com/spreadsheets/d/onthecard", in_channel=LEAD_POST,
+        rows=rows,
+    )
+
+    assert rows[0][1] == "https://docs.google.com/spreadsheets/d/onthecard"
+
+
+def test_no_sheet_anywhere_is_said_at_the_button_that_cannot_be_undone(monkeypatch):
+    """The row has an empty cell and the channel is about to go. That belongs
+    next to the delete, not three messages earlier."""
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], on_card="", in_channel="",
+    )
+    red = next(one for one in said if "cannot be undone" in one)
+
+    assert "No sheet link was found" in red
+    assert "not in the channel" in red
+
+
+def test_a_sheet_that_was_found_says_nothing_extra_at_the_button(monkeypatch):
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+    red = next(one for one in said if "cannot be undone" in one)
+
+    assert "No sheet link was found" not in red

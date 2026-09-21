@@ -82,6 +82,10 @@ class Plan:
     sheet: str = ""
     member_id: str = ""
     member_name: str = ""
+    #: Whether the sheet link came out of the channel rather than off a Trello
+    #: card. Worth saying: it means the link is about to be deleted along with
+    #: the channel, and the row in ALL CLIENTS is the only place it will live.
+    from_channel: bool = False
     problems: list = field(default_factory=list)
 
     @property
@@ -135,6 +139,31 @@ def tidy_words(name: str) -> str:
     """A channel name without emoji or separators - "📋 general" -> "general"."""
     said = re.sub(r"[^\w\s-]", " ", (name or ""))
     return " ".join(said.replace("-", " ").replace("_", " ").split()).casefold()
+
+
+#: A Google Sheet, in the words of a message rather than in a Trello comment.
+_A_SHEET = re.compile(
+    r"https?://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]{20,}[^\s<>\])]*"
+)
+
+
+def sheet_in(messages) -> str:
+    """The delivered-leads sheet out of the channel itself, or "".
+
+    Artur Rushiti has no New Agent card anywhere on the board, so the sheet
+    was reported as "none found on their card" - while every lead his channel
+    has ever carried ends "Check it here:" and the link. The channel is where
+    the link actually lives for these, and it is the thing about to be
+    deleted.
+
+    The newest one. A client who was set up twice has two, and the one that
+    matters is the round they were on when they stopped.
+    """
+    for one in reversed(list(messages or [])):
+        found = _A_SHEET.search(str(getattr(one, "text", "") or ""))
+        if found:
+            return found.group(0).rstrip(".,;)")
+    return ""
 
 
 def row_for(plan: Plan, *, when: datetime) -> list:
@@ -216,10 +245,15 @@ def describe(plan: Plan) -> str:
         lines.append(f"• Category — {plan.channel.category}")
     if plan.channel.last_active:
         lines.append(f"• Last message — {plan.channel.last_active:%d %b %Y}")
-    lines.append(
-        f"• Sheet — {plan.sheet}" if plan.sheet
-        else "• Sheet — **none found on their card**"
-    )
+    if plan.sheet:
+        lines.append(
+            f"• Sheet — {plan.sheet}"
+            + (" -# (out of the channel, not off a card)" if plan.from_channel else "")
+        )
+    else:
+        lines.append(
+            "• Sheet — **none found**, not on the board and not in the channel"
+        )
     lines.append(
         f"• Member — {plan.member_name}" if plan.member_id
         else "• Member — **not in the server**, so there is nobody to ban"

@@ -2251,6 +2251,20 @@ async def _clear_out(
         plan.member_id, plan.member_name = str(member.id), str(member)
 
     plan.sheet, trouble = await asyncio.to_thread(jobs.sheet_for_agent, config, name)
+
+    # Read once, before anything is offered: the picture needs it, and so does
+    # the sheet when the board has no card for them. Artur Rushiti has no New
+    # Agent card anywhere - the clear-out said "none found on their card" and
+    # went on to offer the buttons, while every lead in his channel ends
+    # "Check it here:" and the link. Writing an empty cell into ALL CLIENTS
+    # and then deleting the only copy is the exact thing this is built to
+    # prevent.
+    messages = await _last_said(guild.get_channel(int(plan.channel.channel_id)))
+    if not plan.sheet:
+        plan.sheet = clearout.sheet_in(messages)
+        if plan.sheet:
+            plan.from_channel = True
+            trouble = []
     plan.problems += trouble
 
     view = views.ConfirmView(
@@ -2276,7 +2290,6 @@ async def _clear_out(
     )
     kept.append(f"✅ Sheet link → **{tab}**" if tab else "❌ " + "; ".join(trouble))
 
-    messages = await _last_said(guild.get_channel(int(plan.channel.channel_id)))
     picture, trouble = await asyncio.to_thread(
         jobs.keep_the_picture, config,
         clearout.as_page(plan, messages),
@@ -2307,6 +2320,10 @@ async def _clear_out(
     await responder.send(
         "\n".join(kept)
         + f"\n\n**This cannot be undone.**\n"
+        + ("" if plan.sheet else
+           "• ⚠ **No sheet link was found** — not on the board, not in the "
+           "channel. The row in ALL CLIENTS has an empty cell, and whatever "
+           "is in the channel goes with it.\n")
         + (f"• Ban **{plan.member_name}** from {guild.name}\n"
            if plan.member_id else "• Nobody to ban — they've already left\n")
         + f"• Delete **#{plan.channel.name}**",
