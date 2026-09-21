@@ -1073,3 +1073,16 @@ def test_a_permission_that_cannot_be_read_counts_as_readable():
         SimpleNamespace(me=object()), SimpleNamespace(permissions_for=boom)
     ) is True
     assert bot_client._can_read(SimpleNamespace(me=None), object()) is True
+
+
+def test_the_small_note_is_on_a_line_of_its_own():
+    """"-#" is Discord's small text only at the start of a line. In the
+    middle of the sheet line it rendered as the two characters."""
+    said = clearout.describe(_plan(
+        sheet="https://docs.google.com/spreadsheets/d/abc", from_channel=True,
+    ))
+
+    assert not any(
+        "-#" in line and not line.startswith("-#") for line in said.splitlines()
+    ), said
+    assert any(line.startswith("-#") for line in said.splitlines())

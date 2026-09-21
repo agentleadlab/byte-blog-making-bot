@@ -251,10 +251,7 @@ def describe(plan: Plan) -> str:
     if plan.channel.last_active:
         lines.append(f"• Last message — {plan.channel.last_active:%d %b %Y}")
     if plan.sheet:
-        lines.append(
-            f"• Sheet — {plan.sheet}"
-            + (" -# (out of the channel, not off a card)" if plan.from_channel else "")
-        )
+        lines.append(f"• Sheet — {plan.sheet}")
     else:
         lines.append(
             "• Sheet — **none found**, not on the board and not in the channel"
@@ -264,6 +261,15 @@ def describe(plan: Plan) -> str:
         else "• Member — **not in the server**, so there is nobody to ban"
     )
     lines += [f"⚠ {one}" for one in plan.problems]
+    # Under the list rather than inside it, and on a line of its own: "-#" is
+    # Discord's small text only at the start of one, and in the middle of the
+    # sheet line it rendered as the two characters.
+    if plan.sheet and plan.from_channel:
+        lines.append(
+            "-# That sheet link came out of the channel rather than off a "
+            "card, so once the channel goes the ALL CLIENTS row is the only "
+            "place it lives."
+        )
     return "\n".join(lines)
 
 
