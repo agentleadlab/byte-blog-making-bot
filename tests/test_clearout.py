@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -306,7 +307,7 @@ class Guild:
 
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
-             on_card="https://sheet", in_channel="", rows=None):
+             on_card="https://sheet", in_channel="", rows=None, unread=False):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -331,9 +332,11 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
     )
 
     async def said_in_there(_channel):
+        if unread:
+            return [], ["Couldn't read that channel's history: 403 Forbidden"]
         if not in_channel:
-            return []
-        return [clearout.Said(who="bot", when="May 24", text=in_channel)]
+            return [], []
+        return [clearout.Said(who="bot", when="May 24", text=in_channel)], []
 
     monkeypatch.setattr(bot_client, "_last_said", said_in_there)
 
@@ -864,3 +867,126 @@ def test_a_sheet_that_was_found_says_nothing_extra_at_the_button(monkeypatch):
     red = next(one for one in said if "cannot be undone" in one)
 
     assert "No sheet link was found" not in red
+
+
+# ------------------------- what the lead bots actually post
+
+
+class Embed:
+    def __init__(self, description="", title="", url="", fields=()):
+        self.description, self.title, self.url = description, title, url
+        self.fields = [
+            SimpleNamespace(name=name, value=value) for name, value in fields
+        ]
+        self.footer = SimpleNamespace(text="")
+        self.author = SimpleNamespace(name="")
+
+
+class Posted:
+    def __init__(self, content="", embeds=(), who="Artur_Rushiti BOT"):
+        self.content, self.embeds = content, list(embeds)
+        self.author = SimpleNamespace(display_name=who)
+        self.created_at = datetime(2026, 5, 24, 0, 7)
+        self.attachments = []
+
+
+def test_a_lead_posted_as_an_embed_is_not_a_blank_message():
+    """The lead bots put the whole lead in an embed, so `content` is empty.
+    Reading only `content` made those channels look like forty blank messages:
+    no sheet link to find, and a picture of nothing to keep before deleting
+    them."""
+    from wilbyte.bot import client as bot_client
+
+    said = bot_client._all_of_it(Posted(embeds=[Embed(
+        title="--New VET Lead--",
+        description=LEAD_POST,
+        url="https://docs.google.com/spreadsheets/d/1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ/edit",
+    )]))
+
+    assert "Henri Harper" in said
+    assert "1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ" in said
+    assert clearout.sheet_in([clearout.Said(who="bot", when="", text=said)])
+
+
+def test_an_embeds_fields_are_read_too():
+    from wilbyte.bot import client as bot_client
+
+    said = bot_client._all_of_it(Posted(embeds=[Embed(
+        fields=(("Sheet", "https://docs.google.com/spreadsheets/d/aaaaaaaaaaaaaaaaaaaaaa/edit"),),
+    )]))
+
+    assert "aaaaaaaaaaaaaaaaaaaaaa" in said
+
+
+def test_an_ordinary_message_still_reads_as_itself():
+    from wilbyte.bot import client as bot_client
+
+    assert bot_client._all_of_it(Posted(content="got the leads thanks")) == (
+        "got the leads thanks"
+    )
+
+
+def test_a_channel_that_would_not_open_is_not_an_empty_one(monkeypatch):
+    """A channel RYTE is not allowed to read looked exactly like an empty one,
+    so the picture kept before a delete was a picture of nothing and was
+    reported as kept."""
+    guild, channel, said, _buttons = _closing(
+        monkeypatch, says=[True, True], unread=True,
+    )
+    whole = "\n".join(said)
+
+    assert channel.deleted is False, "it deleted a channel it could not read"
+    assert guild.banned == []
+    assert "Nothing deleted" in whole
+    assert "Couldn't read that channel's history" in whole
+
+
+def test_reading_a_channel_reports_why_it_could_not(monkeypatch):
+    """Logged and swallowed, a 403 came back as an empty list and was
+    indistinguishable from a channel nobody ever used."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    class Refused:
+        def history(self, limit=0):
+            raise PermissionError("403 Forbidden (Missing Access)")
+
+    found, trouble = asyncio.run(bot_client._last_said(Refused()))
+
+    assert found == []
+    assert trouble and "403" in trouble[0]
+    assert "nothing to keep a picture of" in trouble[0]
+
+
+def test_an_empty_channel_is_not_a_failure():
+    """A channel nobody ever used is a real answer, and a clear-out of one is
+    allowed to go ahead."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    class Quiet:
+        async def history(self, limit=0):
+            return
+            yield
+
+    found, trouble = asyncio.run(bot_client._last_said(Quiet()))
+
+    assert found == [] and trouble == []
+
+
+def test_an_embed_only_channel_reads_through_to_the_end(monkeypatch):
+    """The real shape: history of embed posts, read for the sheet."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    class Feed:
+        async def history(self, limit=0):
+            yield Posted(embeds=[Embed(description=LEAD_POST)])
+
+    found, trouble = asyncio.run(bot_client._last_said(Feed()))
+
+    assert not trouble
+    assert clearout.sheet_in(found).endswith("edit?usp=sharing")

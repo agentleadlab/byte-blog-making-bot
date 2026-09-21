@@ -2259,7 +2259,10 @@ async def _clear_out(
     # "Check it here:" and the link. Writing an empty cell into ALL CLIENTS
     # and then deleting the only copy is the exact thing this is built to
     # prevent.
-    messages = await _last_said(guild.get_channel(int(plan.channel.channel_id)))
+    messages, unread = await _last_said(
+        guild.get_channel(int(plan.channel.channel_id))
+    )
+    plan.problems += unread
     if not plan.sheet:
         plan.sheet = clearout.sheet_in(messages)
         if plan.sheet:
@@ -2301,7 +2304,15 @@ async def _clear_out(
     )
 
     # Only once both are kept. The whole point of the order is that a channel
-    # is never deleted with the only copy of something still inside it.
+    # is never deleted with the only copy of something still inside it - and a
+    # channel whose history would not open is one whose picture is of nothing,
+    # however cleanly the picture itself was taken.
+    if unread:
+        await responder.send(
+            "\n".join(kept)
+            + "\n\n**Nothing deleted.** " + " ".join(unread)
+        )
+        return
     if not picture or not tab:
         await responder.send(
             "\n".join(kept)
@@ -2606,25 +2617,62 @@ def _member_called(guild, name: str):
     return None
 
 
-async def _last_said(channel) -> list:
-    """The last of the conversation, oldest first, for the picture."""
+def _all_of_it(message) -> str:
+    """Everything a message says, its embeds included.
+
+    The lead bots post each lead as an embed, so `content` is empty and the
+    whole lead - the name, the state, and the "Check it here:" link - is in
+    the embed's description. Reading only `content` made those channels look
+    like forty blank messages: no sheet link to find, and a picture of
+    nothing to keep before deleting them.
+    """
+    parts = [str(getattr(message, "content", "") or "")]
+    for embed in getattr(message, "embeds", None) or []:
+        for bit in (getattr(embed, "title", None), getattr(embed, "description", None)):
+            if bit:
+                parts.append(str(bit))
+        for field in getattr(embed, "fields", None) or []:
+            said = f"{getattr(field, 'name', '') or ''} {getattr(field, 'value', '') or ''}"
+            if said.strip():
+                parts.append(said.strip())
+        for bit in (
+            getattr(embed, "url", None),
+            getattr(getattr(embed, "footer", None), "text", None),
+            getattr(getattr(embed, "author", None), "name", None),
+        ):
+            if bit:
+                parts.append(str(bit))
+    return "\n".join(part for part in parts if str(part).strip())
+
+
+async def _last_said(channel) -> tuple[list, list[str]]:
+    """The last of the conversation, oldest first. (messages, problems).
+
+    The problem comes back rather than being logged and swallowed. A channel
+    RYTE is not allowed to read looked exactly like an empty one, which meant
+    the picture kept before a delete was a picture of nothing and was reported
+    as kept.
+    """
     from .. import clearout
 
     if channel is None:
-        return []
+        return [], ["There is no channel by that id to read."]
     found = []
     try:
         async for said in channel.history(limit=clearout.KEEP_MESSAGES):
             found.append(clearout.Said(
                 who=str(getattr(said.author, "display_name", "") or said.author),
                 when=f"{said.created_at:%b %d, %Y %H:%M}" if said.created_at else "",
-                text=str(said.content or ""),
+                text=_all_of_it(said),
                 attachments=len(getattr(said, "attachments", []) or []),
             ))
-    except Exception:
+    except Exception as exc:
         log.exception("Couldn't read that channel's history")
-        return []
-    return list(reversed(found))
+        return [], [
+            "Couldn't read that channel's history, so there is nothing to "
+            f"keep a picture of: {jobs._short(exc, 140)}"
+        ]
+    return list(reversed(found)), []
 
 
 async def _what_i_can_do(responder: Responder, bot: "WilByteBot") -> None:
