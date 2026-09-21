@@ -2542,6 +2542,7 @@ async def _quiet_channels(
             category=str(getattr(one.category, "name", "") or ""),
             last_active=when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None,
             ever_used=used,
+            readable=_can_read(guild, one),
         ))
 
     quiet, ours, unknown = clearout.quiet_ones(channels, since=since)
@@ -2571,6 +2572,27 @@ async def _quiet_channels(
     # typed route would be two different pieces of code doing the irreversible
     # thing, and only one of them would have been watched.
     await _clear_out(bot, responder, config, picker.chosen)
+
+
+def _can_read(guild, channel) -> bool:
+    """Whether RYTE may open this channel's history.
+
+    Asked of the permissions rather than by trying: Discord hands over every
+    channel in the server whether or not it can be read, and finding out by
+    reading is one request per channel and a 403 at the end of most of them.
+
+    Unknowable counts as readable. Being told a channel cannot be cleared when
+    it can is worse than finding out at the first button, which now says so
+    plainly.
+    """
+    try:
+        us = getattr(guild, "me", None)
+        if us is None:
+            return True
+        allowed = channel.permissions_for(us)
+        return bool(allowed.view_channel and allowed.read_message_history)
+    except Exception:
+        return True
 
 
 def _last_used(channel):

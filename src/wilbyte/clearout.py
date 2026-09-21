@@ -61,6 +61,11 @@ class Channel:
     #: clear-out is looking for, so it belongs in the list rather than in the
     #: couldn't-tell pile - but it should not claim somebody spoke in March.
     ever_used: bool = True
+    #: Whether RYTE is allowed to read the conversation in it. Discord hands
+    #: over every channel in the server whether or not it can be opened, and
+    #: when it cannot the history answers 403 - so a channel can be listed as
+    #: quiet and still be one nothing can be kept out of.
+    readable: bool = True
 
 
 @dataclass
@@ -341,8 +346,16 @@ PICKABLE = 25
 
 
 def pick_from(quiet, *, now: datetime, most: int = PICKABLE) -> list:
-    """(channel name, how long it has been quiet) for the ones on offer."""
-    return [(one.name, how_long(one, now=now)) for one in quiet[:most]]
+    """(channel name, how long it has been quiet) for the ones on offer.
+
+    Only the ones that can be read. A clear-out of a channel whose history
+    answers 403 stops at the first button with nothing kept, so offering it is
+    offering a press that cannot go anywhere.
+    """
+    return [
+        (one.name, how_long(one, now=now))
+        for one in quiet[:most] if one.readable
+    ]
 
 
 def describe_quiet(
@@ -371,10 +384,20 @@ def describe_quiet(
     lines = [
         f"• **#{one.name}** — {how_long(one, now=now)}"
         + (f", {one.category}" if one.category else "")
+        + ("" if one.readable else " — 🔒 **can't read it**")
         for one in shown
     ]
+    shut = [one for one in shown if not one.readable]
 
     tail = []
+    if shut:
+        tail.append(
+            f"🔒 **{len(shut)} of these can't be opened** — Discord answers 403 "
+            "on their history, so there is no conversation to keep a picture "
+            "of and nothing to clear out. They need **View Channel** and "
+            "**Read Message History** for RYTE's role, on the channel or on "
+            "the category above it."
+        )
     if over:
         tail.append(
             f"-# …and {over} more. Clear some of these and run `@RYTE quiet` "

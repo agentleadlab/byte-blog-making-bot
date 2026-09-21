@@ -990,3 +990,86 @@ def test_an_embed_only_channel_reads_through_to_the_end(monkeypatch):
 
     assert not trouble
     assert clearout.sheet_in(found).endswith("edit?usp=sharing")
+
+
+# ------------------------- the ones Discord will not let RYTE open
+
+
+def test_a_channel_that_cannot_be_opened_is_marked_in_the_list():
+    """403 Forbidden (error code: 50001): Missing Access. Discord hands over
+    every channel in the server whether or not it can be read, so a channel
+    can be listed as quiet and still be one nothing can be kept out of."""
+    channels = [
+        quiet_channel("artur_rushiti-vet", days=120),
+        quiet_channel("jay-rodriguez", days=100),
+    ]
+    channels[0].readable = False
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+    whole = "\n".join(clearout.describe_quiet(
+        quiet, [], [], since=NOW - timedelta(days=60), now=NOW
+    ))
+
+    assert "#artur_rushiti-vet" in whole
+    assert "can't read it" in whole
+    assert "1 of these can't be opened" in whole
+    assert "Read Message History" in whole, "what to actually change"
+
+
+def test_one_that_cannot_be_opened_is_not_offered():
+    """A clear-out of one stops at the first button with nothing kept, so
+    offering it is offering a press that cannot go anywhere."""
+    channels = [
+        quiet_channel("artur_rushiti-vet", days=120),
+        quiet_channel("jay-rodriguez", days=100),
+    ]
+    channels[0].readable = False
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+
+    assert [name for name, _note in clearout.pick_from(quiet, now=NOW)] == [
+        "jay-rodriguez",
+    ]
+
+
+def test_nothing_is_said_about_locks_when_there_are_none():
+    channels = [quiet_channel("jay-rodriguez", days=100)]
+    quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
+    whole = "\n".join(clearout.describe_quiet(
+        quiet, [], [], since=NOW - timedelta(days=60), now=NOW
+    ))
+
+    assert "can't be opened" not in whole
+
+
+def test_the_permission_is_read_rather_than_found_out_by_asking():
+    """One request per channel and a 403 at the end of most of them is not a
+    way to build a list of a hundred and eighty."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    def channel(view, history):
+        return SimpleNamespace(permissions_for=lambda who: SimpleNamespace(
+            view_channel=view, read_message_history=history,
+        ))
+
+    guild = SimpleNamespace(me=object())
+
+    assert bot_client._can_read(guild, channel(True, True)) is True
+    assert bot_client._can_read(guild, channel(True, False)) is False
+    assert bot_client._can_read(guild, channel(False, True)) is False
+
+
+def test_a_permission_that_cannot_be_read_counts_as_readable():
+    """Being told a channel cannot be cleared when it can is worse than
+    finding out at the first button, which now says so plainly."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+
+    def boom(who):
+        raise RuntimeError("discord.py changed shape")
+
+    assert bot_client._can_read(
+        SimpleNamespace(me=object()), SimpleNamespace(permissions_for=boom)
+    ) is True
+    assert bot_client._can_read(SimpleNamespace(me=None), object()) is True
