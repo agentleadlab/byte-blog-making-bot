@@ -3724,7 +3724,7 @@ def test_only_the_new_line_goes_in_the_next_message(monkeypatch):
     _watching(monkeypatch, tasks=[old], press=False, remember=True)
     _filed, second = _watching(monkeypatch, tasks=[old, new], press=False, remember=True)
 
-    assert "1 new item(s)" in second[0]
+    assert "New in the comments" in second[0]
     assert "Check the budget" in second[0]
     assert "Add YT channel" not in second[0]
 
@@ -4284,7 +4284,7 @@ def test_three_jobs_from_one_comment_are_three_lines_to_remember(monkeypatch):
     _filed, first = _watching(monkeypatch, tasks=three, press=False, remember=True)
     _filed, again = _watching(monkeypatch, tasks=three, press=False, remember=True)
 
-    assert "3 new item(s)" in first[0]
+    assert sum("not on a checklist yet" in one for one in first) == 3
     assert again == []
 
 
@@ -4305,7 +4305,7 @@ def test_a_fourth_job_on_the_same_comment_is_still_new(monkeypatch):
         monkeypatch, tasks=three + [kaths("four")], press=False, remember=True,
     )
 
-    assert "1 new item(s)" in again[0]
+    assert sum("not on a checklist yet" in one for one in again) == 1
 
 
 # ------------------------- a message in the channel, put on the board

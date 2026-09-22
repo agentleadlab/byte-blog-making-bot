@@ -242,6 +242,35 @@ _NOT_YET = re.compile(
 )
 
 
+# Somebody reporting what they have already done, rather than handing over
+# something to do. "Updated email for Killian Cooper" is a line about work
+# that happened; "Review MP gameplan card" is work waiting to be done.
+#
+# The first word and only the first word. "Updated email for Killian Cooper"
+# opens with the doing already finished, and "Review MP gameplan card" opens
+# with the asking - and a rule about a word anywhere in the line would read
+# "review the updated email" as a report.
+_ALREADY_DID = frozenset("""
+    updated update added sent fired completed finished fixed changed created
+    uploaded posted removed moved scheduled done made replied emailed texted
+    called checked confirmed submitted processed paid refunded cancelled
+    canceled attached filed reviewed replaced renamed deleted closed resolved
+    """.split())
+
+
+def an_update(text: str) -> bool:
+    """Whether the line reports work already done rather than asking for it.
+
+    "as soon as there's a new comment that is a reminder or a tasks, (not an
+    update on a current tasks)". A checklist is what is left to do, and a line
+    saying something is finished arrives on it already true.
+    """
+    said = strip_mentions(text or "")
+    said = re.sub(r"^[\W_]+", "", said)
+    first = (said.split() or [""])[0].casefold().strip(".,:;!?")
+    return first in _ALREADY_DID
+
+
 def a_setup_confirmation(text: str) -> bool:
     """Whether the comment is somebody saying a setup has been done."""
     said = " ".join((text or "").split())

@@ -4998,24 +4998,38 @@ async def _offer_tags_now(
 async def _offer_these(
     responder: Responder, config: Config, tasks, *, problems, emoji: str, what: str
 ) -> None:
-    """One list, one button. Nothing is written until it is pressed."""
+    """One item, one button, each on its own.
+
+    "i want this 1 item per flag". A list of four with one button is a yes to
+    all four or a no to all four, and the whole reason to look at them is that
+    some belong on a checklist and some do not.
+
+    Together rather than one after the other: each waits on its own button for
+    up to the approval timeout, so asking in turn would hide the fourth until
+    somebody had answered the first.
+    """
+    if problems:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+    await asyncio.gather(*(
+        _offer_one(responder, config, one, emoji=emoji, what=what)
+        for one in tasks
+    ))
+
+
+async def _offer_one(
+    responder: Responder, config: Config, task, *, emoji: str, what: str
+) -> None:
+    """One item, one button. Nothing is written until it is pressed."""
     from .. import tagged
 
+    tasks = [task]
     view = views.ConfirmView(
         requester_id=None,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Add {len(tasks)} item(s)",
+        label="Add it",
         emoji=emoji,
     )
-    listed = "\n".join(f"• {tagged.describe(one)}" for one in tasks[:TAGS_SHOWN])
-    if len(tasks) > TAGS_SHOWN:
-        listed += f"\n…and {len(tasks) - TAGS_SHOWN} more."
-    note = (
-        f"{emoji} {len(tasks)} new item(s) {what} on today's cards, "
-        f"not on a checklist yet:\n{listed}"
-    )
-    if problems:
-        note += "\n⚠ " + "\n⚠ ".join(problems)
+    note = f"{emoji} New {what}, not on a checklist yet:\n• {tagged.describe(task)}"
     await responder.send(note, view=view)
     await view.wait()
     if not view.confirmed:

@@ -2870,10 +2870,18 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
         if not days:
             return [], [f"No General, Ops or Ads card dated {day:%m/%d/%y} on the board"]
 
+        from .. import tagged as rules_tags
+
         tasks = []
         for which in days:
             tasks += _tags_on(config, client, every, members, which, problems)
-        return tasks, problems
+        # A checklist is what is left to do. "Updated email for Killian
+        # Cooper" is a line about work that already happened, and it would
+        # arrive on somebody's list already true - "not an update on a current
+        # tasks".
+        return [
+            one for one in tasks if not rules_tags.an_update(one.summary)
+        ], problems
     finally:
         client.close()
 

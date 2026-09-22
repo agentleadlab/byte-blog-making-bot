@@ -1566,3 +1566,41 @@ def test_the_confirmation_is_skipped_where_the_ongoing_order_is():
 
     assert "a_setup_confirmation(note.text)" in source
     assert source.index("an_ongoing_order") < source.index("a_setup_confirmation")
+
+
+# ------------------- a line about work done is not work to do
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["Updated email for Killian Cooper", "@faith Updated email for Killian Cooper",
+     "✅ Added EMAIL & SMS notifications", "Fired a test in the Discord channel",
+     "Sent the contract", "Finished the gameplan", "done"],
+)
+def test_a_line_reporting_work_done_is_not_a_task(said):
+    """"not an update on a current tasks". A checklist is what is left to do,
+    and a line saying something is finished arrives on it already true."""
+    assert tagged.an_update(said) is True
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["Review MP gameplan card", "Send the updated email to Killian",
+     "review the updated email", "Please review the gameplan",
+     "Call Killian about the renewal", "add states for Drago"],
+)
+def test_work_still_to_do_is_a_task(said):
+    """The first word and only the first word: a rule about a word anywhere
+    in the line would read "review the updated email" as a report."""
+    assert tagged.an_update(said) is False
+
+
+def test_the_reports_are_dropped_where_the_tasks_are_read():
+    """The rule exists; this is it being applied to what gets offered."""
+    import inspect
+
+    from wilbyte.bot import jobs
+
+    source = inspect.getsource(jobs.tags_to_file)
+
+    assert "an_update(one.summary)" in source
