@@ -4315,3 +4315,55 @@ def test_the_correction_underneath_is_the_one_taken():
 
     assert said == "12 Text Verified Trucker IUL leads"
     assert "10" not in said, "took the line that was corrected"
+
+
+MARTIN = """-- New Client Onboarded --
+
+First Name: Martin
+Last Name: Mugratsch
+Phone: +17027386232
+Email: mmugratsch@gmail.com
+Package Selected: Basic Client (Text Verified)
+Lead Type: Trucker Leads
+Target Areas for Marketing:
+
+Name: Martin Mugratsch
+Lead Type: OTP Vets - 50 OTP VETS
+States: Same as last order
+Notes: First time vets
+
+Live Wednesday, September 23"""
+
+
+def test_a_stale_line_from_the_last_order_does_not_win():
+    """Martin Mugratsch's card was copied from his own previous order and
+    still says "Lead Type: Trucker Leads" above "Lead Type: OTP Vets - 50 OTP
+    VETS". Trucker is a qualifier and vets is a family, so preferring the
+    qualified phrase reached past this year's order and filed him on last
+    year's."""
+    said = agents.stated_orders(MARTIN)
+
+    assert said == "50 OTP VETS"
+    assert "trucker" not in said.casefold()
+
+
+def test_a_vet_setup_of_a_vet_order_is_not_raised():
+    assert agents.wrong_setup(agents.stated_orders(MARTIN), [
+        "✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete "
+        "for MARTIN MUGRATSCH",
+        "✅ martin-mugratsch-vet",
+    ]) is None
+
+
+def test_the_vertical_only_wins_within_the_same_family():
+    """Both of Matthew's phrases are IUL and one says which IUL. Martin's are
+    an IUL line and a vet line, which is not the same question."""
+    both_iul = agents.stated_lead_type(
+        "Lead Type: Text Verified IUL Plus\n\n12 Trucker IUL leads"
+    )
+    two_families = agents.stated_lead_type(
+        "Lead Type: Trucker Leads\n\nLead Type: OTP Vets - 50 OTP VETS"
+    )
+
+    assert "trucker" in both_iul.casefold()
+    assert "trucker" not in two_families.casefold()

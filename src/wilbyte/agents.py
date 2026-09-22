@@ -1074,16 +1074,27 @@ def stated_lead_type(text: str) -> str:
     # The last one, not the first. A card that says it twice has been
     # corrected, and the correction is written underneath.
     tiered = [phrase for phrase in said if tier_of(phrase)]
-    qualified = [phrase for phrase in said if qualifiers_of(phrase)]
+    # A phrase naming the vertical beats one that only names the tier, and
+    # only when they are talking about the same leads. Matthew Odierno's card
+    # says "Lead Type: Text Verified IUL Plus" and, below it, "12 Trucker IUL
+    # leads" - both IUL, one of them saying which IUL. The field is the
+    # package he is on and the line is what he bought.
+    #
+    # Two phrases naming *different* families are a different question
+    # entirely, and this is not the place it gets answered. Martin
+    # Mugratsch's card was copied from his own last order and still carries
+    # "Lead Type: Trucker Leads" above "Lead Type: OTP Vets - 50 OTP VETS".
+    # Trucker is a qualifier and vets is a family, so a rule preferring the
+    # qualified phrase reached past this year's order and filed him on last
+    # year's - which is the opposite of the bug it was written for.
+    qualified = [
+        phrase for phrase in said
+        if qualifiers_of(phrase)
+        and tiered and families_in(phrase) == families_in(tiered[-1])
+    ]
     if tiered and (qualifiers_of(tiered[-1]) or not qualified):
         return with_line(tiered[-1], text)
 
-    # A phrase naming the vertical beats one that only names the tier.
-    # Matthew Odierno's card says "Lead Type: Text Verified IUL Plus" and,
-    # below it, "12 Trucker IUL leads": the field is the package he is on and
-    # the line is what he bought. Taking the field alone filed him under Text
-    # Verified IUL Plus and then raised him as set up wrong against the
-    # trucker campaign he had actually ordered - "WRONG! ITS TRUCKER".
     best = qualified[-1] if qualified else said[-1]
     if tier_of(best):
         return with_line(best, text)
