@@ -1698,7 +1698,7 @@ def _check_tracker(config: Config) -> list[tuple[bool, str]]:
 
     if not (getattr(config.secrets, "tracker_sheet_id", "") or "").strip():
         return [(None, "Chargeback tracker not configured - rows stay unwritten")]
-    headings, tab, problems = tracker_headings(config)
+    headings, tab, problems, _made = tracker_headings(config)
     if problems:
         return [(False, f"Chargeback tracker - {_short('; '.join(problems), 300)}")]
     if not headings:
@@ -4392,17 +4392,75 @@ def _which_tab(titles: list, when) -> tuple[str, str]:
     )
 
 
-def tracker_headings(config: Config, *, day=None) -> tuple[list[str], str, list[str]]:
-    """The chargeback tracker's own column headings. (headings, tab, problems).
+def _make_month_tab(writing, sheet: str, titles: list, when) -> tuple[str, str]:
+    """Make this month's tab by copying the newest one. (tab, what was done).
 
-    Reads only. The sheet is somebody's, with their columns in their order and
-    their wording, so the row is built against what is actually there.
+    The tracker runs out of tabs. Somebody made Aug through Dec 2026 by hand
+    in one sitting, and on the first of January the tracker has no tab for the
+    month and a chargeback has nowhere to go - "once its 2027 ryte will make
+    them".
+
+    A duplicate of the newest month rather than a fresh tab, so it arrives
+    with the columns, the widths, the Arial 12, the date formats and the
+    Win/Refunded dropdowns already on it. Then the list's own columns are
+    emptied from row 2 down.
+
+    Only the list's columns. The month tab has a second table beside it - the
+    deductions-by-closer summary from column G - and what belongs in January's
+    copy of that is the sheet owner's business, not a guess made at two in the
+    morning by whatever wrote the first chargeback of the year. It comes
+    across exactly as it was, and the message says so.
+    """
+    from .. import rebuttal as rules_doc
+
+    like = rules_doc.latest_month(titles)
+    if not like:
+        return "", ""
+    from_id = next(
+        (one.get("sheetId") for one in writing.tabs(sheet)
+         if str(one.get("title") or "") == like),
+        None,
+    )
+    if from_id is None:
+        return "", ""
+
+    title = rules_doc.month_tab_name(when, titles)
+    made = writing.copy_tab(sheet, int(from_id), title)
+    if made is None:
+        # Somebody made it between the read and now, which is the outcome
+        # wanted either way.
+        return title, ""
+
+    wide = len(_the_list_columns(
+        [str(one) for one in (writing.rows(sheet, f"'{title}'!1:1") or [[]])[0]]
+    ))
+    if wide:
+        writing.clear(sheet, f"'{title}'!A2:{_column_letter(wide)}")
+    return title, (
+        f"Made **{title}** by copying **{like}** — there was no tab for this "
+        f"month. Its list is empty; anything beside the list came across as "
+        f"it was, so give that a look."
+    )
+
+
+def tracker_headings(
+    config: Config, *, day=None
+) -> tuple[list[str], str, list[str], list[str]]:
+    """The tracker's own column headings. (headings, tab, problems, notes).
+
+    The sheet is somebody's, with their columns in their order and their
+    wording, so the row is built against what is actually there.
+
+    Writes in one case only: a sheet kept by month that has run out of months
+    gets the next one made, by copying the last. Said out loud when it
+    happens - a tab appearing in somebody's spreadsheet with nobody told is
+    the kind of help that gets a bot turned off.
     """
     from .. import gsheets
 
     sheet = (getattr(config.secrets, "tracker_sheet_id", "") or "").strip()
     if not sheet:
-        return [], "", []
+        return [], "", [], []
     sheet = gsheets.sheet_id_in(sheet) or sheet
     when = day or board_day(config)
     try:
@@ -4412,18 +4470,21 @@ def tracker_headings(config: Config, *, day=None) -> tuple[list[str], str, list[
             # does not exist: "Unable to parse range: 'Sheet1'!1:1".
             titles = [str(one.get("title") or "") for one in reading.tabs(sheet)]
             tab, trouble = _which_tab(titles, when)
+            note = ""
             if trouble:
-                return [], "", [trouble]
+                tab, note = _make_month_tab(reading, sheet, titles, when)
+                if not tab:
+                    return [], "", [trouble], []
             rows = reading.rows(sheet, f"'{tab}'!1:1")
     except Exception as exc:
-        return [], "", [f"Couldn't read the tracker: {_short(exc, 200)}"]
+        return [], "", [f"Couldn't read the tracker: {_short(exc, 200)}"], []
 
     headings = _the_list_columns([str(one) for one in (rows[0] if rows else [])])
     if not headings:
         return [], tab, [
             "The tracker's first row is empty, so there are no columns to fill."
-        ]
-    return headings, tab, []
+        ], [note] if note else []
+    return headings, tab, [], [note] if note else []
 
 
 def _the_list_columns(row: list[str]) -> list[str]:

@@ -123,7 +123,7 @@ class Sheet:
         self.headings = HEADS if headings is None else headings
         self.titles = list(self.MONTHS) if titles is None else list(titles)
         self.blows_up, self.written, self.asked = blows_up, [], []
-        self.restyled = []
+        self.restyled, self.copied, self.cleared = [], [], []
 
     def tabs(self, sheet_id):
         # `tabs()` hands back the properties already — reaching into them
@@ -142,6 +142,16 @@ class Sheet:
 
     def match_row_above(self, sheet_id, tab_id, row, wide):
         self.restyled.append((tab_id, row, wide))
+
+    def copy_tab(self, sheet_id, from_id, title):
+        if title in self.titles:
+            return None
+        self.copied.append((from_id, title))
+        self.titles.append(title)
+        return 900 + len(self.titles)
+
+    def clear(self, sheet_id, span):
+        self.cleared.append(span)
 
     def append(self, sheet_id, tab, rows):  # pragma: no cover - must not run
         raise AssertionError(
@@ -431,11 +441,54 @@ def test_the_headings_are_read_off_that_month_s_tab(monkeypatch):
     assert paper.asked == ["'Sept 2026'!1:1"]  # nothing written, nothing else read
 
 
-def test_a_missing_month_stops_before_any_row_is_offered(monkeypatch):
-    paper, said = _offered(monkeypatch, sheet=Sheet(titles=["Aug 2026"]))
+def test_a_missing_month_is_made_by_copying_the_newest(monkeypatch):
+    """"once its 2027 ryte will make them." The tracker runs out of tabs, and
+    on the first of the month after the last one a chargeback has nowhere to
+    go."""
+    paper, said = _offered(
+        monkeypatch, sheet=Sheet(titles=["Aug 2026", "Jul 2026"]),
+    )
 
-    assert paper.written == []
-    assert "no tab for Sep 2026" in said[0]
+    assert paper.copied == [(0, "Sep 2026")], "copied the wrong month, or none"
+    assert "Sep 2026" in paper.titles
+    assert any("Made **Sep 2026**" in one for one in said)
+    assert any("copying **Aug 2026**" in one for one in said)
+
+
+def test_the_new_months_list_is_emptied_and_nothing_else_is(monkeypatch):
+    """The month tab has a second table beside it, and what belongs in
+    January's copy of that is the sheet owner's business."""
+    paper, _said = _offered(
+        monkeypatch, sheet=Sheet(titles=["Aug 2026"]),
+    )
+
+    assert paper.cleared == [f"'Sep 2026'!A2:{chr(ord('A') + len(HEADS) - 1)}"]
+
+
+def test_a_tracker_with_no_tabs_at_all_is_still_refused(monkeypatch):
+    """Nothing to copy, and a tab invented out of nothing is a tab that
+    matches no other sheet anybody keeps."""
+    paper, said = _offered(monkeypatch, sheet=Sheet(titles=[]))
+
+    assert paper.copied == [] and paper.written == []
+    assert "no tabs" in said[0]
+
+
+def test_a_month_that_turned_up_while_we_were_looking_is_not_made_twice(
+    monkeypatch
+):
+    paper = Sheet(titles=["Aug 2026"])
+    real = paper.copy_tab
+
+    def once(sheet_id, from_id, title):
+        paper.titles.append(title)      # somebody else got there first
+        return real(sheet_id, from_id, title)
+
+    paper.copy_tab = once
+    _paper, said = _offered(monkeypatch, sheet=paper)
+
+    assert paper.titles.count("Sep 2026") == 1
+    assert not any("Made **Sep 2026**" in one for one in said)
 
 
 # ------------------------------------- the row has to look like the sheet's own
@@ -488,3 +541,42 @@ def test_the_heading_rows_clothes_are_never_copied_down():
     Client().match_row_above("sid", 3, 3, 5)
 
     assert len(asked) == 1
+
+
+def test_the_newest_month_is_the_one_copied():
+    """A sheet's oldest tab is last year's shape, and whatever was learned
+    since is on the newest one."""
+    assert rebuttal.latest_month(Sheet.MONTHS) == "Dec 2026"
+    assert rebuttal.latest_month(["Dec 2026", "Jan 2027"]) == "Jan 2027"
+    assert rebuttal.latest_month(["Notes", "Summary"]) == ""
+
+
+def test_a_tab_with_no_year_on_it_cannot_be_the_newest():
+    """"September" could be any year, and copying it could mean copying a tab
+    three years old."""
+    assert rebuttal.month_of("September") is None
+    assert rebuttal.latest_month(["September", "Aug 2026"]) == "Aug 2026"
+
+
+def test_the_new_tab_is_named_the_way_the_sheet_names_them():
+    """"Sept 2026" rather than "Sep 2026" when that is how the sheet says it.
+    A tab that matches none of the eleven beside it looks like somebody else
+    made it — which somebody else did."""
+    assert rebuttal.month_tab_name(date(2027, 9, 1), Sheet.MONTHS) == "Sept 2027"
+    assert rebuttal.month_tab_name(date(2027, 1, 1), Sheet.MONTHS) == "Jan 2027"
+
+
+def test_a_sheet_with_no_habit_to_copy_gets_the_plain_name():
+    assert rebuttal.month_tab_name(date(2027, 1, 1), []) == "Jan 2027"
+
+
+def test_month_tabs_with_no_year_on_them_are_not_copied_from(monkeypatch):
+    """"September" could be any year. Copying it to make a new month could
+    mean copying a tab three years old, with three-year-old columns."""
+    paper, said = _offered(
+        monkeypatch, sheet=Sheet(titles=["July", "August"]),
+    )
+
+    assert paper.copied == [], "copied a tab that could be from any year"
+    assert paper.written == []
+    assert "no tab for Sep 2026" in said[0]

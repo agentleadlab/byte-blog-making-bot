@@ -2080,14 +2080,18 @@ async def _offer_the_tracker(
     from .. import rebuttal as rules_doc
 
     try:
-        headings, tab, problems = await asyncio.to_thread(
+        headings, tab, problems, made = await asyncio.to_thread(
             jobs.tracker_headings, config
         )
     except PIPELINE_ERRORS as exc:
-        headings, tab, problems = [], "", [f"Couldn't read the tracker: {exc}"]
+        headings, tab, problems, made = [], "", [f"Couldn't read the tracker: {exc}"], []
     if problems:
         await responder.send("⚠ " + "\n⚠ ".join(problems))
         return
+    # Before the button, not after. A tab appearing in somebody's spreadsheet
+    # is worth reading about while there is still a decision to make.
+    for one in made:
+        await responder.send(f"📄 {one}")
     if not headings:
         return
 

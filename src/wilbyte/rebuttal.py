@@ -806,6 +806,15 @@ _MONTH_TAB = re.compile(
     re.IGNORECASE,
 )
 
+#: The whole month word, however it is spelled out. `_MONTH_TAB` keeps the
+#: `[a-z]*` outside its group and so only ever hands back three letters, which
+#: is right for deciding which month a tab is and wrong for writing a new tab's
+#: name in the same words as the ones beside it.
+_MONTH_WORD = re.compile(
+    r"\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)\.?",
+    re.IGNORECASE,
+)
+
 _MONTHS_SHORT = (
     "jan", "feb", "mar", "apr", "may", "jun",
     "jul", "aug", "sep", "oct", "nov", "dec",
@@ -821,6 +830,51 @@ def looks_monthly(title: str) -> bool:
     """
     found = _MONTH_TAB.search(str(title or ""))
     return bool(found) and found.group(1).casefold()[:3] in _MONTHS_SHORT
+
+
+def month_of(title: str) -> tuple | None:
+    """(year, month) out of a tab's name, or None. A tab with no year is None.
+
+    Used to find the newest month on a sheet, which needs both numbers: "Dec
+    2026" is later than "Jan 2027" by month and earlier by year, and sorting
+    on the month alone puts the new year at the bottom of the pile.
+    """
+    found = _MONTH_TAB.search(str(title or ""))
+    if not found:
+        return None
+    month = found.group(1).casefold()[:3]
+    said = found.group(2)
+    if month not in _MONTHS_SHORT or not said:
+        return None
+    year = int(said) + (2000 if len(said) == 2 else 0)
+    return (year, _MONTHS_SHORT.index(month) + 1)
+
+
+def latest_month(titles) -> str:
+    """The newest month-shaped tab, to copy a new month's from.
+
+    The newest rather than the first: a sheet's oldest tab is last year's
+    shape, and whatever was learned since - a column added, a dropdown
+    widened - is on the newest one.
+    """
+    dated = [(month_of(one), str(one)) for one in titles or []]
+    found = [one for one in dated if one[0] is not None]
+    return max(found)[1] if found else ""
+
+
+def month_tab_name(when: date, like=()) -> str:
+    """What to call a new month's tab, in the words the sheet already uses.
+
+    "Sept 2026" rather than "Sep 2026" when that is how the sheet says it.
+    Both are read back the same way, and a tab that does not match the five
+    beside it looks like somebody else made it - which somebody else did.
+    """
+    wanted = _MONTHS_SHORT[when.month - 1]
+    for title in like or []:
+        found = _MONTH_WORD.search(str(title or ""))
+        if found and found.group(1).casefold()[:3] == wanted:
+            return f"{found.group(1)} {when:%Y}"
+    return f"{when:%b} {when:%Y}"
 
 
 def monthly_tab(titles, when: date) -> str:

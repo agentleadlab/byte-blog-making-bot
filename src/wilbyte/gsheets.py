@@ -278,6 +278,40 @@ class SheetsClient:
         found = (made.get("properties") or {}).get("sheetId")
         return int(found) if found is not None else None
 
+    def copy_tab(self, sheet_id: str, from_id: int, title: str) -> int | None:
+        """Duplicate a tab, under a new name, at the end. Its id, or None.
+
+        A duplicate rather than a new tab and a copied heading row: it brings
+        the column widths, the fonts, the number formats, the dropdowns in the
+        Win/Refunded column, and whatever else is on the sheet beside the list
+        itself. A month's tab built from scratch would be a month's tab that
+        looks nothing like the eleven beside it.
+
+        None when a tab by that name already exists, so calling it twice makes
+        one tab.
+        """
+        if any(one.get("title") == title for one in self.tabs(sheet_id)):
+            return None
+        got = self._request(
+            "POST",
+            f"/{sheet_id}:batchUpdate",
+            json={"requests": [{"duplicateSheet": {
+                "sourceSheetId": int(from_id),
+                "newSheetName": title,
+            }}]},
+        )
+        made = (got.get("replies") or [{}])[0].get("duplicateSheet") or {}
+        found = (made.get("properties") or {}).get("sheetId")
+        return int(found) if found is not None else None
+
+    def clear(self, sheet_id: str, span: str) -> None:
+        """Empty the values in a range, leaving its formatting alone.
+
+        Values only. The dropdowns, the borders and the fonts stay, which is
+        the whole point of having copied the tab in the first place.
+        """
+        self._request("POST", f"/{sheet_id}/values/{quoted(span)}:clear", json={})
+
     def match_row_above(
         self, sheet_id: str, tab_id: int, row: int, wide: int
     ) -> None:
