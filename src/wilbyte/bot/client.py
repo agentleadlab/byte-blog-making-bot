@@ -4933,6 +4933,29 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
         now = datetime.now(timezone.utc)
         settling = [plan for plan in doable if rules.still_being_written(plan.agent, now=now)]
         doable = [plan for plan in doable if plan not in settling]
+        # And a card still being written is not one to move out from under
+        # whoever is writing it. They land finished and wrong - copied from
+        # the last agent, then corrected - and the launch date is often the
+        # line that gets corrected.
+        stuck = [
+            plan for plan in stuck
+            if not rules.still_being_written(plan.agent, now=now)
+        ]
+
+    # The ones that need a person go and wait in Franklin's list. Nothing is
+    # filed by this and nothing is marked done; his list is read on every pass
+    # like In Que, so a card that gains its launch date is picked up then.
+    parked, wouldnt_move = await asyncio.to_thread(
+        jobs.park_agents, config, stuck, where
+    )
+    if parked:
+        await responder.send(
+            f"📥 Waiting in **{rules.PARKED}**: "
+            + ", ".join(f"**{one}**" for one in parked)
+            + "\n-# I'll file them as soon as the card says when they go live."
+        )
+    for one in wouldnt_move:
+        await responder.send(f"⚠ {one}")
 
     if not silent:
         view = None

@@ -2412,6 +2412,12 @@ class AgentPlan:
     when: str
     steps: list[Step] = field(default_factory=list)
     move_to: str = ""
+    #: Where a card that still needs a person goes to wait. Not filing -
+    #: nothing is written onto a checklist and nothing is marked done - so it
+    #: is kept apart from `move_to`, which only happens once the work is done.
+    #: "move it to my section and he'll try again when launch date is
+    #: available."
+    park_to: str = ""
     problems: list[str] = field(default_factory=list)
 
     @property

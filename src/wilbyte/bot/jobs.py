@@ -6155,10 +6155,15 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
 
     plan = rules.AgentPlan(agent=agent, when=agent.when(day))
 
-    # Without a launch date there is nothing to decide, and parking it would
-    # be a guess. That one always needs a person.
+    # Without a launch date there is nothing to decide. It still needs a
+    # person, and it waits in Franklin's list while it does - "move it to my
+    # section and he'll try again when launch date is available". His list is
+    # read on every pass exactly like In Que, so the moment the date is filled
+    # in the card is picked up and filed, with nobody having to remember it
+    # was waiting. Left where it is if it is already there.
     if agent.launch is None:
         plan.problems.append(rules.cannot_read(agent, needs_lead_type=False))
+        plan.park_to = "" if parked else rules.PARKED
         return plan
 
     # Before anything is decided on the date, because everything is: which
@@ -6318,6 +6323,39 @@ def apply_agents(config: Config, plans, where) -> tuple[int, list[str]]:
     finally:
         client.close()
     return filed, problems
+
+
+def park_agents(config: Config, plans, where) -> tuple[list[str], list[str]]:
+    """Move the cards that need a person to where they wait. (moved, problems).
+
+    Not filing. Nothing is written onto a checklist and nothing is marked
+    done: the card is put where Franklin will see it, and his list is read on
+    every pass, so the day somebody fills in the launch date it is picked up
+    on its own.
+
+    One card failing to move is said and the rest still move. A card that
+    stays in In Que is where it started, which is the same place it would be
+    if this had never run.
+    """
+    wanted = [one for one in plans if one.park_to and one.park_to in where]
+    if not wanted:
+        return [], []
+
+    client = open_trello(config)
+    moved, problems = [], []
+    try:
+        for plan in wanted:
+            try:
+                client.move_card(plan.agent.card_id, where[plan.park_to])
+            except Exception as exc:
+                problems.append(
+                    f"{plan.agent.name} — couldn't move the card: {_short(exc, 160)}"
+                )
+                continue
+            moved.append(plan.agent.name)
+    finally:
+        client.close()
+    return moved, problems
 
 
 def _carry_out(client, plan, where):

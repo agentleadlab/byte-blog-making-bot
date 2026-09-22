@@ -4040,3 +4040,147 @@ def test_sendblue_is_a_tool_not_an_order():
     """"RINGY AND SEND BLUE INTEGRAION" was read as an order for blue collar
     leads the moment "blue" became a lead word on its own."""
     assert agents.stated_orders(TOPPED_UP) == "30 OTP VETS"
+
+
+# --------------------------- the card with no launch date goes and waits
+
+
+ALEX = """-- New Client Onboarded --
+
+First Name: Alex
+Last Name: Salazar
+Package Selected: Text Verified
+Lead Type: Text Verified IUL Plus
+30 OTP Spanish IUL Leads
+States: To be determined
+Internal: Launch Date to be determined
+Wants CRM Integration"""
+
+
+def _alex(*, parked=False):
+    from wilbyte.bot import jobs
+
+    return jobs._plan_for(
+        None, read(ALEX, title="New Agent - Alex Salazar"),
+        day=TUESDAY, tomorrow=date(2026, 8, 26), dated={}, every_card=[],
+        parked=parked,
+    )
+
+
+def test_a_card_with_no_launch_date_goes_to_franklins_list():
+    """"move it to my section and he'll try again when launch date is
+    available." His list is read on every pass, so the day the date is filled
+    in the card is picked up on its own."""
+    plan = _alex()
+
+    assert plan.park_to == agents.PARKED
+    assert "launch date" in " ".join(plan.problems)
+
+
+def test_it_is_still_not_filed_by_being_moved():
+    """Moving is not filing. Nothing goes on a checklist and nothing is
+    marked done - somebody still has to put the date on the card."""
+    plan = _alex()
+
+    assert plan.steps == []
+    assert plan.move_to == ""
+    assert plan.doable is False
+
+
+def test_one_already_in_franklins_list_is_left_where_it_is():
+    """Moving it to the list it is in would put it at the top every pass,
+    which reorders his waiting room all day."""
+    assert _alex(parked=True).park_to == ""
+
+
+def test_a_card_that_only_wants_a_lead_type_is_not_moved():
+    """It has a launch date, so it is waiting on its setup card rather than
+    on Franklin, and his list is not where that waits."""
+    from wilbyte.bot import jobs
+
+    agent = read(
+        "Launch date is Wednesday, August 26\nPackage Selected: Text Verified",
+        title="New Agent - Gustin Elrod",
+    )
+    plan = jobs._plan_for(
+        Stub(), agent, day=TUESDAY, tomorrow=date(2026, 8, 26), dated={},
+        every_card=[{"id": "s1", "name": "Agent Setup Going Live Wednesday 08/26"}],
+    )
+
+    assert plan.park_to == ""
+    assert "lead type" in " ".join(plan.problems)
+
+
+class Moving:
+    """A board that only moves cards, and can be told to refuse one."""
+
+    def __init__(self, refuse=()):
+        self.moved = []
+        self.refuse = set(refuse)
+
+    def move_card(self, card_id, list_id, *, position="top"):
+        if card_id in self.refuse:
+            raise RuntimeError("Trello said no")
+        self.moved.append((card_id, list_id))
+        return {}
+
+    def close(self):
+        pass
+
+
+def _parking(monkeypatch, plans, where=None):
+    from wilbyte.bot import jobs
+
+    board = Moving()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    moved, problems = jobs.park_agents(
+        None, plans, where if where is not None else {agents.PARKED: "franklin"},
+    )
+    return board, moved, problems
+
+
+def test_the_card_actually_moves(monkeypatch):
+    plan = _alex()
+    board, moved, problems = _parking(monkeypatch, [plan])
+
+    assert board.moved == [(plan.agent.card_id, "franklin")]
+    assert moved == ["Alex Salazar"]
+    assert problems == []
+
+
+def test_a_card_with_nowhere_to_wait_is_left_alone(monkeypatch):
+    """The board has no list by that name, so there is nowhere to put it and
+    In Que is where it started. Not a complaint either: a board missing a list
+    is already said, loudly, before any of this runs."""
+    board, moved, problems = _parking(monkeypatch, [_alex()], where={})
+
+    assert board.moved == [] and moved == []
+    assert problems == [], "reported a card it never even tried to move"
+
+
+def test_nothing_to_park_does_not_open_the_board(monkeypatch):
+    from wilbyte.bot import jobs
+
+    opened = []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: opened.append(1))
+
+    assert jobs.park_agents(None, [], {agents.PARKED: "franklin"}) == ([], [])
+    assert opened == []
+
+
+def test_one_card_refusing_to_move_does_not_hold_up_the_rest(monkeypatch):
+    from wilbyte.bot import jobs
+
+    first, second = _alex(), _alex()
+    first.agent.card_id = "bad"
+    second.agent.card_id = "good"
+
+    board = Moving(refuse=["bad"])
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    moved, problems = jobs.park_agents(
+        None, [first, second], {agents.PARKED: "franklin"},
+    )
+
+    assert moved == ["Alex Salazar"]
+    assert board.moved == [("good", "franklin")]
+    assert len(problems) == 1 and "couldn't move" in problems[0]

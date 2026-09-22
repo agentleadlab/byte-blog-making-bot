@@ -6571,3 +6571,73 @@ def test_the_clients_sheet_is_named_in_the_startup_report():
     at = source.index("DISCORD_CLIENTS_GUILD_ID\",\n         \"the server")
 
     assert "CLIENTS_SHEET_LINK" in source[at:at + 600]
+
+
+# ------------------------------------- a card with no launch date goes to wait
+
+
+def _stuck_for(agent):
+    from wilbyte import agents as rules
+
+    return rules.AgentPlan(
+        agent=agent, when="unknown", park_to=rules.PARKED,
+        problems=["I can't find a launch date on this card."],
+    )
+
+
+def _parking(monkeypatch, config, plan, *, silent=True):
+    from wilbyte.bot import client
+
+    parked = {}
+
+    def moving(cfg, plans, where):
+        parked["plans"] = list(plans)
+        return [one.agent.name for one in plans if one.park_to], []
+
+    monkeypatch.setattr(
+        jobs, "read_agents", lambda cfg: ([plan], {"Franklin (Admin)": "f"}, [], []),
+    )
+    monkeypatch.setattr(jobs, "apply_agents", lambda cfg, plans, where: (0, []))
+    monkeypatch.setattr(jobs, "park_agents", moving)
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 5))
+    heard = Listening()
+    asyncio.run(
+        client._file_agents(ChannelResponder(heard), config, silent=silent)
+    )
+    return parked.get("plans", []), heard.said
+
+
+def test_a_card_with_no_launch_date_is_sent_to_wait(config, monkeypatch):
+    """"move it to my section and he'll try again when launch date is
+    available"."""
+    agent = _settling_agent(30, copied=False)
+    agent.launch = None
+    sent, said = _parking(monkeypatch, config, _stuck_for(agent))
+
+    assert [one.agent.name for one in sent] == ["Fabiana Roman"]
+    assert any("Franklin (Admin)" in one for one in said)
+    assert any("when they go live" in one for one in said)
+
+
+def test_a_card_still_being_written_is_not_moved_out_from_under_them(
+    config, monkeypatch
+):
+    """They land finished and wrong - copied from the last agent, then
+    corrected - and the launch date is often the line that gets corrected."""
+    agent = _settling_agent(1)
+    agent.launch = None
+    sent, said = _parking(monkeypatch, config, _stuck_for(agent))
+
+    assert sent == []
+    assert said == []
+
+
+def test_asking_by_hand_moves_it_too(config, monkeypatch):
+    """The button is about filing. A card with no date on it is not waiting
+    on the button."""
+    agent = _settling_agent(1)
+    agent.launch = None
+    sent, said = _parking(monkeypatch, config, _stuck_for(agent), silent=False)
+
+    assert [one.agent.name for one in sent] == ["Fabiana Roman"]
+    assert any("Franklin (Admin)" in one for one in said)
