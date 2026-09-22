@@ -147,10 +147,18 @@ class ConfirmView(discord.ui.View):
         label: str,
         emoji: str,
         danger: bool = False,
+        stoppable: bool = False,
     ):
         super().__init__(timeout=timeout)
         self.requester_id = requester_id
         self.confirmed = False
+        #: Whether they asked to stop going down the list. Only offered during
+        #: a run: "leave it" means leave this one and go on to the next, and
+        #: with a hundred and eighty to go there has to be a way to say enough
+        #: that is not walking away from the keyboard.
+        self.stopped = False
+        if not stoppable:
+            self.remove_item(self._stop)
         #: Whether somebody actually pressed one of the two. A list that timed
         #: out is a list nobody saw, and that is worth saying; "leave it" has
         #: already been answered and is not.
@@ -180,6 +188,14 @@ class ConfirmView(discord.ui.View):
     async def _no(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.confirmed = False
         await self._close(interaction, "✖ Left alone — nothing changed.")
+
+    @discord.ui.button(
+        label="Stop the run", style=discord.ButtonStyle.secondary, emoji="🛑"
+    )
+    async def _stop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = False
+        self.stopped = True
+        await self._close(interaction, "🛑 Stopped — this one is untouched too.")
 
     async def _close(self, interaction: discord.Interaction, note: str) -> None:
         self.answered = True
@@ -215,6 +231,9 @@ class ChannelPicker(discord.ui.View):
     ):
         super().__init__(timeout=timeout)
         self.chosen: str | None = None
+        #: Whether they asked to be taken through the whole list rather than
+        #: pick one of it - "so i dont have to pick anymore".
+        self.run = False
         self.answered = False
         self.requester_id = requester_id
 
@@ -248,6 +267,21 @@ class ChannelPicker(discord.ui.View):
             child.disabled = True
         await interaction.response.edit_message(
             content=f"🧹 **#{self.chosen}** — looking at what to keep…", view=self
+        )
+        self.stop()
+
+    @discord.ui.button(
+        label="Go through them one by one",
+        style=discord.ButtonStyle.primary, emoji="🧹",
+    )
+    async def _run(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.run = True
+        self.answered = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content="🧹 Going down the list — the same two questions each time.",
+            view=self,
         )
         self.stop()
 

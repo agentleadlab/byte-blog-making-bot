@@ -711,6 +711,40 @@ def pick_from(quiet, *, now: datetime, most: int = PICKABLE) -> list:
     ]
 
 
+def one_by_one(quiet) -> list:
+    """Every quiet channel's name, in order, for a run through them.
+
+    The same rule as the dropdown - only the ones that can be read - and no
+    cap on how many. Twenty-five is Discord's limit on a dropdown, not on how
+    many people there are to close down, and a run does not have to live
+    within it: "for every list he gives me, he send them to me one by one, so
+    i dont have to pick anymore".
+    """
+    return [one.name for one in quiet if one.readable]
+
+
+#: How many in a row can go wrong before a run gives up. One that fails
+#: because a client has no sheet is that client's problem; three in a row is
+#: Google being down, and grinding through a hundred and eighty of those is
+#: a hundred and eighty messages saying the same thing.
+ENOUGH_WRONG = 3
+
+
+def how_the_run_went(went: list, left: list, trouble: list, *, over: str) -> str:
+    """What a run through the list did, once it has stopped."""
+    lines = [f"🧹 **{over}**"]
+    if went:
+        lines.append(f"• 🗑 Deleted {len(went)} — " + ", ".join(f"#{one}" for one in went))
+    if left:
+        lines.append(f"• ✖ Left {len(left)} — " + ", ".join(f"#{one}" for one in left))
+    if trouble:
+        lines.append(f"• ⚠ Couldn't finish {len(trouble)} — "
+                     + ", ".join(f"#{one}" for one in trouble))
+    if not (went or left or trouble):
+        lines.append("• Nothing was touched.")
+    return "\n".join(lines)
+
+
 def describe_quiet(
     quiet, ours, unknown, *, since: datetime, now: datetime, most: int = PICKABLE
 ) -> list:

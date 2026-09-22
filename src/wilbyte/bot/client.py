@@ -2187,9 +2187,15 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
 
 
 async def _clear_out(
-    bot: "WilByteBot", responder: Responder, config: Config, name: str
-) -> None:
+    bot: "WilByteBot", responder: Responder, config: Config, name: str,
+    *, run: tuple[int, int] | None = None,
+) -> str:
     """Close an agent down: keep the sheet, keep the conversation, then go.
+
+    Says how it went - "deleted", "left", "stopped" or "trouble" - so a run
+    down the list knows whether to carry on. A press on either question is
+    an answer; nobody pressing anything is not, and a run stops rather than
+    walking a hundred and eighty channels past an empty chair.
 
     Two presses. The first keeps things and is safe - a row in ALL CLIENTS and
     a picture in Drive, neither of which takes anything away. The second is the
@@ -2211,7 +2217,7 @@ async def _clear_out(
             "keep their sheet and a picture of the conversation, and then ask "
             "before anything goes."
         )
-        return
+        return "trouble"
 
     where = (config.secrets.discord_clients_guild_id or "").strip()
     guild = bot.get_guild(int(where)) if where.isdigit() else None
@@ -2220,7 +2226,7 @@ async def _clear_out(
             "I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in "
             ".env isn't it. `@RYTE access` lists the servers I'm in."
         )
-        return
+        return "trouble"
 
     channels = [
         clearout.Channel(
@@ -2235,7 +2241,7 @@ async def _clear_out(
         await responder.send(
             f"No channel in **{guild.name}** looks like **{name}**'s."
         )
-        return
+        return "trouble"
     if len(found) > 1:
         await responder.send(
             f"More than one channel could be **{name}**'s, so I've left them "
@@ -2243,7 +2249,7 @@ async def _clear_out(
             + "\n".join(f"• #{one.name}" for one in found)
             + "\nName the one you mean and I'll do that one."
         )
-        return
+        return "trouble"
 
     plan = clearout.Plan(name=name, channel=found[0])
     member = _member_called(guild, name)
@@ -2273,18 +2279,25 @@ async def _clear_out(
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
+        stoppable=run is not None,
         label="Keep the sheet and show me the messages",
         emoji="🧹",
     )
     await responder.send(
-        clearout.describe(plan)
+        (f"-# {run[0]} of {run[1]}\n" if run else "")
+        + clearout.describe(plan)
         + "\n-# Nothing is deleted by this. I'll put the conversation here for "
         "you to screenshot, and ask again before anything goes.",
         view=view,
     )
     await view.wait()
+    # A timeout is not an answer. "Leave it" is this client left alone and on
+    # to the next; nobody pressing anything is nobody there, and a run walks
+    # the rest of the list past an empty chair.
+    if getattr(view, "stopped", False) or not view.answered:
+        return "stopped"
     if not view.confirmed:
-        return
+        return "left"
 
     today = datetime.now(ZoneInfo(config.schedule.timezone))
     kept = []
@@ -2357,18 +2370,19 @@ async def _clear_out(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** " + " ".join(unread)
         )
-        return
+        return "trouble"
     if not forwarded or not tab:
         await responder.send(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** One of those didn't work, and the "
             "channel is the only copy of what it didn't keep."
         )
-        return
+        return "trouble"
 
     going = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
+        stoppable=run is not None,
         label=f"Delete #{plan.channel.name}",
         emoji="🗑",
         danger=True,
@@ -2389,11 +2403,16 @@ async def _clear_out(
         view=going,
     )
     await going.wait()
+    if getattr(going, "stopped", False) or not going.answered:
+        await responder.send(
+            "Left alone. The sheet row and the messages above stay either way."
+        )
+        return "stopped"
     if not going.confirmed:
         await responder.send(
             "Left alone. The sheet row and the messages above stay either way."
         )
-        return
+        return "left"
 
     done, trouble = [], []
     channel = guild.get_channel(int(plan.channel.channel_id))
@@ -2414,6 +2433,7 @@ async def _clear_out(
         "\n".join(done + [f"⚠ {one}" for one in trouble])
         or "Nothing happened, which shouldn't be possible — check the channel."
     )
+    return "deleted" if done else "trouble"
 
 
 async def _blacklist_them(responder: Responder, config: Config, asked: str) -> None:
@@ -2614,6 +2634,9 @@ async def _quiet_channels(
     )
     await responder.send(pages[-1], view=picker)
     await picker.wait()
+    if picker.run:
+        await _all_of_them(bot, responder, config, clearout.one_by_one(quiet))
+        return
     if not picker.chosen:
         return
 
@@ -2622,6 +2645,56 @@ async def _quiet_channels(
     # typed route would be two different pieces of code doing the irreversible
     # thing, and only one of them would have been watched.
     await _clear_out(bot, responder, config, picker.chosen)
+
+
+async def _all_of_them(
+    bot: "WilByteBot", responder: Responder, config: Config, names: list
+) -> None:
+    """Down the whole list, one at a time, asking the same two each time.
+
+    "so i dont have to pick anymore ... then i just confirm if add to sheet,
+    conversation added, then delete then move on to next person." The picking
+    is what goes; both questions stay, on every single one, because the second
+    of them is still the one that cannot be undone.
+
+    Down the same path as a typed name and a picked one. There is one piece of
+    code that deletes a channel and it is watched; a run that had its own
+    would be a second one that wasn't.
+    """
+    from .. import clearout
+
+    went, left, trouble, wrong_in_a_row = [], [], [], 0
+    stopped = ""
+    for number, name in enumerate(names, start=1):
+        how = await _clear_out(
+            bot, responder, config, name, run=(number, len(names)),
+        )
+        if how == "stopped":
+            stopped = f"Stopped at **#{name}** — {number} of {len(names)}."
+            break
+        if how == "deleted":
+            went.append(name)
+        elif how == "left":
+            left.append(name)
+        else:
+            trouble.append(name)
+
+        # Three in a row wrong is not three unlucky clients. Something they
+        # all depend on is down - the board, the sheet, Drive - and the rest
+        # of the list would be a hundred and eighty messages saying so.
+        wrong_in_a_row = wrong_in_a_row + 1 if how == "trouble" else 0
+        if wrong_in_a_row >= clearout.ENOUGH_WRONG:
+            stopped = (
+                f"Stopped after {wrong_in_a_row} in a row went wrong. That is "
+                "not the clients - something they all need is down. Nothing "
+                "was deleted for those."
+            )
+            break
+
+    await responder.send(clearout.how_the_run_went(
+        went, left, trouble,
+        over=stopped or f"Went through all {len(names)}.",
+    ))
 
 
 def _can_read(guild, channel) -> bool:

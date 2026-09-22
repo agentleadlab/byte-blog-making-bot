@@ -311,12 +311,19 @@ class Pressed:
 
     says = [True, True]
 
+    #: Whether anybody pressed anything. `None` in `says` is nobody: the
+    #: view timed out, which is not the same answer as "leave it".
     def __init__(self, **kw):
         told = type(self).says
-        self.confirmed = told.pop(0) if told else False
-        self.answered = True
+        heard = told.pop(0) if told else False
+        self.confirmed = bool(heard)
+        self.answered = heard is not None
+        self.stopped = heard == "stop"
+        if self.stopped:
+            self.confirmed = False
         self.label = kw.get("label", "")
         self.danger = kw.get("danger", False)
+        self.stoppable = kw.get("stoppable", False)
 
     async def wait(self):
         return None
@@ -756,6 +763,7 @@ def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
 
     class Nobody:
         chosen = None
+        run = False
 
         def __init__(self, choices, **kw):
             offered.extend(choices)
@@ -839,6 +847,7 @@ def test_picking_one_starts_that_one_clear_out(monkeypatch):
 
     class Picked:
         chosen = "jay-rodriguez"
+        run = False
 
         def __init__(self, choices, **kw):
             pass
@@ -2530,3 +2539,402 @@ def test_a_different_channel_is_still_named():
     )
 
     assert said == "2 — artur_rushiti-vet — ring-da-bell — 2026-09-22.png"
+
+
+# --------------- down the whole list, without picking
+
+
+def test_a_run_offers_every_readable_one_with_no_cap_of_twenty_five():
+    """Twenty-five is Discord's limit on a dropdown, not on how many people
+    there are to close down."""
+    quiet = [
+        clearout.Channel(channel_id=str(i), name=f"agent-{i}", readable=True)
+        for i in range(40)
+    ]
+    quiet.append(clearout.Channel(channel_id="x", name="shut", readable=False))
+
+    names = clearout.one_by_one(quiet)
+
+    assert len(names) == 40
+    assert "shut" not in names, "offered one whose history cannot be read"
+    assert names[0] == "agent-0", "the order of the list was not kept"
+
+
+def _ran(monkeypatch, answers, *, names=("a", "b", "c")):
+    """One run down a list, with each clear-out answering as told."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    asked, said = [], []
+
+    async def clearing(bot, responder, config, name, *, run=None):
+        asked.append((name, run))
+        return answers.pop(0) if answers else "deleted"
+
+    async def send(content=None, **kw):
+        said.append(str(content or ""))
+
+    monkeypatch.setattr(bot_client, "_clear_out", clearing)
+    asyncio.run(bot_client._all_of_them(
+        None, NS(send=send, requester_id=1), None, list(names),
+    ))
+    return asked, "\n".join(said)
+
+
+def test_the_run_goes_to_the_next_one_by_itself(monkeypatch):
+    """"so i dont have to pick anymore"."""
+    asked, said = _ran(monkeypatch, ["deleted", "deleted", "deleted"])
+
+    assert [one for one, _ in asked] == ["a", "b", "c"]
+    assert "Deleted 3" in said
+
+
+def test_each_one_says_where_it_is_in_the_list(monkeypatch):
+    asked, _said = _ran(monkeypatch, ["deleted", "deleted", "deleted"])
+
+    assert [where for _, where in asked] == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_leaving_one_alone_goes_on_to_the_next(monkeypatch):
+    """"Leave it" means leave this one, not stop."""
+    asked, said = _ran(monkeypatch, ["left", "deleted", "deleted"])
+
+    assert [one for one, _ in asked] == ["a", "b", "c"]
+    assert "Left 1" in said and "#a" in said
+
+
+def test_stopping_stops(monkeypatch):
+    asked, said = _ran(monkeypatch, ["deleted", "stopped", "deleted"])
+
+    assert [one for one, _ in asked] == ["a", "b"], "kept going after stop"
+    assert "Stopped at **#b**" in said
+    assert "2 of 3" in said
+
+
+def test_nobody_at_the_keyboard_stops_the_run(monkeypatch):
+    """A run that walks a hundred and eighty channels past an empty chair is
+    a hundred and eighty channels nobody looked at. A timeout is not a press,
+    and "leave it" is."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [None]
+    channel = Channel("jay-rodriguez")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", []),
+    )
+
+    async def nothing(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", nothing)
+    monkeypatch.setattr(bot_client, "_also_said", nothing)
+
+    async def send(content=None, **kw):
+        return None
+
+    how = asyncio.run(bot_client._clear_out(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "Jay Rodriguez", run=(1, 180),
+    ))
+
+    assert how == "stopped", "a timed-out question was read as an answer"
+    assert channel.deleted is not True
+
+
+def test_the_stop_button_stops_it_and_leaves_that_one_alone(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = ["stop"]
+    channel = Channel("jay-rodriguez")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", []),
+    )
+
+    async def nothing(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", nothing)
+    monkeypatch.setattr(bot_client, "_also_said", nothing)
+
+    async def send(content=None, **kw):
+        return None
+
+    how = asyncio.run(bot_client._clear_out(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "Jay Rodriguez", run=(1, 180),
+    ))
+
+    assert how == "stopped"
+    assert channel.deleted is not True
+
+
+def test_leaving_one_alone_is_an_answer_and_not_a_stop(monkeypatch):
+    """The difference the run turns on: "leave it" is one client, a timeout
+    is the whole list."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [False]
+    channel = Channel("jay-rodriguez")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", []),
+    )
+
+    async def nothing(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", nothing)
+    monkeypatch.setattr(bot_client, "_also_said", nothing)
+
+    async def send(content=None, **kw):
+        return None
+
+    how = asyncio.run(bot_client._clear_out(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "Jay Rodriguez", run=(1, 180),
+    ))
+
+    assert how == "left"
+
+
+def test_the_stop_button_is_only_there_during_a_run(monkeypatch):
+    """Nothing to stop when there is one of them."""
+    Pressed.says = [True, False]
+    _guild, _channel, _said, buttons = _closing(monkeypatch, says=[True, False])
+
+    assert [one.stoppable for one in buttons] == [False, False]
+
+
+def test_one_client_going_wrong_does_not_stop_the_rest(monkeypatch):
+    asked, said = _ran(monkeypatch, ["trouble", "deleted", "deleted"])
+
+    assert [one for one, _ in asked] == ["a", "b", "c"]
+    assert "Couldn't finish 1" in said
+
+
+def test_three_wrong_in_a_row_stops_the_run(monkeypatch):
+    """Three in a row is not three unlucky clients - something they all need
+    is down, and the rest of the list would say so a hundred more times."""
+    asked, said = _ran(
+        monkeypatch, ["trouble", "trouble", "trouble", "deleted"],
+        names=("a", "b", "c", "d"),
+    )
+
+    assert [one for one, _ in asked] == ["a", "b", "c"]
+    assert "3 in a row" in said
+    assert "something they all need is down" in said
+
+
+def test_a_good_one_in_between_resets_the_count(monkeypatch):
+    asked, _said = _ran(
+        monkeypatch, ["trouble", "trouble", "deleted", "trouble", "deleted"],
+        names=("a", "b", "c", "d", "e"),
+    )
+
+    assert [one for one, _ in asked] == ["a", "b", "c", "d", "e"]
+
+
+def test_the_run_button_starts_it_rather_than_the_dropdown(monkeypatch):
+    """The picker still works; this is the other way out of the same list."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import discord
+
+    from wilbyte.bot import client as bot_client
+
+    def snowflake(when):
+        return (int(when.timestamp() * 1000) - 1420070400000) << 22
+
+    class Text:
+        def __init__(self, name, *, last=None):
+            self.id, self.name = abs(hash(name)) % 10**6, name
+            self.category = None
+            self.last_message_id = snowflake(last) if last else None
+            self.created_at = datetime(2026, 1, 1, tzinfo=discord.utils.utcnow().tzinfo)
+
+    quiet_since = datetime(2026, 5, 1, tzinfo=discord.utils.utcnow().tzinfo)
+    guild = SimpleNamespace(
+        name="Agent Lead Lab Clients", me=None,
+        text_channels=[Text("jay-rodriguez", last=quiet_since),
+                       Text("connor-knudsen", last=quiet_since)],
+    )
+
+    class Pressed:
+        chosen = None
+        run = True
+
+        def __init__(self, choices, **kw):
+            pass
+
+        async def wait(self):
+            return None
+
+    started = []
+
+    async def running(bot, responder, config, names):
+        started.append(list(names))
+
+    monkeypatch.setattr(bot_client.views, "ChannelPicker", Pressed)
+    monkeypatch.setattr(bot_client, "_all_of_them", running)
+
+    async def send(content=None, **kw):
+        return None
+
+    asyncio.run(bot_client._quiet_channels(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "",
+    ))
+
+    assert started == [["jay-rodriguez", "connor-knudsen"]]
+
+
+def test_nobody_at_the_keyboard_for_the_delete_stops_the_run_too(monkeypatch):
+    """The second question is the one that cannot be undone, and walking past
+    an unanswered one of those is worse than walking past the first."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, None]
+    channel = Channel("jay-rodriguez")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("Ryte Collection", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "keep_the_picture",
+        lambda config, page, called, **kw: ("https://drive/p.png", []),
+    )
+
+    async def theirs(_channel, **kw):
+        return [clearout.Said(who="Jay", when="May 24", text="thanks",
+                              at=datetime(2026, 5, 24), where="jay-rodriguez")], []
+
+    async def nothing(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", theirs)
+    monkeypatch.setattr(bot_client, "_also_said", nothing)
+
+    async def send(content=None, **kw):
+        return None
+
+    how = asyncio.run(bot_client._clear_out(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "Jay Rodriguez", run=(1, 180),
+    ))
+
+    assert how == "stopped", "an unanswered delete was read as an answer"
+    assert channel.deleted is not True
+
+
+def test_both_questions_carry_the_stop_button_during_a_run(monkeypatch):
+    """With a hundred and eighty to go there has to be a way to say enough
+    that is not walking away from the keyboard."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, False]
+    buttons = []
+
+    class Watched(Pressed):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            buttons.append(self)
+
+    channel = Channel("jay-rodriguez")
+    guild = Guild(channel, Member("Jay Rodriguez"))
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Watched)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("Ryte Collection", []),
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "keep_the_picture",
+        lambda config, page, called, **kw: ("https://drive/p.png", []),
+    )
+
+    async def theirs(_channel, **kw):
+        return [clearout.Said(who="Jay", when="May 24", text="thanks",
+                              at=datetime(2026, 5, 24), where="jay-rodriguez")], []
+
+    async def nothing(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", theirs)
+    monkeypatch.setattr(bot_client, "_also_said", nothing)
+
+    async def send(content=None, **kw):
+        return None
+
+    asyncio.run(bot_client._clear_out(
+        SimpleNamespace(get_guild=lambda where: guild),
+        SimpleNamespace(send=send, requester_id=1),
+        SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                        discord=SimpleNamespace(approval_timeout_seconds=1),
+                        schedule=SimpleNamespace(timezone="America/Chicago")),
+        "Jay Rodriguez", run=(1, 180),
+    ))
+
+    assert [one.stoppable for one in buttons] == [True, True]
+
+
+def test_the_stop_button_is_really_gone_when_there_is_no_run():
+    """Nothing to stop when there is one of them, and a button that says
+    "Stop the run" under a single clear-out is a button nobody can read."""
+    from wilbyte.bot import views
+
+    alone = views.ConfirmView(
+        requester_id=1, timeout=1, label="go", emoji="✅",
+    )
+    running = views.ConfirmView(
+        requester_id=1, timeout=1, label="go", emoji="✅", stoppable=True,
+    )
+
+    assert len(alone.children) == 2
+    assert len(running.children) == 3
+    assert any("Stop" in str(one.label) for one in running.children)
+    assert not any("Stop" in str(one.label) for one in alone.children)
