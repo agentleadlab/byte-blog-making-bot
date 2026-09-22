@@ -2251,7 +2251,7 @@ async def _clear_out(
         )
         return "trouble"
 
-    plan = clearout.Plan(name=name, channel=found[0])
+    plan = clearout.Plan(name=name, channel=found[0], guild_id=str(guild.id))
     member = _member_called(guild, name)
     if member is not None:
         plan.member_id, plan.member_name = str(member.id), str(member)
@@ -2398,7 +2398,7 @@ async def _clear_out(
            "• ⚠ **No sheet link was found** — not on the board, not in the "
            "channel. The row in Ryte Collection has an empty cell, and "
            "whatever is in the channel goes with it.\n")
-        + f"• Delete **#{plan.channel.name}**\n"
+        + f"• Delete {clearout.jump_to(plan)}\n"
         + "-# Nobody is banned by this. That is the chargeback run's job.",
         view=going,
     )

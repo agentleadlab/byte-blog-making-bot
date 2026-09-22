@@ -135,6 +135,11 @@ class Plan:
     sheet: str = ""
     member_id: str = ""
     member_name: str = ""
+    #: The server the channel is in, for the link that opens it. Kept on the
+    #: plan rather than built where it is shown: a jump link needs the server
+    #: id as well as the channel's, and the one place that knows both is where
+    #: the channel was found.
+    guild_id: str = ""
     #: Whether the sheet link came out of the channel rather than off a Trello
     #: card. Worth saying: it means the link is about to be deleted along with
     #: the channel, and the row in ALL CLIENTS is the only place it will live.
@@ -347,7 +352,10 @@ def to_screenshot(plan: Plan, messages: list, feed: list = ()) -> list:
     that was had rather than as something RYTE wrote.
     """
     where = plan.channel.name if plan.channel else plan.name
-    link = f" — <#{plan.channel.channel_id}>" if plan.channel else ""
+    # The link rather than a mention. A mention renders as the channel's name
+    # only for somebody who can see it, and the one message that most needs
+    # this says "go and look before deleting it".
+    link = f" — {jump_to(plan)}" if plan.channel else ""
     head = (
         f"🧹 **#{where}** — {len(messages)} message"
         f"{'s' if len(messages) != 1 else ''}. Screenshot what you want."
@@ -584,6 +592,25 @@ def as_page(plan: Plan, messages: list) -> str:
 </body></html>"""
 
 
+def jump_to(plan: Plan) -> str:
+    """The channel, as something to click on and go and look at.
+
+    A mention alone only renders where the reader can see that channel, and
+    these are read in whichever channel the clear-out was asked in. The link
+    beside it opens the channel wherever it is, so "which one is he talking
+    about" is one click rather than a search of the sidebar.
+    """
+    if plan.channel is None:
+        return ""
+    said = f"**#{plan.channel.name}**"
+    if plan.guild_id and plan.channel.channel_id:
+        return (
+            f"{said} — [open it](https://discord.com/channels/"
+            f"{plan.guild_id}/{plan.channel.channel_id})"
+        )
+    return said
+
+
 def describe(plan: Plan) -> str:
     """What was found, to be read before anything irreversible is pressed."""
     if plan.channel is None:
@@ -592,7 +619,7 @@ def describe(plan: Plan) -> str:
             + ("\n".join(f"⚠ {one}" for one in plan.problems) if plan.problems else "")
         ).strip()
 
-    lines = [f"🧹 **{plan.name}**", f"• Channel — **#{plan.channel.name}**"]
+    lines = [f"🧹 **{plan.name}**", f"• Channel — {jump_to(plan)}"]
     if plan.channel.category:
         lines.append(f"• Category — {plan.channel.category}")
     if plan.channel.last_active:

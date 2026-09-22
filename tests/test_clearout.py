@@ -69,6 +69,7 @@ def test_an_agent_channel_is_not_off_limits():
 def _plan(**kwargs):
     kwargs.setdefault("name", "Jay Rodriguez")
     kwargs.setdefault("channel", channel("jay-rodriguez"))
+    kwargs.setdefault("guild_id", "g9")
     return clearout.Plan(**kwargs)
 
 
@@ -172,7 +173,7 @@ def test_a_channel_of_nothing_but_the_lead_feed_says_so():
     assert len(pages) == 1
     assert "nothing to post" in pages[0]
     assert "Open it and look before deleting it" in pages[0]
-    assert "<#c1>" in pages[0], "no way to go and look"
+    assert "discord.com/channels/g9/c1" in pages[0], "no way to go and look"
     assert str(clearout.LOOK_BACK) in pages[0]
     assert str(clearout.FIRST_OF_IT) in pages[0]
 
@@ -1831,7 +1832,7 @@ def test_a_channel_with_neither_still_says_to_go_and_look():
     pages = clearout.to_screenshot(_plan(), [], [])
 
     assert "nothing to post" in pages[0]
-    assert "<#c1>" in pages[0]
+    assert "discord.com/channels/g9/c1" in pages[0]
 
 
 def test_the_feed_is_only_the_bots():
@@ -2938,3 +2939,50 @@ def test_the_stop_button_is_really_gone_when_there_is_no_run():
     assert len(running.children) == 3
     assert any("Stop" in str(one.label) for one in running.children)
     assert not any("Stop" in str(one.label) for one in alone.children)
+
+
+# --------------- a link to the channel, to see which one he means
+
+
+def test_the_channel_is_something_to_click_on():
+    """"can it attach the discord link so i can check which one hes talking
+    about?" - 179 of them go past, and #malaki-martinez-vet is a name until
+    you have opened it."""
+    said = clearout.describe(_plan())
+
+    assert "https://discord.com/channels/g9/c1" in said
+    assert "#jay-rodriguez" in said, "the name went when the link arrived"
+
+
+def test_the_link_is_the_server_and_the_channel_both():
+    """A channel id on its own opens nothing."""
+    said = clearout.jump_to(_plan())
+
+    assert said.endswith("(https://discord.com/channels/g9/c1)")
+
+
+def test_without_a_server_it_is_still_named():
+    """Better a name with no link than a link that goes nowhere."""
+    said = clearout.jump_to(clearout.Plan(
+        name="Jay", channel=clearout.Channel(channel_id="c1", name="jay"),
+    ))
+
+    assert said == "**#jay**"
+    assert "discord.com" not in said
+
+
+def test_nobody_with_a_channel_has_nothing_to_click():
+    assert clearout.jump_to(clearout.Plan(name="Jay")) == ""
+
+
+def test_the_delete_button_names_a_channel_you_can_open(monkeypatch):
+    """The last message before the one that cannot be undone."""
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], in_channel="got them, thanks",
+    )
+    whole = "\n".join(said)
+
+    assert "This cannot be undone" in whole
+    assert whole.count("discord.com/channels/") >= 2, (
+        "the delete question named a channel with no way to look at it"
+    )
