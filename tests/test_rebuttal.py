@@ -708,7 +708,7 @@ def test_the_timeline_carries_the_day_the_sheet_was_handed_over(monkeypatch):
 
     said = dict(found.timeline)
     assert "08/28/2026" in said
-    assert any("delivered" in one.casefold() for one in said.values())
+    assert any("delivery sheet" in one.casefold() for one in said.values())
     assert len(found.timeline) >= 2, "still just the charge"
 
 
@@ -2248,3 +2248,62 @@ def test_the_specific_reason_beats_the_category_it_sits_under():
     )
 
     assert said == "13.3"
+
+
+def test_the_timeline_does_not_contradict_itself_about_delivery(monkeypatch):
+    """David Pereira's said "09/04 Leads delivered by shared spreadsheet" and
+    then "09/07 Launch date, leads begin delivery" — the document arguing with
+    itself about the one fact it exists to establish."""
+    from datetime import date
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    said = jobs._timeline(
+        NS(amount="$1,407.60", paid=lambda: date(2026, 9, 4),
+           disputed=lambda: None, days_waited=lambda: 0),
+        NS(launch=date(2026, 9, 7)),
+        NS(delivered_on="2026-09-04"),
+    )
+    whole = " · ".join(what for _when, what in said).casefold()
+
+    assert "shared with the cardholder" in whole
+    assert "begin landing in that sheet" in whole
+    assert whole.count("deliver") <= 1, "two lines arguing about delivery"
+
+
+def test_a_sheet_shared_on_the_launch_day_is_one_line(monkeypatch):
+    """Two lines on the same date reading around each other is what started
+    this."""
+    from datetime import date
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    said = jobs._timeline(
+        NS(amount="$900.00", paid=lambda: date(2026, 9, 4),
+           disputed=lambda: None, days_waited=lambda: 0),
+        NS(launch=date(2026, 9, 7)),
+        NS(delivered_on="2026-09-07"),
+    )
+
+    assert len(said) == 2, "the same day said twice"
+    assert "and leads begin landing in it" in said[-1][1]
+
+
+def test_a_sheet_shared_after_the_launch_still_says_both(monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    said = jobs._timeline(
+        NS(amount="$900.00", paid=lambda: date(2026, 9, 4),
+           disputed=lambda: None, days_waited=lambda: 0),
+        NS(launch=date(2026, 9, 5)),
+        NS(delivered_on="2026-09-08"),
+    )
+
+    assert [when for when, _what in said] == [
+        "09/04/2026", "09/05/2026", "09/08/2026",
+    ]

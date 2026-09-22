@@ -5311,17 +5311,37 @@ def _timeline(dispute, agent, found) -> list:
     paid = dispute.paid()
     if paid:
         when.append((f"{paid:%m/%d/%Y}", f"Charged {dispute.amount}"))
-    if agent is not None and agent.launch:
-        when.append((f"{agent.launch:%m/%d/%Y}", "Launch date, leads begin delivery"))
     # The handover. Without it the spine of the document is a charge and a
     # chargeback with nothing in between, which is the half that answers the
     # dispute - Juliana Hernandez's timeline was one line long.
+    #
+    # The sheet is shared before the launch and fills from it. Said as
+    # "delivered" beside a later line saying "leads begin delivery", it read
+    # as the document contradicting itself about the one fact it is there to
+    # establish: David Pereira's said 09/04 delivered and 09/07 beginning.
     handed = (getattr(found, "delivered_on", "") or "").split("-")
-    if len(handed) == 3:
+    shared = (
+        f"{handed[1]}/{handed[2]}/{handed[0]}" if len(handed) == 3 else ""
+    )
+    launched = f"{agent.launch:%m/%d/%Y}" if agent is not None and agent.launch else ""
+    if shared and shared == launched:
+        # One day, one line. Two lines on the same date reading around each
+        # other is what started this.
         when.append((
-            f"{handed[1]}/{handed[2]}/{handed[0]}",
-            "Leads delivered by shared spreadsheet, confirmed in writing",
+            shared,
+            "Delivery sheet shared with the cardholder and leads begin "
+            "landing in it",
         ))
+    else:
+        if shared:
+            when.append((
+                shared,
+                "Delivery sheet shared with the cardholder, confirmed in writing",
+            ))
+        if launched:
+            when.append((
+                launched, "Launch date — leads begin landing in that sheet",
+            ))
     disputed = dispute.disputed()
     if disputed:
         waited = dispute.days_waited()
