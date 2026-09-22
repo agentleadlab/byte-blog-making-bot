@@ -4184,3 +4184,134 @@ def test_one_card_refusing_to_move_does_not_hold_up_the_rest(monkeypatch):
     assert moved == ["Alex Salazar"]
     assert board.moved == [("good", "franklin")]
     assert len(problems) == 1 and "couldn't move" in problems[0]
+
+
+# ------------- the field is the package, the line below it is what they bought
+
+MATTHEW = """-- New Client Onboarded --
+
+First Name: Matthew
+Last Name: Odierno
+Phone: +16146033618
+Email: modierno@ascendialifeinsurance.com
+Package Selected: Text Verified
+Lead Type: Text Verified IUL Plus
+Target Areas for Marketing:
+
+12 Trucker IUL leads
+Same states
+Same time parameters
+
+Live Tuesday, September 22
+EOD 7 PM EST"""
+
+MATTHEW_SETUP = ["""✅ TEXT VERIFIED TRUCKER IUL ON DISTRO HUB setup is complete for MATTHEW ODIERNO
+✅ Fired a test in the Discord channel and Google Sheet to ensure it is working properly.
+✅ Added EMAIL & SMS notifications.
+✅ matthew-odierno-trucker
+Ready to go live Tuesday, September 22"""]
+
+
+def test_the_line_below_the_field_is_what_was_bought():
+    """"WRONG! ITS TRUCKER." The field is the package he is on; the line under
+    it is the order."""
+    said = agents.stated_orders(MATTHEW)
+
+    assert "trucker" in said.casefold()
+
+
+def test_the_tier_is_kept_and_read_in_the_right_order():
+    """"Text Verified 12 Trucker IUL leads" is the right words in an order
+    nobody writes."""
+    said = agents.stated_orders(MATTHEW)
+
+    assert said == "12 Text Verified Trucker IUL leads"
+
+
+def test_a_trucker_setup_of_a_trucker_order_is_not_raised():
+    """It was raised as set up wrong against the campaign he ordered, with the
+    flag itself saying "but the same comment says trucker"."""
+    assert agents.wrong_setup(agents.stated_orders(MATTHEW), MATTHEW_SETUP) is None
+
+
+def test_a_setup_on_genuinely_different_leads_is_still_raised():
+    """The whole point of the check. Trucker and Spanish IUL are different
+    campaigns and different checklists."""
+    clash = agents.wrong_setup(
+        agents.stated_orders(MATTHEW),
+        ["✅ OTP SPANISH IUL ON DISTRO HUB setup is complete for MATTHEW ODIERNO"],
+    )
+
+    assert clash is not None
+    assert "trucker" in clash[0].casefold()
+
+
+def test_the_field_still_wins_when_it_is_the_fuller_phrase():
+    """A field naming the vertical has already said what was bought, and a
+    bare count below it is not a second opinion."""
+    said = agents.stated_lead_type(
+        "Lead Type: OTP Spanish IUL Plus\n\n30 leads\nSame states"
+    )
+
+    assert said == "OTP Spanish IUL Plus"
+
+
+def test_a_card_with_only_the_field_still_uses_it():
+    assert agents.stated_lead_type(
+        "Package Selected: Text Verified\nLead Type: Text Verified IUL Plus"
+    ) == "Text Verified IUL Plus"
+
+
+def test_alex_salazars_spanish_order_beats_his_package():
+    """Same shape: the package line says Text Verified IUL Plus and the order
+    below it says Spanish."""
+    said = agents.stated_orders(
+        "Package Selected: Text Verified\n"
+        "Lead Type: Text Verified IUL Plus\n\n"
+        "30 OTP Spanish IUL Leads\nStates: To be determined"
+    )
+
+    assert "spanish" in said.casefold()
+
+
+def test_two_real_orders_are_both_still_kept():
+    """Catherine Y Barney bought vets and FEX, and neither is a package line."""
+    said = agents.stated_orders("Lead Type: OTP\n\n15 OTP VETS\n15 OTP FEX")
+
+    assert "vet" in said.casefold() and "fex" in said.casefold()
+
+
+def test_the_count_stays_at_the_front():
+    assert agents._tiered("12 Trucker IUL leads", "Text Verified") == (
+        "12 Text Verified Trucker IUL leads"
+    )
+    assert agents._tiered("Trucker IUL leads", "Text Verified") == (
+        "Text Verified Trucker IUL leads"
+    )
+    assert agents._tiered("12 Trucker IUL leads", "") == "12 Trucker IUL leads"
+
+
+def test_a_line_that_is_only_a_number_is_not_rebuilt_around_it():
+    assert agents._tiered("12", "Text Verified") == "Text Verified 12"
+
+
+def test_a_field_naming_the_vertical_and_its_tier_beats_the_line_below_it():
+    """"OTP Spanish IUL Plus" has already said what was bought. A count below
+    it saying the same family again is the same order written twice, and the
+    fuller phrase is the one that routes."""
+    said = agents.stated_lead_type(
+        "Lead Type: OTP Spanish IUL Plus\n\n30 Spanish IUL leads\nSame states"
+    )
+
+    assert said == "OTP Spanish IUL Plus"
+
+
+def test_the_correction_underneath_is_the_one_taken():
+    """A card that says it twice has been corrected, and the correction is
+    written underneath."""
+    said = agents.stated_lead_type(
+        "Lead Type: Text Verified IUL Plus\n\n10 trucker iul\n12 Trucker IUL leads"
+    )
+
+    assert said == "12 Text Verified Trucker IUL leads"
+    assert "10" not in said, "took the line that was corrected"

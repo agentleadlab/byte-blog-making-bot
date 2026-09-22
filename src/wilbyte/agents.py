@@ -1074,11 +1074,40 @@ def stated_lead_type(text: str) -> str:
     # The last one, not the first. A card that says it twice has been
     # corrected, and the correction is written underneath.
     tiered = [phrase for phrase in said if tier_of(phrase)]
-    if tiered:
+    qualified = [phrase for phrase in said if qualifiers_of(phrase)]
+    if tiered and (qualifiers_of(tiered[-1]) or not qualified):
         return with_line(tiered[-1], text)
 
-    word = tier_word(text)
-    return with_line(f"{word} {said[-1]}".strip() if word else said[-1], text)
+    # A phrase naming the vertical beats one that only names the tier.
+    # Matthew Odierno's card says "Lead Type: Text Verified IUL Plus" and,
+    # below it, "12 Trucker IUL leads": the field is the package he is on and
+    # the line is what he bought. Taking the field alone filed him under Text
+    # Verified IUL Plus and then raised him as set up wrong against the
+    # trucker campaign he had actually ordered - "WRONG! ITS TRUCKER".
+    best = qualified[-1] if qualified else said[-1]
+    if tier_of(best):
+        return with_line(best, text)
+    return with_line(_tiered(best, tier_word(text)), text)
+
+
+#: How many leads, at the front of the phrase the card wrote. "12 Trucker IUL
+#: leads", "10 OTP VETS", "30 more OTP vets".
+_HOW_MANY = re.compile(r"^\s*(\d+\s*(?:more\s+)?)(.*)$", re.DOTALL)
+
+
+def _tiered(phrase: str, word: str) -> str:
+    """The phrase with the card's tier word in it, after any count.
+
+    In front of the leads and behind the number: the card's own lines read
+    "12 Trucker IUL leads" and "10 OTP VETS", and "Text Verified 12 Trucker
+    IUL leads" is the right words in an order nobody writes.
+    """
+    if not word:
+        return phrase
+    found = _HOW_MANY.match(phrase or "")
+    if not found or not found.group(2).strip():
+        return f"{word} {phrase}".strip()
+    return f"{found.group(1).strip()} {word} {found.group(2).strip()}"
 
 
 # A line word and nothing else. Phoenix is a family as well as a line, so
