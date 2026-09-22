@@ -2699,26 +2699,30 @@ def _as_said(message, where: str):
     )
 
 
-async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
-    """What this client said in the channels the whole server shares.
+#: How deep the first read of a shared channel goes. Ring-da-bell carries the
+#: whole server's wins, so a client who stopped buying in May is months and
+#: thousands of messages down. Paid once, not once per clear-out.
+FIRST_READ = 25_000
 
-    A sale posted in ring-da-bell is the client saying the leads worked, and
-    it is the half of the evidence their own channel does not have - theirs is
-    the bot's lead feed and a "thanks".
+#: How much to pick up on a later pass. Only what has been said since, so
+#: this is a fortnight's worth of headroom rather than a second deep read.
+CATCH_UP = 2_000
 
-    Only the shared ones, which are the channels a clear-out already refuses
-    to touch. Reading all hundred and eighty to find four messages is one
-    request per channel for every client closed down.
 
-    What it looked at comes back with what it found. Skipping a channel it is
-    not allowed to open, and saying nothing, is how "nothing anybody said"
-    gets reported about somebody who has been ringing the bell all year.
+async def _fill_the_bell(guild, channels) -> tuple[dict, list[str]]:
+    """Read the shared channels and remember who said what. (data, notes).
+
+    The first pass is deep and slow and happens once. Every pass after it
+    reads only what has been said since, which on a busy channel is a few
+    hundred messages and on a quiet one is none.
+
+    Only what people said. A bot's post in a shared channel is an
+    announcement, and this is a record of who sold what.
     """
-    if member is None:
-        return [], ["Nobody by that name is in the server, so only their own channel was read."]
-    from .. import clearout
+    from .. import bell, clearout
 
-    found, read, shut = [], [], []
+    data = await asyncio.to_thread(bell.load)
+    notes: list[str] = []
     for one in channels or []:
         if not clearout.off_limits(one):
             continue
@@ -2726,36 +2730,92 @@ async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
         if channel is None:
             continue
         if not _can_read(guild, channel):
-            shut.append(str(one.name))
+            notes.append(f"⚠ Can't open #{one.name}, so nothing said in it is kept.")
             continue
-        try:
-            oldest = None
-            async for said in channel.history(limit=clearout.LOOK_BACK):
-                oldest = getattr(said, "created_at", None) or oldest
-                if getattr(getattr(said, "author", None), "id", None) == member.id:
-                    found.append(_as_said(said, str(one.name)))
-            # How far back it actually got. A thousand messages is a year in
-            # one channel and a fortnight in another, and "found nothing" only
-            # means something next to how far it looked.
-            read.append(
-                f"{one.name}" + (f" (back to {oldest:%d %b})" if oldest else "")
-            )
-        except Exception as exc:
-            log.exception("Couldn't read #%s for what they said in it", one.name)
-            shut.append(f"{one.name} ({jobs._short(exc, 60)})")
 
-    notes = []
-    if read:
-        notes.append(
-            f"Also read {len(read)} shared channel(s) for what they said: "
-            + ", ".join(f"#{one}" for one in read[:6])
+        after = bell.since(data, one.channel_id)
+        how = (
+            {"limit": CATCH_UP, "after": discord.Object(id=int(after)),
+             "oldest_first": True}
+            if after.isdigit() else {"limit": FIRST_READ}
         )
-    if shut:
+        newest, count = after, 0
+        try:
+            async for said in channel.history(**how):
+                count += 1
+                mark = str(getattr(said, "id", "") or "")
+                if mark and (not newest.isdigit() or int(mark) > int(newest)):
+                    newest = mark
+                author = getattr(said, "author", None)
+                if getattr(author, "bot", False) or author is None:
+                    continue
+                text = _all_of_it(said)
+                if not text.strip():
+                    continue
+                at = getattr(said, "created_at", None)
+                bell.keep(
+                    data, author_id=getattr(author, "id", ""), message_id=mark,
+                    who=str(getattr(author, "display_name", "") or author),
+                    when=f"{at:%b %d, %Y %H:%M}" if at else "",
+                    text=text, where=str(one.name),
+                    at=at.isoformat() if at else "",
+                )
+            bell.read_to(data, one.channel_id, newest)
+            if count:
+                notes.append(
+                    f"-# Read {count} new message(s) in #{one.name}."
+                    if after.isdigit() else
+                    f"-# First read of #{one.name}: {count} message(s)."
+                )
+        except Exception as exc:
+            log.exception("Couldn't read #%s for the bell", one.name)
+            notes.append(f"⚠ Couldn't finish reading #{one.name}: {jobs._short(exc, 60)}")
+
+    await asyncio.to_thread(bell.save, data)
+    return data, notes
+
+
+async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
+    """What this client said in the channels the whole server shares.
+
+    A sale rung in ring-da-bell is the client saying the leads worked, and it
+    is the half of the evidence their own channel does not have - theirs is
+    the bot's lead feed and a "thanks".
+
+    Out of what has been read and remembered rather than by reading the
+    channel again now. Reading it per clear-out reached thirteen days and
+    found nothing of a client who stopped in May.
+    """
+    from .. import bell, clearout
+
+    if member is None:
+        return [], [
+            "Nobody by that name is in the server, so only their own channel "
+            "was read."
+        ]
+
+    data, notes = await _fill_the_bell(guild, channels)
+    found = [
+        clearout.Said(
+            who=str(one.get("who") or ""), when=str(one.get("when") or ""),
+            text=str(one.get("text") or ""), where=str(one.get("where") or ""),
+            at=_as_when(one.get("at")),
+        )
+        for one in bell.theirs(data, getattr(member, "id", ""))
+    ]
+    if not found:
         notes.append(
-            f"⚠ Couldn't open {len(shut)} shared channel(s), so anything they "
-            "said in them is not here: " + ", ".join(f"#{one}" for one in shut[:6])
+            "-# Nothing of theirs in the shared channels that have been read."
         )
     return found, notes
+
+
+def _as_when(said):
+    """An ISO string back into a datetime, or None."""
+    try:
+        return datetime.fromisoformat(str(said)) if said else None
+    except ValueError:
+        return None
 
 
 async def _last_said(channel, *, howmany: int = 0) -> tuple[list, list[str]]:

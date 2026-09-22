@@ -1560,30 +1560,27 @@ def test_the_written_row_is_tidied_up_after_it_lands(monkeypatch):
     assert wrap == "CLIP"
 
 
-def test_the_shared_channels_it_could_not_open_are_named(monkeypatch):
+def test_the_shared_channels_it_could_not_open_are_named(monkeypatch, tmp_path):
     """Skipping a channel it is not allowed to open, and saying nothing, is
     how "nothing anybody said" gets reported about somebody who has been
     ringing the bell all year."""
     import asyncio
     from types import SimpleNamespace as NS
 
+    from wilbyte import bell
     from wilbyte.bot import client as bot_client
 
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+
     shut = NS(id=1, name="ring-da-bell", guild=NS(id=3))
-    open_one = NS(id=2, name="general-chat", guild=NS(id=3))
 
     class Chat:
-        async def history(self, limit=0, oldest_first=False):
+        async def history(self, **how):
             return
             yield
 
     monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: ch is not shut)
-    guild = NS(
-        id=3, me=object(),
-        get_channel=lambda cid: {1: shut, 2: Chat()}.get(cid),
-    )
-    for name in ("history",):
-        setattr(shut, name, Chat().history)
+    guild = NS(id=3, me=object(), get_channel=lambda cid: {1: shut}.get(cid, Chat()))
 
     found, notes = asyncio.run(bot_client._also_said(
         guild, NS(id=7),
@@ -1592,9 +1589,85 @@ def test_the_shared_channels_it_could_not_open_are_named(monkeypatch):
     ))
 
     assert found == []
-    whole = "\n".join(notes)
-    assert "#ring-da-bell" in whole and "Couldn't open" in whole
-    assert "#general-chat" in whole
+    assert "#ring-da-bell" in "\n".join(notes)
+    assert "Can't open" in "\n".join(notes)
+
+
+def test_what_was_rung_in_the_bell_is_remembered_and_looked_up(monkeypatch, tmp_path):
+    """A thousand messages of ring-da-bell is thirteen days, and the client
+    stopped buying in May. Read once, remembered by who said it, and a
+    clear-out is a lookup after that."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    where = tmp_path / "bell.json"
+    monkeypatch.setattr(bell, "BELL_PATH", where)
+
+    reads = []
+
+    class Bell:
+        async def history(self, **how):
+            reads.append(how)
+            if how.get("after") is not None:
+                return
+            for mark, when, text in (
+                (11, datetime(2026, 5, 8, 14, 9), "$1548 ethos aged 6/7"),
+                (12, datetime(2026, 5, 16, 17, 51), "$1440 trans aged lead"),
+                (13, datetime(2026, 5, 25, 18, 46), "$1960 fresh vet lead"),
+            ):
+                yield NS(
+                    id=mark, created_at=when, content=text, embeds=[],
+                    attachments=[],
+                    author=NS(id=7, display_name="Artur | NOVA |", bot=False),
+                )
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    guild = NS(id=3, me=object(), get_channel=lambda cid: Bell())
+    channels = [clearout.Channel(channel_id="1", name="ring-da-bell")]
+
+    found, _notes = asyncio.run(bot_client._also_said(guild, NS(id=7), channels))
+
+    assert [one.text for one in found] == [
+        "$1548 ethos aged 6/7", "$1440 trans aged lead", "$1960 fresh vet lead",
+    ]
+    assert found[0].where == "ring-da-bell"
+    assert reads[0].get("limit") == bot_client.FIRST_READ
+
+    # And the next clear-out does not read it all again.
+    again, _ = asyncio.run(bot_client._also_said(guild, NS(id=7), channels))
+
+    assert len(again) == 3
+    assert reads[1].get("after") is not None, "it read the whole channel twice"
+
+
+def test_somebody_else_s_sales_are_not_this_client_s(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+
+    class Bell:
+        async def history(self, **how):
+            yield NS(
+                id=11, created_at=datetime(2026, 5, 8), content="$1,259.28 Combined",
+                embeds=[], attachments=[],
+                author=NS(id=99, display_name="Riley Shaffer", bot=False),
+            )
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    found, notes = asyncio.run(bot_client._also_said(
+        NS(id=3, me=object(), get_channel=lambda cid: Bell()), NS(id=7),
+        [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert found == []
+    assert "Nothing of theirs" in "\n".join(notes)
 
 
 def test_nobody_in_the_server_is_said_rather_than_skipped(monkeypatch):
@@ -1641,36 +1714,69 @@ def test_a_message_read_from_both_ends_is_only_kept_once():
     assert len(found) == 1, [one.text for one in found]
 
 
-def test_how_far_back_each_shared_channel_was_read_is_said(monkeypatch):
-    """A thousand messages is a year in one channel and a fortnight in
-    another, and "found nothing" only means something next to how far it
-    looked."""
+def test_the_first_read_and_the_catch_up_are_both_said(monkeypatch, tmp_path):
+    """A first read of twenty-five thousand messages is worth knowing about,
+    and so is a later one that found none."""
     import asyncio
     from types import SimpleNamespace as NS
 
+    from wilbyte import bell
     from wilbyte.bot import client as bot_client
 
-    class Busy:
-        async def history(self, limit=0, oldest_first=False):
-            for day in (25, 20, 14):
-                yield NS(
-                    id=day, author=NS(id=1, display_name="somebody else", bot=False),
-                    created_at=datetime(2026, 8, day), content="x", embeds=[],
-                    attachments=[],
-                )
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+
+    class Bell:
+        async def history(self, **how):
+            if how.get("after") is not None:
+                return
+            yield NS(
+                id=11, created_at=datetime(2026, 5, 8), content="$1548 ethos",
+                embeds=[], attachments=[],
+                author=NS(id=7, display_name="Artur", bot=False),
+            )
 
     monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
-    guild = NS(id=3, me=object(), get_channel=lambda cid: Busy())
+    guild = NS(id=3, me=object(), get_channel=lambda cid: Bell())
+    channels = [clearout.Channel(channel_id="1", name="ring-da-bell")]
 
-    found, notes = asyncio.run(bot_client._also_said(
-        guild, NS(id=7), [clearout.Channel(channel_id="1", name="ring-da-bell")],
-    ))
+    _found, notes = asyncio.run(bot_client._also_said(guild, NS(id=7), channels))
+    assert "First read of #ring-da-bell" in "\n".join(notes)
 
-    assert found == []
-    assert "back to 14 Aug" in "\n".join(notes)
+    _again, later = asyncio.run(bot_client._also_said(guild, NS(id=7), channels))
+    assert "First read" not in "\n".join(later), "it read the whole thing twice"
 
 
-# ------------------- a channel that holds nothing but the feed
+def test_what_it_searched_is_said_where_the_result_is(monkeypatch):
+    """"nothing anybody said" is only checkable next to where it looked."""
+    from wilbyte.bot import client as bot_client
+
+    async def some_notes(*a, **kw):
+        return [], ["Also read 2 shared channel(s) for what they said: #ring-da-bell"]
+
+    monkeypatch.setattr(bot_client, "_also_said", some_notes)
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+
+    assert "#ring-da-bell" in "\n".join(said)
+
+
+def test_a_message_read_from_both_ends_is_only_kept_once():
+    """A short channel is read twice over - newest first and oldest first -
+    and every message in it would otherwise be in the picture twice."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    only = Posted(content="got them, thanks", who="artur.rushiti", bot=False)
+    only.id = 99
+
+    class Short:
+        async def history(self, limit=0, oldest_first=False):
+            yield only
+
+    found, trouble = asyncio.run(bot_client._last_said(Short()))
+
+    assert not trouble
+    assert len(found) == 1, [one.text for one in found]
 
 
 def _fed(text=LEAD_POST, at=None):
@@ -1775,3 +1881,31 @@ def test_the_feed_reaches_the_handler(monkeypatch):
 
     assert "nobody said anything in it" in whole
     assert "Henri Harper" in whole, "the channel with nothing else got nothing"
+
+
+def test_a_bot_in_a_shared_channel_is_not_somebody_selling(monkeypatch, tmp_path):
+    """A bot's post in a shared channel is an announcement. This is a record
+    of who sold what."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+
+    class Bell:
+        async def history(self, **how):
+            yield NS(
+                id=11, created_at=datetime(2026, 5, 8),
+                content="Glad you're here, Cameron.", embeds=[], attachments=[],
+                author=NS(id=7, display_name="Server", bot=True),
+            )
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    found, _notes = asyncio.run(bot_client._also_said(
+        NS(id=3, me=object(), get_channel=lambda cid: Bell()), NS(id=7),
+        [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert found == [], "a welcome message was kept as one of their sales"
