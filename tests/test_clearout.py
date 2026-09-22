@@ -2510,3 +2510,23 @@ def test_the_picture_is_cut_to_what_is_on_it(monkeypatch, tmp_path):
     assert "documentElement" not in " ".join(asked), (
         "asked the one thing that always answers with the viewport height"
     )
+
+
+def test_the_name_is_not_said_twice_when_it_is_the_channels_name():
+    """Looking somebody up by their channel name is normal, and
+    "1 — artur_rushiti-vet — artur_rushiti-vet" reads like a mistake."""
+    said = clearout.picture_name(
+        clearout.Plan(name="artur_rushiti-vet"), when=datetime(2026, 9, 22),
+        where="artur_rushiti-vet", order=1,
+    )
+
+    assert said == "1 — artur_rushiti-vet — 2026-09-22.png"
+
+
+def test_a_different_channel_is_still_named():
+    said = clearout.picture_name(
+        clearout.Plan(name="artur_rushiti-vet"), when=datetime(2026, 9, 22),
+        where="ring-da-bell", order=2,
+    )
+
+    assert said == "2 — artur_rushiti-vet — ring-da-bell — 2026-09-22.png"

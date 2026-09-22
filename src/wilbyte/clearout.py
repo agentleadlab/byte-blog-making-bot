@@ -463,6 +463,11 @@ def picture_name(
     """
     safe = re.sub(r"[^\w .-]+", "", plan.name).strip() or "agent"
     said = re.sub(r"[^\w .-]+", "", str(where or "")).strip()
+    # Once, when they are the same word. Looking them up by their channel
+    # name is normal, and "1 - artur_rushiti-vet - artur_rushiti-vet" reads
+    # like something went wrong.
+    if said.casefold() == safe.casefold():
+        said = ""
     parts = ([str(order)] if order else []) + [safe] + ([said] if said else [])
     return " — ".join(parts) + f" — {when:%Y-%m-%d}.png"
 
