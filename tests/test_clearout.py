@@ -1668,3 +1668,110 @@ def test_how_far_back_each_shared_channel_was_read_is_said(monkeypatch):
 
     assert found == []
     assert "back to 14 Aug" in "\n".join(notes)
+
+
+# ------------------- a channel that holds nothing but the feed
+
+
+def _fed(text=LEAD_POST, at=None):
+    return clearout.Said(who="Artur_Rushiti BOT", when="May 24", text=text,
+                         by_bot=True, at=at, where="artur_rushiti-vet")
+
+
+def test_the_feed_is_posted_when_nobody_said_anything():
+    """Filtering the bots out is right when there is a conversation
+    underneath them. When there is not, it left nothing at all - and the feed
+    is what was delivered, which is the thing worth keeping about a channel
+    like that."""
+    pages = clearout.to_screenshot(_plan(), [], clearout.the_feed([_fed(), _fed()]))
+    whole = "\n".join(pages)
+
+    assert "nobody said anything in it" in whole
+    assert "what was delivered" in whole
+    assert "Henri Harper" in whole
+    assert "1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ" in whole
+
+
+def test_what_people_said_still_wins_over_the_feed():
+    """The feed is the fallback, not the answer."""
+    whole = "\n".join(clearout.to_screenshot(
+        _plan(),
+        [clearout.Said(who="artur.rushiti", when="May 25", text="got them, thanks")],
+        clearout.the_feed([_fed()]),
+    ))
+
+    assert "got them, thanks" in whole
+    assert "Henri Harper" not in whole
+
+
+def test_only_the_last_few_of_the_feed():
+    """Enough to show what was delivered, few enough to screenshot in one go."""
+    kept = clearout.the_feed([_fed(f"lead {i}") for i in range(20)])
+
+    assert len(kept) == clearout.FEED_SHOWN
+    assert kept[-1].text == "lead 19"
+
+
+def test_a_channel_with_neither_still_says_to_go_and_look():
+    pages = clearout.to_screenshot(_plan(), [], [])
+
+    assert "nothing to post" in pages[0]
+    assert "<#c1>" in pages[0]
+
+
+def test_the_feed_is_only_the_bots():
+    """What people said is not the feed, whichever list it arrives in."""
+    kept = clearout.the_feed([
+        _fed("a lead"),
+        clearout.Said(who="artur.rushiti", when="May 25", text="thanks"),
+    ])
+
+    assert [one.text for one in kept] == ["a lead"]
+
+
+def test_the_feed_reaches_the_handler(monkeypatch):
+    """The fallback exists; this is it being handed the feed to fall back to.
+    Without it the channel that most needs it gets nothing."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, False]
+    channel = Channel("artur_rushiti-vet")
+    guild = Guild(channel, Member("artur.rushiti"))
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("Ryte Collection", []),
+    )
+
+    async def only_the_feed(_channel, **kw):
+        return [_fed(), _fed()], []
+
+    async def none_elsewhere(*a, **kw):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_last_said", only_the_feed)
+    monkeypatch.setattr(bot_client, "_also_said", none_elsewhere)
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(str(content or ""))
+
+    asyncio.run(bot_client._clear_out(
+        NS(get_guild=lambda where: guild), NS(send=send, requester_id=1),
+        NS(secrets=NS(discord_clients_guild_id="3"),
+           discord=NS(approval_timeout_seconds=1),
+           schedule=NS(timezone="America/Chicago")),
+        "artur_rushiti-vet",
+    ))
+    whole = "\n".join(said)
+
+    assert "nobody said anything in it" in whole
+    assert "Henri Harper" in whole, "the channel with nothing else got nothing"

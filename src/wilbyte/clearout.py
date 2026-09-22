@@ -48,6 +48,11 @@ LOOK_BACK = 1000
 #: screenshot by hand.
 FIRST_OF_IT = 60
 
+#: How much of the lead feed to post when there is nothing else. Enough to
+#: show what was delivered and that the sheet link was in every one of them,
+#: few enough to screenshot in one go.
+FEED_SHOWN = 4
+
 #: Words a channel of the server's own is made of. A channel whose name is
 #: nothing but these is never an agent's, whatever anybody typed - "admin-team"
 #: and "general" alike. Deleting one of them is the mistake this is built to
@@ -312,7 +317,17 @@ def for_the_picture(theirs: list, elsewhere: list = ()) -> list:
     return (undated + dated)[-KEEP_MESSAGES:]
 
 
-def to_screenshot(plan: Plan, messages: list) -> list:
+def the_feed(messages: list, *, most: int = FEED_SHOWN) -> list:
+    """The last of the lead feed, for a channel that holds nothing else.
+
+    Filtering the bots out is right when there is a conversation underneath
+    them. When there is not, it leaves nothing at all - and the feed is what
+    was delivered, which is the thing worth keeping about a channel like that.
+    """
+    return [one for one in list(messages) if one.by_bot][-most:]
+
+
+def to_screenshot(plan: Plan, messages: list, feed: list = ()) -> list:
     """The conversation as messages to post, for somebody to screenshot.
 
     RYTE used to photograph this itself, into Drive. It was not good enough -
@@ -329,15 +344,24 @@ def to_screenshot(plan: Plan, messages: list) -> list:
         f"🧹 **#{where}** — {len(messages)} message"
         f"{'s' if len(messages) != 1 else ''}. Screenshot what you want."
     )
-    if not messages:
+    if not messages and feed:
+        # Nobody said anything, so the feed is the record. It is what was
+        # delivered, and every post in it carries the sheet link - which is
+        # the thing worth screenshotting about a channel like this one.
+        head = (
+            f"🧹 **#{where}**{link} — nobody said anything in it, so here is "
+            f"the last of what was delivered. Screenshot what you want."
+        )
+        messages = feed
+    elif not messages:
         # The channel itself, to go and look in. RYTE reading a thousand
         # messages and finding none is not the same as there being none, and
         # the person about to delete it should be able to check rather than
         # take that on trust.
         return [
-            f"🧹 **#{where}**{link} — nothing anybody said in the "
-            f"{LOOK_BACK} newest or the {FIRST_OF_IT} oldest messages, so "
-            "there is nothing to post. Open it and look before deleting it."
+            f"🧹 **#{where}**{link} — nothing in the {LOOK_BACK} newest or "
+            f"the {FIRST_OF_IT} oldest messages, so there is nothing to post. "
+            "Open it and look before deleting it."
         ]
 
     lines = []

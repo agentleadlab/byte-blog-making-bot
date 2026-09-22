@@ -2303,7 +2303,9 @@ async def _clear_out(
     shown = clearout.for_the_picture(messages, elsewhere)
     forwarded = True
     try:
-        for page in clearout.to_screenshot(plan, shown):
+        for page in clearout.to_screenshot(
+            plan, shown, clearout.the_feed(messages)
+        ):
             await responder.send(page)
     except Exception as exc:
         forwarded = False
