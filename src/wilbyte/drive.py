@@ -10,8 +10,14 @@ the request here rather than passed in, so nothing calling this can write
 anywhere else in Drive. And `drive.file` is the scope, which is the one that
 grants access to files this app creates and to nothing that was already there.
 
-Uploads only. There is no read, no list and no delete in here, so a bug in the
-clear-out cannot take the folder with it.
+Uploads, and the folders to put them in. Each client gets a folder of their
+own inside the one from .env, so opening it shows their conversation rather
+than a heap of loose pictures with every other client's mixed in.
+
+No delete, no move, no overwrite. The only read is the one that asks whether
+this client's folder already exists, and under `drive.file` even that can only
+see folders this app made itself - so a bug in the clear-out cannot take the
+folder with it.
 """
 
 from __future__ import annotations
@@ -29,6 +35,8 @@ from .gsheets import (
 )
 
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+FILES = "https://www.googleapis.com/drive/v3/files"
+A_FOLDER = "application/vnd.google-apps.folder"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
@@ -99,8 +107,84 @@ class DriveClient:
             raise DriveError("Google signed us in but sent no access token back.")
         return self._token
 
-    def put(self, path: Path, *, name: str = "") -> Uploaded:
-        """Upload one file into the configured folder.
+    def folder_named(self, name: str) -> str:
+        """The folder of that name inside the configured one, made if needed.
+
+        Asked for rather than assumed: a client cleared out twice is one
+        folder with both days in it, not two folders with the same name that
+        nobody can tell apart.
+
+        The `q` is pinned to the configured folder as its parent, so the
+        worst a bad name can do is fail to match. Under `drive.file` the
+        listing only ever sees folders this app created anyway.
+        """
+        called = " ".join(str(name or "").split())
+        if not called:
+            return self._folder
+        safe = called.replace("\\", "\\\\").replace("'", "\\'")
+        try:
+            reply = self._client.get(
+                FILES,
+                params={
+                    "q": (
+                        f"name = '{safe}' and '{self._folder}' in parents "
+                        f"and mimeType = '{A_FOLDER}' and trashed = false"
+                    ),
+                    "fields": "files(id,name)",
+                    "pageSize": 1,
+                },
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+            )
+        except httpx.HTTPError as exc:
+            raise DriveError(f"Couldn't reach Drive: {exc}") from exc
+        if reply.status_code < 400:
+            found = (reply.json().get("files") or [])
+            if found and found[0].get("id"):
+                return str(found[0]["id"])
+        elif reply.status_code >= 500:
+            raise DriveError(f"Drive said {reply.status_code} looking for that folder.")
+        # A 4xx on the lookup is not fatal on its own - the create below says
+        # the same thing in a sentence that names the folder.
+
+        try:
+            made = self._client.post(
+                FILES,
+                params={"fields": "id"},
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+                json={
+                    "name": called, "mimeType": A_FOLDER,
+                    "parents": [self._folder],
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise DriveError(f"Couldn't reach Drive: {exc}") from exc
+        if made.status_code >= 400:
+            raise DriveError(self._refused(made.status_code, made.text))
+        got = str((made.json() or {}).get("id") or "")
+        if not got:
+            raise DriveError("Drive made that folder but sent no id back.")
+        return got
+
+    def _refused(self, code: int, body: str) -> str:
+        """Why Drive said no, in a sentence that says what to change."""
+        if code == 403:
+            return (
+                "Drive refused that: "
+                + (why_refused(body) or "no reason given")
+                + "\n-# If that mentions a scope, the one it wants is "
+                "https://www.googleapis.com/auth/drive.file. If it mentions "
+                "permission, CLIENTS_DRIVE_FOLDER is not shared with the "
+                "account the token was minted for."
+            )
+        if code == 404:
+            return (
+                f"Drive has no folder {self._folder}. Check CLIENTS_DRIVE_FOLDER "
+                "in .env is the folder's link or its id."
+            )
+        return f"Drive said {code}: {body[:200]}"
+
+    def put(self, path: Path, *, name: str = "", into: str = "") -> Uploaded:
+        """Upload one file into the configured folder, or one inside it.
 
         Multipart in one request: the metadata that says which folder, then
         the bytes. A resumable upload would be the right thing for something
@@ -112,7 +196,9 @@ class DriveClient:
 
         called = name or where.name
         kind = mimetypes.guess_type(called)[0] or "application/octet-stream"
-        meta = json.dumps({"name": called, "parents": [self._folder]})
+        meta = json.dumps({
+            "name": called, "parents": [(into or "").strip() or self._folder],
+        })
         try:
             reply = self._client.post(
                 UPLOAD,
@@ -126,22 +212,8 @@ class DriveClient:
         except httpx.HTTPError as exc:
             raise DriveError(f"Couldn't reach Drive: {exc}") from exc
 
-        if reply.status_code == 403:
-            raise DriveError(
-                "Drive refused that: "
-                + (why_refused(reply.text) or "no reason given")
-                + "\n-# If that mentions a scope, the one it wants is "
-                "https://www.googleapis.com/auth/drive.file. If it mentions "
-                "permission, CLIENTS_DRIVE_FOLDER is not shared with the "
-                "account the token was minted for."
-            )
-        if reply.status_code == 404:
-            raise DriveError(
-                f"Drive has no folder {self._folder}. Check CLIENTS_DRIVE_FOLDER "
-                "in .env is the folder's link or its id."
-            )
         if reply.status_code >= 400:
-            raise DriveError(f"Drive said {reply.status_code}: {reply.text[:200]}")
+            raise DriveError(self._refused(reply.status_code, reply.text))
 
         got = reply.json()
         return Uploaded(file_id=str(got.get("id") or ""), name=str(got.get("name") or called))

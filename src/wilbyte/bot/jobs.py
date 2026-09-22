@@ -4948,12 +4948,18 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
     return tab, []
 
 
-def keep_the_picture(config: Config, page: str, called: str) -> tuple[str, list[str]]:
+def keep_the_picture(
+    config: Config, page: str, called: str, *, into: str = "",
+) -> tuple[str, list[str]]:
     """Photograph a conversation and put it in Drive. (link, problems).
 
     The channel is about to stop existing, so this is the only copy there will
     be of what was said in it - which is why it is a picture rather than a
     paragraph somebody wrote about it.
+
+    `into` is the client's own folder inside the one from .env, so what is
+    kept reads as their conversation rather than as loose pictures with every
+    other client's mixed in.
     """
     import tempfile
 
@@ -4968,14 +4974,27 @@ def keep_the_picture(config: Config, page: str, called: str) -> tuple[str, list[
         except Exception as exc:
             return "", [f"Couldn't render the conversation: {_short(exc, 140)}"]
 
+        trouble = []
         try:
             with drive.open_drive(config.secrets) as uploading:
-                got = uploading.put(png_path, name=called)
+                theirs = ""
+                if into:
+                    try:
+                        theirs = uploading.folder_named(into)
+                    except Exception as exc:
+                        # Into the top folder rather than nowhere. A picture
+                        # in the wrong place is something to tidy up; a
+                        # channel deleted without one is gone.
+                        trouble.append(
+                            f"Couldn't make their folder, so this went in the "
+                            f"top one: {_short(exc, 120)}"
+                        )
+                got = uploading.put(png_path, name=called, into=theirs)
         except drive.DriveError as exc:
             return "", [str(exc)]
         except Exception as exc:
             return "", [f"Couldn't upload to Drive: {_short(exc, 140)}"]
-    return got.link(), []
+    return got.link(), trouble
 
 
 #: Wide enough that a line of conversation is not wrapped into noise, and the

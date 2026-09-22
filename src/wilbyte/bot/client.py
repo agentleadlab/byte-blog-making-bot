@@ -2325,17 +2325,27 @@ async def _clear_out(
         # Said rather than left out. A run with no picture line at all reads
         # exactly like one where the upload quietly failed.
         kept.append("-# No picture — there was nothing in the channel to draw.")
-    for where, group in groups:
+    for number, (where, group) in enumerate(groups, start=1):
         picture, trouble = await asyncio.to_thread(
-            jobs.keep_the_picture, config,
-            clearout.as_page(plan, group),
-            clearout.picture_name(plan, when=today, where=where),
+            partial(
+                jobs.keep_the_picture, config,
+                clearout.as_page(plan, group),
+                clearout.picture_name(
+                    plan, when=today, where=where, order=number,
+                ),
+                into=clearout.their_folder(plan),
+            )
         )
         named = f"#{where}" if where else "Picture"
         kept.append(
             f"✅ {named} → <{picture}>" if picture
             else f"⚠ {named} — " + "; ".join(trouble)
         )
+        # Said even when the upload worked. It came back with a link and a
+        # complaint, and dropping the complaint because there was a link is
+        # how a picture ends up in the wrong folder with nobody told.
+        if picture and trouble:
+            kept += [f"-# {one}" for one in trouble]
     kept += [f"-# {one}" for one in looked]
 
     # Only once both are kept. The whole point of the order is that a channel

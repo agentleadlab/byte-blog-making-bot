@@ -409,18 +409,40 @@ def by_channel(messages: list) -> list:
     return list(groups.items())
 
 
-def picture_name(plan: Plan, *, when: datetime, where: str = "") -> str:
+def their_folder(plan: Plan) -> str:
+    """The folder in Drive that is theirs.
+
+    A folder each, inside the one from .env - "it should add it here as a
+    conversation". Opening it shows one client's conversation rather than a
+    heap of loose pictures with every other client's mixed in.
+
+    Named after who they are in the server rather than after what was typed
+    to find them. "artur rushiti", "Artur Rushiti" and "artur_rushiti-vet"
+    all find the same person, and three spellings of one name is three
+    folders.
+    """
+    who = str(plan.member_name or "").strip() or plan.name
+    return re.sub(r"[^\w .-]+", "", who).strip() or "agent"
+
+
+def picture_name(
+    plan: Plan, *, when: datetime, where: str = "", order: int = 0,
+) -> str:
     """What the picture is called in Drive.
 
-    The channel is in the name because there is now one picture per channel,
-    and two files called the same thing on the same day are two files nobody
-    can tell apart.
+    Numbered, because Drive sorts by name and a conversation out of order is
+    not a conversation. The channel is in it because there is one picture per
+    channel, and two files called the same thing on the same day are two
+    files nobody can tell apart.
+
+    Their name stays on the file as well as on the folder. When their folder
+    could not be made the picture goes in the top one instead, and a file
+    that says only "1 — ring-da-bell" is a file nobody can place.
     """
     safe = re.sub(r"[^\w .-]+", "", plan.name).strip() or "agent"
     said = re.sub(r"[^\w .-]+", "", str(where or "")).strip()
-    if said:
-        return f"{safe} — {said} — {when:%Y-%m-%d}.png"
-    return f"{safe} — {when:%Y-%m-%d}.png"
+    parts = ([str(order)] if order else []) + [safe] + ([said] if said else [])
+    return " — ".join(parts) + f" — {when:%Y-%m-%d}.png"
 
 
 #: The colours of the real thing, sampled off a screenshot of the channel

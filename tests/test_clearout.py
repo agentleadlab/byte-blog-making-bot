@@ -1967,8 +1967,8 @@ def test_the_picture_reaches_drive_and_is_reported(monkeypatch):
     is still there in six months when the channel is not."""
     taken = {}
 
-    def photographing(config, page, called):
-        taken["page"], taken["called"] = page, called
+    def photographing(config, page, called, *, into=""):
+        taken["page"], taken["called"], taken["into"] = page, called, into
         return "https://drive.google.com/file/d/abc", []
 
     monkeypatch.setattr(
@@ -1988,7 +1988,7 @@ def test_a_picture_that_would_not_upload_does_not_stop_the_delete(monkeypatch):
     are what the order of this exists to protect."""
     monkeypatch.setattr(
         __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
-        lambda config, page, called: ("", ["Chromium isn't installed"]),
+        lambda config, page, called, **kw: ("", ["Chromium isn't installed"]),
     )
     _guild, channel, said, _buttons = _closing(
         monkeypatch, says=[True, True], in_channel="got them, thanks",
@@ -2168,8 +2168,8 @@ def test_one_picture_goes_to_drive_for_each_channel(monkeypatch):
         lambda config, plan, *, when: ("Ryte Collection", []),
     )
 
-    def photographing(config, page, called):
-        taken.append((called, page))
+    def photographing(config, page, called, *, into=""):
+        taken.append((called, page, into))
         return f"https://drive/{len(taken)}.png", []
 
     monkeypatch.setattr(bot_client.jobs, "keep_the_picture", photographing)
@@ -2203,11 +2203,17 @@ def test_one_picture_goes_to_drive_for_each_channel(monkeypatch):
     whole = "\n".join(said)
 
     assert len(taken) == 2, "one tall picture of two channels is a picture of neither"
-    names = [one for one, _ in taken]
+    names = [one for one, _, _ in taken]
     assert "ring-da-bell" in names[0] and names[0].endswith(".png")
     assert "artur_rushiti-vet" in names[1] and names[1].endswith(".png")
     assert names[0] != names[1], "two files nobody can tell apart"
     assert "$1548 ethos aged 6/7" in taken[0][1]
+    assert {one for _, _, one in taken} == {"artur.rushiti"}, (
+        "the pictures went anywhere but the folder that is theirs"
+    )
+    assert names[0].startswith("1 — ") and names[1].startswith("2 — "), (
+        "Drive sorts by name, and a conversation out of order is not one"
+    )
     assert "$1548" not in taken[1][1], "the sale ended up in the wrong picture"
     assert "#ring-da-bell → <https://drive/1.png>" in whole
     assert "#artur_rushiti-vet → <https://drive/2.png>" in whole
@@ -2218,10 +2224,99 @@ def test_a_channel_with_nothing_in_it_says_so_rather_than_going_quiet(monkeypatc
     upload quietly failed."""
     monkeypatch.setattr(
         __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
-        lambda config, page, called: ("https://drive/p.png", []),
+        lambda config, page, called, **kw: ("https://drive/p.png", []),
     )
     _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
     whole = "\n".join(said)
 
     assert "nothing in the channel to draw" in whole
     assert "https://drive/p.png" not in whole
+
+
+# --------------- a folder each, and a fallback when there isn't one
+
+
+def test_the_folder_is_named_after_who_they_are_not_what_was_typed():
+    """"artur rushiti", "Artur Rushiti" and "artur_rushiti-vet" all find the
+    same person, and three spellings of one name is three folders."""
+    plan = clearout.Plan(name="artur_rushiti-vet", member_name="artur.rushiti")
+
+    assert clearout.their_folder(plan) == "artur.rushiti"
+
+
+def test_a_client_who_is_not_in_the_server_still_gets_a_folder():
+    assert clearout.their_folder(clearout.Plan(name="artur rushiti")) == "artur rushiti"
+
+
+def test_a_folder_name_is_never_empty_and_never_a_path():
+    assert clearout.their_folder(clearout.Plan(name="///")) == "agent"
+    assert "/" not in clearout.their_folder(clearout.Plan(name="Jay / Rodriguez"))
+
+
+def test_a_picture_is_numbered_so_the_conversation_is_in_order():
+    said = clearout.picture_name(
+        _plan(), when=datetime(2026, 9, 22), where="ring-da-bell", order=2,
+    )
+
+    assert said == "2 — Jay Rodriguez — ring-da-bell — 2026-09-22.png"
+
+
+def test_their_name_stays_on_the_file_as_well_as_the_folder():
+    """When their folder could not be made the picture goes in the top one
+    instead, and a file that says only "1 — ring-da-bell" is unplaceable."""
+    said = clearout.picture_name(_plan(), when=datetime(2026, 9, 22), order=1)
+
+    assert "Jay Rodriguez" in said
+
+
+def test_a_folder_that_cannot_be_made_does_not_lose_the_picture(monkeypatch):
+    """A picture in the wrong place is something to tidy up; a channel
+    deleted without one is gone."""
+    from wilbyte import drive
+    from wilbyte.bot import jobs
+
+    put = {}
+
+    class Refusing:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def folder_named(self, name):
+            raise drive.DriveError("Drive refused that")
+
+        def put(self, path, *, name="", into=""):
+            put["into"] = into
+            return drive.Uploaded(file_id="f1", name=name)
+
+    monkeypatch.setattr(jobs, "_photograph", lambda html, png: png.write_bytes(b"x"))
+    monkeypatch.setattr(drive, "open_drive", lambda secrets: Refusing())
+
+    link, trouble = jobs.keep_the_picture(
+        SimpleNamespace(secrets=None), "<html>", "1 — Artur.png", into="Artur",
+    )
+
+    assert link, "the picture was thrown away because a folder could not be made"
+    assert put["into"] == ""
+    assert any("top one" in one for one in trouble)
+
+
+def test_a_picture_that_landed_in_the_wrong_folder_is_still_reported(monkeypatch):
+    """It came back with a link and a complaint, and dropping the complaint
+    because there was a link is how a picture ends up somewhere nobody looks."""
+    monkeypatch.setattr(
+        __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
+        lambda config, page, called, **kw: (
+            "https://drive/p.png", ["Couldn't make their folder, so this went "
+                                    "in the top one: Drive refused that"]
+        ),
+    )
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], in_channel="got them, thanks",
+    )
+    whole = "\n".join(said)
+
+    assert "https://drive/p.png" in whole
+    assert "went in the top one" in whole
