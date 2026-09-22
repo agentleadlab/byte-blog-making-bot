@@ -238,7 +238,45 @@ def code_in(text: str) -> str:
         for found in _CODE.finditer(where):
             if found.group(1) in CODES:
                 return found.group(1)
-    return ""
+    return _code_named(said)
+
+
+def _plainly(said: str) -> str:
+    """Text flattened enough to compare a code's name against.
+
+    Dashes first. The acquirer writes "Other Fraud - Card Absent Environment"
+    with a hyphen and the notice is pasted with an en dash, and those are the
+    same words as far as anybody reading them is concerned.
+    """
+    flat = str(said or "")
+    for dash in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212":
+        flat = flat.replace(dash, "-")
+    return " ".join(flat.replace("-", " - ").split()).casefold()
+
+
+def _code_named(said: str) -> str:
+    """The code whose name is written out in the text, or "".
+
+    A dispute is as often named as numbered. Franklin asked for David
+    Pereira's rebuttal with "Code: Other Fraud - Card Absent Environment" and
+    no digits at all; that is 10.4, a fraud code, and finding nothing built
+    him a document arguing what was delivered - which for a fraud claim, in
+    this file's own words, concedes the point.
+
+    The longest name that fits, so a code whose name contains another's does
+    not lose to it.
+    """
+    flat = _plainly(said)
+    if not flat:
+        return ""
+    found = [
+        (len(_plainly(name)), code) for code, (name, *_rest) in CODES.items()
+        if _plainly(name) and _plainly(name) in flat
+    ]
+    # Ties keep the order they are written in above, where the fullest entry
+    # comes first: "No Cardholder Authorization" is the name of both 37 and
+    # 4837, and 37 is the one that spells out what answers it.
+    return max(found, key=lambda one: one[0])[1] if found else ""
 
 
 def what_the_code_means(code: str) -> tuple[str, str, str] | None:

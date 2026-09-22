@@ -2187,3 +2187,64 @@ def test_the_duplicate_is_dropped_where_the_exhibits_are_lettered():
 
     assert "only_once(" in source
     assert source.index("only_once(") < source.index("client.messages.create")
+
+
+# ------------------- a dispute is as often named as it is numbered
+
+
+def test_a_code_written_out_in_words_is_still_the_code():
+    """Franklin asked for David Pereira's rebuttal with "Code: Other Fraud -
+    Card Absent Environment" and no digits at all. Finding nothing built him
+    a document arguing what was delivered, which for a fraud claim concedes
+    the point."""
+    assert rebuttal.code_in("Code: Other Fraud – Card Absent Environment") == "10.4"
+
+
+def test_an_en_dash_is_the_same_word_as_a_hyphen():
+    """The acquirer writes a hyphen and the notice is pasted with an en
+    dash."""
+    assert rebuttal.code_in("Other Fraud - Card Absent Environment") == "10.4"
+    assert rebuttal.code_in("Other Fraud — Card Absent Environment") == "10.4"
+
+
+def test_the_number_still_wins_when_there_is_one():
+    assert rebuttal.code_in("Code: 13.3 - Other Fraud - Card Absent") == "13.3"
+
+
+def test_a_name_two_codes_share_gives_the_one_that_says_most():
+    """"No Cardholder Authorization" is the name of both 37 and 4837, and 37
+    is the entry that spells out what answers it."""
+    assert rebuttal.code_in("Code: No Cardholder Authorization") == "37"
+
+
+def test_the_longest_name_that_fits_wins():
+    assert rebuttal.code_in("Merchandise/Services Not Received") == "13.1"
+
+
+def test_a_notice_naming_no_code_still_names_none():
+    """Guessing one is worse than not having it: the document is built around
+    whichever question it is told to answer."""
+    assert rebuttal.code_in("Customer says the leads were rubbish") == ""
+    assert rebuttal.code_in("") == ""
+
+
+def test_the_named_code_reaches_what_answers_it():
+    found = rebuttal.what_the_code_means(
+        rebuttal.code_in("Code: Other Fraud – Card Absent Environment")
+    )
+
+    assert found is not None
+    assert "who paid" in found[2]
+
+
+def test_the_specific_reason_beats_the_category_it_sits_under():
+    """An acquirer's notice names the bucket and then the reason: "Dispute
+    Category: Cardholder Dispute" over "Reason: Not as Described or Defective
+    Merchandise/Services". Answering the category writes a document aimed at
+    nothing in particular."""
+    said = rebuttal.code_in(
+        "Dispute Category: Cardholder Dispute\n"
+        "Reason: Not as Described or Defective Merchandise/Services"
+    )
+
+    assert said == "13.3"
