@@ -3971,8 +3971,8 @@ def test_blue_collar_written_out_is_the_same_as_bc():
     a known lead word and "BLUE COLLAR" was not, so the confirmation was read
     from the IUL onwards - the two words naming which IUL thrown away - and
     compared against "24 BC" as though they were different leads."""
-    assert agents._from_the_leads("TEXT VERIFIED BLUE COLLAR IUL") == (
-        "BLUE COLLAR IUL"
+    assert "BLUE COLLAR IUL" in agents._from_the_leads(
+        "TEXT VERIFIED BLUE COLLAR IUL"
     )
     assert agents.wrong_setup(
         "24 BC",
@@ -3988,3 +3988,55 @@ def test_a_genuinely_different_family_is_still_caught():
     )
 
     assert said is not None
+
+
+# ------------------ a top-up written the way Travis Harvey's card writes it
+
+
+TOPPED_UP = """New Client Onboarded --
+
+First Name: Travis
+Last Name: Harvey
+Lead Package: OTP VETS
+
+30 OTP VETS
+
+FEARLESS
+
+RINGY AND SEND BLUE INTEGRAION
+FOR SENDBLUE: harvey.fearlessshepherds@gmail.com
+
+ADD THIS TO HIS CURRENT ORDER"""
+
+
+def test_add_this_to_his_current_order_is_a_day():
+    """Travis Harvey's card carries no date at all - adding to an order that
+    is already running is the same-day job. "this" was not among the words
+    allowed between "add" and "to", so the card read as one nobody had dated
+    and he was never filed."""
+    assert agents.find_launch(TOPPED_UP, today=date(2026, 9, 22)) == (
+        date(2026, 9, 22)
+    )
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["ADD THIS TO HIS CURRENT ORDER", "add to his active order",
+     "add these to his order", "add that to her existing order",
+     "ADD THE LEADS TO HIS CURRENT ORDER", "added it to his order"],
+)
+def test_the_ways_a_top_up_is_written(said):
+    assert bool(agents.ADD_TO_ORDER.search(said.lower())) is True
+
+
+@pytest.mark.parametrize(
+    "said", ["add him to the ads card", "add a checklist to the card"],
+)
+def test_adding_something_that_is_not_leads_is_not_a_top_up(said):
+    assert bool(agents.ADD_TO_ORDER.search(said.lower())) is False
+
+
+def test_sendblue_is_a_tool_not_an_order():
+    """"RINGY AND SEND BLUE INTEGRAION" was read as an order for blue collar
+    leads the moment "blue" became a lead word on its own."""
+    assert agents.stated_orders(TOPPED_UP) == "30 OTP VETS"

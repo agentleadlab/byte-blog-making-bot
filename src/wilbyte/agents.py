@@ -175,7 +175,11 @@ FAMILIES = (
             # onwards - the two words naming which IUL thrown away - and
             # compared against Prestyn Redd's "24 BC" as though they were
             # different leads.
-            r"|\bblue\b",
+            #
+            # Both words, not just the first. "blue" on its own read "RINGY
+            # AND SEND BLUE INTEGRAION" on Travis Harvey's card as an order
+            # for blue collar leads - Sendblue is the SMS tool, not a product.
+            r"|\bblue\s+collar\b",
             re.IGNORECASE,
         ),
     ),
@@ -1342,12 +1346,29 @@ _LEAD_WORDS = tuple(pattern for _name, pattern in FAMILIES + QUALIFIERS) + (
 
 
 def _from_the_leads(phrase: str) -> str:
-    """The phrase from its first lead-type word onwards."""
-    words = (phrase or "").split()
-    for at, word in enumerate(words):
-        if any(pattern.search(word) for pattern in _LEAD_WORDS):
-            return " ".join(words[at:])
-    return ""
+    """The phrase from where its lead type starts, or "".
+
+    Searched over the whole phrase rather than word by word, so a lead type
+    written as two words is found where it begins. "BLUE COLLAR IUL" could
+    not match a single word, so the phrase was read from the IUL onwards and
+    the two words saying which IUL were thrown away.
+
+    Earliest wins, which means a tier at the front comes with it: "TEXT
+    VERIFIED BLUE COLLAR IUL" is returned whole. That is what the
+    confirmation said, and the comparison already knows a tier named by only
+    one side is not a disagreement.
+    """
+    said = phrase or ""
+    at = min(
+        (
+            found.start()
+            for pattern in _LEAD_WORDS
+            for found in [pattern.search(said)]
+            if found
+        ),
+        default=None,
+    )
+    return said[at:].strip() if at is not None else ""
 
 
 def setup_said(comments) -> str:
@@ -1515,8 +1536,15 @@ ASAP = re.compile(
 # "order" is not always the word: Sebastian Salas's card says "add it to his
 # current once fulfilled", and reading that as a card somebody forgot to date
 # left fifty veteran leads waiting for an answer.
+#: What can sit between "add" and "to". Travis Harvey's card says "ADD THIS
+#: TO HIS CURRENT ORDER", and "this" was not among them - so the card read as
+#: one nobody had dated and he was never filed. Written once and used by both
+#: this phrase and the launch sentences below, which carried the same list
+#: with the same hole in it.
+_ADDING = r"(?:it|them|these|this|that|those|him|her|the\s+leads?)\s+"
+
 ADD_TO_ORDER = re.compile(
-    r"\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+|him\s+|her\s+)?"
+    rf"\badd(?:ed|ing)?\s+(?:{_ADDING})?"
     r"to\b[^.\n]*\b(?:order|current|existing|active|batch|list)\b"
     r"|\bonce\s+(?:it\s+is\s+|its\s+|it's\s+)?fulfill?ed\b"
     r"|\bwhen\s+(?:it\s+is\s+|its\s+|it's\s+)?fulfill?ed\b"
@@ -1542,7 +1570,7 @@ _WHEN_SAID = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"[^.\n]*\badd(?:ed|ing)?\s+(?:it\s+|them\s+|these\s+)?to\b[^.\n]*\border\b[^.\n]*",
+        rf"[^.\n]*\badd(?:ed|ing)?\s+(?:{_ADDING})?to\b[^.\n]*\border\b[^.\n]*",
         re.IGNORECASE,
     ),
     re.compile(r"[^.\n]*\blive\b[^.\n]*", re.IGNORECASE),
