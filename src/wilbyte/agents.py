@@ -169,7 +169,13 @@ FAMILIES = (
         "iul",
         re.compile(
             r"\biuls?\b|\bsiul\b|\bbc\b|\btruckers?\b|\bascend\b"
-            r"|\bindex(?:ed)?\s+universal\s+life\b",
+            r"|\bindex(?:ed)?\s+universal\s+life\b"
+            # Written out. "BC" was known and "BLUE COLLAR" was not, so
+            # Therese's "TEXT VERIFIED BLUE COLLAR IUL" was read from the IUL
+            # onwards - the two words naming which IUL thrown away - and
+            # compared against Prestyn Redd's "24 BC" as though they were
+            # different leads.
+            r"|\bblue\b",
             re.IGNORECASE,
         ),
     ),

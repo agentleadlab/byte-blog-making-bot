@@ -3963,3 +3963,28 @@ def test_something_unreadable_that_is_not_a_day_is_still_reported():
     """"25" on its own is not an order either, but it is also not a day, and
     something RYTE cannot read has to keep being said out loud."""
     assert agents.order_parts("25") == ["25"]
+
+
+def test_blue_collar_written_out_is_the_same_as_bc():
+    """Prestyn Redd ordered "BC IUL", 24 BC leads, and Therese confirmed
+    "TEXT VERIFIED BLUE COLLAR IUL ON DISTRO HUB setup is complete". "BC" was
+    a known lead word and "BLUE COLLAR" was not, so the confirmation was read
+    from the IUL onwards - the two words naming which IUL thrown away - and
+    compared against "24 BC" as though they were different leads."""
+    assert agents._from_the_leads("TEXT VERIFIED BLUE COLLAR IUL") == (
+        "BLUE COLLAR IUL"
+    )
+    assert agents.wrong_setup(
+        "24 BC",
+        ["TEXT VERIFIED BLUE COLLAR IUL ON DISTRO HUB setup is complete"],
+    ) is None
+
+
+def test_a_genuinely_different_family_is_still_caught():
+    """The check is worth nothing if widening it silences it."""
+    said = agents.wrong_setup(
+        "24 BC IUL",
+        ["OTP FINAL EXPENSE ON DISTRO HUB setup is complete"],
+    )
+
+    assert said is not None
