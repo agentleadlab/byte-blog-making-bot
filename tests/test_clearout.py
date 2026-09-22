@@ -2448,7 +2448,7 @@ def test_the_picture_is_cut_to_what_is_on_it(monkeypatch, tmp_path):
 
     from wilbyte.bot import jobs
 
-    sized = []
+    sized, asked = [], []
 
     class Page:
         def goto(self, where):
@@ -2458,7 +2458,14 @@ def test_the_picture_is_cut_to_what_is_on_it(monkeypatch, tmp_path):
             pass
 
         def evaluate(self, script):
-            return 214.3
+            # What Chromium really answers for this page. The document
+            # element is never shorter than the viewport, whatever is on it;
+            # the body is the content. Measured off the real thing, because
+            # reasoning about it is how the empty purple got there twice.
+            asked.append(script)
+            if "documentElement" in script:
+                return 1200
+            return 276.4
 
         def set_viewport_size(self, size):
             sized.append(size)
@@ -2497,4 +2504,9 @@ def test_the_picture_is_cut_to_what_is_on_it(monkeypatch, tmp_path):
     html.write_text("<html></html>", encoding="utf-8")
     jobs._photograph(html, tmp_path / "convo.png")
 
-    assert sized[-1] == {"width": jobs.PICTURE_WIDTH, "height": 215}
+    assert sized[-1] == {"width": jobs.PICTURE_WIDTH, "height": 277}, (
+        "the viewport height leaked back into the measurement"
+    )
+    assert "documentElement" not in " ".join(asked), (
+        "asked the one thing that always answers with the viewport height"
+    )

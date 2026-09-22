@@ -5024,9 +5024,15 @@ def _photograph(html_path: Path, png_path: Path) -> None:
             # Cut to what is on it. `full_page` is never shorter than the
             # viewport, so three messages came out as three messages and a
             # thousand pixels of empty purple underneath them.
+            #
+            # The body, and only the body. `documentElement.scrollHeight` is
+            # never less than the viewport - asked of this very page it says
+            # 1200 where the body says 277 - so taking the larger of the two
+            # was asking the question and then throwing the answer away.
             tall = page.evaluate(
-                "Math.ceil(Math.max(document.documentElement.scrollHeight,"
-                " document.body ? document.body.scrollHeight : 0))"
+                "Math.ceil(document.body ? Math.max("
+                "document.body.scrollHeight,"
+                " document.body.getBoundingClientRect().bottom) : 0)"
             )
             # Rounded up here as well as in the page. Rounding down loses the
             # bottom of the last message, which is the one worth reading.
