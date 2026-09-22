@@ -2313,17 +2313,29 @@ async def _clear_out(
     if forwarded:
         kept.append(f"✅ {len(shown)} message(s) posted above.")
 
-    # And a picture of them in Drive, drawn the way Discord draws them. The
-    # messages above are for screenshotting now; this is the copy that is
+    # And pictures of them in Drive, drawn the way Discord draws them. The
+    # messages above are for screenshotting now; these are the copy that is
     # still there in six months when the channel is not.
-    picture, trouble = await asyncio.to_thread(
-        jobs.keep_the_picture, config,
-        clearout.as_page(plan, shown or clearout.the_feed(messages)),
-        clearout.picture_name(plan, when=today),
-    )
-    kept.append(
-        f"✅ Picture → <{picture}>" if picture else "⚠ " + "; ".join(trouble)
-    )
+    #
+    # One per channel - "so itll be like 3 ss in total or smthing like that".
+    # Their own channel and the sales they rang in ring-da-bell are two
+    # different screenshots to the person who would have taken them by hand.
+    groups = clearout.by_channel(shown or clearout.the_feed(messages))
+    if not groups:
+        # Said rather than left out. A run with no picture line at all reads
+        # exactly like one where the upload quietly failed.
+        kept.append("-# No picture — there was nothing in the channel to draw.")
+    for where, group in groups:
+        picture, trouble = await asyncio.to_thread(
+            jobs.keep_the_picture, config,
+            clearout.as_page(plan, group),
+            clearout.picture_name(plan, when=today, where=where),
+        )
+        named = f"#{where}" if where else "Picture"
+        kept.append(
+            f"✅ {named} → <{picture}>" if picture
+            else f"⚠ {named} — " + "; ".join(trouble)
+        )
     kept += [f"-# {one}" for one in looked]
 
     # Only once both are kept. The whole point of the order is that a channel
@@ -2711,6 +2723,17 @@ def _reacted(message) -> str:
     return " · ".join(found)
 
 
+def _face(author) -> str:
+    """Their profile picture's url, or "".
+
+    `display_avatar` is the one Discord actually shows - their server
+    picture, their account picture, or the default one it draws for people
+    who never set either - so there is always something to fetch.
+    """
+    face = getattr(author, "display_avatar", None)
+    return str(getattr(face, "url", "") or face or "")
+
+
 def _as_said(message, where: str):
     """One Discord message as the picture's own shape."""
     from .. import clearout
@@ -2725,6 +2748,7 @@ def _as_said(message, where: str):
         at=getattr(message, "created_at", None),
         where=where,
         reactions=_reacted(message),
+        avatar=_face(author),
     )
 
 
@@ -2788,7 +2812,7 @@ async def _fill_the_bell(guild, channels) -> tuple[dict, list[str]]:
                     when=f"{at:%b %d, %Y %H:%M}" if at else "",
                     text=text, where=str(one.name),
                     at=at.isoformat() if at else "",
-                    reactions=_reacted(said),
+                    reactions=_reacted(said), avatar=_face(author),
                 )
             bell.read_to(data, one.channel_id, newest)
             if count:
@@ -2831,6 +2855,7 @@ async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
             text=str(one.get("text") or ""), where=str(one.get("where") or ""),
             at=_as_when(one.get("at")),
             reactions=str(one.get("reactions") or ""),
+            avatar=str(one.get("avatar") or ""),
         )
         for one in bell.theirs(data, getattr(member, "id", ""))
     ]

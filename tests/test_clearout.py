@@ -1975,7 +1975,9 @@ def test_the_picture_reaches_drive_and_is_reported(monkeypatch):
         __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
         photographing,
     )
-    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], in_channel="got them, thanks",
+    )
 
     assert "https://drive.google.com/file/d/abc" in "\n".join(said)
     assert taken["called"].endswith(".png")
@@ -1988,7 +1990,238 @@ def test_a_picture_that_would_not_upload_does_not_stop_the_delete(monkeypatch):
         __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
         lambda config, page, called: ("", ["Chromium isn't installed"]),
     )
-    _guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True])
+    _guild, channel, said, _buttons = _closing(
+        monkeypatch, says=[True, True], in_channel="got them, thanks",
+    )
 
     assert channel.deleted is True
     assert "Chromium isn't installed" in "\n".join(said)
+
+
+# --------------- whose face is on it
+
+
+def test_their_profile_picture_comes_off_the_message():
+    """A Discord message without one does not look like a Discord message."""
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    said = bot_client._as_said(
+        NS(id=11, created_at=datetime(2026, 5, 8), content="$1548 ethos aged 6/7",
+           embeds=[], attachments=[], reactions=[],
+           author=NS(display_name="Artur | NOVA |", bot=False,
+                     display_avatar=NS(url="https://cdn.discordapp.com/a/7.png"))),
+        "ring-da-bell",
+    )
+
+    assert said.avatar == "https://cdn.discordapp.com/a/7.png"
+
+
+def test_somebody_with_no_picture_is_not_an_error():
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    assert bot_client._face(NS()) == ""
+    assert bot_client._face(None) == ""
+
+
+def test_the_face_is_remembered_and_comes_back_with_them(monkeypatch, tmp_path):
+    """The bell is read once and looked up afterwards, so a face that is not
+    kept in it is a face the picture never has."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+
+    class Bell:
+        async def history(self, **how):
+            yield NS(
+                id=11, created_at=datetime(2026, 5, 8),
+                content="$1548 ethos aged 6/7", embeds=[], attachments=[],
+                reactions=[],
+                author=NS(id=7, display_name="Artur | NOVA |", bot=False,
+                          display_avatar=NS(url="https://cdn.discordapp.com/a/7.png")),
+            )
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    found, _notes = asyncio.run(bot_client._also_said(
+        NS(id=3, me=object(), get_channel=lambda cid: Bell()), NS(id=7),
+        [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert [one.avatar for one in found] == ["https://cdn.discordapp.com/a/7.png"]
+
+
+def test_the_face_is_on_the_page():
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="Artur | NOVA |", when="May 08", text="$1548 ethos",
+                      avatar="https://cdn.discordapp.com/a/7.png"),
+    ])
+
+    assert "src='https://cdn.discordapp.com/a/7.png'" in page
+    assert "class='pfp blank'" not in page
+
+
+def test_no_face_is_a_plain_circle_rather_than_a_gap():
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="artur.rushiti", when="May 24", text="got them, thanks"),
+    ])
+
+    assert "class='pfp blank'" in page
+    assert "<img class='pfp'" not in page
+
+
+def test_a_face_that_will_not_load_becomes_the_plain_circle():
+    """An avatar url remembered in May is gone the moment they change their
+    picture, and a broken-image mark in the middle of the screenshot is worse
+    than no picture at all."""
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="Artur", when="May 08", text="hi", avatar="https://x/a.png"),
+    ])
+
+    assert "onerror" in page
+    assert "classList.add('blank')" in page
+
+
+def test_an_avatar_url_cannot_break_out_of_the_tag():
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="Jay", when="", text="hi",
+                      avatar="x' onerror='alert(1)"),
+    ])
+
+    assert "onerror='alert(1)" not in page
+
+
+# --------------- one picture per channel, not one tall one
+
+
+def test_the_messages_are_split_by_the_channel_they_were_said_in():
+    """A client's own channel and the sales they rang in ring-da-bell are two
+    different screenshots to the person who would have taken them by hand."""
+    groups = clearout.by_channel([
+        clearout.Said(who="artur", when="May 08", text="$1548",
+                      where="ring-da-bell"),
+        clearout.Said(who="artur", when="May 24", text="thanks",
+                      where="artur_rushiti-vet"),
+        clearout.Said(who="artur", when="May 25", text="$1440",
+                      where="ring-da-bell"),
+    ])
+
+    assert [where for where, _ in groups] == ["ring-da-bell", "artur_rushiti-vet"]
+    assert [one.text for one in groups[0][1]] == ["$1548", "$1440"]
+    assert [one.text for one in groups[1][1]] == ["thanks"]
+
+
+def test_messages_from_nowhere_in_particular_are_still_one_picture():
+    groups = clearout.by_channel([
+        clearout.Said(who="artur", when="May 24", text="thanks"),
+    ])
+
+    assert [where for where, _ in groups] == [""]
+
+
+def test_nothing_said_is_no_pictures_rather_than_an_empty_one():
+    assert clearout.by_channel([]) == []
+
+
+def test_the_channel_is_in_the_picture_name():
+    """Two files called the same thing on the same day are two files nobody
+    can tell apart."""
+    said = clearout.picture_name(
+        _plan(), when=datetime(2026, 9, 22), where="ring-da-bell",
+    )
+
+    assert said == "Jay Rodriguez — ring-da-bell — 2026-09-22.png"
+
+
+def test_a_channel_name_with_awkward_characters_still_makes_a_filename():
+    said = clearout.picture_name(
+        _plan(), when=datetime(2026, 9, 22), where="wins/vault: the 2nd",
+    )
+
+    assert "/" not in said and said.endswith(".png")
+
+
+def test_one_picture_goes_to_drive_for_each_channel(monkeypatch):
+    """"so itll be like 3 ss in total or smthing like that"."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    Pressed.says = [True, False]
+    channel = Channel("artur_rushiti-vet")
+    guild = Guild(channel, Member("artur.rushiti"))
+    taken = []
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    monkeypatch.setattr(
+        bot_client.jobs, "sheet_for_agent", lambda config, who: ("https://s", [])
+    )
+    monkeypatch.setattr(
+        bot_client.jobs, "collect_client",
+        lambda config, plan, *, when: ("Ryte Collection", []),
+    )
+
+    def photographing(config, page, called):
+        taken.append((called, page))
+        return f"https://drive/{len(taken)}.png", []
+
+    monkeypatch.setattr(bot_client.jobs, "keep_the_picture", photographing)
+
+    async def theirs(_channel, **kw):
+        return [clearout.Said(who="artur.rushiti", when="May 24",
+                              text="got them, thanks",
+                              at=datetime(2026, 5, 24),
+                              where="artur_rushiti-vet")], []
+
+    async def elsewhere(*a, **kw):
+        return [clearout.Said(who="Artur | NOVA |", when="May 08",
+                              text="$1548 ethos aged 6/7",
+                              at=datetime(2026, 5, 8), where="ring-da-bell")], []
+
+    monkeypatch.setattr(bot_client, "_last_said", theirs)
+    monkeypatch.setattr(bot_client, "_also_said", elsewhere)
+
+    said = []
+
+    async def send(content=None, **kw):
+        said.append(str(content or ""))
+
+    asyncio.run(bot_client._clear_out(
+        NS(get_guild=lambda where: guild), NS(send=send, requester_id=1),
+        NS(secrets=NS(discord_clients_guild_id="3"),
+           discord=NS(approval_timeout_seconds=1),
+           schedule=NS(timezone="America/Chicago")),
+        "artur_rushiti-vet",
+    ))
+    whole = "\n".join(said)
+
+    assert len(taken) == 2, "one tall picture of two channels is a picture of neither"
+    names = [one for one, _ in taken]
+    assert "ring-da-bell" in names[0] and names[0].endswith(".png")
+    assert "artur_rushiti-vet" in names[1] and names[1].endswith(".png")
+    assert names[0] != names[1], "two files nobody can tell apart"
+    assert "$1548 ethos aged 6/7" in taken[0][1]
+    assert "$1548" not in taken[1][1], "the sale ended up in the wrong picture"
+    assert "#ring-da-bell → <https://drive/1.png>" in whole
+    assert "#artur_rushiti-vet → <https://drive/2.png>" in whole
+
+
+def test_a_channel_with_nothing_in_it_says_so_rather_than_going_quiet(monkeypatch):
+    """A run with no picture line at all reads exactly like one where the
+    upload quietly failed."""
+    monkeypatch.setattr(
+        __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
+        lambda config, page, called: ("https://drive/p.png", []),
+    )
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+    whole = "\n".join(said)
+
+    assert "nothing in the channel to draw" in whole
+    assert "https://drive/p.png" not in whole

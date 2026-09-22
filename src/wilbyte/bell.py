@@ -65,7 +65,7 @@ def since(data: dict, channel_id) -> str:
 
 
 def keep(data: dict, *, author_id, message_id, who, when, text, where, at,
-         reactions: str = "") -> None:
+         reactions: str = "", avatar: str = "") -> None:
     """Remember one thing somebody said, newest last, oldest dropped."""
     said = data.setdefault("said", {})
     mine = said.setdefault(str(author_id), [])
@@ -74,6 +74,7 @@ def keep(data: dict, *, author_id, message_id, who, when, text, where, at,
     mine.append({
         "id": str(message_id), "who": who, "when": when,
         "text": text, "where": where, "at": at, "reactions": reactions,
+        "avatar": avatar,
     })
     # By when it was said rather than by when it was read: the first deep
     # read walks backwards and every catch-up walks forwards, so appending

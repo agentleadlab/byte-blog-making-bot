@@ -121,6 +121,9 @@ class Said:
     #: in ring-da-bell is the team piling onto it, and a picture of the post
     #: without them is not what was sent.
     reactions: str = ""
+    #: Their profile picture, as a url Chromium can fetch. A Discord message
+    #: without one does not look like a Discord message.
+    avatar: str = ""
 
 
 @dataclass
@@ -388,19 +391,60 @@ def to_screenshot(plan: Plan, messages: list, feed: list = ()) -> list:
     return _pages(head, lines, [])
 
 
-def picture_name(plan: Plan, *, when: datetime) -> str:
-    """What the picture is called in Drive."""
+def by_channel(messages: list) -> list:
+    """The messages grouped by where they were said. [(channel, messages)].
+
+    One picture per channel rather than one tall picture of everything -
+    "so itll be like 3 ss in total or smthing like that". A client's own
+    channel and the sales they rang in ring-da-bell are two different
+    screenshots to the person who would otherwise have taken them by hand,
+    and a single image with both in it is not a picture of either.
+
+    In the order the channels first appear, which - the messages arriving
+    sorted by when they were said - is the order they were first used.
+    """
+    groups: dict[str, list] = {}
+    for one in messages:
+        groups.setdefault(str(getattr(one, "where", "") or ""), []).append(one)
+    return list(groups.items())
+
+
+def picture_name(plan: Plan, *, when: datetime, where: str = "") -> str:
+    """What the picture is called in Drive.
+
+    The channel is in the name because there is now one picture per channel,
+    and two files called the same thing on the same day are two files nobody
+    can tell apart.
+    """
     safe = re.sub(r"[^\w .-]+", "", plan.name).strip() or "agent"
+    said = re.sub(r"[^\w .-]+", "", str(where or "")).strip()
+    if said:
+        return f"{safe} — {said} — {when:%Y-%m-%d}.png"
     return f"{safe} — {when:%Y-%m-%d}.png"
 
 
-def as_page(plan: Plan, messages: list) -> str:
-    """The conversation as a page Chromium can photograph.
+#: The colours of the real thing, sampled off a screenshot of the channel
+#: rather than guessed at - "make it like the real one like this". A purple
+#: theme, not Discord's own grey, because that is what these were sent in and
+#: a picture in the wrong colours is one somebody has to be told about.
+INK_ON_PAGE = {
+    "page": "#411A3E",
+    "bar": "#381737",
+    "said": "#EAE6EB",
+    "name": "#FBF6F9",
+    "quiet": "#B3A3B5",
+    "pill": "#4B2A4B",
+    "edge": "#5A3459",
+}
 
-    Discord's own colours and shape, as close to what the agents actually
-    sent as a page can get - "replicating as close as possible to how it was
-    sent by agents". The reactions belong on it: half of what a sale looks
-    like in ring-da-bell is the team piling onto it.
+
+def as_page(plan: Plan, messages: list) -> str:
+    """The messages as a page Chromium can photograph.
+
+    Made to look like the channel they were said in rather than like a
+    report: the avatars, the names, the times, the reactions and the colours
+    of the real thing - "replicating as close as possible to how it was sent
+    by agents".
     """
     lines = []
     for one in messages:
@@ -418,39 +462,76 @@ def as_page(plan: Plan, messages: list) -> str:
         said_in = ""
         if one.where and plan.channel and one.where != plan.channel.name:
             said_in = f"<span class='where'>#{html.escape(one.where)}</span>"
+        face = (
+            f"<img class='pfp' src='{html.escape(one.avatar, quote=True)}' alt=''>"
+            if one.avatar else "<div class='pfp blank'></div>"
+        )
         lines.append(
-            "<div class='msg'>"
+            f"<div class='msg'>{face}<div class='body'>"
             f"<div class='who'>{html.escape(one.who or 'somebody')}"
             f"<span class='when'>{html.escape(one.when or '')}</span>{said_in}</div>"
             f"<div class='what'>{text or '<em>no text</em>'}</div>"
-            "</div>"
+            "</div></div>"
         )
 
-    where = html.escape(plan.channel.name if plan.channel else plan.name)
+    where = html.escape(
+        (messages[0].where if messages and messages[0].where else "")
+        or (plan.channel.name if plan.channel else plan.name)
+    )
+    paint = INK_ON_PAGE
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
-  body {{ margin: 0; background: #313338; color: #dbdee1;
-         font: 15px/1.45 "gg sans", "Helvetica Neue", Helvetica, Arial, sans-serif; }}
-  .head {{ padding: 14px 20px; background: #2b2d31; color: #f2f3f5;
-           font-weight: 600; border-bottom: 1px solid #1f2023; }}
-  .head span {{ color: #949ba4; font-weight: 400; margin-left: 8px; }}
-  .wrap {{ padding: 12px 20px 20px; }}
-  .msg {{ padding: 8px 0; }}
-  .who {{ color: #f2f3f5; font-weight: 600; }}
-  .when {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px; }}
-  .where {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px;
-            background: #404249; border-radius: 4px; padding: 1px 6px; }}
-  .what {{ white-space: pre-wrap; word-break: break-word; }}
-  .files {{ color: #949ba4; font-size: 13px; font-style: italic; }}
-  .react {{ margin-top: 6px; }}
-  .react span {{ display: inline-block; background: #2b2d31; color: #b5bac1;
-                 border: 1px solid #3f4147; border-radius: 8px;
-                 padding: 2px 8px; margin-right: 4px; font-size: 13px; }}
+  body {{ margin: 0; background: {paint['page']}; color: {paint['said']};
+         font: 15px/1.375 "gg sans", "Noto Color Emoji", "Helvetica Neue",
+               Helvetica, Arial, sans-serif; }}
+  .head {{ padding: 13px 18px; background: {paint['bar']}; color: {paint['name']};
+           font-weight: 600; }}
+  .head span {{ color: {paint['quiet']}; font-weight: 400; margin-left: 10px;
+                font-size: 13px; }}
+  .wrap {{ padding: 10px 18px 16px; }}
+  .msg {{ display: flex; gap: 14px; padding: 9px 0; }}
+  .pfp {{ width: 40px; height: 40px; border-radius: 50%; flex: 0 0 40px;
+          object-fit: cover; }}
+  .blank {{ background: {paint['pill']}; }}
+  .body {{ min-width: 0; }}
+  .who {{ color: {paint['name']}; font-weight: 500; }}
+  .when {{ color: {paint['quiet']}; font-weight: 400; font-size: 12px;
+           margin-left: 8px; }}
+  .where {{ color: {paint['quiet']}; font-weight: 400; font-size: 12px;
+            margin-left: 8px; background: {paint['pill']};
+            border-radius: 4px; padding: 1px 6px; }}
+  .what {{ white-space: pre-wrap; word-break: break-word; margin-top: 2px; }}
+  .files {{ color: {paint['quiet']}; font-size: 13px; font-style: italic; }}
+  .react {{ margin-top: 7px; }}
+  .react span {{ display: inline-block; background: {paint['pill']};
+                 border: 1px solid {paint['edge']}; border-radius: 8px;
+                 padding: 2px 8px; margin-right: 5px; font-size: 14px;
+                 color: {paint['said']}; }}
 </style></head>
 <body>
-  <div class="head">#{where}<span>{len(messages)} message(s)</span></div>
+  <div class="head"># {where}<span>{len(messages)} message(s)</span></div>
   <div class="wrap">{"".join(lines) or "<em>Nothing was said in this channel.</em>"}</div>
-  <script>document.documentElement.dataset.ready = '1';</script>
+  <script>
+    // Only once every avatar has loaded or given up, or the picture is taken
+    // with holes where the faces go. An avatar url remembered months ago is
+    // gone the moment they change their picture, so one that will not load
+    // becomes the same plain circle as somebody with no picture at all,
+    // rather than a broken-image mark in the middle of the screenshot.
+    Promise.all([...document.images].map(one => {{
+      const plain = () => {{
+        one.classList.add('blank');
+        one.removeAttribute('src');
+      }};
+      if (one.complete) {{
+        if (!one.naturalWidth) {{ plain(); }}
+        return true;
+      }}
+      return new Promise(done => {{
+        one.onload = () => done(true);
+        one.onerror = () => {{ plain(); done(true); }};
+      }});
+    }})).then(() => {{ document.documentElement.dataset.ready = '1'; }});
+  </script>
 </body></html>"""
 
 

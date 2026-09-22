@@ -103,3 +103,23 @@ def _missing():
     from pathlib import Path
 
     return Path("/nowhere/at/all/bell.json")
+
+
+def test_whose_face_it_was_is_remembered_too():
+    """The bell is read once and looked up afterwards, so a face that is not
+    kept here is a face the picture never has."""
+    data = bell.load(_missing())
+    _kept(data, message_id=11, when="May 08", text="$1548 ethos aged 6/7",
+          at="2026-05-08T14:09:00", avatar="https://cdn.discordapp.com/a/7.png")
+
+    assert [one["avatar"] for one in bell.theirs(data, 7)] == [
+        "https://cdn.discordapp.com/a/7.png"
+    ]
+
+
+def test_somebody_with_no_face_is_still_remembered():
+    data = bell.load(_missing())
+    _kept(data, message_id=11, when="May 08", text="thanks",
+          at="2026-05-08T14:09:00")
+
+    assert bell.theirs(data, 7)[0]["avatar"] == ""
