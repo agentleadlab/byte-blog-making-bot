@@ -2311,7 +2311,19 @@ async def _clear_out(
         forwarded = False
         kept.append(f"❌ Couldn't post the conversation: {_readable(exc)}")
     if forwarded:
-        kept.append(f"✅ {len(shown)} message(s) posted above — screenshot them now.")
+        kept.append(f"✅ {len(shown)} message(s) posted above.")
+
+    # And a picture of them in Drive, drawn the way Discord draws them. The
+    # messages above are for screenshotting now; this is the copy that is
+    # still there in six months when the channel is not.
+    picture, trouble = await asyncio.to_thread(
+        jobs.keep_the_picture, config,
+        clearout.as_page(plan, shown or clearout.the_feed(messages)),
+        clearout.picture_name(plan, when=today),
+    )
+    kept.append(
+        f"✅ Picture → <{picture}>" if picture else "⚠ " + "; ".join(trouble)
+    )
     kept += [f"-# {one}" for one in looked]
 
     # Only once both are kept. The whole point of the order is that a channel
@@ -2683,6 +2695,22 @@ def _all_of_it(message) -> str:
     return "\n".join(part for part in parts if str(part).strip())
 
 
+def _reacted(message) -> str:
+    """The reactions on a message, as "❤️ 4 · 🔥 2".
+
+    Half of what a sale looks like in ring-da-bell is the team piling onto
+    it, and a picture of the post without them is not what was sent.
+    """
+    found = []
+    for one in getattr(message, "reactions", None) or []:
+        mark = getattr(one, "emoji", "")
+        name = str(getattr(mark, "name", "") or mark or "").strip()
+        count = getattr(one, "count", 0) or 0
+        if name and count:
+            found.append(f"{name} {count}")
+    return " · ".join(found)
+
+
 def _as_said(message, where: str):
     """One Discord message as the picture's own shape."""
     from .. import clearout
@@ -2696,6 +2724,7 @@ def _as_said(message, where: str):
         by_bot=bool(getattr(author, "bot", False)),
         at=getattr(message, "created_at", None),
         where=where,
+        reactions=_reacted(message),
     )
 
 
@@ -2759,6 +2788,7 @@ async def _fill_the_bell(guild, channels) -> tuple[dict, list[str]]:
                     when=f"{at:%b %d, %Y %H:%M}" if at else "",
                     text=text, where=str(one.name),
                     at=at.isoformat() if at else "",
+                    reactions=_reacted(said),
                 )
             bell.read_to(data, one.channel_id, newest)
             if count:
@@ -2800,6 +2830,7 @@ async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
             who=str(one.get("who") or ""), when=str(one.get("when") or ""),
             text=str(one.get("text") or ""), where=str(one.get("where") or ""),
             at=_as_when(one.get("at")),
+            reactions=str(one.get("reactions") or ""),
         )
         for one in bell.theirs(data, getattr(member, "id", ""))
     ]

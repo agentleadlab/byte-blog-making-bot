@@ -1909,3 +1909,86 @@ def test_a_bot_in_a_shared_channel_is_not_somebody_selling(monkeypatch, tmp_path
     ))
 
     assert found == [], "a welcome message was kept as one of their sales"
+
+
+# --------------- the picture, back, with what the agents actually sent
+
+
+def test_the_reactions_are_on_the_picture():
+    """Half of what a sale looks like in ring-da-bell is the team piling onto
+    it, and a picture of the post without them is not what was sent."""
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="Artur | NOVA |", when="May 08", text="$1548 ethos aged 6/7",
+                      where="ring-da-bell", reactions="❤️ 4 · 🔥 2"),
+    ])
+
+    assert "$1548 ethos aged 6/7" in page
+    assert "❤️ 4" in page and "🔥 2" in page
+    assert "#ring-da-bell" in page
+
+
+def test_a_message_with_no_reactions_gets_no_empty_box():
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="artur.rushiti", when="May 24", text="got them, thanks"),
+    ])
+
+    assert "class='react'" not in page
+
+
+def test_what_somebody_typed_still_cannot_become_markup():
+    """A client who writes "<script>" does not get to write the evidence of
+    their own conversation."""
+    page = clearout.as_page(_plan(), [
+        clearout.Said(who="<b>Jay", when="", text="<script>alert(1)</script>",
+                      reactions="<img onerror=x> 2"),
+    ])
+
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;script&gt;" in page
+    assert "<img onerror=x>" not in page
+
+
+def test_the_picture_is_named_after_them_and_the_day():
+    said = clearout.picture_name(_plan(), when=datetime(2026, 9, 22))
+
+    assert said == "Jay Rodriguez — 2026-09-22.png"
+
+
+def test_a_name_with_awkward_characters_still_makes_a_filename():
+    said = clearout.picture_name(
+        clearout.Plan(name="Jay / Rodriguez: the 2nd"), when=datetime(2026, 9, 22),
+    )
+
+    assert "/" not in said and said.endswith(".png")
+
+
+def test_the_picture_reaches_drive_and_is_reported(monkeypatch):
+    """The messages above are for screenshotting now; this is the copy that
+    is still there in six months when the channel is not."""
+    taken = {}
+
+    def photographing(config, page, called):
+        taken["page"], taken["called"] = page, called
+        return "https://drive.google.com/file/d/abc", []
+
+    monkeypatch.setattr(
+        __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
+        photographing,
+    )
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+
+    assert "https://drive.google.com/file/d/abc" in "\n".join(said)
+    assert taken["called"].endswith(".png")
+
+
+def test_a_picture_that_would_not_upload_does_not_stop_the_delete(monkeypatch):
+    """The messages are posted and the row is written either way, and those
+    are what the order of this exists to protect."""
+    monkeypatch.setattr(
+        __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
+        lambda config, page, called: ("", ["Chromium isn't installed"]),
+    )
+    _guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True])
+
+    assert channel.deleted is True
+    assert "Chromium isn't installed" in "\n".join(said)

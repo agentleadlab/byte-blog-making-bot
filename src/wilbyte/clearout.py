@@ -26,6 +26,7 @@ about afterwards.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -116,6 +117,10 @@ class Said:
     #: client's own - a sale posted in ring-da-bell is worth showing as having
     #: been posted there.
     where: str = ""
+    #: The reactions on it, as "❤️ 4 · 🔥 2". Half of what a sale looks like
+    #: in ring-da-bell is the team piling onto it, and a picture of the post
+    #: without them is not what was sent.
+    reactions: str = ""
 
 
 @dataclass
@@ -381,6 +386,72 @@ def to_screenshot(plan: Plan, messages: list, feed: list = ()) -> list:
             + "\n"
         )
     return _pages(head, lines, [])
+
+
+def picture_name(plan: Plan, *, when: datetime) -> str:
+    """What the picture is called in Drive."""
+    safe = re.sub(r"[^\w .-]+", "", plan.name).strip() or "agent"
+    return f"{safe} — {when:%Y-%m-%d}.png"
+
+
+def as_page(plan: Plan, messages: list) -> str:
+    """The conversation as a page Chromium can photograph.
+
+    Discord's own colours and shape, as close to what the agents actually
+    sent as a page can get - "replicating as close as possible to how it was
+    sent by agents". The reactions belong on it: half of what a sale looks
+    like in ring-da-bell is the team piling onto it.
+    """
+    lines = []
+    for one in messages:
+        text = html.escape(one.text or "")
+        if one.attachments:
+            text += (
+                f"<div class='files'>{one.attachments} attachment"
+                f"{'s' if one.attachments != 1 else ''}</div>"
+            )
+        if one.reactions:
+            text += "<div class='react'>" + "".join(
+                f"<span>{html.escape(bit.strip())}</span>"
+                for bit in one.reactions.split("·") if bit.strip()
+            ) + "</div>"
+        said_in = ""
+        if one.where and plan.channel and one.where != plan.channel.name:
+            said_in = f"<span class='where'>#{html.escape(one.where)}</span>"
+        lines.append(
+            "<div class='msg'>"
+            f"<div class='who'>{html.escape(one.who or 'somebody')}"
+            f"<span class='when'>{html.escape(one.when or '')}</span>{said_in}</div>"
+            f"<div class='what'>{text or '<em>no text</em>'}</div>"
+            "</div>"
+        )
+
+    where = html.escape(plan.channel.name if plan.channel else plan.name)
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body {{ margin: 0; background: #313338; color: #dbdee1;
+         font: 15px/1.45 "gg sans", "Helvetica Neue", Helvetica, Arial, sans-serif; }}
+  .head {{ padding: 14px 20px; background: #2b2d31; color: #f2f3f5;
+           font-weight: 600; border-bottom: 1px solid #1f2023; }}
+  .head span {{ color: #949ba4; font-weight: 400; margin-left: 8px; }}
+  .wrap {{ padding: 12px 20px 20px; }}
+  .msg {{ padding: 8px 0; }}
+  .who {{ color: #f2f3f5; font-weight: 600; }}
+  .when {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px; }}
+  .where {{ color: #949ba4; font-weight: 400; font-size: 12px; margin-left: 8px;
+            background: #404249; border-radius: 4px; padding: 1px 6px; }}
+  .what {{ white-space: pre-wrap; word-break: break-word; }}
+  .files {{ color: #949ba4; font-size: 13px; font-style: italic; }}
+  .react {{ margin-top: 6px; }}
+  .react span {{ display: inline-block; background: #2b2d31; color: #b5bac1;
+                 border: 1px solid #3f4147; border-radius: 8px;
+                 padding: 2px 8px; margin-right: 4px; font-size: 13px; }}
+</style></head>
+<body>
+  <div class="head">#{where}<span>{len(messages)} message(s)</span></div>
+  <div class="wrap">{"".join(lines) or "<em>Nothing was said in this channel.</em>"}</div>
+  <script>document.documentElement.dataset.ready = '1';</script>
+</body></html>"""
 
 
 def describe(plan: Plan) -> str:
