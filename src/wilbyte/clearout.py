@@ -409,6 +409,28 @@ def by_channel(messages: list) -> list:
     return list(groups.items())
 
 
+def to_draw(plan: Plan, messages: list, elsewhere: list = ()) -> list:
+    """What to photograph, as one picture per channel. [(channel, messages)].
+
+    Their own channel always gets one, even when the only thing ever posted
+    in it was the lead feed. It is the channel being deleted - ring-da-bell
+    is not - so it is the one that ends up with no record at all otherwise,
+    and a run that photographed three sales out of a channel nobody is
+    touching and nothing out of the one about to go is backwards.
+
+    Theirs first, then wherever else they spoke, oldest first. Picture 1 is
+    always the channel this clear-out is about.
+    """
+    mine = plan.channel.name if plan.channel else ""
+    groups = by_channel(for_the_picture(messages, elsewhere))
+    if mine and not any(where == mine for where, _ in groups):
+        feed = the_feed(messages)
+        if feed:
+            groups.append((mine, feed))
+    groups.sort(key=lambda one: 0 if mine and one[0] == mine else 1)
+    return groups
+
+
 def their_folder(plan: Plan) -> str:
     """The folder in Drive that is theirs.
 

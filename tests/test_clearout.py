@@ -2204,19 +2204,19 @@ def test_one_picture_goes_to_drive_for_each_channel(monkeypatch):
 
     assert len(taken) == 2, "one tall picture of two channels is a picture of neither"
     names = [one for one, _, _ in taken]
-    assert "ring-da-bell" in names[0] and names[0].endswith(".png")
-    assert "artur_rushiti-vet" in names[1] and names[1].endswith(".png")
+    assert "artur_rushiti-vet" in names[0] and names[0].endswith(".png")
+    assert "ring-da-bell" in names[1] and names[1].endswith(".png")
     assert names[0] != names[1], "two files nobody can tell apart"
-    assert "$1548 ethos aged 6/7" in taken[0][1]
+    assert "$1548 ethos aged 6/7" in taken[1][1]
     assert {one for _, _, one in taken} == {"artur.rushiti"}, (
         "the pictures went anywhere but the folder that is theirs"
     )
     assert names[0].startswith("1 — ") and names[1].startswith("2 — "), (
         "Drive sorts by name, and a conversation out of order is not one"
     )
-    assert "$1548" not in taken[1][1], "the sale ended up in the wrong picture"
-    assert "#ring-da-bell → <https://drive/1.png>" in whole
-    assert "#artur_rushiti-vet → <https://drive/2.png>" in whole
+    assert "$1548" not in taken[0][1], "the sale ended up in the wrong picture"
+    assert "#artur_rushiti-vet → <https://drive/1.png>" in whole
+    assert "#ring-da-bell → <https://drive/2.png>" in whole
 
 
 def test_a_channel_with_nothing_in_it_says_so_rather_than_going_quiet(monkeypatch):
@@ -2320,3 +2320,181 @@ def test_a_picture_that_landed_in_the_wrong_folder_is_still_reported(monkeypatch
 
     assert "https://drive/p.png" in whole
     assert "went in the top one" in whole
+
+
+# --------------- the channel being deleted is the one that needs the picture
+
+
+def test_their_own_channel_gets_a_picture_even_with_only_the_feed_in_it():
+    """It is the channel being deleted - ring-da-bell is not - so it is the
+    one that ends up with no record at all otherwise."""
+    groups = clearout.to_draw(
+        _plan(),
+        [_fed("Henri Harper"), _fed("Rosa Vega")],
+        [clearout.Said(who="Jay", when="May 08", text="$1548",
+                       at=datetime(2026, 5, 8), where="ring-da-bell")],
+    )
+
+    assert [where for where, _ in groups] == ["jay-rodriguez", "ring-da-bell"]
+    assert [one.text for one in groups[0][1]] == ["Henri Harper", "Rosa Vega"]
+
+
+def test_their_own_channel_comes_first():
+    """Picture 1 is always the channel this clear-out is about."""
+    groups = clearout.to_draw(
+        _plan(),
+        [clearout.Said(who="Jay", when="May 24", text="thanks",
+                       at=datetime(2026, 5, 24), where="jay-rodriguez")],
+        [clearout.Said(who="Jay", when="May 08", text="$1548",
+                       at=datetime(2026, 5, 8), where="ring-da-bell")],
+    )
+
+    assert [where for where, _ in groups] == ["jay-rodriguez", "ring-da-bell"]
+
+
+def test_what_they_said_in_their_channel_wins_over_its_feed():
+    """The feed is the fallback, not the answer."""
+    groups = clearout.to_draw(
+        _plan(),
+        [_fed("Henri Harper"),
+         clearout.Said(who="Jay", when="May 24", text="thanks",
+                       at=datetime(2026, 5, 24), where="jay-rodriguez")],
+        [],
+    )
+
+    assert [one.text for one in groups[0][1]] == ["thanks"]
+
+
+def test_a_channel_with_nothing_at_all_in_it_is_no_picture():
+    assert clearout.to_draw(_plan(), [], []) == []
+
+
+def test_a_client_with_no_channel_still_gets_their_sales():
+    groups = clearout.to_draw(
+        clearout.Plan(name="Jay Rodriguez"), [],
+        [clearout.Said(who="Jay", when="May 08", text="$1548",
+                       at=datetime(2026, 5, 8), where="ring-da-bell")],
+    )
+
+    assert [where for where, _ in groups] == ["ring-da-bell"]
+
+
+def test_a_face_remembered_before_there_was_one_is_filled_in_now(monkeypatch, tmp_path):
+    """The bell is only ever read forwards, so without this the oldest
+    messages - the ones worth keeping - stay faceless for good."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+    data = {"channels": {"1": "11"}, "said": {"7": [{
+        "id": "11", "who": "Artur | NOVA |", "when": "May 08",
+        "text": "$1548 ethos aged 6/7", "where": "ring-da-bell",
+        "at": "2026-05-08T18:09:00", "reactions": "",
+    }]}}
+    bell.save(data, tmp_path / "bell.json")
+
+    class Quiet:
+        async def history(self, **how):
+            return
+            yield
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    found, _notes = asyncio.run(bot_client._also_said(
+        NS(id=3, me=object(), get_channel=lambda cid: Quiet()),
+        NS(id=7, display_avatar=NS(url="https://cdn.discordapp.com/a/now.png")),
+        [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert [one.avatar for one in found] == ["https://cdn.discordapp.com/a/now.png"]
+
+
+def test_the_face_on_the_message_wins_over_the_one_they_have_now(monkeypatch, tmp_path):
+    """What was remembered is what it looked like when they said it."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte import bell
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bell, "BELL_PATH", tmp_path / "bell.json")
+    bell.save({"channels": {"1": "11"}, "said": {"7": [{
+        "id": "11", "who": "Artur", "when": "May 08", "text": "$1548",
+        "where": "ring-da-bell", "at": "2026-05-08T18:09:00",
+        "avatar": "https://cdn.discordapp.com/a/then.png",
+    }]}}, tmp_path / "bell.json")
+
+    class Quiet:
+        async def history(self, **how):
+            return
+            yield
+
+    monkeypatch.setattr(bot_client, "_can_read", lambda guild, ch: True)
+    found, _notes = asyncio.run(bot_client._also_said(
+        NS(id=3, me=object(), get_channel=lambda cid: Quiet()),
+        NS(id=7, display_avatar=NS(url="https://cdn.discordapp.com/a/now.png")),
+        [clearout.Channel(channel_id="1", name="ring-da-bell")],
+    ))
+
+    assert [one.avatar for one in found] == ["https://cdn.discordapp.com/a/then.png"]
+
+
+def test_the_picture_is_cut_to_what_is_on_it(monkeypatch, tmp_path):
+    """Three messages came out as three messages and a thousand pixels of
+    empty purple underneath them."""
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    sized = []
+
+    class Page:
+        def goto(self, where):
+            pass
+
+        def wait_for_function(self, script, timeout=0):
+            pass
+
+        def evaluate(self, script):
+            return 214.3
+
+        def set_viewport_size(self, size):
+            sized.append(size)
+
+        def screenshot(self, path="", full_page=False):
+            import pathlib
+
+            pathlib.Path(path).write_bytes(b"png")
+
+    class Browser:
+        def new_page(self, viewport=None):
+            sized.append(viewport)
+            return Page()
+
+        def close(self):
+            pass
+
+    class Playing:
+        chromium = NS(launch=lambda **kw: Browser())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        jobs, "sync_playwright", lambda: Playing(), raising=False,
+    )
+    import sys
+    monkeypatch.setitem(
+        sys.modules, "playwright.sync_api", NS(sync_playwright=lambda: Playing()),
+    )
+
+    html = tmp_path / "convo.html"
+    html.write_text("<html></html>", encoding="utf-8")
+    jobs._photograph(html, tmp_path / "convo.png")
+
+    assert sized[-1] == {"width": jobs.PICTURE_WIDTH, "height": 215}

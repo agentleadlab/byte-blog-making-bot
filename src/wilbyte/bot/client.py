@@ -2320,7 +2320,7 @@ async def _clear_out(
     # One per channel - "so itll be like 3 ss in total or smthing like that".
     # Their own channel and the sales they rang in ring-da-bell are two
     # different screenshots to the person who would have taken them by hand.
-    groups = clearout.by_channel(shown or clearout.the_feed(messages))
+    groups = clearout.to_draw(plan, messages, elsewhere)
     if not groups:
         # Said rather than left out. A run with no picture line at all reads
         # exactly like one where the upload quietly failed.
@@ -2859,13 +2859,18 @@ async def _also_said(guild, member, channels) -> tuple[list, list[str]]:
         ]
 
     data, notes = await _fill_the_bell(guild, channels)
+    # Their face as it is now, for anything remembered before there was
+    # somewhere to keep one. The bell is only ever read forwards, so without
+    # this those messages stay faceless for good - and they are the oldest,
+    # which is to say the ones worth keeping.
+    face = _face(member)
     found = [
         clearout.Said(
             who=str(one.get("who") or ""), when=str(one.get("when") or ""),
             text=str(one.get("text") or ""), where=str(one.get("where") or ""),
             at=_as_when(one.get("at")),
             reactions=str(one.get("reactions") or ""),
-            avatar=str(one.get("avatar") or ""),
+            avatar=str(one.get("avatar") or "") or face,
         )
         for one in bell.theirs(data, getattr(member, "id", ""))
     ]

@@ -5021,6 +5021,21 @@ def _photograph(html_path: Path, png_path: Path) -> None:
             page.wait_for_function(
                 "document.documentElement.dataset.ready === '1'", timeout=10_000
             )
+            # Cut to what is on it. `full_page` is never shorter than the
+            # viewport, so three messages came out as three messages and a
+            # thousand pixels of empty purple underneath them.
+            tall = page.evaluate(
+                "Math.ceil(Math.max(document.documentElement.scrollHeight,"
+                " document.body ? document.body.scrollHeight : 0))"
+            )
+            # Rounded up here as well as in the page. Rounding down loses the
+            # bottom of the last message, which is the one worth reading.
+            import math
+
+            page.set_viewport_size({
+                "width": PICTURE_WIDTH,
+                "height": max(1, min(math.ceil(float(tall or 0)) or 1200, 20_000)),
+            })
             page.screenshot(path=str(png_path), full_page=True)
         finally:
             browser.close()
