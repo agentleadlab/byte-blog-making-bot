@@ -6641,3 +6641,89 @@ def test_asking_by_hand_moves_it_too(config, monkeypatch):
 
     assert [one.agent.name for one in sent] == ["Fabiana Roman"]
     assert any("Franklin (Admin)" in one for one in said)
+
+
+# ---------------------------------- the watcher does not wait on the buttons
+
+
+def _ticking(monkeypatch, offering, *, stamps):
+    """Run the tag watcher for a few ticks, with the board stubbed."""
+    from wilbyte.bot import client
+
+    seen = []
+
+    def stamp(config, *, day=None):
+        seen.append(1)
+        return stamps[min(len(seen) - 1, len(stamps) - 1)]
+
+    monkeypatch.setattr(jobs, "tags_stamp", stamp)
+    monkeypatch.setattr(client, "_offer_tags_now", offering)
+    monkeypatch.setattr(client, "_board_responder", lambda bot: object())
+    monkeypatch.setattr(client, "TAG_CHECK_SECONDS", 0)
+
+    class Bot:
+        config = None
+
+        def __init__(self):
+            self.ticks = 0
+
+        def is_closed(self):
+            self.ticks += 1
+            return self.ticks > 3
+
+    async def go():
+        # A hard stop, because the bug this guards against is not a wrong
+        # answer but no answer at all: awaiting the buttons made the loop
+        # wait twelve hours, and a test for it would otherwise hang rather
+        # than fail.
+        try:
+            await asyncio.wait_for(client.tags_loop(Bot()), timeout=2)
+        except asyncio.TimeoutError:
+            raise AssertionError(
+                "the watcher never came back round - it is waiting on a button"
+            ) from None
+
+    asyncio.run(go())
+    return len(seen)
+
+
+def test_an_unpressed_button_does_not_stop_the_watcher(monkeypatch):
+    """A button lives for twelve hours. Awaiting them meant two nobody
+    pressed at half eight in the morning stopped the watcher until half eight
+    at night, and everything said on the board in between was never flagged."""
+    waiting = asyncio.Event()      # never set: the flag is still on screen
+
+    async def never_answered(responder, config, *, remember=False):
+        await waiting.wait()
+
+    ticks = _ticking(monkeypatch, never_answered, stamps=["a", "b", "c"])
+
+    assert ticks >= 3, "the loop stopped at the first unanswered button"
+
+
+def test_the_same_stamp_is_not_offered_twice(monkeypatch):
+    """A tick that finds nothing changed costs one request and says nothing."""
+    from wilbyte.bot import client
+
+    offered = []
+
+    async def counting(responder, config, *, remember=False):
+        offered.append(1)
+
+    _ticking(monkeypatch, counting, stamps=["a", "a", "a"])
+
+    assert len(offered) == 1
+
+
+def test_an_offer_that_breaks_is_not_swallowed(monkeypatch, caplog):
+    """A task nobody awaits raises into nothing, which is the same shape as
+    every swallowed error in this file."""
+    from wilbyte.bot import client
+
+    async def breaks(responder, config, *, remember=False):
+        raise RuntimeError("Discord said no")
+
+    with caplog.at_level("ERROR"):
+        _ticking(monkeypatch, breaks, stamps=["a", "b"])
+
+    assert any("Tag offer failed" in one.message for one in caplog.records)

@@ -5071,6 +5071,31 @@ AGENT_CHECK_SECONDS = 20
 TAG_CHECK_SECONDS = 60
 
 
+#: Offers that have been posted and are still waiting on their buttons. Held
+#: only so Python does not collect a task mid-flight; nothing reads them.
+_OFFERING: set = set()
+
+
+def _also_running(job) -> None:
+    """Keep hold of a background offer, and say so if it breaks.
+
+    A task nobody holds a reference to can be collected while it is still
+    waiting, and one that raises with nobody awaiting it raises into nothing -
+    which is the same shape as every swallowed error in this file.
+    """
+    _OFFERING.add(job)
+
+    def done(finished) -> None:
+        _OFFERING.discard(finished)
+        if finished.cancelled():
+            return
+        broke = finished.exception()
+        if broke is not None:
+            log.error("Tag offer failed", exc_info=broke)
+
+    job.add_done_callback(done)
+
+
 async def tags_loop(bot: "WilByteBot") -> None:
     """Watch the day's cards and offer what was tagged, as it lands.
 
@@ -5079,6 +5104,11 @@ async def tags_loop(bot: "WilByteBot") -> None:
     instead of the button having to be gone and fetched: every comment and
     every line added to a description shows up here within the minute, and
     stays where it was written until somebody presses it.
+
+    The tick does not wait for the pressing. A button lives for twelve hours
+    and most of them are never pressed at all, and a loop that waited on them
+    was a loop that stopped for the day at the first one somebody scrolled
+    past.
 
     Cheap while it is quiet: one request a minute to ask whether any of the
     three cards has been touched at all. Everything else - the comments, the
@@ -5105,7 +5135,21 @@ async def tags_loop(bot: "WilByteBot") -> None:
                 seen = stamp
                 responder = _board_responder(bot)
                 if responder is not None:
-                    await _offer_tags_now(responder, bot.config, remember=True)
+                    # Posted, and then let go of. Every flag waits on its own
+                    # button for up to the approval timeout, which is twelve
+                    # hours - so awaiting them here meant two unanswered
+                    # buttons at half past eight in the morning stopped the
+                    # watcher until half past eight at night. Everything said
+                    # on the board in between was never flagged, and looked
+                    # from the outside exactly like RYTE not reading it.
+                    #
+                    # Safe to let go of, because what has been shown is
+                    # written to disk as it is posted rather than after the
+                    # button. The next pass offers what is new and never what
+                    # is already on the screen waiting.
+                    _also_running(asyncio.create_task(
+                        _offer_tags_now(responder, bot.config, remember=True)
+                    ))
         except asyncio.CancelledError:
             raise
         except Exception:  # a bad tick must not take the loop down for good
