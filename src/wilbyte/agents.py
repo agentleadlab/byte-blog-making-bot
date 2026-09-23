@@ -728,6 +728,17 @@ def shape_of(text: str) -> tuple:
 # not part of what the leads are called.
 _PRICE_PREFIX = re.compile(r"^\$\s*[\d,.]+\s*(?:/\s*\w+)?\s*[-–—:]*\s*")
 
+# The arithmetic off the end of an order line. EVERLIFE's cards are written
+# as an invoice - "Lines: 25 x MTG Standard @ $28.00 = $700.00; adjustment
+# -$450.00" - and none of that is the name of anything. Shelby Guest's line
+# came to nine words once tidied, one over the limit that stops a sentence
+# being read as a lead type, so the whole line was dropped and the card sat
+# in In Que saying there was no lead type on it.
+#
+# From the "@" that carries a price. An "@" with a price after it is a rate,
+# never part of what the leads are called.
+_RATE_TAIL = re.compile(r"\s*@\s*\$.*$", re.DOTALL)
+
 # "Package Selected: Basic Spanish IUL" is a label and then a lead type. The
 # label is the form's word for the field, not anything about the leads.
 _LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
@@ -830,6 +841,7 @@ def tidy_lead_type(phrase: str) -> str:
     said = " ".join((phrase or "").split())
     said = _LABEL_PREFIX.sub("", said)
     said = _PRICE_PREFIX.sub("", said).strip(" -–—:")
+    said = _RATE_TAIL.sub("", said)
     said = _WHO_BOUGHT.sub("", said, count=1)
     said = _LEAD_IN.sub("", said, count=1)
     # Before `_drop_notes`, which splits on commas and would otherwise cut a

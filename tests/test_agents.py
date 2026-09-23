@@ -4367,3 +4367,65 @@ def test_the_vertical_only_wins_within_the_same_family():
 
     assert "trucker" in both_iul.casefold()
     assert "trucker" not in two_families.casefold()
+
+
+# ------------------------------- a card written as an invoice, not as a form
+
+SHELBY = """SHELBY GUEST — $1,250.00
+Email: shelby.guest@everlife.com
+Phone Number: 435-817-3162
+States: UT, AL, AR, AZ, CA, GA, IL, IN, KY, LA, MI, MO, NC, OH, PA, SC, VA
+Lines: 25 x MTG Standard @ $28.00 = $700.00; adjustment -$450.00
+
+Paid by Tony Moderno
+EVERLIFE
+Live Friday September 25"""
+
+
+def test_an_order_written_as_an_invoice_line_is_still_an_order():
+    """EVERLIFE's cards are written as invoices. Shelby Guest's line came to
+    nine words once tidied, one over the limit that stops a sentence being
+    read as a lead type, so the whole line went and the card sat in In Que
+    saying there was no lead type on it."""
+    one = agents.read_agent(
+        {"id": "c1", "name": "New Agent - Shelby Guest",
+         "url": "https://trello.com/c/x"},
+        text=SHELBY, today=date(2026, 9, 23),
+    )
+
+    assert one.stated == "25 x MTG Standard"
+    assert one.launch == date(2026, 9, 25)
+    assert agents.cannot_read(one, needs_lead_type=True) == ""
+
+
+def test_the_rate_is_not_part_of_what_the_leads_are_called():
+    """An "@" with a price after it is a rate, never part of a name."""
+    assert agents.tidy_lead_type("25 x MTG Standard @ $28.00 = $700.00") == (
+        "25 x MTG Standard"
+    )
+    assert agents.tidy_lead_type("40 OTP VETS @ $30 each") == "40 OTP VETS"
+
+
+def test_an_email_address_is_not_a_rate():
+    """The "@" has to carry a price. Half the cards have an address on them."""
+    assert "everlife" in agents.tidy_lead_type("shelby.guest@everlife.com")
+
+
+def test_a_price_with_no_at_sign_is_left_where_it_was():
+    """Benji Missey's "uprise- $350/week standard" says which leads in the
+    words the order was written in."""
+    said = agents.named_lead_types("Lead Type: vets\nuprise- $350/week standard")
+
+    assert any("uprise" in one.casefold() for one in said)
+
+
+def test_the_invoice_line_reaches_the_checklist_readably():
+    """It goes on three people's lists, and "25 x MTG Standard @ $28.00 =
+    $700.00; adjustment" is not a line anybody wants to read there."""
+    one = agents.read_agent(
+        {"id": "c1", "name": "New Agent - Shelby Guest",
+         "url": "https://trello.com/c/x"},
+        text=SHELBY, today=date(2026, 9, 23),
+    )
+
+    assert agents.checklist_item(one.url, one.stated).endswith("25 x MTG Standard")
