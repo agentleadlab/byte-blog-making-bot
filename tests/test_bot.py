@@ -6727,3 +6727,48 @@ def test_an_offer_that_breaks_is_not_swallowed(monkeypatch, caplog):
         _ticking(monkeypatch, breaks, stamps=["a", "b"])
 
     assert any("Tag offer failed" in one.message for one in caplog.records)
+
+
+def test_an_unpressed_top_up_does_not_hold_up_the_board(monkeypatch, config):
+    """The board's own clock is six, nine, six and half eight. Awaiting the
+    button held the whole walk behind it: a top-up offer nobody pressed at six
+    meant the evening spread and the move into Done never happened, with
+    nothing said about either."""
+    from types import SimpleNamespace as NS
+
+    from wilbyte import boardclock, dailyops
+    from wilbyte.bot import client
+
+    still_on_screen = asyncio.Event()      # nobody ever presses it
+    offered = []
+
+    async def never_answered(responder, cfg, found):
+        offered.append(found)
+        await still_on_screen.wait()
+
+    marked = []
+    monkeypatch.setattr(client, "_offer_the_top_ups", never_answered)
+    monkeypatch.setattr(boardclock, "mark", lambda step, today: marked.append(step))
+    monkeypatch.setattr(
+        jobs, "unmarked_agents", lambda cfg: (["an unticked card"], []),
+    )
+    monkeypatch.setattr(jobs, "weekend_order_card", lambda cfg: ("", []))
+    monkeypatch.setattr(client, "_unmarked_ping", lambda cfg: "")
+    monkeypatch.setattr(client, "_unmarked_card", lambda *a, **kw: None)
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 9, 23))
+
+    heard = Listening()
+    monkeypatch.setattr(client, "_board_responder", lambda bot: ChannelResponder(heard))
+
+    step = sorted(dailyops.UNMARKED)[0]
+
+    async def go():
+        await asyncio.wait_for(
+            client._board_step(NS(config=config), step, date(2026, 9, 23)),
+            timeout=2,
+        )
+
+    asyncio.run(go())
+
+    assert marked == [step], "the step was not recorded as done"
+    assert offered, "the top-ups were never offered at all"

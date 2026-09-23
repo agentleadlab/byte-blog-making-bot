@@ -3258,7 +3258,17 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
     if responder and (note or card):
         await responder.send(note or None, embed=card)
     if responder and top_ups:
-        await _offer_the_top_ups(responder, bot.config, top_ups)
+        # Posted and let go of, like the tag watcher. This is the board's own
+        # clock - six, nine, six and half eight - and awaiting the button
+        # held the whole walk up behind it: a top-up offer nobody pressed at
+        # six in the morning meant the evening spread and the move into Done
+        # never happened, with nothing said about either.
+        #
+        # Safe to let go of because the step is marked done above, before any
+        # of this, so letting go cannot make it run twice.
+        _also_running(asyncio.create_task(
+            _offer_the_top_ups(responder, bot.config, top_ups)
+        ))
 
 
 def _why_flagged(item) -> str:
