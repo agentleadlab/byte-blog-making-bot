@@ -2389,8 +2389,18 @@ def test_asked_for_with_no_inbox_set_up_says_so(monkeypatch):
     (says, pdf, called, problem), box = _asking(monkeypatch, [], sender="")
 
     assert pdf == b""
-    assert "GMAIL_CONTRACT_SENDER" in problem
+    assert "PandaDoc" in problem and "download" in problem.casefold()
     assert box.asked == [], "went looking in an inbox it had no sender for"
+
+
+def test_it_does_not_send_him_to_a_setting_that_cannot_work(monkeypatch):
+    """"pandadoc doesnt send contract on gmail, we have to download it on
+    pandadoc." Telling him to set GMAIL_CONTRACT_SENDER=pandadoc.com was
+    advice built on a guess about how PandaDoc behaves, and it was wrong."""
+    (says, pdf, called, problem), _box = _asking(monkeypatch, [], sender="")
+
+    assert "GMAIL_CONTRACT_SENDER" not in problem
+    assert "pandadoc.com" not in problem
 
 
 def test_the_rebuttal_is_still_quiet_about_an_inbox_nobody_set_up(monkeypatch):

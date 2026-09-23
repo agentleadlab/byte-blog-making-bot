@@ -287,10 +287,9 @@ def open_contracts(secrets) -> GmailClient:
     sender is the boundary of what can be read, and it is set here rather
     than passed in so nothing calling this can widen it.
 
-    PandaDoc is the reason this exists. Its production API is behind a sales
-    call on this account, and the sandbox key only reaches sandbox documents -
-    but a completed document is emailed to the owner with the PDF attached, so
-    the inbox is the way to the contract that the API is not.
+    Written for PandaDoc on the belief that it emails the completed PDF. On
+    this account it does not - the PDF is downloaded from PandaDoc - so this
+    finds nothing unless contracts reach the inbox some other way.
     """
     return GmailClient(
         _signed_in(secrets),

@@ -5160,11 +5160,11 @@ def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
 
     (what it says, the PDF, what to call it, a problem or "").
 
-    PandaDoc's production API is behind a sales call on this account and the
-    sandbox key only reaches sandbox documents - but a completed document is
-    emailed to the owner with the PDF on it, and that email is the contract.
-    No webhook, no public address for a Mac that sleeps, and nothing to keep
-    running between PandaDoc and here.
+    Only works if the signed PDF arrives by email, and on this account it does
+    not: "pandadoc doesnt send contract on gmail, we have to download it on
+    pandadoc". Kept because the rebuttal is quiet when it finds nothing, and
+    because a forwarded contract is still a contract - but the way to the PDF
+    is PandaDoc's own download, which needs its API key.
 
     The PDF when there is one, because the no-chargeback clause is in the
     document rather than in the notification. The body is the fallback: it
@@ -5198,10 +5198,15 @@ def signed_contract_for(config: Config, name: str) -> tuple[str, bytes, str, str
     if not who:
         return "", b"", "", "Whose contract? Try `@RYTE contract of David Pereira`."
     if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
+        # Not "set GMAIL_CONTRACT_SENDER". That was the advice until Franklin
+        # said what PandaDoc actually does: "pandadoc doesnt send contract on
+        # gmail, we have to download it on pandadoc". Pointing at a setting
+        # that cannot find anything is worse than saying plainly that this
+        # part does not reach PandaDoc yet.
         return "", b"", "", (
-            "GMAIL_CONTRACT_SENDER isn't set in .env, so I don't know which "
-            "inbox the signed contracts land in. For PandaDoc it's "
-            "`pandadoc.com`."
+            "I can't reach PandaDoc contracts yet — PandaDoc doesn't email the "
+            "signed PDF, it has to be downloaded there. Download it and attach "
+            "it to the rebuttal."
         )
     try:
         with inbox.open_contracts(config.secrets) as reading:
