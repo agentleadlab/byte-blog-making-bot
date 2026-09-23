@@ -619,6 +619,37 @@ def who_wants_a_sheet(text: str) -> str:
     return "" if left.casefold() in ("sheet", "spreadsheet", "link", "") else left
 
 
+# "contract of David Pereira", "signed contract for Jay", "David Pereira's
+# contract", "pandadoc Jay Rodriguez". The same trick as the sheet: take the
+# asking off both ends and what is left is the name.
+_CONTRACT_WORDS = r"(?:signed\s+|completed\s+)?(?:contracts?|agreements?|pandadoc)"
+_CONTRACT_BEFORE = re.compile(
+    r"^\s*(?:can\s+you\s+|please\s+)?(?:send|give|show|get|find|pull|share)?\s*"
+    r"(?:me\s+|us\s+)?(?:the\s+|a\s+|an\s+)?"
+    rf"{_CONTRACT_WORDS}?\s*(?:pdf\s+)?"
+    r"(?:for|of|on|to)?\s*",
+    re.IGNORECASE,
+)
+_CONTRACT_AFTER = re.compile(
+    rf"\s*(?:'s|s')?\s*{_CONTRACT_WORDS}\s*(?:pdf)?\s*\??\s*$",
+    re.IGNORECASE,
+)
+
+
+def who_wants_a_contract(text: str) -> str:
+    """The client whose signed contract was asked for, or ""."""
+    said = " ".join((text or "").split())
+    if not said:
+        return ""
+    shorter = _CONTRACT_AFTER.sub(
+        "", _CONTRACT_BEFORE.sub("", said, count=1), count=1,
+    )
+    left = " ".join(shorter.strip(" -–—:?").split())
+    return "" if left.casefold() in (
+        "contract", "contracts", "agreement", "pandadoc", "pdf", "",
+    ) else left
+
+
 # A Google Sheet, however the comment happens to write it: a bare URL, or
 # Trello markdown with the sheet's name in front of it.
 _SHEET_URL = re.compile(

@@ -5170,18 +5170,44 @@ def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
     document rather than in the notification. The body is the fallback: it
     carries who signed and when, which is most of what the timeline wants.
     """
-    from .. import gmail as inbox
-
+    # Quiet when nobody set it up: the rebuttal stood without the contract
+    # before there was an inbox to read, and a hole saying "nobody configured
+    # Gmail" is a hole about RYTE rather than about the dispute. Asked for by
+    # name, the same silence would be a wrong answer - see `signed_contract_for`.
     if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
         return "", b"", "", ""
+    said, pdf, called, problem = signed_contract_for(config, dispute.customer_name)
+    if problem.startswith("No signed contract"):
+        problem = problem.rstrip(".") + ", so it had to be left out."
+    return said, pdf, called, problem
+
+
+def signed_contract_for(config: Config, name: str) -> tuple[str, bytes, str, str]:
+    """The signed contract for somebody, by name. (says, PDF, filename, problem).
+
+    "contract of David Pereira." The finding was already written, inside the
+    rebuttal; asked for plainly it fell through to the help text.
+
+    Not quiet when the inbox is not set up. Somebody asked for a document by
+    name, and saying nothing is indistinguishable from there being no
+    contract - which is a different thing to find out.
+    """
+    from .. import gmail as inbox
+
+    who = " ".join(str(name or "").split())
+    if not who:
+        return "", b"", "", "Whose contract? Try `@RYTE contract of David Pereira`."
+    if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
+        return "", b"", "", (
+            "GMAIL_CONTRACT_SENDER isn't set in .env, so I don't know which "
+            "inbox the signed contracts land in. For PandaDoc it's "
+            "`pandadoc.com`."
+        )
     try:
         with inbox.open_contracts(config.secrets) as reading:
-            found = reading.invoices_for(dispute.customer_name)
+            found = reading.invoices_for(who)
             if not found:
-                return "", b"", "", (
-                    f"No signed contract for “{dispute.customer_name}” in the "
-                    "inbox, so it had to be left out."
-                )
+                return "", b"", "", f"No signed contract for “{who}” in the inbox."
             # The completed one. PandaDoc emails at every step - sent, viewed,
             # a reminder - and only the completed one is the signed document.
             done = [
@@ -5191,13 +5217,12 @@ def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
             ] or found
             one = done[0]
             said = f"{one.subject}\n{one.when}\n\n{one.body}".strip()
-            for name, attachment_id in one.files:
-                if name.casefold().endswith(".pdf"):
-                    return said, reading.download(one.message_id, attachment_id), name, ""
+            for called, attachment_id in one.files:
+                if called.casefold().endswith(".pdf"):
+                    return said, reading.download(one.message_id, attachment_id), called, ""
             return said, b"", "", (
-                f"The contract email for “{dispute.customer_name}” has no PDF on "
-                "it, so only what it says is in the document. Download the "
-                "completed PDF from PandaDoc and attach it for the clause."
+                f"The contract email for “{who}” has no PDF on it. Download the "
+                "completed PDF from PandaDoc for the clause."
             )
     except inbox.GmailError as exc:
         return "", b"", "", f"Couldn't read the signed contract: {_short(exc, 140)}"

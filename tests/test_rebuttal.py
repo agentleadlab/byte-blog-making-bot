@@ -2307,3 +2307,156 @@ def test_a_sheet_shared_after_the_launch_still_says_both(monkeypatch):
     assert [when for when, _what in said] == [
         "09/04/2026", "09/05/2026", "09/08/2026",
     ]
+
+
+# ------------------------- "contract of David Pereira", asked for on its own
+
+
+def _asking(monkeypatch, emails, *, sender="pandadoc.com", pdf=b"%PDF-1.4 signed",
+            name="David Pereira"):
+    from types import SimpleNamespace
+
+    from wilbyte import gmail
+    from wilbyte.bot import jobs
+
+    box = Inbox(emails, pdf=pdf)
+    monkeypatch.setattr(gmail, "open_contracts", lambda secrets: box)
+    config = SimpleNamespace(secrets=SimpleNamespace(gmail_contract_sender=sender))
+    return jobs.signed_contract_for(config, name), box
+
+
+@pytest.mark.parametrize("said, who", [
+    ("contract of David Pereira", "David Pereira"),
+    ("contract for Jay Rodriguez", "Jay Rodriguez"),
+    ("David Pereira contract", "David Pereira"),
+    ("signed contract David Pereira", "David Pereira"),
+    ("pandadoc Shelby Guest", "Shelby Guest"),
+    ("David Pereira's contract?", "David Pereira"),
+    ("can you send me the contract for David Pereira", "David Pereira"),
+])
+def test_asking_for_a_contract_by_name_is_a_command(said, who):
+    """Asked plainly, it fell through to the help text."""
+    from wilbyte import agents
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse(f"<@123456> {said}")
+
+    assert asked.action == "contract"
+    assert agents.who_wants_a_contract(asked.brief) == who
+
+
+@pytest.mark.parametrize("said", [
+    "email about the new contract terms",
+    "sms our contract is changing next month",
+    "ad for agents who hate long contracts",
+    # These read exactly like the command - "contract for …", ending on
+    # "contract" - and only the format word says they are copy.
+    "email about the contract for new agents",
+    "sms reminding them to sign the contract",
+    "landing page for the agreement",
+])
+def test_a_copy_brief_that_mentions_a_contract_is_still_copy(said):
+    """"contract" is a word a brief can easily contain, which is why this only
+    counts when no format word claimed the message first."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(f"<@123456> {said}").action == "write"
+
+
+def test_the_other_commands_still_win():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> sheet for Faith").action == "agentsheet"
+    assert mentions.parse("<@1> blacklist David Pereira").action == "blacklist"
+
+
+def test_asked_for_by_name_the_pdf_comes_back(monkeypatch):
+    (says, pdf, called, problem), box = _asking(monkeypatch, [
+        _email("Document completed: David Pereira Agreement",
+               files=[("David Pereira Agreement.pdf", "a1")]),
+    ])
+
+    assert pdf == b"%PDF-1.4 signed"
+    assert called == "David Pereira Agreement.pdf"
+    assert problem == ""
+    assert box.asked == [("David Pereira",)]
+
+
+def test_asked_for_with_no_inbox_set_up_says_so(monkeypatch):
+    """Somebody asked for a document by name, and saying nothing is
+    indistinguishable from there being no contract — which is a different
+    thing to find out."""
+    (says, pdf, called, problem), box = _asking(monkeypatch, [], sender="")
+
+    assert pdf == b""
+    assert "GMAIL_CONTRACT_SENDER" in problem
+    assert box.asked == [], "went looking in an inbox it had no sender for"
+
+
+def test_the_rebuttal_is_still_quiet_about_an_inbox_nobody_set_up(monkeypatch):
+    """The rebuttal stood without the contract before there was an inbox, and
+    a hole about RYTE's setup is not a hole about the dispute."""
+    (says, pdf, called, problem), _box = _contract(monkeypatch, [], sender="")
+
+    assert (says, pdf, called, problem) == ("", b"", "", "")
+
+
+def test_nobody_named_is_asked_who(monkeypatch):
+    (says, pdf, called, problem), box = _asking(monkeypatch, [], name="")
+
+    assert "Whose contract" in problem
+    assert box.asked == []
+
+
+def test_no_contract_in_the_inbox_is_said_plainly(monkeypatch):
+    (says, pdf, called, problem), _box = _asking(monkeypatch, [])
+
+    assert problem == "No signed contract for “David Pereira” in the inbox."
+
+
+def test_the_rebuttal_still_says_why_it_was_left_out(monkeypatch):
+    (says, pdf, called, problem), _box = _contract(monkeypatch, [])
+
+    assert problem.endswith("so it had to be left out.")
+
+
+def test_the_command_sends_the_pdf_as_a_file(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    monkeypatch.setattr(
+        jobs, "signed_contract_for",
+        lambda config, who: ("Document completed", b"%PDF", "Agreement.pdf", ""),
+    )
+    sent = []
+
+    class Heard:
+        async def send(self, content=None, **kw):
+            sent.append((content, kw.get("file")))
+
+    asyncio.run(client._send_contract(Heard(), None, "contract of David Pereira"))
+
+    assert "David Pereira" in sent[0][0]
+    assert sent[0][1] is not None and sent[0][1].filename == "Agreement.pdf"
+
+
+def test_the_command_says_why_when_there_is_no_pdf(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    monkeypatch.setattr(
+        jobs, "signed_contract_for",
+        lambda config, who: ("", b"", "", "No signed contract for “X” in the inbox."),
+    )
+    sent = []
+
+    class Heard:
+        async def send(self, content=None, **kw):
+            sent.append((content, kw.get("file")))
+
+    asyncio.run(client._send_contract(Heard(), None, "contract of X"))
+
+    assert "No signed contract" in sent[0][0]
+    assert sent[0][1] is None

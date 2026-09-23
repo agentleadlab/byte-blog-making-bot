@@ -932,6 +932,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_sheet(responder, config, request.brief or "")
                 return
 
+            if request.action == "contract":
+                await _send_contract(responder, config, request.brief or "")
+                return
+
             if request.action == "whenlive":
                 await _when_live(responder, config, request.brief or "")
                 return
@@ -1211,6 +1215,37 @@ def _said_sheet(one: dict) -> str:
     if len(sheets) > 1:
         line += f"\n  *(the newest of {len(sheets)} — the setup was redone)*"
     return line
+
+
+async def _send_contract(responder: Responder, config: Config, said: str) -> None:
+    """Answer "contract of David Pereira" with the signed PDF off the inbox."""
+    import io
+
+    from .. import agents as rules
+
+    who = rules.who_wants_a_contract(said)
+    try:
+        says, pdf, called, problem = await asyncio.to_thread(
+            jobs.signed_contract_for, config, who
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read the inbox\n{exc}"))
+        return
+
+    if pdf:
+        await responder.send(
+            f"📄 **{who}** — signed contract.",
+            file=discord.File(io.BytesIO(pdf), filename=called or f"{who}.pdf"),
+        )
+        return
+    # The email without its PDF still says who signed and when, which is
+    # worth having while somebody goes and downloads the rest.
+    lines = [f"📄 **{who}**"] if says else []
+    if says:
+        lines.append("> " + "\n> ".join(says.splitlines()[:6]))
+    if problem:
+        lines.append(f"⚠ {problem}")
+    await responder.send("\n".join(lines) or "Nothing came back, which shouldn't happen.")
 
 
 async def _send_sheet(responder: Responder, config: Config, said: str) -> None:

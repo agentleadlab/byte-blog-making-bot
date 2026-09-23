@@ -525,6 +525,18 @@ SHEET_ASKED = re.compile(
 )
 
 
+# "contract of David Pereira". Built like SHEET_ASKED and for the same
+# reason: "contract" is a word a copy brief can easily contain - "email about
+# the new contract terms" - so this only counts when nothing else, and no
+# format word, has claimed the message first.
+CONTRACT_ASKED = re.compile(
+    r"\b(?:contracts?|agreements?)\s+(?:pdf\s+)?(?:for|of)\b"
+    r"|\b(?:contracts?|agreements?)\s*\??\s*$"
+    r"|^\s*(?:the\s+)?(?:signed\s+|completed\s+)?(?:contracts?|agreements?|pandadoc)\b",
+    re.IGNORECASE,
+)
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -561,6 +573,15 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         and SHEET_ASKED.search(_without_links(text))
     ):
         return MentionRequest(action="agentsheet", brief=text)
+
+    # "contract of David Pereira" - the signed PDF, out of the inbox PandaDoc
+    # emails it to. Asked for plainly, it fell through to the help text.
+    if (
+        not action
+        and not _first_format_word(text, find)
+        and CONTRACT_ASKED.search(_without_links(text))
+    ):
+        return MentionRequest(action="contract", brief=text)
 
     # `cover` takes free text, so handle it before the link/number extraction.
     # "trello" names the board and then says what to do with it. On its own it
@@ -968,6 +989,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > cards too, so agents from months ago still answer
 > @RYTE **sheet for Faith** — the Google Sheet her setup was built on, off
 > her card. Also **Faith's sheet**. The newest one when a setup was redone
+> @RYTE **contract of David Pereira** — the signed PDF, out of the inbox
+> PandaDoc emails it to. Also **David Pereira's contract**
 > @RYTE **words** — the lead-type words you've taught me
 > @RYTE **words STNDRD = standard** — teach me one. A word can mean a family
 > (iul, fex, mtg, vet, widows, phnx), a tier (standard, plus) or a qualifier
