@@ -5536,6 +5536,31 @@ RING_CHECK_SECONDS = 60
 #: somebody; said every minute it is a channel nobody reads by lunchtime.
 _RING_SAID: set = set()
 
+#: Whether this run has said it is connected. Once per start: with no agent
+#: waiting, a working watcher and a broken one are otherwise equally silent.
+_RING_READY: list = []
+
+_RING_SETTINGS = (
+    ("RINGCENTRAL_CLIENT_ID", "ringcentral_client_id"),
+    ("RINGCENTRAL_CLIENT_SECRET", "ringcentral_client_secret"),
+    ("RINGCENTRAL_JWT", "ringcentral_jwt"),
+    ("RINGCENTRAL_EXTENSION", "ringcentral_extension"),
+)
+
+
+def _ring_half_set(secrets) -> list:
+    """The settings missing when some are there. [] when none or all are.
+
+    None set is somebody not using this, and is nobody's business. Some set
+    is somebody who meant to and got a name wrong - and that watcher idles
+    in exactly the silence a working one keeps when no agent is waiting.
+    """
+    have = [env for env, attr in _RING_SETTINGS
+            if (getattr(secrets, attr, "") or "").strip()]
+    if not have or len(have) == len(_RING_SETTINGS):
+        return []
+    return [env for env, _attr in _RING_SETTINGS if env not in have]
+
 
 async def ring_loop(bot: "WilByteBot") -> None:
     """Watch Faith's texts and ping Franklin with how she would answer.
@@ -5554,6 +5579,14 @@ async def ring_loop(bot: "WilByteBot") -> None:
         try:
             if ringcentral.configured(bot.config.secrets):
                 await _ring_once(bot)
+            else:
+                missing = _ring_half_set(bot.config.secrets)
+                said = "RingCentral is half set up — missing " + ", ".join(missing)
+                if missing and said not in _RING_SAID:
+                    _RING_SAID.add(said)
+                    responder = _ring_responder(bot)
+                    if responder is not None:
+                        await responder.send(f"⚠ {said} in .env.")
         except asyncio.CancelledError:
             raise
         except Exception:  # a bad tick must not take the loop down for good
@@ -5632,11 +5665,14 @@ async def _ring_once(bot: "WilByteBot") -> None:
     if fresh and responder is not None:
         _RING_SAID.update(fresh)
         await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
+    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    done = smsreplies.exchanges(texts)
+    if not problems and not _RING_READY and responder is not None:
+        _RING_READY.append(True)
+        await responder.send(_ring_ready(len(texts), len(done)))
     if not found or responder is None:
         return
 
-    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
-    done = smsreplies.exchanges(texts)
     for agent, name, tail in found:
         asked = "\n".join(one.said for one in tail)
         try:
@@ -5655,6 +5691,27 @@ async def _ring_once(bot: "WilByteBot") -> None:
         # the two cannot post the same suggestion twice.
         await asyncio.to_thread(jobs.ring_pinged, tail[-1].id)
         await responder.send(_ring_note(bot.config, agent, name, tail, drafted))
+
+
+def _ring_ready(texts: int, replies: int) -> str:
+    """The line that says it is connected, once a run.
+
+    Says what it learned from, because a connection to the wrong extension
+    connects perfectly well: somebody with no texts to agents reads as zero
+    replies, and that is worth saying rather than finding out in a week.
+    """
+    if not replies:
+        return (
+            f"📱 Connected to RingCentral and read {texts} text"
+            f"{'' if texts == 1 else 's'} — but none of them are Faith answering "
+            "an agent, so there's nothing to learn her replies from. Check "
+            "RINGCENTRAL_EXTENSION is her extension."
+        )
+    return (
+        f"📱 Connected to RingCentral — learning from {replies} of Faith's "
+        f"replies ({texts} texts). I'll ping here when an agent is waiting. "
+        "Read-only: I can't text anybody."
+    )
 
 
 def _ring_number(agent: str) -> str:

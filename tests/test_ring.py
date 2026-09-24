@@ -228,9 +228,11 @@ class Heard:
         self.said.append(str(content or ""))
 
 
-def _once(monkeypatch, *, drafted=None, problems=(), found=True):
+def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True):
     from wilbyte.bot import client
 
+    # Already said it's connected, unless the test is about saying so.
+    monkeypatch.setattr(client, "_RING_READY", [True] if ready else [])
     heard = Heard()
     texts = [one for one in (smsreplies.from_record(r) for r in HISTORY) if one]
     tail = [smsreplies.from_record(record(5, 5, "are my leads paused?"))]
@@ -419,3 +421,88 @@ def test_the_channel_problem_is_said_once_where_the_pings_went(monkeypatch):
         asyncio.run(client._ring_once(NS(config=None)))
 
     assert heard.said == ["⚠ RingCentral: I'm not allowed to post in #ryte-responder."]
+
+
+
+# ------------------------------------------- saying it's connected, once
+
+
+def test_a_working_connection_says_so_once(monkeypatch):
+    """With no agent waiting, a working watcher and a broken one are otherwise
+    equally silent."""
+    from wilbyte.bot import client
+
+    said, _ = _once(monkeypatch, found=False, ready=False)
+
+    assert len(said) == 1
+    assert said[0].startswith("📱 Connected to RingCentral")
+    assert "2 of Faith's replies" in said[0]
+    assert "can't text anybody" in said[0]
+    assert client._RING_READY, "would say it again next minute"
+
+
+def test_it_is_not_said_again_the_next_minute(monkeypatch):
+    said, _ = _once(monkeypatch, found=False, ready=True)
+
+    assert said == []
+
+
+def test_it_is_not_said_when_something_is_wrong(monkeypatch):
+    """"Connected" beside a refusal would be two answers to one question."""
+    said, _ = _once(monkeypatch, found=False, ready=False,
+                    problems=["RingCentral refused that."])
+
+    assert not any("Connected" in one for one in said)
+
+
+def test_connected_to_somebody_with_no_replies_says_check_the_extension():
+    """The wrong extension connects perfectly well."""
+    from wilbyte.bot import client
+
+    said = client._ring_ready(40, 0)
+
+    assert "none of them are Faith answering" in said
+    assert "RINGCENTRAL_EXTENSION" in said
+
+
+def test_half_set_up_names_what_is_missing():
+    """Some set is somebody who meant to and got a name wrong."""
+    from wilbyte.bot import client
+
+    missing = client._ring_half_set(NS(
+        ringcentral_client_id="a", ringcentral_client_secret="b",
+        ringcentral_jwt="", ringcentral_extension="103",
+    ))
+
+    assert missing == ["RINGCENTRAL_JWT"]
+
+
+def test_not_using_it_at_all_is_nobodys_business():
+    from wilbyte.bot import client
+
+    blank = NS(ringcentral_client_id="", ringcentral_client_secret="",
+               ringcentral_jwt="", ringcentral_extension="")
+
+    assert client._ring_half_set(blank) == []
+
+
+def test_half_set_up_is_said_once_by_the_loop(monkeypatch):
+    from wilbyte.bot import client
+
+    client._RING_SAID.clear()
+    heard = Heard()
+    monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
+    monkeypatch.setattr(client, "RING_CHECK_SECONDS", 0)
+
+    class Bot:
+        config = NS(secrets=NS(ringcentral_client_id="a", ringcentral_client_secret="b",
+                               ringcentral_jwt="", ringcentral_extension="103"))
+        ticks = 0
+
+        def is_closed(self):
+            type(self).ticks += 1
+            return type(self).ticks > 3
+
+    asyncio.run(client.ring_loop(Bot()))
+
+    assert heard.said == ["⚠ RingCentral is half set up — missing RINGCENTRAL_JWT in .env."]
