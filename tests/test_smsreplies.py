@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from wilbyte import smsreplies
-from wilbyte.smsreplies import Text
+from wilbyte.smsreplies import Exchange, Text
 
 SHELBY = "8015550142"
 JAY = "8015550100"
@@ -544,18 +544,38 @@ def test_what_faith_sent_after_a_suggestion_is_the_lesson():
     assert lessons == [{
         "asked": "pause", "suggested": "Hi! Paused 😊",
         "sent": "All set Shelby! Leads are paused 🙂",
-        "at": "2026-09-24T10:05", "agent": "1", "same": False,
+        "at": "2026-09-24T10:05", "asked_at": "2026-09-24T10:00", "agent": "1",
+        "key": "C-1", "same": False, "kept": 0.25,
     }]
 
 
 def test_the_first_thing_she_sent_is_the_answer_not_a_later_one():
     lessons, _ = smsreplies.lessons_from(
         [_pending()],
-        [_faith("2026-09-24T10:09", "later"), _faith("2026-09-24T10:05", "first")],
+        [_faith("2026-09-24T10:40", "later"), _faith("2026-09-24T10:05", "first")],
         now="2026-09-24T11:00", gone_after="2026-09-21",
     )
 
     assert lessons[0]["sent"] == "first"
+
+
+def test_an_answer_sent_as_several_texts_is_one_answer():
+    lessons, _ = smsreplies.lessons_from(
+        [_pending()],
+        [_faith("2026-09-24T10:05", "Yes they are!"), _faith("2026-09-24T10:06", "Back Monday 🙂")],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons[0]["sent"] == "Yes they are!\nBack Monday 🙂"
+
+
+def test_an_answer_still_being_typed_is_graded_later():
+    lessons, waiting = smsreplies.lessons_from(
+        [_pending()], [_faith("2026-09-24T10:05", "Yes they are!")],
+        now="2026-09-24T10:07", gone_after="2026-09-21",
+    )
+
+    assert lessons == [] and len(waiting) == 1
 
 
 def test_what_was_sent_before_the_agents_text_is_not_the_answer():
@@ -629,3 +649,111 @@ def test_the_playbook_is_studied_from_all_of_her_history_not_one_week():
 
 def test_a_short_history_is_studied_whole():
     assert smsreplies.sample_for_playbook([1, 2, 3], most=10) == [1, 2, 3]
+
+
+# ------------------------------------------------- why, and what it adds up to
+
+
+def test_a_suggestion_sent_with_a_word_changed_counts_as_used():
+    assert smsreplies.kept("Hi Shelby! Yes they are paused until Monday 😊",
+                           "Hi Shelby! Yes they are paused until Monday 🙂") == 1.0
+    assert smsreplies.kept("Hi Shelby! Yes they are paused until Monday",
+                           "Hey Shelby yes they are paused until Monday") >= smsreplies.USED
+    assert smsreplies.kept("Yes they are paused", "Let me check with the team") < 0.3
+    assert smsreplies.kept("", "anything") == 0.0
+
+
+def test_only_real_corrections_need_explaining():
+    lessons = [
+        {"sent": "a", "same": True},
+        {"sent": "near", "kept": 0.9},
+        {"sent": "different", "kept": 0.1},
+        {"sent": "different", "kept": 0.1, "why": "known already"},
+        {"sent": "different", "kept": 0.1, "tries": 3},
+        {"sent": "a", "same": True, "note": "Franklin: never say paused"},
+    ]
+
+    todo = smsreplies.needs_explaining(lessons)
+
+    assert [one["sent"] for one in todo] == ["different", "a"]
+
+
+def test_franklins_word_makes_even_a_used_suggestion_a_correction():
+    assert smsreplies.used_count([
+        {"sent": "a", "same": True},
+        {"sent": "a", "same": True, "note": "that was wrong"},
+        {"sent": "b", "kept": 0.1},
+    ]) == (1, 3)
+
+
+def test_the_rules_learned_are_each_said_once_newest_kept():
+    lessons = [{"rule": f"Rule {at}."} for at in range(20)] + [
+        {"rule": "rule 19"}, {"rule": ""}, {},
+    ]
+
+    rules = smsreplies.rules_from(lessons, most=3)
+
+    assert rules == ["Rule 17.", "Rule 18.", "rule 19"]
+
+
+def test_the_conversation_around_a_moment():
+    texts = [_faith(f"2026-09-24T10:0{at}", str(at)) for at in range(9)] + [
+        _faith("2026-09-24T10:04:30", "other", key="C-2"),
+    ]
+
+    assert [one.said for one in smsreplies.before(texts, "C-1", "2026-09-24T10:04", most=3)] == ["1", "2", "3"]
+    assert [one.said for one in smsreplies.after(texts, "C-1", "2026-09-24T10:04", most=2)] == ["5", "6"]
+
+
+def _swap(at, key="C-1"):
+    return Exchange(agent="1", name="", asked="q", answered="a", at=at, key=key)
+
+
+def test_her_exchanges_are_studied_newest_first_and_once():
+    done = [_swap(f"2026-09-2{at}T10:00") for at in range(5)]
+    reasons = {done[3].id: "already"}
+
+    todo = smsreplies.unexplained(done, reasons, settled="2026-09-23T12:00", most=2)
+
+    # the 24th is not settled; the 23rd is done; then newest first
+    assert [one.at for one in todo] == ["2026-09-22T10:00", "2026-09-21T10:00"]
+
+
+def test_what_was_learned_goes_back_on_each_exchange():
+    done = [_swap("1", "A"), _swap("1", "B")]
+
+    smsreplies.give_reasons(done, {"A|1": "she was holding the date back"})
+
+    assert [one.why for one in done] == ["she was holding the date back", ""]
+
+
+def test_an_exchange_knows_its_conversation():
+    texts = [
+        Text(id="1", at="1", inbound=True, agent="5", name="", said="hi", conversation="C-9"),
+        Text(id="2", at="2", inbound=False, agent="5", name="", said="hey", conversation="C-9"),
+    ]
+
+    assert smsreplies.exchanges(texts)[0].id == "C-9|2"
+
+
+def test_franklin_answering_from_the_line_is_learned_as_faith():
+    texts = [
+        Text(id="1", at="1", inbound=False, agent="5", name="", said="a", sender="8785550100"),
+        Text(id="2", at="2", inbound=False, agent="5", name="", said="b", sender="3105550199"),
+        Text(id="3", at="3", inbound=False, agent="5", name="", said="c", sender="4125550111"),
+    ]
+
+    smsreplies.mark_team(texts, [], faith="878-555-0100, (310) 555-0199")
+
+    assert [one.team for one in texts] == [False, False, True]
+
+
+def test_a_note_on_a_suggestion_nobody_texted_back_is_still_a_lesson():
+    lessons, waiting = smsreplies.lessons_from(
+        [{**_pending(at="2026-09-10T10:00"), "note": "we call these ones"},
+         _pending(at="2026-09-10T10:00")],
+        [], now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert waiting == []
+    assert [(one["sent"], one["note"]) for one in lessons] == [("", "we call these ones")]

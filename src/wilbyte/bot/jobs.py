@@ -7507,10 +7507,27 @@ def ring_pinged(message_id: str, *, pending: dict | None = None) -> None:
         ringtexts.save(data)
 
 
+def _card_text(card: dict) -> str:
+    """The agent's card, as a draft or a lesson is shown it."""
+    return (
+        "WHAT THE TEAM'S BOARD SAYS ABOUT THIS AGENT - their New Agent "
+        f"card for {card.get('agent') or 'them'}, in the "
+        f"\"{card.get('list') or '?'}\" list, last touched "
+        f"{card.get('touched') or '?'}:\n{card.get('desc') or ''}"
+        + (f"\n\nSetup confirmation on the card:\n{card['setup']}"
+           if card.get("setup") else "")
+        + (f"\n\nTheir lead sheet: {card['sheet']}" if card.get("sheet") else "")
+    )
+
+
+def _said_by(one) -> str:
+    return "Team" if one.team else "Agent" if one.inbound else "Faith"
+
+
 def draft_like_faith(
     config: Config, *, asked: str, done: list, thread: list = (), name: str = "",
     agent: str = "", card: dict | None = None, history: list = (),
-    lessons: list = (), playbook: str = "",
+    lessons: list = (), playbook: str = "", learned: list = (),
 ) -> dict:
     """The reply Faith would send. {"reply", "why", "blanks", "examples"}.
 
@@ -7540,7 +7557,10 @@ def draft_like_faith(
 
     lines = []
     for at, one in enumerate(examples, start=1):
-        lines.append(f"EXAMPLE {at}\nAgent: {one.asked}\nFaith: {one.answered}")
+        lines.append(
+            f"EXAMPLE {at}\nAgent: {one.asked}\nFaith: {one.answered}"
+            + (f"\n(Why she answered that way: {one.why})" if one.why else "")
+        )
     so_far = [
         f"{'Team' if one.team else 'Agent' if one.inbound else 'Faith'}: {one.said}"
         for one in thread or []
@@ -7553,16 +7573,14 @@ def draft_like_faith(
             "FAITH'S PLAYBOOK - how she handles agents, written from her own "
             f"replies:\n\n{playbook}"
         )
-    if card:
+    if learned:
         sections.append(
-            "WHAT THE TEAM'S BOARD SAYS ABOUT THIS AGENT - their New Agent "
-            f"card for {card.get('agent') or 'them'}, in the "
-            f"\"{card.get('list') or '?'}\" list, last touched "
-            f"{card.get('touched') or '?'}:\n{card.get('desc') or ''}"
-            + (f"\n\nSetup confirmation on the card:\n{card['setup']}"
-               if card.get("setup") else "")
-            + (f"\n\nTheir lead sheet: {card['sheet']}" if card.get("sheet") else "")
+            "WHAT YOU HAVE LEARNED FROM HER CORRECTIONS - standing rules, each "
+            "from a suggestion she or Franklin did not send as written:\n"
+            + "\n".join(f"- {one}" for one in learned)
         )
+    if card:
+        sections.append(_card_text(card))
     if history:
         sections.append(
             "EARLIER TEXTS WITH THIS AGENT, in other conversations:\n"
@@ -7574,10 +7592,12 @@ def draft_like_faith(
     if lessons:
         sections.append(
             "WHERE EARLIER SUGGESTIONS WERE WRONG - what was suggested, and "
-            "what Faith actually sent instead. Follow what she did:\n\n"
+            "what Faith actually sent instead, and why. Follow what she did:\n\n"
             + "\n\n".join(
                 f"Agent: {one.get('asked')}\nSuggested: {one.get('suggested')}\n"
-                f"Faith sent: {one.get('sent')}"
+                f"Faith sent: {one.get('sent') or '(nothing by text)'}"
+                + (f"\nFranklin said: {one['note']}" if one.get("note") else "")
+                + (f"\nWhy: {one['why']}" if one.get("why") else "")
                 for one in lessons
             )
         )
@@ -7618,7 +7638,12 @@ def draft_like_faith(
             "use it only where it plainly answers this message. Where the "
             "reply needs a fact nothing here settles, write a bracketed blank "
             "like [launch date] and list it in blanks. Where a correction shows "
-            "Faith answering differently from a suggestion, do what she did. If the message needs a decision only a person can make "
+            "Faith answering differently from a suggestion, do what she did, "
+            "and follow the rules learned from her corrections - what Franklin "
+            "said about a suggestion outranks everything else. The reasons "
+            "given beside her examples are why she answered that way: answer "
+            "for the same reasons, not only in the same words. If the message "
+            "needs a decision only a person can make "
             "- a refund, a complaint about the leads, an upset agent - still "
             "draft her holding reply, and say so in why. Match her, not a "
             "customer-service script: if she writes two lines, write two lines."
@@ -7766,6 +7791,21 @@ KEEP_LESSONS = 150
 #: How often Faith's playbook is written again from her replies.
 PLAYBOOK_DAYS = 7
 
+#: This many new lessons since the playbook was written, and it is written
+#: again without waiting out the week.
+PLAYBOOK_NEW_RULES = 10
+
+#: Corrections worked out per minute's read. One Claude call each.
+STUDY_LESSONS = 3
+
+#: Her past exchanges studied per call, and one call per minute's read: her
+#: whole history is read through within a couple of hours of starting, then
+#: each new one as it settles.
+REASON_BATCH = 20
+
+#: An answer this old is finished. She often answers in two or three texts.
+REASON_SETTLE_MINUTES = 60
+
 
 def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | None:
     """The agent's New Agent card, found by the number texting or by name.
@@ -7817,7 +7857,7 @@ def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | No
     }
 
 
-def faith_playbook(config: Config, done: list) -> str:
+def faith_playbook(config: Config, done: list, learned: list = ()) -> str:
     """How Faith handles agents, written down from her own replies.
 
     Examples show how she answered one message. This is the part above them:
@@ -7835,7 +7875,15 @@ def faith_playbook(config: Config, done: list) -> str:
     if len(picked) < 20:
         raise ValueError("Too few of her replies to write a playbook from.")
     shown = "\n\n".join(
-        f"Agent: {one.asked[:300]}\nFaith: {one.answered[:400]}" for one in picked
+        f"Agent: {one.asked[:300]}\nFaith: {one.answered[:400]}"
+        + (f"\n(Why: {one.why})" if getattr(one, "why", "") else "")
+        for one in picked
+    )
+    corrected = (
+        "\n\n---\nAnd what was learned where drafts written like her were not "
+        "sent as written - these are right, and the playbook must agree with "
+        "them:\n" + "\n".join(f"- {one}" for one in learned)
+        if learned else ""
     )
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
@@ -7850,15 +7898,15 @@ def faith_playbook(config: Config, done: list) -> str:
         ),
         messages=[{"role": "user", "content": (
             f"Here are {len(picked)} real exchanges, spread across her history:"
-            f"\n\n{shown}\n\n---\nWrite Faith's playbook in plain markdown:\n"
+            f"\n\n{shown}{corrected}\n\n---\nWrite Faith's playbook in plain markdown:\n"
             "1. **How she writes** - length, greeting, sign-off, capitals, "
             "punctuation, emoji, how she uses the agent's name.\n"
             "2. **Each kind of message agents send** - group them into the kinds "
             "that actually come up (invoices, launch dates, pausing, states, "
             "lead quality, thanks, and whatever else is there). For each: what "
             "she does, what she asks for, what she commits to and what she "
-            "won't, when she hands it to the team, and two or three of her "
-            "real phrasings, quoted.\n"
+            "won't, when she hands it to the team, why she handles it that "
+            "way, and two or three of her real phrasings, quoted.\n"
             "3. **Things she never does.**\n"
             "Keep it under 1,200 words."
         )}],
@@ -7873,7 +7921,8 @@ def faith_playbook(config: Config, done: list) -> str:
 
 
 def ring_playbook_due(data: dict, *, now=None) -> bool:
-    """Whether Faith's playbook needs writing - never written, or a week old."""
+    """Whether Faith's playbook needs writing - never written, a week old, or
+    behind on what her corrections have taught since."""
     from datetime import timezone
 
     held = data.get("playbook") or {}
@@ -7881,7 +7930,11 @@ def ring_playbook_due(data: dict, *, now=None) -> bool:
     if not held.get("text") or made is None:
         return True
     now = now or datetime.now(timezone.utc)
-    return now - made > timedelta(days=PLAYBOOK_DAYS)
+    newer = [
+        one for one in data.get("lessons") or []
+        if one.get("rule") and str(one.get("at") or "") > str(held.get("made") or "")
+    ]
+    return now - made > timedelta(days=PLAYBOOK_DAYS) or len(newer) >= PLAYBOOK_NEW_RULES
 
 
 def ring_keep_playbook(text: str, replies: int) -> None:
@@ -7903,7 +7956,7 @@ def ring_context(config: Config, data: dict, texts: list, *, agent: str,
                  name: str = "", key: str = "", asked: str = "") -> dict:
     """Everything a draft should know besides the conversation itself.
 
-    {"card", "history", "lessons", "playbook"}. The card is looked up on the
+    {"card", "history", "lessons", "playbook", "learned"}. The card is looked up on the
     board and a board that will not answer costs the draft its context, not
     the draft - a suggestion without the launch date is still a suggestion.
     """
@@ -7924,4 +7977,316 @@ def ring_context(config: Config, data: dict, texts: list, *, agent: str,
         "history": smsreplies.history(texts, agent, besides=key) if agent else [],
         "lessons": smsreplies.pick_lessons(list(data.get("lessons") or []), asked),
         "playbook": str((data.get("playbook") or {}).get("text") or ""),
+        "learned": smsreplies.rules_from(list(data.get("lessons") or [])),
     }
+
+
+# ------------------------------------------------------ learning why she did
+
+
+def _lesson_id(lesson: dict) -> str:
+    """Which suggestion a lesson grades: the conversation and the moment."""
+    return f"{lesson.get('key') or lesson.get('agent') or ''}|{lesson.get('asked_at') or lesson.get('at') or ''}"
+
+
+def explain_the_change(config: Config, lesson: dict, *, before: list = (),
+                       after: list = (), card: dict | None = None) -> dict:
+    """Why a suggestion was not sent as written. {"why", "rule", "kind"}.
+
+    What was sent says what she did; this is the part a draft can carry to
+    the next agent - that she knew the launch date off the card, that she
+    never says "paused" to somebody behind on an invoice, that she called
+    instead. What Franklin said about it, when he said something, is the
+    reason, and is not second-guessed.
+    """
+    from anthropic import Anthropic
+
+    parts = []
+    if card:
+        parts.append(_card_text(card))
+    if before:
+        parts.append("THE CONVERSATION BEFORE IT, oldest first:\n" + "\n".join(
+            f"{_said_by(one)}: {one.said[:400]}" for one in before
+        ))
+    parts.append(f"THE AGENT'S MESSAGE:\n{lesson.get('asked') or ''}")
+    parts.append(f"RYTE SUGGESTED:\n{lesson.get('suggested') or ''}")
+    parts.append(
+        "WHAT WAS ACTUALLY SENT:\n" + (
+            lesson.get("sent") or "(nothing was texted back - it was handled "
+            "some other way, or needed no text)"
+        )
+    )
+    if after:
+        parts.append("WHAT CAME AFTER, oldest first:\n" + "\n".join(
+            f"{_said_by(one)}: {one.said[:400]}" for one in after
+        ))
+    if lesson.get("note"):
+        parts.append(f"FRANKLIN SAID ABOUT THE SUGGESTION:\n{lesson['note']}")
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=600,
+        system=(
+            "RYTE drafts replies to insurance agents' text messages the way "
+            "Faith, on Agent Lead Lab's customer service team, would write "
+            "them. Franklin, the general manager, reads each draft, and Faith "
+            "- or Franklin, from her line - sends the real reply. This draft "
+            "was not sent as written. Work out why, so the next draft gets it "
+            "right.\n\n"
+            "If Franklin said why, that is the reason: explain it in his terms "
+            "and do not second-guess it. Otherwise look for what the draft "
+            "missed: a fact she knew that it did not (from the card or the "
+            "earlier texts), something it promised that she would not, an "
+            "action she took instead of words (a call, a handover to the "
+            "team), a question she asked first, length, tone, timing - or "
+            "only wording, when that is all it was. Use what came after as a "
+            "clue to how her answer landed. Never invent a reason the texts "
+            "do not support."
+        ),
+        tools=[{
+            "name": "lesson",
+            "description": "Why the draft was not sent, and what to do next time.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "why": {
+                        "type": "string",
+                        "description": "One or two plain sentences to Franklin: "
+                                       "why she wrote something different.",
+                    },
+                    "rule": {
+                        "type": "string",
+                        "description": "One standing instruction for future "
+                                       "drafts that would have got this right. "
+                                       "General enough for other agents: no "
+                                       "names, dates or amounts from this "
+                                       "conversation.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["facts", "promise", "action", "handoff",
+                                 "question", "length", "tone", "timing",
+                                 "wording", "other"],
+                    },
+                },
+                "required": ["why", "rule", "kind"],
+            },
+        }],
+        tool_choice={"type": "tool", "name": "lesson"},
+        messages=[{"role": "user", "content": "\n\n".join(parts)}],
+    )
+    got = _tool_input(response, "lesson")
+    why = " ".join(str(got.get("why") or "").split())
+    if not why:
+        raise ValueError("The lesson came back empty.")
+    return {
+        "why": why,
+        "rule": " ".join(str(got.get("rule") or "").split()),
+        "kind": str(got.get("kind") or "other"),
+    }
+
+
+def explain_her_replies(config: Config, batch: list) -> dict:
+    """Why she answered each of these the way she did. {exchange id: why}.
+
+    `batch` is [(Exchange, [the texts before it])]. Every past reply of hers,
+    read with the conversation it was in: a draft shown "Faith: I'll check
+    with the team!" copies the words; shown that she says it whenever an
+    agent asks about a refund, it knows when to.
+    """
+    from anthropic import Anthropic
+
+    if not batch:
+        return {}
+    shown = []
+    for at, (one, before) in enumerate(batch, start=1):
+        so_far = "\n".join(f"{_said_by(text)}: {text.said[:300]}" for text in before)
+        shown.append(
+            f"EXCHANGE {at}\n{so_far or 'Agent: ' + one.asked[:600]}\n"
+            f"FAITH ANSWERED: {one.answered[:600]}"
+        )
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=4000,
+        system=(
+            "You are studying how Faith, on Agent Lead Lab's customer service "
+            "team, answers text messages from insurance agents who buy leads, "
+            "so that drafts can answer the way she would and for the same "
+            "reasons. For each exchange, say in one sentence why she answered "
+            "the way she did: what in the agent's message or the conversation "
+            "before it led her there - what she was asking for, promising or "
+            "holding back, whether she handed it to the team, why so short or "
+            "so warm. The reason, not a summary of her words. Only what the "
+            "texts support; when it is simply how she always answers that, "
+            "say so."
+        ),
+        tools=[{
+            "name": "reasons",
+            "description": "Why she answered each exchange the way she did.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "reasons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "n": {"type": "integer"},
+                                "why": {"type": "string"},
+                            },
+                            "required": ["n", "why"],
+                        },
+                    },
+                },
+                "required": ["reasons"],
+            },
+        }],
+        tool_choice={"type": "tool", "name": "reasons"},
+        messages=[{"role": "user", "content": "\n\n".join(shown)}],
+    )
+    got = _tool_input(response, "reasons")
+    found = {}
+    for item in got.get("reasons") or []:
+        try:
+            at = int(item.get("n"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        why = " ".join(str(item.get("why") or "").split())
+        if 1 <= at <= len(batch) and why:
+            found[batch[at - 1][0].id] = why
+    if not found:
+        raise ValueError("None of her replies came back explained.")
+    # One skipped is remembered as studied: asked again every minute, an
+    # exchange Claude will not explain is a bill that never ends.
+    return {one.id: found.get(one.id, "") for one, _before in batch}
+
+
+def ring_study(config: Config, *, now=None) -> dict:
+    """A little more learning, each minute. {"explained", "studied", "problems"}.
+
+    The corrections first, a few at a time - why a suggestion was not sent,
+    worked out from the conversation, the card and whatever Franklin said -
+    then the next batch of her past replies, newest first, until her whole
+    history has been read. Claude is asked with the file let go, so a ping
+    is never held up by the studying.
+    """
+    import logging
+    from datetime import timezone
+
+    from .. import ringtexts, smsreplies
+
+    log = logging.getLogger("wilbyte.bot")
+    now = now or datetime.now(timezone.utc)
+    with _RING_FILE:
+        data = ringtexts.load()
+    texts = ring_texts(config, data)
+    problems: list[str] = []
+
+    explained, tried = {}, set()
+    for one in smsreplies.needs_explaining(list(data.get("lessons") or []))[:STUDY_LESSONS]:
+        key, at = str(one.get("key") or ""), str(one.get("at") or "")
+        card = None
+        try:
+            card = agent_on_the_board(config, str(one.get("agent") or ""),
+                                      str(one.get("name") or ""))
+        except Exception:
+            log.warning("Couldn't look the agent up for a lesson", exc_info=True)
+        try:
+            explained[_lesson_id(one)] = explain_the_change(
+                config, one, card=card,
+                before=smsreplies.before(texts, key, str(one.get("asked_at") or at)),
+                after=smsreplies.after(texts, key, at),
+            )
+        except Exception as exc:
+            tried.add(_lesson_id(one))
+            problems.append(f"Couldn't work out a lesson: {_short(exc, 160)}")
+
+    reasons = {}
+    batch = smsreplies.unexplained(
+        smsreplies.exchanges(texts), data.get("reasons") or {},
+        settled=_ring_iso(now - timedelta(minutes=REASON_SETTLE_MINUTES)),
+        most=REASON_BATCH,
+    )
+    if batch:
+        try:
+            reasons = explain_her_replies(config, [
+                (one, smsreplies.before(texts, one.key, one.at, most=6)) for one in batch
+            ])
+        except Exception as exc:
+            problems.append(f"Couldn't study her replies: {_short(exc, 160)}")
+
+    new = []
+    if explained or tried or reasons:
+        with _RING_FILE:
+            data = ringtexts.load()
+            for one in data.get("lessons") or []:
+                lesson = _lesson_id(one)
+                if lesson in explained:
+                    one.update(explained[lesson])
+                    new.append(one)
+                elif lesson in tried:
+                    one["tries"] = int(one.get("tries") or 0) + 1
+            if reasons:
+                known = {one.id for one in smsreplies.exchanges(ring_texts(config, data))}
+                held = {**(data.get("reasons") or {}), **reasons}
+                data["reasons"] = {at: why for at, why in held.items() if at in known}
+            ringtexts.save(data)
+    return {"explained": new, "studied": len(reasons), "problems": problems}
+
+
+def ring_posted(ring_id: str, discord_id, *, lesson: str = "") -> None:
+    """Remember which Discord message a suggestion - or a lesson - went out
+    as, so Franklin replying to it can be matched back to it."""
+    from .. import ringtexts
+
+    with _RING_FILE:
+        data = ringtexts.load()
+        for one in (data.get("lessons") if lesson else data.get("pending")) or []:
+            if (_lesson_id(one) if lesson else str(one.get("id") or "")) == (lesson or ring_id):
+                one["lesson_post" if lesson else "posted"] = str(discord_id)
+        ringtexts.save(data)
+
+
+def ring_posts(data: dict) -> set:
+    """Every Discord message a reply to would be Franklin teaching RYTE."""
+    ids = set()
+    for one in list(data.get("pending") or []) + list(data.get("lessons") or []):
+        for field in ("posted", "lesson_post"):
+            if str(one.get(field) or "").isdigit():
+                ids.add(int(one[field]))
+    return ids
+
+
+def ring_told(discord_id, note: str) -> str | None:
+    """What Franklin said, replying to a suggestion or a lesson.
+
+    "lesson", "ping" or None if the message was neither. On a lesson it
+    replaces RYTE's guess at why, which is worked out again in his terms; on
+    a suggestion Faith has not answered yet, it waits for her answer and
+    goes with it - or, if she never texts back, is the lesson on its own.
+    """
+    from .. import ringtexts
+
+    note = " ".join(str(note or "").split())
+    if not note:
+        return None
+    wanted = str(discord_id)
+    with _RING_FILE:
+        data = ringtexts.load()
+        for one in data.get("lessons") or []:
+            if wanted in (str(one.get("posted") or ""), str(one.get("lesson_post") or "")):
+                one["note"] = " / ".join(bit for bit in (one.get("note"), note) if bit)
+                for guess in ("why", "rule", "kind", "tries"):
+                    one.pop(guess, None)
+                ringtexts.save(data)
+                return "lesson"
+        for one in data.get("pending") or []:
+            if str(one.get("posted") or "") == wanted:
+                one["note"] = " / ".join(bit for bit in (one.get("note"), note) if bit)
+                ringtexts.save(data)
+                return "ping"
+    return None

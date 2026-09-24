@@ -268,6 +268,7 @@ def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
         return None
 
     monkeypatch.setattr(client, "_write_the_playbook", no_playbook)
+    monkeypatch.setattr(client, "_study", no_playbook)
 
     def drafting(cfg, **kw):
         if isinstance(drafted, Exception):
@@ -1080,7 +1081,7 @@ def test_a_written_playbook_is_posted_for_franklin_to_correct(monkeypatch):
     from wilbyte.bot import client
 
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
-    monkeypatch.setattr(jobs, "faith_playbook", lambda cfg, done: "## How she writes")
+    monkeypatch.setattr(jobs, "faith_playbook", lambda cfg, done, learned=(): "## How she writes")
     kept = []
     monkeypatch.setattr(jobs, "ring_keep_playbook", lambda text, n: kept.append((text, n)))
     sent = []
@@ -1105,7 +1106,7 @@ def test_a_playbook_that_failed_is_not_tried_again_every_minute(monkeypatch):
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
     tries = []
 
-    def fails(cfg, done):
+    def fails(cfg, done, learned=()):
         tries.append(1)
         raise RuntimeError("overloaded")
 
@@ -1126,7 +1127,7 @@ def test_a_fresh_playbook_is_not_written_again(monkeypatch):
 
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
     monkeypatch.setattr(jobs, "faith_playbook",
-                        lambda cfg, done: (_ for _ in ()).throw(AssertionError("rewrote")))
+                        lambda cfg, done, learned=(): (_ for _ in ()).throw(AssertionError("rewrote")))
     fresh = {"playbook": {"text": "x", "made": jobs._ring_iso(datetime.now(timezone.utc))}}
 
     asyncio.run(client._write_the_playbook(NS(config=None), Heard(), fresh, [1]))
@@ -1145,3 +1146,458 @@ def test_the_ping_is_drafted_with_what_is_known_and_graded_later(monkeypatch):
     pending = jobs.ring_pinged.pending
     assert pending["draft"] == "Hi Shelby! Yes 😊"
     assert pending["asked"] == "are my leads paused?"
+
+
+# ----------------------------------------- why a suggestion was not sent
+
+
+def _says(monkeypatch, name, answer):
+    """Claude answering with one tool call, remembering what it was asked."""
+    config = _drafting(monkeypatch)
+
+    def create(self, **kw):
+        Claude.asked.append(kw)
+        if isinstance(answer, Exception):
+            raise answer
+        got = answer(kw) if callable(answer) else answer
+        return NS(stop_reason="tool_use", content=[NS(type="tool_use", name=name, input=got)])
+
+    monkeypatch.setattr(Claude, "create", create)
+    return config
+
+
+def _txt(at, said, *, inbound=True, key="C-1", team=False):
+    one = smsreplies.Text(id=at, at=at, inbound=inbound, agent="3125550188",
+                          name="", said=said, conversation=key)
+    one.team = team
+    return one
+
+
+LESSON = {
+    "asked": "when do my leads start?", "suggested": "Hi! They start [launch date] 😊",
+    "sent": "Hi Adrian! Friday 🙂", "at": "2026-09-24T10:05:00.000Z",
+    "asked_at": "2026-09-24T10:00:00.000Z", "agent": "3125550188", "key": "C-1",
+    "same": False, "kept": 0.2, "name": "Adrian Pacheco",
+}
+
+
+def test_a_changed_suggestion_is_explained_from_everything_around_it(monkeypatch):
+    config = _says(monkeypatch, "lesson", {
+        "why": "She knew the launch day off the card.",
+        "rule": "Give the launch day when the card has it.", "kind": "facts",
+    })
+
+    got = jobs.explain_the_change(
+        config, {**LESSON, "note": "the card says Friday, use it"},
+        before=[_txt("1", "hey"), _txt("2", "when do my leads start?")],
+        after=[_txt("3", "perfect thanks!")],
+        card={"agent": "Adrian Pacheco", "desc": "Live Friday September 26"},
+    )
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert got == {"why": "She knew the launch day off the card.",
+                   "rule": "Give the launch day when the card has it.", "kind": "facts"}
+    for shown in ("Live Friday September 26", "Agent: hey", "Hi! They start [launch date]",
+                  "Hi Adrian! Friday", "Agent: perfect thanks!",
+                  "FRANKLIN SAID ABOUT THE SUGGESTION:\nthe card says Friday"):
+        assert shown in prompt, shown
+    assert "do not second-guess it" in Claude.asked[0]["system"]
+
+
+def test_nothing_texted_back_is_said_as_such(monkeypatch):
+    config = _says(monkeypatch, "lesson", {"why": "Called.", "rule": "", "kind": "action"})
+
+    jobs.explain_the_change(config, {**LESSON, "sent": "", "note": "I called him"})
+
+    assert "nothing was texted back" in Claude.asked[0]["messages"][0]["content"]
+
+
+def test_an_empty_explanation_is_not_a_lesson(monkeypatch):
+    config = _says(monkeypatch, "lesson", {"why": " ", "rule": "x", "kind": "other"})
+
+    with pytest.raises(ValueError):
+        jobs.explain_the_change(config, LESSON)
+
+
+# ------------------------------------------------ why she answered that way
+
+
+def _swaps(count):
+    return [smsreplies.Exchange(agent="1", name="", asked=f"q{at}", answered=f"a{at}",
+                                at=f"2026-09-2{at}", key="C") for at in range(count)]
+
+
+def test_each_of_her_replies_is_explained_with_the_conversation_before_it(monkeypatch):
+    config = _says(monkeypatch, "reasons", {"reasons": [
+        {"n": 2, "why": "She was holding the date back."},
+        {"n": 1, "why": "Invoices go to Tre."},
+        {"n": 9, "why": "no such exchange"},
+        {"n": "x", "why": "not a number"},
+    ]})
+    one, two, three = _swaps(3)
+
+    got = jobs.explain_her_replies(config, [
+        (one, [_txt("1", "is my invoice ready?")]), (two, []), (three, []),
+    ])
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert "EXCHANGE 1\nAgent: is my invoice ready?\nFAITH ANSWERED: a0" in prompt
+    assert "EXCHANGE 2\nAgent: q1\nFAITH ANSWERED: a1" in prompt
+    # the one skipped is remembered as studied, so it isn't paid for every minute
+    assert got == {one.id: "Invoices go to Tre.", two.id: "She was holding the date back.",
+                   three.id: ""}
+
+
+def test_a_batch_with_nothing_explained_is_a_failure_not_a_blank(monkeypatch):
+    config = _says(monkeypatch, "reasons", {"reasons": []})
+
+    with pytest.raises(ValueError):
+        jobs.explain_her_replies(config, [(one, []) for one in _swaps(2)])
+
+
+# ------------------------------------------------------------ studying
+
+
+def _studying(monkeypatch, data, *, lesson=None, reasons=None):
+    ringtexts.save(data)
+    monkeypatch.setattr(jobs, "agent_on_the_board", lambda cfg, n, name="": None)
+    asked = {"lessons": [], "reasons": []}
+
+    def change(cfg, one, **kw):
+        asked["lessons"].append((one, kw))
+        if isinstance(lesson, Exception):
+            raise lesson
+        return lesson or {"why": "She knew.", "rule": "Say it.", "kind": "facts"}
+
+    def replies(cfg, batch):
+        asked["reasons"].append(batch)
+        if isinstance(reasons, Exception):
+            raise reasons
+        return {one.id: f"why {one.answered}" for one, _before in batch}
+
+    monkeypatch.setattr(jobs, "explain_the_change", change)
+    monkeypatch.setattr(jobs, "explain_her_replies", replies)
+    return asked
+
+
+def _history(count, *, day="2026-09-20"):
+    texts = []
+    for at in range(count):
+        texts.append(_txt(f"{day}T1{at}:00:00.000Z", f"question {at}", key=f"C-{at}"))
+        texts.append(_txt(f"{day}T1{at}:05:00.000Z", f"answer {at}", inbound=False, key=f"C-{at}"))
+    return [one.as_dict() for one in texts]
+
+
+def test_corrections_are_explained_and_her_replies_studied(monkeypatch):
+    data = {"texts": _history(3), "lessons": [
+        dict(LESSON), {**LESSON, "asked_at": "x", "same": True},
+    ]}
+    asked = _studying(monkeypatch, data)
+
+    got = jobs.ring_study(NS(secrets=None), now=NOW)
+
+    kept = ringtexts.load()
+    assert len(asked["lessons"]) == 1, "a suggestion sent as written was explained"
+    assert kept["lessons"][0]["why"] == "She knew." and kept["lessons"][0]["rule"] == "Say it."
+    assert [one["why"] for one in got["explained"]] == ["She knew."]
+    assert set(kept["reasons"].values()) == {"why answer 0", "why answer 1", "why answer 2"}
+    # newest first
+    assert [one.answered for one, _ in asked["reasons"][0]] == ["answer 2", "answer 1", "answer 0"]
+    assert got["studied"] == 3 and got["problems"] == []
+
+
+def test_an_answer_still_being_written_is_not_studied_yet(monkeypatch):
+    fresh = (NOW - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    data = {"texts": [_txt("2026-09-24T00:00:00.000Z", "q").as_dict(),
+                      _txt(fresh, "a", inbound=False).as_dict()]}
+    asked = _studying(monkeypatch, data)
+
+    got = jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert asked["reasons"] == [] and got["studied"] == 0
+
+
+def test_her_whole_history_is_read_a_batch_at_a_time(monkeypatch):
+    monkeypatch.setattr(jobs, "REASON_BATCH", 2)
+    asked = _studying(monkeypatch, {"texts": _history(5)})
+
+    jobs.ring_study(NS(secrets=None), now=NOW)
+    jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert [[one.answered for one, _ in batch] for batch in asked["reasons"]] == [
+        ["answer 4", "answer 3"], ["answer 2", "answer 1"],
+    ]
+
+
+def test_a_lesson_that_keeps_failing_is_given_up_on(monkeypatch):
+    asked = _studying(monkeypatch, {"texts": [], "lessons": [dict(LESSON)]},
+                      lesson=RuntimeError("overloaded"))
+
+    for _ in range(5):
+        got = jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert len(asked["lessons"]) == 3
+    assert ringtexts.load()["lessons"][0]["tries"] == 3
+    assert got["problems"] == []
+
+
+def test_a_failed_study_says_so(monkeypatch):
+    _studying(monkeypatch, {"texts": _history(1)}, reasons=RuntimeError("overloaded"))
+
+    got = jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert got["problems"] and "overloaded" in got["problems"][0]
+    assert not ringtexts.load().get("reasons")
+
+
+def test_reasons_for_texts_no_longer_kept_are_let_go(monkeypatch):
+    _studying(monkeypatch, {"texts": _history(1), "reasons": {"gone|1": "old"}})
+
+    jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert "gone|1" not in ringtexts.load()["reasons"]
+
+
+# ------------------------------------------- Franklin saying why, in Discord
+
+
+def test_a_reply_to_a_lesson_replaces_the_guess(monkeypatch):
+    ringtexts.save({"lessons": [{**LESSON, "why": "guess", "rule": "guess",
+                                 "lesson_post": "900"}]})
+
+    assert jobs.ring_told(900, "  she always calls   on refunds ") == "lesson"
+
+    lesson = ringtexts.load()["lessons"][0]
+    assert lesson["note"] == "she always calls on refunds"
+    assert "why" not in lesson and "rule" not in lesson
+    assert smsreplies.needs_explaining([lesson]) == [lesson]
+
+
+def test_a_reply_to_a_ping_waits_for_her_answer(monkeypatch):
+    ringtexts.save({"pending": [{"id": "5", "posted": "901", "key": "C-1", "at": "1"}]})
+
+    assert jobs.ring_told("901", "never say paused") == "ping"
+    assert jobs.ring_told("901", "call instead") == "ping"
+
+    assert ringtexts.load()["pending"][0]["note"] == "never say paused / call instead"
+
+
+def test_a_reply_to_anything_else_is_not_a_lesson():
+    ringtexts.save({"pending": [{"id": "5", "posted": "901"}]})
+
+    assert jobs.ring_told("902", "hello") is None
+    assert jobs.ring_told("901", "   ") is None
+
+
+def test_which_post_was_which_is_remembered():
+    ringtexts.save({"pending": [{"id": "5"}, {"id": "6"}], "lessons": [dict(LESSON)]})
+
+    jobs.ring_posted("6", 901)
+    jobs.ring_posted("", 902, lesson=jobs._lesson_id(LESSON))
+
+    data = ringtexts.load()
+    assert [one.get("posted") for one in data["pending"]] == [None, "901"]
+    assert data["lessons"][0]["lesson_post"] == "902"
+    assert jobs.ring_posts(data) == {901, 902}
+
+
+def test_the_ping_and_the_note_follow_the_suggestion_into_its_lesson(monkeypatch):
+    asked_at = (NOW - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    ringtexts.save({"texts": [], "pinged": [], "pending": [{
+        "id": "5", "key": "C-shelby", "at": asked_at, "asked": "paused?",
+        "draft": "Hi! Yes 😊", "agent": "4358173162", "posted": "901",
+        "note": "tell her Monday", "name": "Shelby Guest",
+    }]})
+    answer = record(9, 20, "Yes they are Shelby! Back on Monday 🙂", inbound=False)
+    answer["conversationId"] = "C-shelby"
+    _ringing(monkeypatch, [answer])
+
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    lesson = data["lessons"][-1]
+    assert (lesson["posted"], lesson["note"], lesson["name"]) == ("901", "tell her Monday", "Shelby Guest")
+
+
+# ---------------------------------------------- what the draft is given
+
+
+def test_the_draft_answers_for_her_reasons_and_what_was_learned(monkeypatch):
+    config = _drafting(monkeypatch)
+    done = _done()
+    done[-1].why = "She holds the date back until the team confirms."
+
+    jobs.draft_like_faith(
+        config, asked="are my leads paused?", done=done,
+        learned=["Give the launch day when the card has it."],
+        lessons=[{**LESSON, "note": "use the card", "why": "She knew it."}],
+    )
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert "(Why she answered that way: She holds the date back" in prompt
+    assert "WHAT YOU HAVE LEARNED FROM HER CORRECTIONS" in prompt
+    assert "- Give the launch day when the card has it." in prompt
+    assert "Franklin said: use the card\nWhy: She knew it." in prompt
+    assert "outranks everything else" in Claude.asked[0]["system"]
+
+
+def test_the_playbook_is_written_with_her_reasons_and_what_was_learned(monkeypatch):
+    config = _drafting(monkeypatch)
+    done = _swaps(9) * 3
+    done[0].why = "Invoices go to Tre."
+
+    def writes(self, **kw):
+        Claude.asked.append(kw)
+        return NS(content=[NS(type="text", text="## Playbook")])
+
+    monkeypatch.setattr(Claude, "create", writes)
+    jobs.faith_playbook(config, done, ["Never promise a refund."])
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert "(Why: Invoices go to Tre.)" in prompt
+    assert "- Never promise a refund." in prompt
+
+
+def test_the_playbook_is_rewritten_once_enough_has_been_learned():
+    made = jobs._ring_iso(NOW - timedelta(days=1))
+    newer = jobs._ring_iso(NOW - timedelta(hours=1))
+    lessons = [{"rule": f"r{at}", "at": newer} for at in range(jobs.PLAYBOOK_NEW_RULES - 1)]
+    held = {"playbook": {"text": "x", "made": made}}
+
+    assert not jobs.ring_playbook_due({**held, "lessons": lessons}, now=NOW)
+    assert not jobs.ring_playbook_due(
+        {**held, "lessons": lessons + [{"rule": "old", "at": made[:-5]}]}, now=NOW)
+    assert jobs.ring_playbook_due(
+        {**held, "lessons": lessons + [{"rule": "new", "at": newer}]}, now=NOW)
+
+
+def test_what_is_known_includes_what_was_learned(monkeypatch):
+    config = _board(monkeypatch, [])
+    config.secrets.ringcentral_team = ""
+
+    known = jobs.ring_context(config, {"lessons": [{"rule": "Be brief."}]}, [], agent="")
+
+    assert known["learned"] == ["Be brief."]
+
+
+# ------------------------------------------------------- in the channel
+
+
+class Posted:
+    def __init__(self):
+        self.said, self.next = [], 700
+
+    async def send(self, content=None, **kw):
+        self.said.append(str(content or ""))
+        self.next += 1
+        return NS(id=self.next)
+
+
+def test_each_lesson_is_told_to_franklin(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_STUDY_FAILED", [])
+    monkeypatch.setattr(client, "_RING_POSTS", set())
+    lesson = {**LESSON, "why": "She knew it off the card.", "rule": "Use the card."}
+    ringtexts.save({"lessons": [lesson, {"same": True, "sent": "a"}]})
+    monkeypatch.setattr(jobs, "ring_study", lambda cfg: {
+        "explained": [lesson], "studied": 20, "problems": []})
+    here = Posted()
+
+    asyncio.run(client._study(NS(config=None), here))
+
+    (said,) = here.said
+    assert said.startswith("📝 **Learned from Adrian Pacheco**")
+    assert "> Hi! They start [launch date] 😊" in said and "> Hi Adrian! Friday 🙂" in said
+    assert "**Why:** She knew it off the card." in said
+    assert "**Next time:** Use the card." in said
+    assert "Used as written or nearly: 1 of my last 2" in said
+    assert "Reply to this" in said
+    assert client._RING_POSTS == {701}
+    assert ringtexts.load()["lessons"][0]["lesson_post"] == "701"
+
+
+def test_studying_that_failed_waits_before_trying_again(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_STUDY_FAILED", [])
+    tries = []
+
+    def study(cfg):
+        tries.append(1)
+        return {"explained": [], "studied": 0, "problems": ["Couldn't study: overloaded"]}
+
+    monkeypatch.setattr(jobs, "ring_study", study)
+    for _ in range(3):
+        asyncio.run(client._study(NS(config=None), Posted()))
+
+    assert tries == [1]
+
+
+def test_a_lesson_franklin_told_shows_his_words(monkeypatch):
+    from wilbyte.bot import client
+
+    said = client._ring_lesson({**LESSON, "sent": "", "note": "I called him",
+                                "why": "It was handled by phone.", "rule": ""})
+
+    assert "**Nothing was texted back.**" in said
+    assert "**You told me:** I called him" in said
+    assert "Next time" not in said
+
+
+def _reply(to, text, *, bot=False):
+    replied = []
+
+    async def reply(content, **kw):
+        replied.append(content)
+
+    message = NS(author=NS(bot=bot), reference=NS(message_id=to), content=text,
+                 reply=reply)
+    return message, replied
+
+
+def test_a_reply_to_a_lesson_is_taken_as_the_reason(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_RING_POSTS", {900})
+    ringtexts.save({"lessons": [{**LESSON, "lesson_post": "900", "why": "guess"}]})
+    message, replied = _reply(900, "she always calls on refunds")
+
+    assert client._is_ring_reply(message)
+    asyncio.run(client._ring_told(message))
+
+    assert ringtexts.load()["lessons"][0]["note"] == "she always calls on refunds"
+    assert "Got it" in replied[0]
+
+
+def test_replies_to_anything_else_are_left_alone(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_RING_POSTS", {900})
+
+    assert not client._is_ring_reply(_reply(901, "hi")[0])
+    assert not client._is_ring_reply(_reply(900, "hi", bot=True)[0])
+    assert not client._is_ring_reply(NS(author=NS(bot=False), reference=None))
+
+
+def test_the_ping_remembers_which_message_it_was(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_RING_POSTS", set())
+    posted = []
+    monkeypatch.setattr(jobs, "ring_posted",
+                        lambda ring, discord, lesson="": posted.append((ring, discord)))
+
+    asyncio.run(client._remember_post(NS(id=777), "5"))
+    asyncio.run(client._remember_post(None, "6"))
+
+    assert posted == [("5", 777)] and client._RING_POSTS == {777}
+
+
+def test_only_a_few_corrections_are_worked_out_a_minute(monkeypatch):
+    """Each is a Claude call; a backlog is worked through, not paid for at once."""
+    lessons = [{**LESSON, "asked_at": f"2026-09-2{at}"} for at in range(5)]
+    asked = _studying(monkeypatch, {"texts": [], "lessons": lessons})
+
+    jobs.ring_study(NS(secrets=None), now=NOW)
+
+    assert len(asked["lessons"]) == jobs.STUDY_LESSONS

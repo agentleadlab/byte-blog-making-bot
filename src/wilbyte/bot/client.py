@@ -332,6 +332,14 @@ class WilByteBot(discord.Client):
                 except Exception:  # Discord unreachable as well; the log has it
                     log.exception("...and I couldn't say so either")
             return
+        # Franklin replying to a suggestion or a lesson: that is him saying
+        # what RYTE got wrong, and the best teacher there is.
+        if _is_ring_reply(message):
+            try:
+                await _ring_told(message)
+            except Exception:
+                log.exception("Couldn't take that correction")
+            return
         # Somebody telling the room to file what was just said, without
         # telling RYTE. He offers; he never files it on his own - nobody
         # addressed him, and writing to the board off a conversation he was
@@ -5560,6 +5568,14 @@ _RING_READY: list = []
 #: bill, not a retry.
 _PLAYBOOK_FAILED: list = []
 
+#: When studying last failed. Tried again ten minutes later, not every minute.
+_STUDY_FAILED: list = []
+
+#: The Discord messages that are RYTE's suggestions and lessons, so a reply
+#: to one is known for Franklin teaching him without reading the file for
+#: every reply in the server.
+_RING_POSTS: set = set()
+
 _RING_SETTINGS = (
     ("RINGCENTRAL_CLIENT_ID", "ringcentral_client_id"),
     ("RINGCENTRAL_CLIENT_SECRET", "ringcentral_client_secret"),
@@ -5686,13 +5702,14 @@ async def _ring_once(bot: "WilByteBot") -> None:
         _RING_SAID.update(fresh)
         await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
     texts = jobs.ring_texts(bot.config, data)
-    done = smsreplies.exchanges(texts)
+    done = smsreplies.give_reasons(smsreplies.exchanges(texts), data.get("reasons") or {})
+    _RING_POSTS.update(jobs.ring_posts(data))
     if not problems and not _RING_READY and responder is not None:
         _RING_READY.append(True)
         await responder.send(_ring_ready(len(texts), len(done)))
     if responder is not None and done and not problems:
         await _write_the_playbook(bot, responder, data, done)
-    if not found or responder is None:
+    if responder is None:
         return
 
     for agent, name, tail in found:
@@ -5718,13 +5735,113 @@ async def _ring_once(bot: "WilByteBot") -> None:
         # the two cannot post the same suggestion twice.
         await asyncio.to_thread(partial(
             jobs.ring_pinged, tail[-1].id, pending={
-                "key": tail[-1].key, "at": tail[-1].at, "asked": asked,
-                "draft": drafted["reply"], "agent": agent,
+                "id": tail[-1].id, "key": tail[-1].key, "at": tail[-1].at,
+                "asked": asked, "draft": drafted["reply"], "agent": agent,
+                "name": name,
             },
         ))
-        await responder.send(_ring_note(
+        sent = await responder.send(_ring_note(
             bot.config, agent, name, tail, drafted, card=known.get("card"),
         ))
+        await _remember_post(sent, tail[-1].id)
+
+    if done and not problems:
+        await _study(bot, responder)
+
+
+async def _remember_post(sent, ring_id: str, *, lesson: str = "") -> None:
+    """Which Discord message this went out as, for replies to it."""
+    posted = getattr(sent, "id", None)
+    if not isinstance(posted, int):
+        return
+    _RING_POSTS.add(posted)
+    try:
+        await asyncio.to_thread(partial(jobs.ring_posted, ring_id, posted, lesson=lesson))
+    except Exception:
+        log.exception("Couldn't remember which message that was")
+
+
+async def _study(bot, responder) -> None:
+    """Learn a little more - why suggestions were changed, why she answered
+    the way she did - and tell Franklin each lesson, so he can say where the
+    reason is wrong."""
+    import time
+
+    from .. import ringtexts, smsreplies
+
+    if _STUDY_FAILED and time.time() - _STUDY_FAILED[-1] < 600:
+        return
+    try:
+        got = await asyncio.to_thread(jobs.ring_study, bot.config)
+    except Exception:
+        _STUDY_FAILED.append(time.time())
+        log.exception("Couldn't study Faith's replies")
+        return
+    if got.get("problems"):
+        _STUDY_FAILED.append(time.time())
+        for one in got["problems"]:
+            log.warning("%s", one)
+    if not got.get("explained"):
+        return
+    lessons = list((await asyncio.to_thread(ringtexts.load)).get("lessons") or [])
+    used, out_of = smsreplies.used_count(lessons)
+    for lesson in got["explained"]:
+        sent = await responder.send(_ring_lesson(lesson, used=used, out_of=out_of))
+        await _remember_post(sent, "", lesson=jobs._lesson_id(lesson))
+
+
+def _quoted(text: str, most: int = 400) -> str:
+    text = str(text or "")
+    if len(text) > most:
+        text = text[:most].rstrip() + "…"
+    return "\n".join("> " + line for line in text.splitlines() or [""])
+
+
+def _ring_lesson(lesson: dict, *, used: int = 0, out_of: int = 0) -> str:
+    """What was learned from one suggestion that was not sent as written."""
+    who = lesson.get("name") or _ring_number(str(lesson.get("agent") or "")) or "an agent"
+    lines = [f"📝 **Learned from {who}** — my suggestion wasn't sent as written."]
+    lines += ["**I suggested:**", _quoted(lesson.get("suggested"))]
+    if lesson.get("sent"):
+        lines += ["**What was sent:**", _quoted(lesson.get("sent"))]
+    else:
+        lines.append("**Nothing was texted back.**")
+    if lesson.get("note"):
+        lines.append(f"**You told me:** {lesson['note']}")
+    lines.append(f"**Why:** {lesson.get('why')}")
+    if lesson.get("rule"):
+        lines.append(f"**Next time:** {lesson['rule']}")
+    foot = []
+    if out_of:
+        foot.append(f"Used as written or nearly: {used} of my last {out_of}")
+    foot.append("Wrong reason? Reply to this and tell me the real one")
+    lines.append("-# " + " · ".join(foot))
+    return "\n".join(lines)
+
+
+def _is_ring_reply(message) -> bool:
+    """A person replying to one of RYTE's suggestions or lessons."""
+    if getattr(message.author, "bot", False):
+        return False
+    reference = getattr(message, "reference", None)
+    return bool(reference) and getattr(reference, "message_id", None) in _RING_POSTS
+
+
+async def _ring_told(message) -> None:
+    """Take what Franklin said about a suggestion or a lesson as the reason."""
+    text = (message.content or "").strip()
+    if not text:
+        return
+    where = await asyncio.to_thread(
+        jobs.ring_told, message.reference.message_id, text,
+    )
+    if where == "lesson":
+        answer = "📝 Got it — I'll work that lesson out again your way and use it from now on."
+    elif where == "ping":
+        answer = "📝 Got it — I'll learn from that alongside whatever gets sent."
+    else:
+        return
+    await message.reply(answer, mention_author=False)
 
 
 def _ring_ready(texts: int, replies: int) -> str:
@@ -5780,12 +5897,17 @@ async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
     import io
     import time
 
+    from .. import smsreplies
+
     if not jobs.ring_playbook_due(data):
         return
     if _PLAYBOOK_FAILED and time.time() - _PLAYBOOK_FAILED[-1] < 3600:
         return
     try:
-        text = await asyncio.to_thread(jobs.faith_playbook, bot.config, done)
+        text = await asyncio.to_thread(
+            jobs.faith_playbook, bot.config, done,
+            smsreplies.rules_from(list(data.get("lessons") or [])),
+        )
     except Exception:
         _PLAYBOOK_FAILED.append(time.time())
         log.exception("Couldn't write Faith's playbook")
@@ -5869,7 +5991,9 @@ async def _respond_like_faith(
         data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
     else:
         data = await asyncio.to_thread(ringtexts.load)
-    done = smsreplies.exchanges(jobs.ring_texts(config, data))
+    done = smsreplies.give_reasons(
+        smsreplies.exchanges(jobs.ring_texts(config, data)), data.get("reasons") or {},
+    )
     if not done:
         await responder.send(
             "I have none of Faith's replies to learn from yet, so anything I "

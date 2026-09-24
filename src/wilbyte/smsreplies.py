@@ -12,6 +12,7 @@ handed back, so it can be tested against real shapes without either.
 
 from __future__ import annotations
 
+import difflib
 import math
 import re
 from dataclasses import dataclass, field
@@ -79,6 +80,16 @@ class Exchange:
     answered: str
     at: str                 # when she answered
     words: frozenset = field(default_factory=frozenset)
+    key: str = ""           # the conversation it happened in
+    #: Why she answered the way she did, as RYTE worked it out from the
+    #: conversation around it. "" until studied.
+    why: str = ""
+
+    @property
+    def id(self) -> str:
+        """Which exchange this is, for remembering what was learned from it.
+        Her first text of the answer does not move once sent."""
+        return f"{self.key}|{self.at}"
 
 
 def digits(number: str) -> str:
@@ -161,18 +172,20 @@ def mark_team(texts: list, names, numbers=(), faith: str = "") -> list:
     text that comes back without a name.
 
     Going out: anything sent from a number that is not Faith's. Both of the
-    line's numbers can send, and only one of them is her.
+    line's numbers can send, and only one of them is her. `faith` can name
+    several, comma-separated - Franklin answering from the line in her place
+    is answering as her, and is worth learning from as much as she is.
     """
     wanted = {" ".join(str(one).split()).casefold() for one in names or () if str(one).strip()}
     ours = {digits(one) for one in numbers or () if digits(one)}
-    hers = digits(faith)
+    hers = {digits(one) for one in str(faith or "").split(",") if digits(one)}
     for one in texts:
         if one.inbound:
             one.team = bool(
                 (one.name and one.name.casefold() in wanted) or one.agent in ours
             )
         else:
-            one.team = bool(hers and one.sender and one.sender != hers)
+            one.team = bool(hers and one.sender and one.sender not in hers)
     return texts
 
 
@@ -223,7 +236,7 @@ def _exchange(asked, answered) -> Exchange:
         name=next((one.name for one in reversed(asked) if one.name), ""),
         asked=question,
         answered="\n".join(one.said for one in answered),
-        at=answered[0].at, words=words_in(question),
+        at=answered[0].at, words=words_in(question), key=asked[-1].key,
     )
 
 
@@ -334,6 +347,23 @@ def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9']+", str(text or "").casefold()))
 
 
+def kept(suggested: str, sent: str) -> float:
+    """How much of a suggestion made it into what was sent, 0 to 1.
+
+    "Hi Shelby! Yes they're paused 😊" sent as "Yes they're paused Shelby!"
+    is the suggestion used, not a correction; a different answer altogether
+    is. Only the words count - a changed emoji is not a lesson.
+    """
+    a, b = _plain(suggested), _plain(sent)
+    if not a or not b:
+        return 0.0
+    return round(difflib.SequenceMatcher(None, a.split(), b.split()).ratio(), 2)
+
+
+#: Kept at least this much, a suggestion counts as used.
+USED = 0.8
+
+
 def lessons_from(pending: list, texts: list, *, now: str, gone_after: str) -> tuple:
     """What was actually sent after each suggestion. (lessons, still pending).
 
@@ -355,30 +385,70 @@ def lessons_from(pending: list, texts: list, *, now: str, gone_after: str) -> tu
              if one.at > str(held.get("at") or "")),
             key=lambda one: one.at,
         )
-        if after:
-            sent = after[0].said
-            lessons.append({
-                "asked": str(held.get("asked") or ""),
-                "suggested": str(held.get("draft") or ""),
-                "sent": sent,
-                "at": after[0].at,
-                "agent": str(held.get("agent") or ""),
-                "same": _plain(sent) == _plain(held.get("draft") or ""),
-            })
+        if after and _plus_minutes(after[0].at, 5) > now:
+            # Still answering, perhaps: graded once she has had a few minutes
+            # to send the rest of it.
+            waiting.append(held)
+        elif after:
+            # Her whole answer, not its first line: a reply sent as three
+            # texts a few seconds apart is one reply.
+            sent = "\n".join(
+                one.said for one in after if one.at <= _plus_minutes(after[0].at, 5)
+            )
+            lessons.append(_lesson(held, sent, after[0].at))
         elif str(held.get("at") or "") >= gone_after:
             waiting.append(held)
+        elif held.get("note"):
+            # Nothing texted back, but Franklin said what was wrong with it -
+            # that is the lesson, and too good to drop with the suggestion.
+            lessons.append(_lesson(held, "", str(held.get("at") or "")))
     return lessons, waiting
+
+
+def _lesson(held: dict, sent: str, at: str) -> dict:
+    suggested = str(held.get("draft") or "")
+    lesson = {
+        "asked": str(held.get("asked") or ""),
+        "suggested": suggested,
+        "sent": sent,
+        "at": at,
+        "asked_at": str(held.get("at") or ""),
+        "agent": str(held.get("agent") or ""),
+        "key": str(held.get("key") or ""),
+        "same": bool(sent) and _plain(sent) == _plain(suggested),
+        "kept": kept(suggested, sent),
+    }
+    for carried in ("posted", "note", "name"):
+        if held.get(carried):
+            lesson[carried] = held[carried]
+    return lesson
+
+
+def _plus_minutes(at: str, minutes: int) -> str:
+    """An ISO time a few minutes later, as a string that still compares."""
+    from datetime import datetime, timedelta
+
+    try:
+        when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+    except ValueError:
+        return str(at)
+    later = when + timedelta(minutes=minutes)
+    return later.strftime("%Y-%m-%dT%H:%M:%S.000Z") if str(at).endswith("Z") else later.isoformat()
 
 
 def pick_lessons(lessons: list, message: str, *, most: int = 4) -> list:
     """The corrections worth showing: the most like this message, then the
     newest. Only where she wrote something different - a suggestion she sent
     word for word teaches nothing the examples do not."""
-    wrong = [one for one in lessons if not one.get("same")]
+    wrong = [one for one in lessons if not _used(one)]
     wanted = words_in(message)
     scored = sorted(
         range(len(wrong)),
-        key=lambda at: (len(wanted & words_in(wrong[at].get("asked"))), at),
+        key=lambda at: (
+            len(wanted & words_in(wrong[at].get("asked"))),
+            bool(wrong[at].get("note")),
+            at,
+        ),
         reverse=True,
     )
     picked = [wrong[at] for at in scored[: max(0, most - 1)]]
@@ -388,6 +458,87 @@ def pick_lessons(lessons: list, message: str, *, most: int = 4) -> list:
         if one not in picked:
             picked.append(one)
     return picked
+
+
+def _used(lesson: dict) -> bool:
+    """Whether a suggestion went out as written, or near enough - and nobody
+    said anything was wrong with it."""
+    if lesson.get("note"):
+        return False
+    if lesson.get("same"):
+        return True
+    return bool(lesson.get("sent")) and float(lesson.get("kept") or 0) >= USED
+
+
+def used_count(lessons: list, *, last: int = 20) -> tuple:
+    """(used, out of) for the newest suggestions - is it getting better."""
+    newest = list(lessons)[-last:]
+    return sum(1 for one in newest if _used(one)), len(newest)
+
+
+def needs_explaining(lessons: list, *, tries: int = 3) -> list:
+    """Corrections nobody has worked out the reason for yet, oldest first."""
+    return [
+        one for one in lessons
+        if not _used(one) and not one.get("why") and int(one.get("tries") or 0) < tries
+    ]
+
+
+def rules_from(lessons: list, *, most: int = 15) -> list:
+    """What the corrections add up to, newest last, each said once.
+
+    Franklin's own words first among equals: when he says why, that is the
+    reason, not RYTE's guess at it.
+    """
+    rules, seen = [], set()
+    for one in reversed(list(lessons)):
+        rule = " ".join(str(one.get("rule") or "").split())
+        if not rule or _plain(rule) in seen:
+            continue
+        seen.add(_plain(rule))
+        rules.append(rule)
+        if len(rules) >= most:
+            break
+    return list(reversed(rules))
+
+
+def before(texts: list, key: str, at: str, *, most: int = 8) -> list:
+    """The conversation up to a moment, oldest first - what she was looking
+    at when she wrote."""
+    theirs = sorted(
+        (one for one in texts if one.key == key and one.at < at), key=lambda one: one.at
+    )
+    return theirs[-most:]
+
+
+def after(texts: list, key: str, at: str, *, most: int = 4) -> list:
+    """What came next, oldest first - how her answer landed."""
+    return sorted(
+        (one for one in texts if one.key == key and one.at > at), key=lambda one: one.at
+    )[:most]
+
+
+def give_reasons(done: list, reasons: dict) -> list:
+    """Her exchanges with what was learned about each, in place."""
+    for one in done:
+        one.why = str((reasons or {}).get(one.id) or "")
+    return done
+
+
+def unexplained(done: list, reasons: dict, *, settled: str, most: int = 20) -> list:
+    """Her exchanges not yet studied, newest first, `most` at a time.
+
+    Only answers older than `settled`: she often answers in two or three
+    texts, and an exchange studied halfway through is studied wrong.
+    """
+    found = []
+    for one in reversed(done):
+        if one.at > settled or one.id in (reasons or {}):
+            continue
+        found.append(one)
+        if len(found) >= most:
+            break
+    return found
 
 
 def sample_for_playbook(done: list, *, most: int = 250) -> list:
