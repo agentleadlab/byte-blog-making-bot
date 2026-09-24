@@ -237,7 +237,8 @@ class Heard:
         self.said.append(str(content or ""))
 
 
-def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True):
+def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
+          card=None):
     from wilbyte.bot import client
 
     # Already said it's connected, unless the test is about saying so.
@@ -252,7 +253,21 @@ def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True):
         lambda cfg: ([("8015550142", "Shelby Guest", tail)] if found else [],
                      data, list(problems)),
     )
-    monkeypatch.setattr(jobs, "ring_pinged", lambda mid: marked.append(mid))
+    def pinged(mid, *, pending=None):
+        marked.append(mid)
+        pinged.pending = pending
+
+    monkeypatch.setattr(jobs, "ring_pinged", pinged)
+    monkeypatch.setattr(
+        jobs, "ring_context",
+        lambda cfg, data, texts, **kw: {"card": card, "history": [], "lessons": [],
+                                        "playbook": ""},
+    )
+
+    async def no_playbook(*a, **kw):
+        return None
+
+    monkeypatch.setattr(client, "_write_the_playbook", no_playbook)
 
     def drafting(cfg, **kw):
         if isinstance(drafted, Exception):
@@ -845,3 +860,288 @@ def test_every_other_channel_is_as_it_was():
     assert not _allowed(2, "general", "")
     # An id is matched as an id, never against a channel's name.
     assert not _allowed(2, "555", "555")
+
+
+# ---------------------------------------------- the agent's card, by number
+
+
+class Board:
+    """Trello, as far as finding an agent's card goes."""
+
+    def __init__(self, cards, comments=None, *, fails=False):
+        self.cards, self.comments, self.fails = cards, comments or {}, fails
+
+    def board_cards(self, board_id, *, archived=False):
+        if self.fails:
+            raise RuntimeError("Trello is down")
+        return list(self.cards)
+
+    def board_lists(self, board_id):
+        return [{"id": "L-done", "name": "Done"}, {"id": "L-que", "name": "In Que"}]
+
+    def card_comments(self, card_id):
+        return list(self.comments.get(card_id, []))
+
+    def close(self):
+        pass
+
+
+ADRIAN_CARD = {
+    "id": "c-adrian", "name": "New Agent - Adrian Pacheco", "idList": "L-que",
+    "shortUrl": "https://trello.com/c/adrian", "dateLastActivity": "2026-09-24T12:00",
+    "desc": "Phone: +1 (312) 555-0188\nLead Type: OTP Trucker IUL\nLive Friday September 26",
+}
+
+
+def _board(monkeypatch, cards, comments=None, *, fails=False):
+    board = Board(cards, comments, fails=fails)
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    return NS(secrets=NS(trello_board_id="b"))
+
+
+def test_the_agent_is_found_by_the_number_texting(monkeypatch):
+    config = _board(monkeypatch, [
+        {"id": "x", "name": "💎 General 09/24/26", "desc": "call 312-555-0188"},
+        ADRIAN_CARD,
+    ], {"c-adrian": [
+        "✅ OTP TRUCKER IUL ON DISTRO HUB setup is complete for ADRIAN PACHECO",
+        "Sheet link: https://docs.google.com/spreadsheets/d/abc/edit",
+    ]})
+
+    card = jobs.agent_on_the_board(config, "+13125550188")
+
+    assert card["agent"] == "Adrian Pacheco"
+    assert card["list"] == "In Que"
+    assert "OTP Trucker IUL" in card["desc"]
+    assert card["setup"].startswith("✅ OTP TRUCKER IUL")
+    assert card["sheet"].startswith("https://docs.google.com/spreadsheets/d/abc")
+
+
+def test_by_name_when_the_card_has_no_number_on_it(monkeypatch):
+    config = _board(monkeypatch, [{**ADRIAN_CARD, "desc": "Lead Type: OTP Trucker IUL"}])
+
+    card = jobs.agent_on_the_board(config, "+19995550000", "Adrian Pacheco")
+
+    assert card and card["agent"] == "Adrian Pacheco"
+
+
+def test_a_client_who_ordered_again_is_read_from_the_newest_card(monkeypatch):
+    """A repeat client keeps the old card as well, and the old order is not
+    what they are texting about."""
+    old = {**ADRIAN_CARD, "id": "old", "idList": "L-done",
+           "dateLastActivity": "2026-05-01", "desc": "Phone: 312-555-0188\n10 OTP VETS"}
+    config = _board(monkeypatch, [old, ADRIAN_CARD])
+
+    card = jobs.agent_on_the_board(config, "3125550188")
+
+    assert "Trucker" in card["desc"]
+
+
+def test_an_archived_card_says_so(monkeypatch):
+    config = _board(monkeypatch, [{**ADRIAN_CARD, "closed": True}])
+
+    assert jobs.agent_on_the_board(config, "3125550188")["list"] == "archived"
+
+
+def test_nobody_on_the_board_is_nothing_rather_than_a_guess(monkeypatch):
+    config = _board(monkeypatch, [ADRIAN_CARD])
+
+    assert jobs.agent_on_the_board(config, "+19995550000", "Nobody Known") is None
+
+
+def test_a_board_that_wont_answer_costs_the_context_not_the_draft(monkeypatch):
+    config = _board(monkeypatch, [], fails=True)
+    config.secrets.ringcentral_team = ""
+
+    known = jobs.ring_context(config, {"playbook": {"text": "Be brief."}}, [],
+                              agent="3125550188", name="Adrian")
+
+    assert known["card"] is None
+    assert known["playbook"] == "Be brief."
+
+
+# ------------------------------------------------ all of it in the draft
+
+
+def test_the_draft_is_given_the_card_the_history_the_corrections_and_the_playbook(
+    monkeypatch,
+):
+    config = _drafting(monkeypatch)
+    card = {"agent": "Adrian Pacheco", "list": "In Que", "touched": "2026-09-24",
+            "desc": "Lead Type: OTP Trucker IUL\nLive Friday September 26",
+            "setup": "✅ setup is complete", "sheet": "https://sheet"}
+    history = [smsreplies.Text(id="h", at="1", inbound=True, agent="1", name="",
+                               said="I bought 25 trucker leads in June")]
+    lessons = [{"asked": "pause", "suggested": "Paused!", "sent": "All set Adrian! 🙂"}]
+
+    jobs.draft_like_faith(
+        config, asked="when do my leads start", done=_done(), card=card,
+        history=history, lessons=lessons, playbook="She signs off with 🙂.",
+    )
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    system = Claude.asked[0]["system"]
+    assert "FAITH'S PLAYBOOK" in prompt and "She signs off with 🙂." in prompt
+    assert "Live Friday September 26" in prompt and '"In Que" list' in prompt
+    assert "I bought 25 trucker leads in June" in prompt
+    assert "Faith sent: All set Adrian! 🙂" in prompt
+    assert "agent's card from the team's board" in system
+    assert "older order" in system
+    assert "do what she did" in system
+
+
+def test_without_any_of_it_the_draft_is_as_before(monkeypatch):
+    config = _drafting(monkeypatch)
+    jobs.draft_like_faith(config, asked="are my leads paused?", done=_done())
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert prompt.startswith("Here is how Faith has answered agents before")
+
+
+def test_how_she_already_talks_to_this_agent_is_shown_first(monkeypatch):
+    config = _drafting(monkeypatch)
+    jobs.draft_like_faith(config, asked="are my leads paused?", done=_done(),
+                          agent="+14358173162")
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    first = prompt.split("EXAMPLE 1\n", 1)[1].split("EXAMPLE 2", 1)[0]
+    assert "Faith:" in first
+
+
+# ------------------------------------------------ learning what she sent
+
+
+def test_a_suggestion_is_remembered_with_what_it_said(monkeypatch):
+    jobs.ring_pinged("5", pending={"key": "C-1", "at": "2026-09-24T10:00",
+                                   "asked": "pause", "draft": "Paused!", "agent": "1"})
+
+    data = ringtexts.load()
+    assert data["pinged"] == ["5"]
+    assert data["pending"][0]["draft"] == "Paused!"
+
+
+def test_what_faith_sent_next_becomes_a_lesson_on_the_next_read(monkeypatch):
+    """Every ping is graded by what she actually sent a minute later."""
+    asked_at = (NOW - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    ringtexts.save({"texts": [], "pinged": [], "pending": [{
+        "key": "C-shelby", "at": asked_at, "asked": "are my leads paused?",
+        "draft": "Hi! Yes 😊", "agent": "4358173162",
+    }]})
+    answer = record(9, 20, "Yes they are Shelby! Back on Monday 🙂", inbound=False)
+    answer["conversationId"] = "C-shelby"
+    _ringing(monkeypatch, [answer])
+
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert data["pending"] == []
+    assert data["lessons"][-1]["sent"] == "Yes they are Shelby! Back on Monday 🙂"
+    assert data["lessons"][-1]["suggested"] == "Hi! Yes 😊"
+
+
+# ------------------------------------------------------------ the playbook
+
+
+def test_a_playbook_is_due_when_never_written_or_a_week_old():
+    fresh = jobs._ring_iso(NOW - timedelta(days=1))
+    stale = jobs._ring_iso(NOW - timedelta(days=8))
+
+    assert jobs.ring_playbook_due({}, now=NOW)
+    assert not jobs.ring_playbook_due({"playbook": {"text": "x", "made": fresh}}, now=NOW)
+    assert jobs.ring_playbook_due({"playbook": {"text": "x", "made": stale}}, now=NOW)
+
+
+def test_the_playbook_is_studied_from_her_replies(monkeypatch):
+    config = _drafting(monkeypatch)
+    done = [smsreplies.Exchange(agent="1", name="", asked=f"q{at}", answered=f"a{at}",
+                                at=str(at)) for at in range(30)]
+
+    def writes(self, **kw):
+        Claude.asked.append(kw)
+        return NS(content=[NS(type="text", text="## How she writes\nShort.")])
+
+    monkeypatch.setattr(Claude, "create", writes)
+    got = jobs.faith_playbook(config, done)
+
+    assert got.startswith("## How she writes")
+    assert "Agent: q0\nFaith: a0" in Claude.asked[0]["messages"][0]["content"]
+    assert "never a policy" in Claude.asked[0]["system"]
+
+
+def test_too_few_replies_to_study_are_not_studied(monkeypatch):
+    config = _drafting(monkeypatch)
+
+    with pytest.raises(ValueError):
+        jobs.faith_playbook(config, _done())
+
+    assert Claude.asked == []
+
+
+def test_a_written_playbook_is_posted_for_franklin_to_correct(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
+    monkeypatch.setattr(jobs, "faith_playbook", lambda cfg, done: "## How she writes")
+    kept = []
+    monkeypatch.setattr(jobs, "ring_keep_playbook", lambda text, n: kept.append((text, n)))
+    sent = []
+
+    class Here:
+        async def send(self, content=None, **kw):
+            sent.append((content, kw.get("file")))
+
+    data = {}
+    asyncio.run(client._write_the_playbook(NS(config=None), Here(), data, [1, 2, 3]))
+
+    assert kept == [("## How she writes", 3)]
+    assert "Faith's playbook" in sent[0][0] and "tell me" in sent[0][0]
+    assert sent[0][1].filename == "faith-playbook.md"
+    assert data["playbook"]["text"] == "## How she writes"
+
+
+def test_a_playbook_that_failed_is_not_tried_again_every_minute(monkeypatch):
+    """A study of her whole history that keeps failing is a bill, not a retry."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
+    tries = []
+
+    def fails(cfg, done):
+        tries.append(1)
+        raise RuntimeError("overloaded")
+
+    monkeypatch.setattr(jobs, "faith_playbook", fails)
+
+    class Here:
+        async def send(self, content=None, **kw):
+            raise AssertionError("posted a failed playbook")
+
+    for _ in range(3):
+        asyncio.run(client._write_the_playbook(NS(config=None), Here(), {}, [1]))
+
+    assert tries == [1]
+
+
+def test_a_fresh_playbook_is_not_written_again(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
+    monkeypatch.setattr(jobs, "faith_playbook",
+                        lambda cfg, done: (_ for _ in ()).throw(AssertionError("rewrote")))
+    fresh = {"playbook": {"text": "x", "made": jobs._ring_iso(datetime.now(timezone.utc))}}
+
+    asyncio.run(client._write_the_playbook(NS(config=None), Heard(), fresh, [1]))
+
+
+# ------------------------------------------------ the ping uses all of it
+
+
+def test_the_ping_is_drafted_with_what_is_known_and_graded_later(monkeypatch):
+    said, marked = _once(monkeypatch, card={
+        "url": "https://trello.com/c/adrian", "list": "In Que",
+    })
+
+    assert marked == ["5"]
+    assert "Knew them from [their card](<https://trello.com/c/adrian>) · In Que" in said[0]
+    pending = jobs.ring_pinged.pending
+    assert pending["draft"] == "Hi Shelby! Yes 😊"
+    assert pending["asked"] == "are my leads paused?"

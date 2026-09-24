@@ -252,37 +252,152 @@ def waiting(texts: list, *, since: str) -> list:
     return found
 
 
-def closest(done: list, message: str, *, most: int = 5, recent: int = 3) -> list:
-    """The past exchanges to show Claude: the most like this one, then recent.
-
-    Most alike, because how she handled "pause my leads" last month is how
-    she would handle it now. A few of the newest as well, whatever they were
-    about, because the way she writes drifts and her newest texts are her.
-    """
-    wanted = words_in(message)
-    scored = []
-    for at, one in enumerate(done):
-        if not wanted or not one.words:
-            continue
-        shared = len(wanted & one.words)
-        if shared:
-            scored.append((shared / math.sqrt(len(wanted) * len(one.words)), at, one))
-    scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
-
-    picked, seen = [], set()
-    for _score, at, one in scored[:most]:
-        picked.append(one)
-        seen.add(at)
-    for at in range(len(done) - 1, -1, -1):
-        if len(picked) >= most + recent:
-            break
-        if at not in seen:
-            picked.append(done[at])
-            seen.add(at)
-    return picked
-
-
 def thread(texts: list, key: str, *, most: int = 12) -> list:
     """The last of one conversation, oldest first. `key` is a Text's `key`."""
     theirs = sorted((one for one in texts if one.key == key), key=lambda one: one.at)
     return theirs[-most:]
+
+
+# ------------------------------------------------------ context and learning
+
+# Not inside a longer run of digits: an ARN or a card number on the card is
+# not the agent's phone, however its last ten digits happen to fall.
+_PHONE = re.compile(r"(?<!\d)\+?1?[\s.(-]*\d{3}[\s.)-]*\d{3}[\s.-]*\d{4}(?!\d)")
+
+
+def phones_in(text: str) -> set:
+    """Every phone number written anywhere in some text, as ten digits.
+
+    For finding an agent's New Agent card by the number texting: "Phone:
+    +16146033618", "Phone Number: 435-817-3162", "(786) 609-0765" - the card
+    is filled in by a form and by hand, and says it every way.
+    """
+    return {digits(one) for one in _PHONE.findall(str(text or "")) if len(digits(one)) == 10}
+
+
+def closest(done: list, message: str, *, most: int = 5, recent: int = 3,
+            agent: str = "", theirs: int = 3) -> list:
+    """The past exchanges to show Claude, best first, never the same twice.
+
+    How she has already talked to this agent, first: the tone she takes with
+    somebody she has texted for months is not the one she takes with
+    somebody new. Then the most like this message, for how she handles it.
+    Then her newest, whatever they were about, to make up the number -
+    because the way she writes drifts and her newest texts are her.
+    """
+    picked, seen = [], set()
+
+    def take(at):
+        picked.append(done[at])
+        seen.add(at)
+
+    if agent:
+        for at in [at for at in range(len(done) - 1, -1, -1)
+                   if done[at].agent == agent][:theirs]:
+            take(at)
+    target = len(picked) + most + recent
+
+    wanted = words_in(message)
+    scored = []
+    for at, one in enumerate(done):
+        if at in seen or not wanted or not one.words:
+            continue
+        shared = len(wanted & one.words)
+        if shared:
+            scored.append((shared / math.sqrt(len(wanted) * len(one.words)), at))
+    scored.sort(reverse=True)
+    for _score, at in scored[:most]:
+        take(at)
+
+    for at in range(len(done) - 1, -1, -1):
+        if len(picked) >= target:
+            break
+        if at not in seen:
+            take(at)
+    return picked
+
+
+def history(texts: list, agent: str, *, besides: str = "", most: int = 20) -> list:
+    """What this agent has said to the line before, in other conversations.
+
+    The current thread goes in whole; this is everything else - the order
+    they placed in June, the states they changed last week - newest last.
+    """
+    theirs = sorted(
+        (one for one in texts if one.agent == agent and one.key != besides),
+        key=lambda one: one.at,
+    )
+    return theirs[-most:]
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9']+", str(text or "").casefold()))
+
+
+def lessons_from(pending: list, texts: list, *, now: str, gone_after: str) -> tuple:
+    """What was actually sent after each suggestion. (lessons, still pending).
+
+    Every ping is a guess about what Faith would say, and a minute later she
+    says it. The first thing sent from her number in that conversation after
+    the agent's text is the answer to the guess - kept beside what RYTE
+    suggested, so the next draft can see where it was wrong. A suggestion
+    nobody answered by `gone_after` is dropped: the agent got a call, or it
+    needed no reply, and neither says anything about how she writes.
+    """
+    lessons, waiting = [], []
+    by_key: dict[str, list] = {}
+    for one in texts:
+        if not one.inbound and not one.team:
+            by_key.setdefault(one.key, []).append(one)
+    for held in pending:
+        after = sorted(
+            (one for one in by_key.get(str(held.get("key") or ""), [])
+             if one.at > str(held.get("at") or "")),
+            key=lambda one: one.at,
+        )
+        if after:
+            sent = after[0].said
+            lessons.append({
+                "asked": str(held.get("asked") or ""),
+                "suggested": str(held.get("draft") or ""),
+                "sent": sent,
+                "at": after[0].at,
+                "agent": str(held.get("agent") or ""),
+                "same": _plain(sent) == _plain(held.get("draft") or ""),
+            })
+        elif str(held.get("at") or "") >= gone_after:
+            waiting.append(held)
+    return lessons, waiting
+
+
+def pick_lessons(lessons: list, message: str, *, most: int = 4) -> list:
+    """The corrections worth showing: the most like this message, then the
+    newest. Only where she wrote something different - a suggestion she sent
+    word for word teaches nothing the examples do not."""
+    wrong = [one for one in lessons if not one.get("same")]
+    wanted = words_in(message)
+    scored = sorted(
+        range(len(wrong)),
+        key=lambda at: (len(wanted & words_in(wrong[at].get("asked"))), at),
+        reverse=True,
+    )
+    picked = [wrong[at] for at in scored[: max(0, most - 1)]]
+    for one in reversed(wrong):
+        if len(picked) >= most:
+            break
+        if one not in picked:
+            picked.append(one)
+    return picked
+
+
+def sample_for_playbook(done: list, *, most: int = 250) -> list:
+    """Her exchanges spread across the whole history, for studying.
+
+    Evenly spaced rather than the newest: a playbook written from one week
+    is that week's playbook, and misses the pauses and the refunds that come
+    round once a month.
+    """
+    if len(done) <= most:
+        return list(done)
+    step = len(done) / most
+    return [done[int(at * step)] for at in range(most)]

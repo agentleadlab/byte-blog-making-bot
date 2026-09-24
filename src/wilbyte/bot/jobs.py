@@ -7429,8 +7429,24 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
             data["owner"] = owner
         if numbers:
             data["numbers"] = numbers
+        _learn_what_was_sent(config, data, now=now)
         ringtexts.save(data)
         return data, []
+
+
+def _learn_what_was_sent(config: Config, data: dict, *, now) -> None:
+    """Grade every suggestion against what Faith then actually sent."""
+    from .. import smsreplies
+
+    pending = list(data.get("pending") or [])
+    if not pending:
+        return
+    lessons, waiting = smsreplies.lessons_from(
+        pending, ring_texts(config, data), now=_ring_iso(now),
+        gone_after=_ring_iso(now - timedelta(days=LESSON_WAIT_DAYS)),
+    )
+    data["lessons"] = (list(data.get("lessons") or []) + lessons)[-KEEP_LESSONS:]
+    data["pending"] = waiting
 
 
 def ring_texts(config: Config, data: dict) -> list:
@@ -7478,18 +7494,23 @@ def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:
     return found, data, problems
 
 
-def ring_pinged(message_id: str) -> None:
-    """Remember that Franklin has been pinged about this text."""
+def ring_pinged(message_id: str, *, pending: dict | None = None) -> None:
+    """Remember that Franklin has been pinged about this text - and what was
+    suggested, so what Faith then sends can grade it."""
     from .. import ringtexts
 
     with _RING_FILE:
         data = ringtexts.load()
         ringtexts.pinged(data, message_id)
+        if pending:
+            data["pending"] = (list(data.get("pending") or []) + [pending])[-200:]
         ringtexts.save(data)
 
 
 def draft_like_faith(
     config: Config, *, asked: str, done: list, thread: list = (), name: str = "",
+    agent: str = "", card: dict | None = None, history: list = (),
+    lessons: list = (), playbook: str = "",
 ) -> dict:
     """The reply Faith would send. {"reply", "why", "blanks", "examples"}.
 
@@ -7510,7 +7531,7 @@ def draft_like_faith(
     said = " ".join(str(asked or "").split())
     if not said:
         raise ValueError("There's no message to reply to.")
-    examples = smsreplies.closest(list(done), said)
+    examples = smsreplies.closest(list(done), said, agent=smsreplies.digits(agent))
     if not examples:
         raise ValueError(
             "I have none of Faith's replies to learn from yet, so anything I "
@@ -7526,8 +7547,43 @@ def draft_like_faith(
     ]
     if not so_far or not so_far[-1].endswith(said):
         so_far.append(f"Agent: {said}")
+    sections = []
+    if playbook:
+        sections.append(
+            "FAITH'S PLAYBOOK - how she handles agents, written from her own "
+            f"replies:\n\n{playbook}"
+        )
+    if card:
+        sections.append(
+            "WHAT THE TEAM'S BOARD SAYS ABOUT THIS AGENT - their New Agent "
+            f"card for {card.get('agent') or 'them'}, in the "
+            f"\"{card.get('list') or '?'}\" list, last touched "
+            f"{card.get('touched') or '?'}:\n{card.get('desc') or ''}"
+            + (f"\n\nSetup confirmation on the card:\n{card['setup']}"
+               if card.get("setup") else "")
+            + (f"\n\nTheir lead sheet: {card['sheet']}" if card.get("sheet") else "")
+        )
+    if history:
+        sections.append(
+            "EARLIER TEXTS WITH THIS AGENT, in other conversations:\n"
+            + "\n".join(
+                f"{'Team' if one.team else 'Agent' if one.inbound else 'Faith'}: {one.said}"
+                for one in history
+            )
+        )
+    if lessons:
+        sections.append(
+            "WHERE EARLIER SUGGESTIONS WERE WRONG - what was suggested, and "
+            "what Faith actually sent instead. Follow what she did:\n\n"
+            + "\n\n".join(
+                f"Agent: {one.get('asked')}\nSuggested: {one.get('suggested')}\n"
+                f"Faith sent: {one.get('sent')}"
+                for one in lessons
+            )
+        )
     prompt = (
-        "Here is how Faith has answered agents before:\n\n"
+        ("\n\n---\n".join(sections) + "\n\n---\n" if sections else "")
+        + "Here is how Faith has answered agents before:\n\n"
         + "\n\n".join(lines)
         + "\n\n---\nThe conversation now, oldest first"
         + (f" (the agent is {name})" if name else "")
@@ -7553,11 +7609,16 @@ def draft_like_faith(
             "for how she handles each kind of message: what she asks for, what "
             "she commits to, what she will not promise, and when she says she "
             "will check with the team. Then write the one reply she would send.\n\n"
-            "Never state a fact that is not in the conversation or plainly a "
-            "standing habit in her examples: no dates, times, prices, lead "
-            "counts, launch days, refunds, credits or promises. Where the reply "
-            "needs one, write a bracketed blank like [launch date] and list it "
-            "in blanks. If the message needs a decision only a person can make "
+            "Never state a fact that is not in the conversation, in the "
+            "agent's card from the team's board, or plainly a standing habit "
+            "in her examples: no dates, times, prices, lead counts, launch "
+            "days, refunds, credits or promises from anywhere else. The card "
+            "can describe an older order - a client who orders again keeps "
+            "the old card, and one long sitting in Done may be months old - so "
+            "use it only where it plainly answers this message. Where the "
+            "reply needs a fact nothing here settles, write a bracketed blank "
+            "like [launch date] and list it in blanks. Where a correction shows "
+            "Faith answering differently from a suggestion, do what she did. If the message needs a decision only a person can make "
             "- a refund, a complaint about the leads, an upset agent - still "
             "draft her holding reply, and say so in why. Match her, not a "
             "customer-service script: if she writes two lines, write two lines."
@@ -7687,3 +7748,180 @@ def read_texts_off(config: Config, shots: list, *, line_name: str = "") -> list[
             found.append({"side": side, "name": str(one.get("name") or "").strip(),
                           "text": text})
     return found
+
+
+# ------------------------------------------- what RYTE knows about the agent
+
+#: How much of a card's description goes into a draft. The form's fields and
+#: the order lines are at the top; the rest is states and notes.
+CARD_CHARS = 1500
+
+#: How long a suggestion waits for Faith's own answer before it is dropped as
+#: something that was settled another way.
+LESSON_WAIT_DAYS = 3
+
+#: How many of what-RYTE-said-and-what-she-sent are kept.
+KEEP_LESSONS = 150
+
+#: How often Faith's playbook is written again from her replies.
+PLAYBOOK_DAYS = 7
+
+
+def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | None:
+    """The agent's New Agent card, found by the number texting or by name.
+
+    {"agent", "list", "desc", "setup", "sheet", "url", "touched"} or None.
+    Context clues: what they bought, when they go live, which states, whether
+    the setup is done. "When do my leads start?" answered from the card is
+    the answer; answered from nothing it is a [launch date] for Franklin to
+    go and look up.
+
+    The newest card when there are several - a client who orders again gets
+    a card copied from the last one - and the list it sits in, so a card put
+    away in Done months ago reads as the old order it is.
+    """
+    from .. import agents, smsreplies, tagged
+
+    wanted = smsreplies.digits(number)
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = [one for one in every if agents.is_agent_card(str(one.get("name") or ""))]
+        found = [
+            one for one in cards
+            if wanted and wanted in smsreplies.phones_in(str(one.get("desc") or ""))
+        ]
+        if not found and name.strip():
+            found = [one for one in agents.named_that(name, cards)]
+        if not found:
+            return None
+        card = max(found, key=lambda one: str(one.get("dateLastActivity") or ""))
+        lists = {
+            str(one.get("id") or ""): str(one.get("name") or "")
+            for one in client.board_lists(config.secrets.trello_board_id)
+        }
+        said = client.card_comments(str(card.get("id") or ""))
+    finally:
+        client.close()
+
+    setup = next((one for one in said if tagged.a_setup_confirmation(one)), "")
+    sheets = agents.sheet_links(said)
+    return {
+        "agent": agents.agent_name(str(card.get("name") or "")),
+        "list": "archived" if card.get("closed") else lists.get(str(card.get("idList") or ""), ""),
+        "desc": str(card.get("desc") or "")[:CARD_CHARS],
+        "setup": setup[:600],
+        "sheet": sheets[-1][1] if sheets else "",
+        "url": str(card.get("shortUrl") or card.get("url") or ""),
+        "touched": str(card.get("dateLastActivity") or "")[:10],
+    }
+
+
+def faith_playbook(config: Config, done: list) -> str:
+    """How Faith handles agents, written down from her own replies.
+
+    Examples show how she answered one message. This is the part above them:
+    what she does with each kind of message across hundreds of them - what
+    she asks for, what she promises and never promises, when she hands it to
+    the team, how she writes at all. Written by Claude from an even spread of
+    her history, used by every draft, and posted so Franklin can say where
+    it is wrong.
+    """
+    from anthropic import Anthropic
+
+    from .. import smsreplies
+
+    picked = smsreplies.sample_for_playbook(list(done))
+    if len(picked) < 20:
+        raise ValueError("Too few of her replies to write a playbook from.")
+    shown = "\n\n".join(
+        f"Agent: {one.asked[:300]}\nFaith: {one.answered[:400]}" for one in picked
+    )
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=3000,
+        system=(
+            "You study how one customer service person, Faith, texts insurance "
+            "agents who buy leads from Agent Lead Lab, and write down how she "
+            "does it so someone else can answer the way she would. Only what "
+            "the examples show - never a policy, price or promise they don't."
+        ),
+        messages=[{"role": "user", "content": (
+            f"Here are {len(picked)} real exchanges, spread across her history:"
+            f"\n\n{shown}\n\n---\nWrite Faith's playbook in plain markdown:\n"
+            "1. **How she writes** - length, greeting, sign-off, capitals, "
+            "punctuation, emoji, how she uses the agent's name.\n"
+            "2. **Each kind of message agents send** - group them into the kinds "
+            "that actually come up (invoices, launch dates, pausing, states, "
+            "lead quality, thanks, and whatever else is there). For each: what "
+            "she does, what she asks for, what she commits to and what she "
+            "won't, when she hands it to the team, and two or three of her "
+            "real phrasings, quoted.\n"
+            "3. **Things she never does.**\n"
+            "Keep it under 1,200 words."
+        )}],
+    )
+    text = "".join(
+        getattr(block, "text", "") for block in response.content
+        if getattr(block, "type", "") == "text"
+    ).strip()
+    if not text:
+        raise ValueError("The playbook came back empty.")
+    return text
+
+
+def ring_playbook_due(data: dict, *, now=None) -> bool:
+    """Whether Faith's playbook needs writing - never written, or a week old."""
+    from datetime import timezone
+
+    held = data.get("playbook") or {}
+    made = _ring_when(held.get("made") or "")
+    if not held.get("text") or made is None:
+        return True
+    now = now or datetime.now(timezone.utc)
+    return now - made > timedelta(days=PLAYBOOK_DAYS)
+
+
+def ring_keep_playbook(text: str, replies: int) -> None:
+    """Remember a freshly written playbook."""
+    from datetime import timezone
+
+    from .. import ringtexts
+
+    with _RING_FILE:
+        data = ringtexts.load()
+        data["playbook"] = {
+            "text": text, "made": _ring_iso(datetime.now(timezone.utc)),
+            "from": replies,
+        }
+        ringtexts.save(data)
+
+
+def ring_context(config: Config, data: dict, texts: list, *, agent: str,
+                 name: str = "", key: str = "", asked: str = "") -> dict:
+    """Everything a draft should know besides the conversation itself.
+
+    {"card", "history", "lessons", "playbook"}. The card is looked up on the
+    board and a board that will not answer costs the draft its context, not
+    the draft - a suggestion without the launch date is still a suggestion.
+    """
+    import logging
+
+    from .. import smsreplies
+
+    card = None
+    if agent or name:
+        try:
+            card = agent_on_the_board(config, agent, name)
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning(
+                "Couldn't look the agent up on the board", exc_info=True
+            )
+    return {
+        "card": card,
+        "history": smsreplies.history(texts, agent, besides=key) if agent else [],
+        "lessons": smsreplies.pick_lessons(list(data.get("lessons") or []), asked),
+        "playbook": str((data.get("playbook") or {}).get("text") or ""),
+    }

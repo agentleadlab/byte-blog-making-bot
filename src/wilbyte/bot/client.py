@@ -5555,6 +5555,11 @@ _RING_SAID: set = set()
 #: waiting, a working watcher and a broken one are otherwise equally silent.
 _RING_READY: list = []
 
+#: When writing Faith's playbook last failed. Tried again an hour later rather
+#: than every minute - a study of her whole history that keeps failing is a
+#: bill, not a retry.
+_PLAYBOOK_FAILED: list = []
+
 _RING_SETTINGS = (
     ("RINGCENTRAL_CLIENT_ID", "ringcentral_client_id"),
     ("RINGCENTRAL_CLIENT_SECRET", "ringcentral_client_secret"),
@@ -5685,16 +5690,23 @@ async def _ring_once(bot: "WilByteBot") -> None:
     if not problems and not _RING_READY and responder is not None:
         _RING_READY.append(True)
         await responder.send(_ring_ready(len(texts), len(done)))
+    if responder is not None and done and not problems:
+        await _write_the_playbook(bot, responder, data, done)
     if not found or responder is None:
         return
 
     for agent, name, tail in found:
         asked = "\n".join(one.said for one in tail)
         try:
+            known = await asyncio.to_thread(partial(
+                jobs.ring_context, bot.config, data, texts, agent=agent,
+                name=name, key=tail[-1].key, asked=asked,
+            ))
             drafted = await asyncio.to_thread(
                 partial(
                     jobs.draft_like_faith, bot.config, asked=asked, done=done,
                     thread=smsreplies.thread(texts, tail[-1].key), name=name,
+                    agent=agent, **known,
                 )
             )
         except Exception:
@@ -5704,8 +5716,15 @@ async def _ring_once(bot: "WilByteBot") -> None:
             continue
         # Remembered before the ping rather than after, so a restart between
         # the two cannot post the same suggestion twice.
-        await asyncio.to_thread(jobs.ring_pinged, tail[-1].id)
-        await responder.send(_ring_note(bot.config, agent, name, tail, drafted))
+        await asyncio.to_thread(partial(
+            jobs.ring_pinged, tail[-1].id, pending={
+                "key": tail[-1].key, "at": tail[-1].at, "asked": asked,
+                "draft": drafted["reply"], "agent": agent,
+            },
+        ))
+        await responder.send(_ring_note(
+            bot.config, agent, name, tail, drafted, card=known.get("card"),
+        ))
 
 
 def _ring_ready(texts: int, replies: int) -> str:
@@ -5752,7 +5771,39 @@ def _ring_notes(drafted: dict, *extra: str) -> str:
     return ("-# " + " · ".join(notes)) if notes else ""
 
 
-def _ring_note(config: Config, agent: str, name: str, tail: list, drafted: dict) -> str:
+async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
+    """Study her replies and write down how she handles agents, when it's due.
+
+    Posted when written, as a file: it is what every suggestion leans on, and
+    the person who knows whether it is right is the one reading this channel.
+    """
+    import io
+    import time
+
+    if not jobs.ring_playbook_due(data):
+        return
+    if _PLAYBOOK_FAILED and time.time() - _PLAYBOOK_FAILED[-1] < 3600:
+        return
+    try:
+        text = await asyncio.to_thread(jobs.faith_playbook, bot.config, done)
+    except Exception:
+        _PLAYBOOK_FAILED.append(time.time())
+        log.exception("Couldn't write Faith's playbook")
+        return
+    await asyncio.to_thread(jobs.ring_keep_playbook, text, len(done))
+    data["playbook"] = {"text": text}
+    await responder.send(
+        f"📘 **Faith's playbook** — how she handles agents, studied from "
+        f"{len(done)} of her replies. Every suggestion uses it. If anything in "
+        "it is wrong, tell me and it gets fixed.",
+        file=discord.File(io.BytesIO(text.encode("utf-8")), filename="faith-playbook.md"),
+    )
+
+
+def _ring_note(
+    config: Config, agent: str, name: str, tail: list, drafted: dict,
+    *, card: dict | None = None,
+) -> str:
     """The ping: who, what they said, and how Faith would answer it."""
     when = jobs._ring_when(tail[-1].at) if tail else None
     local = when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None
@@ -5764,12 +5815,18 @@ def _ring_note(config: Config, agent: str, name: str, tail: list, drafted: dict)
         _unmarked_ping(config), f"📱 {who}",
         f"· {local:%-I:%M %p}" if local else "",
     ) if bit)
+    known = ""
+    if card and card.get("url"):
+        known = f"-# Knew them from [their card](<{card['url']}>)" + (
+            f" · {card['list']}" if card.get("list") else ""
+        )
     lines = [
         head,
         "> " + "\n> ".join(said.splitlines()),
         "**Reply like Faith:**",
         _fenced(drafted["reply"]),
         _ring_notes(drafted),
+        known,
     ]
     return "\n".join(line for line in lines if line)
 
@@ -5859,10 +5916,22 @@ async def _respond_like_faith(
     else:
         asked = typed
 
+    # Who this is, from the texts already read: the screenshot shows a name,
+    # and the name is how to find their number, their history and their card.
+    texts = jobs.ring_texts(config, data)
+    agent = next(
+        (one.agent for one in reversed(texts)
+         if name and one.inbound and one.name.casefold() == name.casefold()),
+        "",
+    )
     try:
+        known = await asyncio.to_thread(partial(
+            jobs.ring_context, config, data, texts, agent=agent, name=name,
+            asked=asked,
+        ))
         drafted = await asyncio.to_thread(
             partial(jobs.draft_like_faith, config, asked=asked, done=done,
-                    thread=thread, name=name)
+                    thread=thread, name=name, agent=agent, **known)
         )
     except Exception as exc:
         await responder.send(f"Couldn't draft that: {_readable(exc)}")

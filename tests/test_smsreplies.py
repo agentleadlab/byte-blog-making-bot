@@ -462,3 +462,170 @@ def test_with_no_number_for_faith_nothing_sent_is_taken_away_from_her():
     )
 
     assert texts[0].team is False
+
+
+# ------------------------------------------------------- context clues
+
+
+def test_a_cards_phone_number_is_found_however_it_was_written():
+    assert smsreplies.phones_in("Phone: +16146033618") == {"6146033618"}
+    assert smsreplies.phones_in("Phone Number: 435-817-3162") == {"4358173162"}
+    assert smsreplies.phones_in("call (786) 609-0765 after 5") == {"7866090765"}
+
+
+def test_numbers_that_arent_phones_are_not():
+    assert smsreplies.phones_in("25 x MTG Standard @ $28.00 = $700.00") == set()
+    # An ARN's last ten digits are not somebody's phone.
+    assert smsreplies.phones_in("ARN 24556406248809639521734") == set()
+
+
+def test_how_she_already_talks_to_this_agent_comes_first():
+    """The tone she takes with somebody she has texted for months is not the
+    one she takes with somebody new."""
+    done = smsreplies.exchanges([
+        said(10, "please pause my leads", agent="1"),
+        said(11, "Paused!", inbound=False, agent="1"),
+        said(12, "yo can u send invoice", agent="2"),
+        said(13, "Sent bro 🙌", inbound=False, agent="2"),
+    ])
+
+    picked = smsreplies.closest(done, "pause my leads", most=1, recent=0, agent="2")
+
+    assert [one.answered for one in picked] == ["Sent bro 🙌", "Paused!"]
+
+
+def test_without_an_agent_it_is_as_before():
+    done = smsreplies.exchanges([
+        said(10, "please pause my leads", agent="1"),
+        said(11, "Paused!", inbound=False, agent="1"),
+    ])
+
+    assert [one.answered for one in smsreplies.closest(done, "pause", recent=0)] == [
+        "Paused!"
+    ]
+
+
+def test_the_agents_other_conversations_are_their_history():
+    texts = [
+        said(1, "I bought 25 vets", agent="1", id_="a"),
+        said(2, "Great!", inbound=False, agent="1", id_="b"),
+        Text(id="c", at="2026-09-03", inbound=True, agent="1", name="",
+             said="now", conversation="C-now"),
+        said(4, "someone else", agent="2", id_="d"),
+    ]
+
+    got = smsreplies.history(texts, "1", besides="C-now")
+
+    assert [one.id for one in got] == ["a", "b"]
+
+
+# ---------------------------------------------------------- learning
+
+
+def _pending(key="C-1", at="2026-09-24T10:00", draft="Hi! Paused 😊", asked="pause"):
+    return {"key": key, "at": at, "asked": asked, "draft": draft, "agent": "1"}
+
+
+def _faith(at, text, key="C-1", *, team=False):
+    one = Text(id=at, at=at, inbound=False, agent="1", name="", said=text,
+               conversation=key)
+    one.team = team
+    return one
+
+
+def test_what_faith_sent_after_a_suggestion_is_the_lesson():
+    lessons, waiting = smsreplies.lessons_from(
+        [_pending()],
+        [_faith("2026-09-24T10:05", "All set Shelby! Leads are paused 🙂")],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert waiting == []
+    assert lessons == [{
+        "asked": "pause", "suggested": "Hi! Paused 😊",
+        "sent": "All set Shelby! Leads are paused 🙂",
+        "at": "2026-09-24T10:05", "agent": "1", "same": False,
+    }]
+
+
+def test_the_first_thing_she_sent_is_the_answer_not_a_later_one():
+    lessons, _ = smsreplies.lessons_from(
+        [_pending()],
+        [_faith("2026-09-24T10:09", "later"), _faith("2026-09-24T10:05", "first")],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons[0]["sent"] == "first"
+
+
+def test_what_was_sent_before_the_agents_text_is_not_the_answer():
+    lessons, waiting = smsreplies.lessons_from(
+        [_pending()], [_faith("2026-09-24T09:00", "earlier")],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons == [] and len(waiting) == 1
+
+
+def test_tre_answering_is_not_faiths_answer():
+    lessons, waiting = smsreplies.lessons_from(
+        [_pending()], [_faith("2026-09-24T10:05", "on it", team=True)],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons == [] and len(waiting) == 1
+
+
+def test_a_suggestion_nobody_answered_for_days_is_let_go():
+    """The agent got a call, or it needed no reply. Neither says anything
+    about how she writes."""
+    lessons, waiting = smsreplies.lessons_from(
+        [_pending(at="2026-09-19T10:00")], [],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons == [] and waiting == []
+
+
+def test_a_suggestion_sent_word_for_word_is_marked_as_right():
+    lessons, _ = smsreplies.lessons_from(
+        [_pending(draft="Hi! Paused 😊")], [_faith("2026-09-24T10:05", "hi paused")],
+        now="2026-09-24T11:00", gone_after="2026-09-21",
+    )
+
+    assert lessons[0]["same"] is True
+
+
+def test_only_the_ones_she_wrote_differently_are_shown_as_corrections():
+    lessons = [
+        {"asked": "send invoice", "suggested": "b", "sent": "B!", "same": False},
+        {"asked": "pause them please", "suggested": "c", "sent": "C!", "same": False},
+        {"asked": "can you pause my leads", "suggested": "a", "sent": "a", "same": True},
+    ]
+
+    picked = smsreplies.pick_lessons(lessons, "can you pause my leads", most=2)
+
+    assert [one["sent"] for one in picked] == ["C!", "B!"]
+
+
+def test_the_newest_correction_is_always_among_them():
+    lessons = [
+        {"asked": "pause my leads", "suggested": "a", "sent": "A!", "same": False},
+        {"asked": "send invoice", "suggested": "b", "sent": "B!", "same": False},
+    ]
+
+    picked = smsreplies.pick_lessons(lessons, "pause my leads", most=2)
+
+    assert {one["sent"] for one in picked} == {"A!", "B!"}
+
+
+def test_the_playbook_is_studied_from_all_of_her_history_not_one_week():
+    done = list(range(1000))
+
+    picked = smsreplies.sample_for_playbook(done, most=10)
+
+    assert len(picked) == 10 and picked[0] == 0 and picked[-1] >= 900
+
+
+def test_a_short_history_is_studied_whole():
+    assert smsreplies.sample_for_playbook([1, 2, 3], most=10) == [1, 2, 3]
