@@ -6805,8 +6805,21 @@ def test_a_clean_day_still_says_what_is_about_to_go_live_unticked(config, monkey
 
     assert asked["calls"][0][0] == date(2026, 9, 3), "the question asked came first"
     assert asked["calls"][1] == (None, True), "never looked ahead"
-    assert "has been ticked for" in words, "dropped the answer to what was asked"
-    assert "But 4 going live" in words
+    assert "4 going live" in words and "still unticked" in words
+    assert "is ticked" in words, "dropped the answer to what was asked"
+
+
+def test_the_unticked_ones_are_the_first_thing_said(config, monkeypatch):
+    """"CLEARLY NOT." The first version opened with "Every New Agent card in
+    Done has been ticked", and that is the line that gets read - with the
+    unticked cards on the screen beside it."""
+    _asked, sent = _unticked(
+        monkeypatch, config, "unticked yesterday", found=[], soon=THURSDAY,
+    )
+    first = str(getattr(sent[0], "content", sent[0]) or "")
+
+    assert first.lstrip("⚠ *").startswith("4 going live")
+    assert not first.startswith("Every")
 
 
 def test_a_clean_day_with_nothing_coming_is_plainly_clean(config, monkeypatch):

@@ -1418,11 +1418,16 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
         except PIPELINE_ERRORS:
             soon = []
         if soon:
+            # The problem first. "Every New Agent card in Done has been
+            # ticked" opened the first version of this, and it is the line
+            # that gets read: Franklin had Brandon Sena and Don Alimi sitting
+            # unticked in Done on the screen beside it - "CLEARLY NOT". The
+            # day he named being clean is a footnote to that, not the news.
             ahead = dailyops.days_chased(_today(config))
             await responder.send(
-                f"Every New Agent card in {dailyops.DONE} has been ticked for "
-                f"{covers}. **But {len(soon)} going live {ahead} "
-                f"{'isn' if len(soon) == 1 else 'aren'}'t:**",
+                f"⚠ **{len(soon)} going live {ahead} "
+                f"{'is' if len(soon) == 1 else 'are'} still unticked.**\n"
+                f"-# Everything that went live {covers} is ticked.",
                 embed=_unmarked_card(soon, days=ahead),
             )
             await _offer_the_top_ups(responder, config, soon)
