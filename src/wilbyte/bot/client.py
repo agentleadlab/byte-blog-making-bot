@@ -5884,6 +5884,9 @@ def _ring_notes(drafted: dict, *extra: str) -> str:
         notes.append("fill in " + ", ".join(drafted["blanks"]))
     if drafted.get("why"):
         notes.append(drafted["why"])
+    checked = list(dict.fromkeys(drafted.get("checked") or []))
+    if checked:
+        notes.append("checked " + ", ".join(checked))
     notes += [one for one in extra if one]
     return ("-# " + " · ".join(notes)) if notes else ""
 
@@ -5897,7 +5900,7 @@ async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
     import io
     import time
 
-    from .. import smsreplies
+    from .. import smslinks, smsreplies
 
     if not jobs.ring_playbook_due(data):
         return
@@ -5907,6 +5910,7 @@ async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
         text = await asyncio.to_thread(
             jobs.faith_playbook, bot.config, done,
             smsreplies.rules_from(list(data.get("lessons") or [])),
+            smslinks.catalog(jobs.ring_texts(bot.config, data)),
         )
     except Exception:
         _PLAYBOOK_FAILED.append(time.time())

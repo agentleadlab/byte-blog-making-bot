@@ -7,6 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -7528,8 +7529,9 @@ def draft_like_faith(
     config: Config, *, asked: str, done: list, thread: list = (), name: str = "",
     agent: str = "", card: dict | None = None, history: list = (),
     lessons: list = (), playbook: str = "", learned: list = (),
+    links: list = (), look: "RingLookups | None" = None,
 ) -> dict:
-    """The reply Faith would send. {"reply", "why", "blanks", "examples"}.
+    """The reply Faith would send. {"reply", "why", "blanks", "examples", "checked"}.
 
     Drafted, never sent - there is nothing here or in `ringcentral` that can
     send. Faith's past exchanges are the examples: the ones most like this
@@ -7581,6 +7583,32 @@ def draft_like_faith(
         )
     if card:
         sections.append(_card_text(card))
+    if links:
+        sections.append(
+            "LINKS FAITH SENDS - each to several agents, so hers to send again "
+            "when she would:\n" + "\n".join(
+                f"- {one['what']}: {one['link']} - sent {one['times']} times to "
+                f"{one['agents']} agents; last with: \"{one['said'][:200]}\""
+                for one in links
+            )
+        )
+    # Every link in the conversation is opened before anything is written:
+    # an agent's "this one?" under a pasted link is a question about what is
+    # behind the link, and the draft should know what that is.
+    if look is not None:
+        from .. import smslinks
+
+        seen = []
+        for one in list(thread or [])[-8:] + list(history or [])[-4:]:
+            for link in smslinks.links_in(one.said):
+                if link not in seen:
+                    seen.append(link)
+        opened = [f"{link}\n{look.run('open_link', {'link': link})}" for link in seen[-LINKS_OPENED:]]
+        if opened:
+            sections.append(
+                "WHAT THE LINKS IN THESE TEXTS ARE - opened with RYTE's own "
+                "access just now:\n\n" + "\n\n".join(opened)
+            )
     if history:
         sections.append(
             "EARLIER TEXTS WITH THIS AGENT, in other conversations:\n"
@@ -7615,10 +7643,7 @@ def draft_like_faith(
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
-    response = client.messages.create(
-        model=config.copy.model,
-        max_tokens=800,
-        system=(
+    system = (
             "You help Franklin, the general manager of Agent Lead Lab, answer "
             "text messages from insurance agents who buy leads from the "
             "company. Faith on the customer service team normally answers "
@@ -7647,8 +7672,25 @@ def draft_like_faith(
             "- a refund, a complaint about the leads, an upset agent - still "
             "draft her holding reply, and say so in why. Match her, not a "
             "customer-service script: if she writes two lines, write two lines."
-        ),
-        tools=[{
+    )
+    if look is not None:
+        system += (
+            "\n\nBefore you write, think through what this message turns on, "
+            "and check it rather than guess. You have RYTE's own read-only "
+            "access: open any link (lead sheets, Trello cards, Stripe payment "
+            "links, Loom videos, web pages), find the agent's card on the "
+            "team's Trello board, their payments and invoices in Stripe, their "
+            "contact in GoHighLevel, and search every text the line has sent "
+            "or received. Leads not coming, or the wrong ones: open their sheet "
+            "and see when the last lead landed and what it was. A payment or "
+            "an invoice: Stripe. Launch day, states or setup: the card. "
+            "Something another agent may have said too: search the texts. A "
+            "few look-ups, not a survey - then reply. What you find is fact "
+            "you may use, and say in why what you checked. Faith's standing "
+            "links may be sent where she would send them; an agent's own "
+            "sheet link only to that agent."
+        )
+    reply_tool = {
             "name": "reply",
             "description": "The reply Faith would send, and what it rests on.",
             "input_schema": {
@@ -7667,11 +7709,11 @@ def draft_like_faith(
                 },
                 "required": ["reply", "why", "blanks"],
             },
-        }],
-        tool_choice={"type": "tool", "name": "reply"},
-        messages=[{"role": "user", "content": prompt}],
+    }
+    got = _think_then_reply(
+        client, model=config.copy.model, system=system, prompt=prompt,
+        reply_tool=reply_tool, look=look,
     )
-    got = _tool_input(response, "reply")
     reply = str(got.get("reply") or "").strip()
     if not reply:
         raise ValueError("The draft came back empty.")
@@ -7680,7 +7722,56 @@ def draft_like_faith(
         "why": " ".join(str(got.get("why") or "").split()),
         "blanks": [str(one) for one in got.get("blanks") or [] if str(one).strip()],
         "examples": len(examples),
+        "checked": list(look.checked) if look is not None else [],
     }
+
+
+#: Look-ups a draft may make before it has to reply. Each is one more round
+#: trip to Claude; a draft that wants more than this is surveying.
+LOOKUPS = 5
+
+#: Links in the conversation opened before drafting.
+LINKS_OPENED = 3
+
+
+def _think_then_reply(client, *, model: str, system: str, prompt: str,
+                      reply_tool: dict, look=None) -> dict:
+    """Ask for the reply, letting Claude look things up first.
+
+    Without look-ups, one call that has to reply. With them, Claude may call
+    RYTE's read-only look-ups a few times, each answer handed back, and must
+    reply on the last turn whatever it has found by then.
+    """
+    tools = [reply_tool] + (look.tools() if look is not None else [])
+    messages = [{"role": "user", "content": prompt}]
+    for turn in range(LOOKUPS + 1):
+        last = look is None or turn == LOOKUPS
+        response = client.messages.create(
+            model=model, max_tokens=1500, system=system,
+            tools=[reply_tool] if last else tools,
+            tool_choice={"type": "tool", "name": "reply"} if last else {"type": "any"},
+            messages=messages,
+        )
+        blocks = list(getattr(response, "content", None) or [])
+        calls = [one for one in blocks if getattr(one, "type", "") == "tool_use"]
+        answer = next((one for one in calls if one.name == reply_tool["name"]), None)
+        if answer is not None:
+            return dict(answer.input or {})
+        if not calls:
+            break
+        messages.append({"role": "assistant", "content": [
+            {"type": "tool_use", "id": one.id, "name": one.name, "input": one.input}
+            if getattr(one, "type", "") == "tool_use"
+            else {"type": "text", "text": str(getattr(one, "text", "") or "")}
+            for one in blocks
+            if getattr(one, "type", "") == "tool_use" or getattr(one, "text", "")
+        ]})
+        messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": one.id,
+             "content": look.run(one.name, dict(one.input or {}))}
+            for one in calls
+        ]})
+    raise ValueError("Claude didn't write a reply.")
 
 
 #: The biggest screenshot sent to be read. Claude takes five megabytes an image.
@@ -7857,7 +7948,7 @@ def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | No
     }
 
 
-def faith_playbook(config: Config, done: list, learned: list = ()) -> str:
+def faith_playbook(config: Config, done: list, learned: list = (), links: list = ()) -> str:
     """How Faith handles agents, written down from her own replies.
 
     Examples show how she answered one message. This is the part above them:
@@ -7885,6 +7976,16 @@ def faith_playbook(config: Config, done: list, learned: list = ()) -> str:
         "them:\n" + "\n".join(f"- {one}" for one in learned)
         if learned else ""
     )
+    if links:
+        corrected += (
+            "\n\n---\nThe links she sends, most sent first - how many times, "
+            "to how many different agents, and her newest text with it in:\n"
+            + "\n".join(
+                f"- {one['what']}: {one['link']} - {one['times']} times, "
+                f"{one['agents']} agents: \"{one['said'][:200]}\""
+                for one in links
+            )
+        )
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
     response = client.messages.create(
@@ -7907,7 +8008,10 @@ def faith_playbook(config: Config, done: list, learned: list = ()) -> str:
             "she does, what she asks for, what she commits to and what she "
             "won't, when she hands it to the team, why she handles it that "
             "way, and two or three of her real phrasings, quoted.\n"
-            "3. **Things she never does.**\n"
+            "3. **Links she sends** - each of her standing links, what it is "
+            "for and when she sends it; and which links are one agent's own, "
+            "like their lead sheet.\n"
+            "4. **Things she never does.**\n"
             "Keep it under 1,200 words."
         )}],
     )
@@ -7956,13 +8060,13 @@ def ring_context(config: Config, data: dict, texts: list, *, agent: str,
                  name: str = "", key: str = "", asked: str = "") -> dict:
     """Everything a draft should know besides the conversation itself.
 
-    {"card", "history", "lessons", "playbook", "learned"}. The card is looked up on the
+    {"card", "history", "lessons", "playbook", "learned", "links", "look"}. The card is looked up on the
     board and a board that will not answer costs the draft its context, not
     the draft - a suggestion without the launch date is still a suggestion.
     """
     import logging
 
-    from .. import smsreplies
+    from .. import smslinks, smsreplies
 
     card = None
     if agent or name:
@@ -7978,6 +8082,8 @@ def ring_context(config: Config, data: dict, texts: list, *, agent: str,
         "lessons": smsreplies.pick_lessons(list(data.get("lessons") or []), asked),
         "playbook": str((data.get("playbook") or {}).get("text") or ""),
         "learned": smsreplies.rules_from(list(data.get("lessons") or [])),
+        "links": smslinks.standing(texts),
+        "look": RingLookups(config, texts, agent=agent, name=name),
     }
 
 
@@ -7990,7 +8096,8 @@ def _lesson_id(lesson: dict) -> str:
 
 
 def explain_the_change(config: Config, lesson: dict, *, before: list = (),
-                       after: list = (), card: dict | None = None) -> dict:
+                       after: list = (), card: dict | None = None,
+                       opened: list = ()) -> dict:
     """Why a suggestion was not sent as written. {"why", "rule", "kind"}.
 
     What was sent says what she did; this is the part a draft can carry to
@@ -8020,6 +8127,10 @@ def explain_the_change(config: Config, lesson: dict, *, before: list = (),
         parts.append("WHAT CAME AFTER, oldest first:\n" + "\n".join(
             f"{_said_by(one)}: {one.said[:400]}" for one in after
         ))
+    if opened:
+        parts.append("WHAT THE LINKS IN IT ARE, opened just now:\n\n" + "\n\n".join(
+            f"{link}\n{said}" for link, said in opened
+        ))
     if lesson.get("note"):
         parts.append(f"FRANKLIN SAID ABOUT THE SUGGESTION:\n{lesson['note']}")
 
@@ -8040,7 +8151,8 @@ def explain_the_change(config: Config, lesson: dict, *, before: list = (),
             "missed: a fact she knew that it did not (from the card or the "
             "earlier texts), something it promised that she would not, an "
             "action she took instead of words (a call, a handover to the "
-            "team), a question she asked first, length, tone, timing - or "
+            "team), a link she sent or left out and what is behind it, a "
+            "question she asked first, length, tone, timing - or "
             "only wording, when that is all it was. Use what came after as a "
             "clue to how her answer landed. Never invent a reason the texts "
             "do not support."
@@ -8066,7 +8178,7 @@ def explain_the_change(config: Config, lesson: dict, *, before: list = (),
                     },
                     "kind": {
                         "type": "string",
-                        "enum": ["facts", "promise", "action", "handoff",
+                        "enum": ["facts", "promise", "action", "handoff", "link",
                                  "question", "length", "tone", "timing",
                                  "wording", "other"],
                     },
@@ -8179,6 +8291,8 @@ def ring_study(config: Config, *, now=None) -> dict:
 
     from .. import ringtexts, smsreplies
 
+    from .. import smslinks
+
     log = logging.getLogger("wilbyte.bot")
     now = now or datetime.now(timezone.utc)
     with _RING_FILE:
@@ -8196,8 +8310,10 @@ def ring_study(config: Config, *, now=None) -> dict:
         except Exception:
             log.warning("Couldn't look the agent up for a lesson", exc_info=True)
         try:
+            links = smslinks.links_in(f"{one.get('sent') or ''} {one.get('suggested') or ''}")
             explained[_lesson_id(one)] = explain_the_change(
                 config, one, card=card,
+                opened=[(link, read_link(config, link)) for link in links[:LINKS_OPENED]],
                 before=smsreplies.before(texts, key, str(one.get("asked_at") or at)),
                 after=smsreplies.after(texts, key, at),
             )
@@ -8290,3 +8406,380 @@ def ring_told(discord_id, note: str) -> str | None:
                 ringtexts.save(data)
                 return "ping"
     return None
+
+
+# ------------------------------------------------ looking things up, read-only
+
+#: How much of one look-up goes back to Claude.
+LOOKUP_CHARS = 3000
+
+
+class RingLookups:
+    """What a draft may check before it is written. Read-only, every one.
+
+    Each look-up answers in words, and a look-up that fails says so in words
+    rather than raising: "Stripe wouldn't let me look" is something to reply
+    around, and a draft lost because the GHL token expired is not. `checked`
+    is the trail, shown under the ping so Franklin sees what it rests on.
+    """
+
+    def __init__(self, config: Config, texts: list, *, agent: str = "", name: str = ""):
+        self.config, self.texts = config, list(texts or [])
+        self.agent, self.name = agent, name
+        self.checked: list[str] = []
+
+    def tools(self) -> list[dict]:
+        def tool(name, what, **fields):
+            return {
+                "name": name, "description": what,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        key: {"type": kind, "description": said}
+                        for key, (kind, said) in fields.items()
+                    },
+                    "required": [key for key, (kind, _) in fields.items() if kind == "string"],
+                },
+            }
+
+        return [
+            tool("open_link", "Open a link and say what is behind it: a lead "
+                 "sheet's newest rows, a Trello card, a Stripe payment link and "
+                 "who paid it, a Loom video's words, a web page.",
+                 link=("string", "The link, as it was sent.")),
+            tool("trello_card", "The agent's New Agent card on the team's "
+                 "Trello board: what they ordered, launch day, states, which "
+                 "list it is in, setup confirmation, sheet link.",
+                 who=("string", "Their name or phone number.")),
+            tool("stripe_customer", "The agent in Stripe: their invoices "
+                 "(paid or not, how much, when) and recent payments.",
+                 who=("string", "Their email, phone number or full name.")),
+            tool("ghl_contact", "The agent's contact in GoHighLevel: email, "
+                 "phone, tags, when they were added.",
+                 who=("string", "Their phone number, email or full name.")),
+            tool("search_texts", "Search every text the line has sent or "
+                 "received for these words, newest first.",
+                 words=("string", "Words that must all appear."),
+                 this_agent_only=("boolean", "Only this agent's texts.")),
+        ]
+
+    def run(self, name: str, asked: dict) -> str:
+        from .. import smsreplies
+
+        said = " ".join(str(
+            asked.get("link") or asked.get("who") or asked.get("words") or ""
+        ).split())
+        try:
+            if name == "open_link":
+                got = read_link(self.config, said)
+                self.checked.append(_what_link(said))
+            elif name == "trello_card":
+                card = agent_on_the_board(
+                    self.config, smsreplies.digits(said) if smsreplies.digits(said) else "",
+                    "" if smsreplies.digits(said) else said,
+                )
+                got = (_card_text(card) + f"\nCard: {card.get('url')}") if card else (
+                    f"No New Agent card on the board for {said}."
+                )
+                self.checked.append("their Trello card" if card else "Trello (no card)")
+            elif name == "stripe_customer":
+                got = stripe_customer(said)
+                self.checked.append("Stripe")
+            elif name == "ghl_contact":
+                got = ghl_contact(self.config, said)
+                self.checked.append("GHL")
+            elif name == "search_texts":
+                from .. import smslinks
+
+                found = smslinks.search(
+                    self.texts, said,
+                    agent=self.agent if asked.get("this_agent_only") else "",
+                )
+                got = "\n".join(
+                    f"{one.at[:10]} {one.name or _said_by(one)} "
+                    f"({_said_by(one)}): {one.said[:300]}" for one in found
+                ) or f"No texts with \"{said}\" in them."
+                self.checked.append(f"past texts for “{said[:30]}”")
+            else:
+                return f"There is no look-up called {name}."
+        except Exception as exc:
+            # In the trail too: "checked Stripe (couldn't)" under a ping says
+            # the key needs a permission, where silence would say it looked.
+            self.checked.append({
+                "trello_card": "Trello", "stripe_customer": "Stripe",
+                "ghl_contact": "GHL", "search_texts": "past texts",
+            }.get(name, "a link") + " (couldn't)")
+            return f"Couldn't look that up: {_short(exc, 200)}"
+        got = str(got or "")
+        return got[:LOOKUP_CHARS] + ("…" if len(got) > LOOKUP_CHARS else "")
+
+
+def _what_link(link: str) -> str:
+    from .. import smslinks
+
+    kind, what = smslinks.kind_of(link)
+    return {"sheet": "the lead sheet", "trello": "the Trello card",
+            "stripe_pay": "the Stripe link", "loom": "the Loom"}.get(kind, what)
+
+
+def read_link(config: Config, link: str) -> str:
+    """What is behind a link, in words, opened with RYTE's own access.
+
+    Never raises: a link that cannot be opened says why, and the draft goes
+    on without it.
+    """
+    from .. import smslinks
+
+    kind, what = smslinks.kind_of(link)
+    try:
+        if kind == "sheet":
+            return f"{what} - {_read_sheet(config, link)}"
+        if kind == "trello":
+            return f"{what} - {_read_trello_link(config, link)}"
+        if kind == "loom":
+            from .. import loom
+
+            words = loom.transcript(link)
+            return f"{what} called \"{loom.title(link)}\" - it says: {words[:1500] or '(no words)'}"
+        if kind == "stripe_pay":
+            return f"{what} - {_read_payment_link(link)}"
+        if kind == "stripe_invoice":
+            return (f"{what}. An invoice link can't be looked up by itself - "
+                    "look the agent up in Stripe to see whether it is paid.")
+        if kind in ("doc", "drive"):
+            return (f"{what}. RYTE's Google access doesn't open these, so what "
+                    "is in it is not known.")
+        return f"{what} - {_read_page(link)}"
+    except Exception as exc:
+        return f"{what} - couldn't open it: {_short(exc, 200)}"
+
+
+#: Rows of a sheet shown: the header and the newest.
+SHEET_ROWS = 8
+
+
+def _read_sheet(config: Config, link: str) -> str:
+    """The sheet's name, tabs, header, how many rows, and the newest few.
+
+    For "I haven't gotten any leads": the newest row says when the last one
+    landed and what it was, which is the whole answer.
+    """
+    from .. import gsheets
+
+    sheet = gsheets.sheet_id_in(link)
+    if not sheet:
+        return "not a spreadsheet link RYTE can read."
+    client = open_sheets(config)
+    try:
+        tabs = client.tabs(sheet)
+        tab = client.tab_named(sheet, gsheets.gid_in(link)) if gsheets.gid_in(link) else ""
+        tab = tab or (str(tabs[0].get("title") or "") if tabs else "")
+        rows = [row for row in client.rows(sheet, f"'{tab}'!A1:Z5000") if any(c.strip() for c in row)]
+    finally:
+        client.close()
+    if not rows:
+        return f"tab \"{tab}\" is empty. Tabs: {', '.join(str(one.get('title')) for one in tabs)}."
+    head, body = rows[0], rows[1:]
+
+    def line(row):
+        return " | ".join(cell.strip()[:40] for cell in row)[:300]
+
+    return (
+        f"tab \"{tab}\" of {len(tabs)} ({', '.join(str(one.get('title')) for one in tabs[:12])}). "
+        f"{len(body)} rows under the header.\nHeader: {line(head)}\n"
+        f"Newest {min(SHEET_ROWS, len(body))} rows, last is newest:\n"
+        + "\n".join(line(row) for row in body[-SHEET_ROWS:])
+    )
+
+
+def _read_trello_link(config: Config, link: str) -> str:
+    found = re.search(r"trello\.com/c/([A-Za-z0-9]+)", link)
+    if not found:
+        return "not a card link."
+    client = open_trello(config)
+    try:
+        card = client.card_detail(found.group(1))
+        lists = {
+            str(one.get("id") or ""): str(one.get("name") or "")
+            for one in client.board_lists(config.secrets.trello_board_id)
+        }
+        said = client.card_comments(found.group(1))[:5]
+    finally:
+        client.close()
+    return (
+        f"\"{card.get('name')}\" in the \"{lists.get(str(card.get('idList') or ''), '?')}\" "
+        f"list.\n{str(card.get('desc') or '')[:CARD_CHARS]}"
+        + ("\nNewest comments:\n" + "\n".join(f"- {one[:300]}" for one in said) if said else "")
+    )
+
+
+def _read_payment_link(link: str) -> str:
+    """What a Stripe payment link sells, and who has paid through it."""
+    from .. import smslinks, stripepay
+
+    wanted = smslinks.same_link(link)
+    found, after = None, None
+    for _page in range(5):
+        params = {"limit": 100, **({"starting_after": after} if after else {})}
+        got = stripepay._call("GET", "payment_links", params=params)
+        for one in got.get("data") or []:
+            if smslinks.same_link(one.get("url") or "") == wanted:
+                found = one
+                break
+        if found or not got.get("has_more") or not got.get("data"):
+            break
+        after = got["data"][-1]["id"]
+    if found is None:
+        return "not one of this Stripe account's payment links."
+    items = stripepay._call("GET", f"payment_links/{found['id']}/line_items").get("data") or []
+    paid = stripepay._call(
+        "GET", "checkout/sessions", params={"payment_link": found["id"], "limit": 5},
+    ).get("data") or []
+    sells = ", ".join(
+        f"{one.get('quantity') or 1} × {one.get('description')} "
+        f"({stripepay.dollars(int(one.get('amount_total') or 0))})" for one in items
+    )
+    return (
+        f"sells {sells or '?'}; {'active' if found.get('active') else 'switched off'}.\n"
+        + ("Paid through it, newest first:\n" + "\n".join(
+            f"- {_stamp(one.get('created'))} {((one.get('customer_details') or {}).get('name') or '?')}"
+            f" <{(one.get('customer_details') or {}).get('email') or '?'}> - {one.get('status')}"
+            f", {one.get('payment_status')}" for one in paid
+        ) if paid else "Nobody has paid through it yet.")
+    )
+
+
+def _stamp(seconds) -> str:
+    from datetime import timezone
+
+    try:
+        return datetime.fromtimestamp(int(seconds), timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return "?"
+
+
+def stripe_customer(who: str) -> str:
+    """The agent in Stripe: their newest invoices and payments."""
+    from .. import smsreplies, stripepay
+
+    who = " ".join(str(who or "").split())
+    if not who:
+        return "Nobody to look up."
+    digits = smsreplies.digits(who)
+    if "@" in who:
+        query = f"email:'{who}'"
+    elif len(digits) == 10:
+        query = f"phone:'+1{digits}'"
+    else:
+        query = f"name~'{who.replace(chr(39), '')}'"
+    people = stripepay._call("GET", "customers/search", params={"query": query, "limit": 3}).get("data") or []
+    if not people:
+        return f"No Stripe customer for {who}."
+    said = []
+    for one in people:
+        invoices = stripepay._call("GET", "invoices", params={"customer": one["id"], "limit": 5}).get("data") or []
+        charges = stripepay._call("GET", "charges", params={"customer": one["id"], "limit": 5}).get("data") or []
+        said.append(
+            f"{one.get('name') or '?'} <{one.get('email') or '?'}> {one.get('phone') or ''}".strip()
+            + "\nInvoices, newest first:\n" + ("\n".join(
+                f"- {_stamp(inv.get('created'))} #{inv.get('number') or '?'} {inv.get('status')}: "
+                f"due {stripepay.dollars(int(inv.get('amount_due') or 0))}, paid "
+                f"{stripepay.dollars(int(inv.get('amount_paid') or 0))}"
+                + (f", due by {_stamp(inv.get('due_date'))}" if inv.get("due_date") else "")
+                for inv in invoices
+            ) or "- none")
+            + "\nPayments, newest first:\n" + ("\n".join(
+                f"- {_stamp(ch.get('created'))} {stripepay.dollars(int(ch.get('amount') or 0))} "
+                f"{ch.get('status')}{' refunded' if ch.get('refunded') else ''}"
+                f" - {ch.get('description') or ''}".rstrip(" -")
+                for ch in charges
+            ) or "- none")
+        )
+    return "\n\n".join(said)
+
+
+def ghl_contact(config: Config, who: str) -> str:
+    """The agent's GoHighLevel contact - one search, never the whole walk."""
+    from .. import ghl, smsreplies
+
+    who = " ".join(str(who or "").split())
+    config.secrets.require("ghl_api_token", "ghl_location_id")
+    email = who.casefold() if "@" in who else ""
+    phone = smsreplies.digits(who) if len(smsreplies.digits(who)) == 10 else ""
+    name = "" if (email or phone) else who.casefold()
+
+    def them(one):
+        # A phone saved as "+1 312…" is the same phone as "312…".
+        if phone:
+            return smsreplies.digits(one.get("phone") or "") == phone
+        return ghl._is_them(one, email, "", name)
+
+    with ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id) as client:
+        found = [one for one in client._ask_for(phone or who) if them(one)]
+    if not found:
+        return f"No GHL contact for {who}."
+    return "\n".join(
+        f"{' '.join(str(one.get(k) or '') for k in ('firstName', 'lastName')).strip() or one.get('contactName') or '?'}"
+        f" <{one.get('email') or '?'}> {one.get('phone') or ''} - added "
+        f"{str(one.get('dateAdded') or '?')[:10]}; tags: {', '.join(one.get('tags') or []) or 'none'}"
+        for one in found[:3]
+    )
+
+
+#: A web page read for a draft: this much of it.
+PAGE_BYTES = 300_000
+
+
+def _read_page(link: str) -> str:
+    """A public web page's title and opening words.
+
+    Only public addresses: the link came from a text anybody can send, and
+    this runs on the office Mac, so nothing on its own network is fetched -
+    every hop of a redirect is checked the same way.
+    """
+    import html as htmlmod
+    import ipaddress
+    import socket
+    from urllib.parse import urljoin, urlsplit
+
+    import httpx
+
+    url = link
+    for _hop in range(4):
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return "not a web address RYTE opens."
+        try:
+            addresses = {one[4][0] for one in socket.getaddrinfo(parts.hostname, None)}
+        except OSError:
+            return "that address doesn't exist."
+        if not addresses or not all(ipaddress.ip_address(one.split("%")[0]).is_global for one in addresses):
+            return "not a public address, so not opened."
+        with httpx.stream("GET", url, timeout=10, follow_redirects=False,
+                          headers={"User-Agent": "Mozilla/5.0 RYTE"}) as response:
+            if response.is_redirect and response.headers.get("location"):
+                url = urljoin(url, response.headers["location"])
+                continue
+            if response.status_code >= 400:
+                return f"the page said HTTP {response.status_code}."
+            body = b""
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) >= PAGE_BYTES:
+                    break
+            break
+    else:
+        return "it redirects too many times."
+    page = body.decode("utf-8", "replace")
+    title = re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)
+    described = re.search(
+        r"<meta[^>]+(?:name|property)=[\"'](?:og:)?description[\"'][^>]+content=[\"']([^\"']*)",
+        page, re.IGNORECASE,
+    )
+    text = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", page)
+    text = " ".join(htmlmod.unescape(re.sub(r"<[^>]+>", " ", text)).split())
+    return (
+        (f"\"{' '.join(htmlmod.unescape(title.group(1)).split())}\". " if title else "")
+        + (f"{htmlmod.unescape(described.group(1))}. " if described else "")
+        + (f"It reads: {text[:1200]}" if text else "")
+    ).strip() or "an empty page."

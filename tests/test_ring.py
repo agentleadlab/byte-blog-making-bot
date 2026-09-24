@@ -1081,7 +1081,7 @@ def test_a_written_playbook_is_posted_for_franklin_to_correct(monkeypatch):
     from wilbyte.bot import client
 
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
-    monkeypatch.setattr(jobs, "faith_playbook", lambda cfg, done, learned=(): "## How she writes")
+    monkeypatch.setattr(jobs, "faith_playbook", lambda cfg, done, learned=(), links=(): "## How she writes")
     kept = []
     monkeypatch.setattr(jobs, "ring_keep_playbook", lambda text, n: kept.append((text, n)))
     sent = []
@@ -1106,7 +1106,7 @@ def test_a_playbook_that_failed_is_not_tried_again_every_minute(monkeypatch):
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
     tries = []
 
-    def fails(cfg, done, learned=()):
+    def fails(cfg, done, learned=(), links=()):
         tries.append(1)
         raise RuntimeError("overloaded")
 
@@ -1127,7 +1127,7 @@ def test_a_fresh_playbook_is_not_written_again(monkeypatch):
 
     monkeypatch.setattr(client, "_PLAYBOOK_FAILED", [])
     monkeypatch.setattr(jobs, "faith_playbook",
-                        lambda cfg, done, learned=(): (_ for _ in ()).throw(AssertionError("rewrote")))
+                        lambda cfg, done, learned=(), links=(): (_ for _ in ()).throw(AssertionError("rewrote")))
     fresh = {"playbook": {"text": "x", "made": jobs._ring_iso(datetime.now(timezone.utc))}}
 
     asyncio.run(client._write_the_playbook(NS(config=None), Heard(), fresh, [1]))
