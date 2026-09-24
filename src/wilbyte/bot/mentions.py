@@ -559,6 +559,35 @@ FAITH_ASKED = re.compile(
 _ABOUT_AGENTS = re.compile(r"\b(?:agents?|clients?)\b", re.IGNORECASE)
 
 
+# A question about agents - "where does agent submit their sale", "how do
+# clients pay" - or anything said to be about RingCentral. "agent" is also
+# the word for filing new agents off In Que, and a question about how agents
+# are answered used to come back as a list of cards with no launch date.
+_QUESTION = re.compile(
+    r"^\s*(?:on\s+ring\s*central\s*,?\s*)?(?:where|how|what|which|who|do|does|did|can|should|is|are)\b"
+    r"|\?\s*$",
+    re.IGNORECASE,
+)
+_RINGCENTRAL = re.compile(r"\bring\s*central\b", re.IGNORECASE)
+_ABOUT_THE_BOARD = re.compile(
+    r"\b(?:que|queue|in\s*que|unticked|ticked|set\s*ups?|setups?|live|launch\w*|"
+    r"trello|cards?|board|done|archived?|onboard(?:ed)?\s+today)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_agents(text: str) -> bool:
+    """A question about how agents are dealt with, to answer from the texts."""
+    if re.search(r"\bsops?\b", text or "", re.IGNORECASE):
+        return False
+    if _RINGCENTRAL.search(text or ""):
+        return True
+    # "what agents are in que", "how many agents unticked" - the board's.
+    if _ABOUT_THE_BOARD.search(text or ""):
+        return False
+    return bool(_QUESTION.search(text or "")) and bool(_ABOUT_AGENTS.search(text or ""))
+
+
 def asks_about_faith(text: str) -> bool:
     """Whether a mention asks how Faith (or the team) answers agents."""
     found = FAITH_ASKED.search(text or "")
@@ -603,6 +632,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     if WHEN_LIVE.search(text):
         return MentionRequest(action="whenlive", brief=text)
+
+    # After the launch questions - "how many agents go live thursday" is a
+    # question about agents that the board answers - and before "agent" is
+    # read as the command to file new ones.
+    if action in (None, "agents") and asks_about_agents(_without_links(text)):
+        return MentionRequest(action="askfaith", brief=text)
 
     # "sheet for Faith". Only when nothing else claimed the message: "levinson
     # sheet" is the tracker, a format word means a copy brief, and all of those

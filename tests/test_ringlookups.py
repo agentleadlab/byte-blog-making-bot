@@ -687,6 +687,19 @@ def test_nothing_found_says_what_was_searched(monkeypatch):
     ("sheet for Faith", "agentsheet"),
     ("how do we use the tracker", "findsop"),
     ("respond what do i send", "respond"),
+    # Luna's, word for word: "agent" used to file new agents off In Que
+    ("where does agent submit their sale", "askfaith"),
+    ("on ring central where does agent submit their sale", "askfaith"),
+    ("how do clients pause their leads", "askfaith"),
+    ("how do agents pay?", "askfaith"),
+    # questions the board answers stay the board's
+    ("what agents are in que", "agents"),
+    ("how many agents unticked", "agents"),
+    ("what agents went live yesterday", "agents"),
+    ("how many agents are going live thursday", "golive"),
+    ("where is the sop for agents", "findsop"),
+    ("trello agents", "agents"),
+    ("agents", "agents"),
 ])
 def test_asking_how_faith_answers_is_told_apart(asked, action):
     from wilbyte.bot import mentions
