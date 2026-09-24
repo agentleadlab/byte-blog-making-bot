@@ -295,9 +295,9 @@ def test_a_text_with_no_thread_falls_back_to_the_number():
 
 # --------------------------------------------- the team texting into the line
 
-# Arnold hands an agent over from his own cell, into the line Faith answers
-# from. RingCentral names the cell "Arnold Tarpley", the same as the line.
-ARNOLD_CELL = "+14125550177"
+# Tre hands an agent over from his cell, (412), into the line Faith answers
+# from, (878). RingCentral labels both "Arnold Tarpley (me)".
+TRE_CELL = "+14125550177"
 ADRIAN = "+13125550188"
 
 
@@ -315,9 +315,9 @@ def into(id_, at, text, *, who, number, conversation="C-adrian", inbound=True):
 
 ADRIAN_THREAD = [
     into(1, "11:43", "With Wolfpack so take care of him",
-         who="Arnold Tarpley", number=ARNOLD_CELL),
+         who="Arnold Tarpley", number=TRE_CELL),
     into(2, "11:44", "Hi faith this is Adrian Pacheco paid for OTP Trucker IUL leads",
-         who="Arnold Tarpley", number=ARNOLD_CELL),
+         who="Arnold Tarpley", number=TRE_CELL),
     into(3, "12:01", "👍", who="Adrian Pacheco", number=ADRIAN),
 ]
 
@@ -350,7 +350,7 @@ def test_arnold_chiming_in_does_not_answer_the_agent_either():
     texts = smsreplies.mark_team([
         into(1, "11:00", "when do my leads start", who="Adrian Pacheco", number=ADRIAN),
         into(2, "11:05", "Faith can you check this", who="Arnold Tarpley",
-             number=ARNOLD_CELL),
+             number=TRE_CELL),
     ], ["Arnold Tarpley"])
 
     ((_agent, _name, tail),) = smsreplies.waiting(texts, since="2026-09-01")
@@ -388,3 +388,77 @@ def test_faiths_group_reply_is_hers_even_when_it_went_to_arnolds_other_number():
     assert texts[1].team is False
     assert smsreplies.waiting(texts, since="2026-09-01") == []
     assert len(smsreplies.exchanges(texts)) == 1
+
+
+
+# ------------------------------------------ only Faith's number is Faith
+
+FAITH_LINE = "+18785550100"
+
+
+def sent(id_, at, text, *, sender, conversation="C-x", to=ADRIAN):
+    return smsreplies.from_record({
+        "id": id_, "creationTime": f"2026-09-24T{at}:00.000Z", "subject": text,
+        "direction": "Outbound",
+        "from": {"phoneNumber": sender, "name": "Arnold Tarpley"},
+        "to": [{"phoneNumber": to, "name": "Adrian Pacheco"}],
+        "conversationId": conversation,
+    })
+
+
+def asked(id_, at, text, *, conversation="C-x"):
+    return into(id_, at, text, who="Adrian Pacheco", number=ADRIAN,
+                conversation=conversation)
+
+
+def test_what_was_sent_says_which_number_sent_it():
+    assert sent(1, "10:00", "hi", sender=FAITH_LINE).sender == "8785550100"
+    assert asked(2, "10:01", "hi").sender == ""
+
+
+def test_faiths_number_is_the_one_nearly_everything_goes_out_from():
+    texts = [sent(at, f"10:{at:02d}", "hi", sender=FAITH_LINE) for at in range(9)]
+    texts.append(sent(99, "11:00", "take care of him", sender=TRE_CELL))
+
+    assert smsreplies.faiths_number(texts) == "8785550100"
+
+
+def test_nothing_sent_yet_is_no_number_rather_than_a_guess():
+    assert smsreplies.faiths_number([asked(1, "10:00", "hi")]) == ""
+
+
+def test_tre_sending_from_the_line_is_never_learned_as_faith():
+    """Both numbers can send from the line. Only one of them is her."""
+    texts = smsreplies.mark_team([
+        asked(1, "10:00", "when do my leads start", conversation="C-1"),
+        sent(2, "10:01", "yo bro checking", sender=TRE_CELL, conversation="C-1"),
+        asked(3, "11:00", "can you pause them", conversation="C-2"),
+        sent(4, "11:01", "Hi Adrian! Paused 😊", sender=FAITH_LINE, conversation="C-2"),
+    ], ["Arnold Tarpley"], faith=FAITH_LINE)
+
+    answers = [one.answered for one in smsreplies.exchanges(texts)]
+
+    assert answers == ["Hi Adrian! Paused 😊"]
+    assert texts[1].team is True and texts[3].team is False
+
+
+def test_tre_chiming_in_does_not_answer_the_agent():
+    """Adrian asked, Tre said something, Faith has not replied - Adrian is
+    still waiting, and that is the ping."""
+    texts = smsreplies.mark_team([
+        asked(1, "10:00", "when do my leads start"),
+        sent(2, "10:01", "Faith will get back to you", sender=TRE_CELL),
+    ], ["Arnold Tarpley"], faith=FAITH_LINE)
+
+    ((_agent, _name, tail),) = smsreplies.waiting(texts, since="2026-09-01")
+
+    assert [one.said for one in tail] == ["when do my leads start"]
+
+
+def test_with_no_number_for_faith_nothing_sent_is_taken_away_from_her():
+    """Not knowing which is hers is no reason to decide none of them are."""
+    texts = smsreplies.mark_team(
+        [sent(1, "10:00", "hi", sender=TRE_CELL)], ["Arnold Tarpley"], faith="",
+    )
+
+    assert texts[0].team is False

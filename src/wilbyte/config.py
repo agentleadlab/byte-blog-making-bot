@@ -265,6 +265,9 @@ class Secrets:
     # Names, comma-separated, of colleagues who text into the line - never an
     # agent waiting on a reply. The line's own owner is always one.
     ringcentral_team: str | None = None
+    # The number Faith texts from. Worked out from what the line sends when
+    # blank - it is the one nearly everything goes out from.
+    ringcentral_faith_number: str | None = None
     # The Google Doc the segment copy goes into, a tab per agent —
     # "YOUTUBE LINKS FOR WEBSITE POSTING". Its link or its id. Needs the
     # documents scope on the token, which Sheets and Drive do not cover.
@@ -398,6 +401,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 ringcentral_extension=_env("RINGCENTRAL_EXTENSION"),
                 ringcentral_channel_id=_env("RINGCENTRAL_CHANNEL_ID"),
                 ringcentral_team=_env("RINGCENTRAL_TEAM"),
+                ringcentral_faith_number=_env("RINGCENTRAL_FAITH_NUMBER"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),
                 ghl_blacklist_tag=_env("GHL_BLACKLIST_TAG") or "blacklisted",
                 tracker_sheet_id=_env("TRACKER_SHEET_ID"),

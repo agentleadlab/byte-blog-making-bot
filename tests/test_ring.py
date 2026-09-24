@@ -589,3 +589,25 @@ def test_a_text_from_the_lines_other_number_is_the_team_even_unnamed(monkeypatch
     (text,) = jobs.ring_texts(NS(secrets=None), data)
 
     assert text.team is True
+
+
+
+def test_faiths_number_can_be_said_outright(monkeypatch):
+    """RINGCENTRAL_FAITH_NUMBER wins over working it out."""
+    data = {"texts": [
+        {"id": str(at), "at": str(at), "inbound": False, "agent": "5",
+         "name": "", "said": "hi", "sender": "4125550177"} for at in range(5)
+    ] + [
+        {"id": "9", "at": "9", "inbound": False, "agent": "5",
+         "name": "", "said": "hi", "sender": "8785550100"},
+    ]}
+
+    worked_out = jobs.ring_texts(NS(secrets=None), data)
+    said_so = jobs.ring_texts(
+        NS(secrets=NS(ringcentral_team="", ringcentral_faith_number="(878) 555-0100")),
+        data,
+    )
+
+    assert [one.team for one in worked_out][-1] is True
+    assert [one.team for one in said_so][:5] == [True] * 5
+    assert said_so[-1].team is False

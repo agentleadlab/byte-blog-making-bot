@@ -34,14 +34,18 @@ class Text:
     #: was filed under nobody: not learned from, and Jay left looking as if he
     #: were still waiting.
     conversation: str = ""
-    #: Somebody on the team texting into the line rather than an agent.
-    #: Arnold texts Ext. 101 from his own cell to hand agents over - "With
-    #: Wolfpack so take care of him", "Hi faith this is Adrian Pacheco paid
-    #: for OTP Trucker IUL leads" - and read as an agent, that is Franklin
-    #: pinged to reply like Faith to Arnold, and Arnold's introduction taken
-    #: for Adrian's own words. Kept, for what it tells the draft; never an
-    #: agent waiting, and never a question Faith was answering.
+    #: Somebody on the team rather than an agent or Faith. Tre hands agents
+    #: over from his cell, (412) - "With Wolfpack so take care of him", "Hi
+    #: faith this is Adrian Pacheco paid for OTP Trucker IUL leads" - and
+    #: RingCentral labels that number "Arnold Tarpley (me)", the same as
+    #: Faith's (878). Read as an agent, that is Franklin pinged to reply like
+    #: Faith to Tre; read as Faith, it is Tre's way of writing learned as
+    #: hers. Kept, for what it tells the draft; never an agent waiting, never
+    #: a question Faith answered, and never Faith's answer.
     team: bool = False
+    #: The number an outgoing text was sent from, digits only. Two numbers
+    #: send from this line and only one of them is Faith.
+    sender: str = ""
 
     @property
     def key(self) -> str:
@@ -52,7 +56,7 @@ class Text:
     def as_dict(self) -> dict:
         return {"id": self.id, "at": self.at, "inbound": self.inbound,
                 "agent": self.agent, "name": self.name, "said": self.said,
-                "conversation": self.conversation}
+                "conversation": self.conversation, "sender": self.sender}
 
     @classmethod
     def from_dict(cls, held: dict) -> "Text":
@@ -61,6 +65,7 @@ class Text:
             inbound=bool(held.get("inbound")), agent=str(held.get("agent") or ""),
             name=str(held.get("name") or ""), said=str(held.get("said") or ""),
             conversation=str(held.get("conversation") or ""),
+            sender=str(held.get("sender") or ""),
         )
 
 
@@ -113,6 +118,7 @@ def from_record(record: dict) -> Text | None:
             record.get("conversationId")
             or (record.get("conversation") or {}).get("id") or ""
         ),
+        sender="" if inbound else digits((record.get("from") or {}).get("phoneNumber") or ""),
     )
 
 
@@ -133,20 +139,40 @@ def words_in(text: str) -> frozenset:
     )
 
 
-def mark_team(texts: list, names, numbers=()) -> list:
-    """Mark what the team sent into the line, by name or by number.
+def faiths_number(texts: list) -> str:
+    """The number nearly everything sent from this line goes out from.
 
-    By the name RingCentral shows - the (412) number arrives as "Arnold
-    Tarpley", the same as the line - and by the line's own numbers, for a
-    text that comes back without a name. Only what came in: what went out is
-    Faith, whoever the line is named for.
+    Faith answers from (878) all day; Tre's (412) sends now and then. Worked
+    out rather than asked for - RINGCENTRAL_FAITH_NUMBER says it outright
+    when it should be - and "" when nothing has gone out yet.
+    """
+    counted: dict[str, int] = {}
+    for one in texts:
+        if not one.inbound and one.sender:
+            counted[one.sender] = counted.get(one.sender, 0) + 1
+    return max(counted, key=counted.get) if counted else ""
+
+
+def mark_team(texts: list, names, numbers=(), faith: str = "") -> list:
+    """Mark what the team sent, coming in or going out.
+
+    Coming in: by the name RingCentral shows - Tre's (412) arrives as "Arnold
+    Tarpley", the same as the line - or by the line's own numbers, for a
+    text that comes back without a name.
+
+    Going out: anything sent from a number that is not Faith's. Both of the
+    line's numbers can send, and only one of them is her.
     """
     wanted = {" ".join(str(one).split()).casefold() for one in names or () if str(one).strip()}
     ours = {digits(one) for one in numbers or () if digits(one)}
+    hers = digits(faith)
     for one in texts:
-        one.team = bool(one.inbound and (
-            (one.name and one.name.casefold() in wanted) or one.agent in ours
-        ))
+        if one.inbound:
+            one.team = bool(
+                (one.name and one.name.casefold() in wanted) or one.agent in ours
+            )
+        else:
+            one.team = bool(hers and one.sender and one.sender != hers)
     return texts
 
 
@@ -212,8 +238,8 @@ def waiting(texts: list, *, since: str) -> list:
     for theirs in _by_conversation(texts).values():
         tail = []
         for one in reversed(theirs):
-            # Arnold chiming in does not answer the agent, and is not the
-            # agent either: passed over, in both directions.
+            # Tre chiming in does not answer the agent, and is not the agent
+            # either: passed over, in both directions.
             if one.team:
                 continue
             if not one.inbound:

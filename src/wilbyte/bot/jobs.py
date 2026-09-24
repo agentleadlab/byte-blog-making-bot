@@ -7428,8 +7428,9 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
 def ring_texts(config: Config, data: dict) -> list:
     """What is remembered, as Texts, with the team's own marked.
 
-    The team is whoever owns the line - texting it from another number is
-    the owner handing an agent over - and anybody named in RINGCENTRAL_TEAM.
+    The team is anything texting in under the line's own name or numbers -
+    Tre's cell is labelled "Arnold Tarpley" too - anybody named in
+    RINGCENTRAL_TEAM, and anything sent from a number that is not Faith's.
     Worked out each time rather than stored, so a name added to .env applies
     to the months already read.
     """
@@ -7441,7 +7442,10 @@ def ring_texts(config: Config, data: dict) -> list:
         ).split(",")
     ]
     texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
-    return smsreplies.mark_team(texts, names, data.get("numbers") or [])
+    faith = str(
+        getattr(getattr(config, "secrets", None), "ringcentral_faith_number", "") or ""
+    ).strip() or smsreplies.faiths_number(texts)
+    return smsreplies.mark_team(texts, names, data.get("numbers") or [], faith)
 
 
 def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:
