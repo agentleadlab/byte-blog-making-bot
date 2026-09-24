@@ -8354,16 +8354,20 @@ def ring_study(config: Config, *, now=None) -> dict:
     return {"explained": new, "studied": len(reasons), "problems": problems}
 
 
-def ring_posted(ring_id: str, discord_id, *, lesson: str = "") -> None:
+def ring_posted(ring_id: str, discord_id, *, lesson: str = "", echo: bool = False) -> None:
     """Remember which Discord message a suggestion - or a lesson - went out
-    as, so Franklin replying to it can be matched back to it."""
+    as, so Franklin replying to it can be matched back to it. `echo` is its
+    copy on the team's screen: a reply there teaches the same."""
     from .. import ringtexts
 
     with _RING_FILE:
         data = ringtexts.load()
         for one in (data.get("lessons") if lesson else data.get("pending")) or []:
             if (_lesson_id(one) if lesson else str(one.get("id") or "")) == (lesson or ring_id):
-                one["lesson_post" if lesson else "posted"] = str(discord_id)
+                if echo:
+                    one["echoes"] = (list(one.get("echoes") or []) + [str(discord_id)])[-4:]
+                else:
+                    one["lesson_post" if lesson else "posted"] = str(discord_id)
         ringtexts.save(data)
 
 
@@ -8374,6 +8378,7 @@ def ring_posts(data: dict) -> set:
         for field in ("posted", "lesson_post"):
             if str(one.get(field) or "").isdigit():
                 ids.add(int(one[field]))
+        ids |= {int(echo) for echo in one.get("echoes") or [] if str(echo).isdigit()}
     return ids
 
 
@@ -8394,14 +8399,15 @@ def ring_told(discord_id, note: str) -> str | None:
     with _RING_FILE:
         data = ringtexts.load()
         for one in data.get("lessons") or []:
-            if wanted in (str(one.get("posted") or ""), str(one.get("lesson_post") or "")):
+            if wanted in (str(one.get("posted") or ""), str(one.get("lesson_post") or "")) \
+                    or wanted in [str(echo) for echo in one.get("echoes") or []]:
                 one["note"] = " / ".join(bit for bit in (one.get("note"), note) if bit)
                 for guess in ("why", "rule", "kind", "tries"):
                     one.pop(guess, None)
                 ringtexts.save(data)
                 return "lesson"
         for one in data.get("pending") or []:
-            if str(one.get("posted") or "") == wanted:
+            if wanted in [str(one.get("posted") or "")] + [str(echo) for echo in one.get("echoes") or []]:
                 one["note"] = " / ".join(bit for bit in (one.get("note"), note) if bit)
                 ringtexts.save(data)
                 return "ping"

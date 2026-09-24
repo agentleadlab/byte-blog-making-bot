@@ -641,10 +641,15 @@ def is_allowed(
     # And the channel the RingCentral suggestions go to, for the same reason:
     # it was named for RYTE to talk in. "@Ryte respond" there went unanswered
     # because it was on one list and not the other.
-    ring = str(getattr(config.secrets, "ringcentral_channel_id", "") or "").lstrip("#").strip()
-    ring_here = bool(ring) and (
-        ring == str(channel_id)
-        or (not ring.isdigit() and ring.casefold() == str(channel_name or "").casefold())
+    ring_here = any(
+        bool(ring) and (
+            ring == str(channel_id)
+            or (not ring.isdigit() and ring.casefold() == str(channel_name or "").casefold())
+        )
+        for ring in (
+            str(getattr(config.secrets, setting, "") or "").lstrip("#").strip()
+            for setting in ("ringcentral_channel_id", "ringcentral_shared_channel_id")
+        )
     )
     if channels and not ring_here and str(channel_id) not in set(channels) | allowed_anyway:
         return False, "RYTE isn't enabled in this channel."
@@ -5732,7 +5737,7 @@ async def ring_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(RING_CHECK_SECONDS)
 
 
-def _ring_channel(bot: "WilByteBot") -> tuple:
+def _ring_channel(bot: "WilByteBot", setting: str = "ringcentral_channel_id") -> tuple:
     """(the channel the suggestions go to or None, what is wrong with it or "").
 
     By id or by name. "#ryte-responder" is what Franklin sees; an id means
@@ -5744,7 +5749,8 @@ def _ring_channel(bot: "WilByteBot") -> tuple:
     loop logs it and Discord shows nothing, which from where Franklin sits is
     exactly the same as no agent having texted.
     """
-    wanted = str(getattr(bot.config.secrets, "ringcentral_channel_id", "") or "").strip()
+    env = setting.upper()
+    wanted = str(getattr(bot.config.secrets, setting, "") or "").strip()
     wanted = wanted.lstrip("#").strip()
     if not wanted:
         return None, ""
@@ -5767,7 +5773,7 @@ def _ring_channel(bot: "WilByteBot") -> tuple:
                 f"{'' if len(named) == 1 else 's'} called #{wanted}, so the "
                 "RingCentral suggestions are coming here instead. "
                 + ("If it's private, give my role access to it."
-                   if not named else "Put its id in RINGCENTRAL_CHANNEL_ID.")
+                   if not named else f"Put its id in {env}.")
             )
         channel = named[0]
     me = getattr(getattr(channel, "guild", None), "me", None)
@@ -5783,11 +5789,67 @@ def _ring_channel(bot: "WilByteBot") -> tuple:
 
 
 def _ring_responder(bot: "WilByteBot"):
-    """Its own channel if it can be posted in, or the board's."""
+    """Its own channel if it can be posted in, or the board's - and the
+    team's copy of it alongside, when there is one."""
     channel, _trouble = _ring_channel(bot)
-    if channel is not None:
-        return ChannelResponder(channel)
-    return _board_responder(bot)
+    main = ChannelResponder(channel) if channel is not None else _board_responder(bot)
+    shared, _trouble = _ring_channel(bot, "ringcentral_shared_channel_id")
+    if main is None or shared is None or shared.id == getattr(main, "channel_id", None):
+        return main
+    return AlsoThere(main, ChannelResponder(shared))
+
+
+_TAGS = re.compile(r"<@[!&]?\d+>|@everyone|@here")
+
+
+def _untagged(content):
+    """What a message says with nobody tagged in it - None if that is nothing."""
+    if content is None:
+        return None
+    left = " ".join(_TAGS.sub(" ", str(content)).split(" ")).strip()
+    return left or None
+
+
+class AlsoThere:
+    """Franklin's channel, and the same again on the team's second screen.
+
+    "its juts like a second screen, that one where everyone can access ryte"
+    - the cards, the lessons, the playbook, all of it, except that nobody is
+    tagged there: "Ryte wont press me or anyone unlike on my server". His
+    channel is the one that matters; the copy failing is logged and never
+    costs him his ping.
+    """
+
+    def __init__(self, main, shared):
+        self.main, self.shared = main, shared
+        self.requester_id = getattr(main, "requester_id", None)
+        self.channel_id = getattr(main, "channel_id", None)
+        #: The copy of the last thing sent, so a reply to it can teach RYTE
+        #: the same as a reply to the original.
+        self.last_echo = None
+
+    async def send(self, content=None, *, embed=None, file=None, view=None, quiet=False):
+        import io
+
+        data = None
+        if file is not None:
+            # A file can be sent once; each channel gets its own.
+            file.fp.seek(0)
+            data = file.fp.read()
+            file = discord.File(io.BytesIO(data), filename=file.filename)
+        sent = await self.main.send(content, embed=embed, file=file, view=view, quiet=quiet)
+        self.last_echo = None
+        said = _untagged(content)
+        if said is None and embed is None and data is None:
+            return sent
+        try:
+            self.last_echo = await self.shared.send(
+                said, embed=embed, quiet=quiet,
+                file=discord.File(io.BytesIO(data), filename=file.filename) if data is not None else None,
+            )
+        except Exception:
+            log.warning("Couldn't post the copy on the team's screen", exc_info=True)
+        return sent
 
 
 async def _ring_once(bot: "WilByteBot") -> None:
@@ -5803,6 +5865,17 @@ async def _ring_once(bot: "WilByteBot") -> None:
     if fresh and responder is not None:
         _RING_SAID.update(fresh)
         await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
+    # The team's copy going wrong is said once, in Franklin's channel, and
+    # stops nothing: his pings do not depend on it.
+    _shared, elsewhere = _ring_channel(bot, "ringcentral_shared_channel_id")
+    if elsewhere and elsewhere not in _RING_SAID and responder is not None:
+        _RING_SAID.add(elsewhere)
+        await getattr(responder, "main", responder).send(
+            "⚠ The team's copy: " + elsewhere.replace(
+                "so the RingCentral suggestions are coming here instead",
+                "so the team's copy isn't going anywhere",
+            ).replace(" Posting them here instead.", "")
+        )
     texts = jobs.ring_texts(bot.config, data)
     done = smsreplies.give_reasons(smsreplies.exchanges(texts), data.get("reasons") or {})
     _RING_POSTS.update(jobs.ring_posts(data))
@@ -5846,20 +5919,27 @@ async def _ring_once(bot: "WilByteBot") -> None:
             bot.config, agent, name, tail, drafted, card=known.get("card"),
         )
         sent = await responder.send(content or None, embed=card)
-        await _remember_post(sent, tail[-1].id)
+        await _remember_post(sent, tail[-1].id, also=getattr(responder, "last_echo", None))
 
     if done and not problems:
         await _study(bot, responder)
 
 
-async def _remember_post(sent, ring_id: str, *, lesson: str = "") -> None:
-    """Which Discord message this went out as, for replies to it."""
+async def _remember_post(sent, ring_id: str, *, lesson: str = "", also=None) -> None:
+    """Which Discord message this went out as - and its copy on the team's
+    screen - for replies to either."""
     posted = getattr(sent, "id", None)
     if not isinstance(posted, int):
         return
     _RING_POSTS.add(posted)
+    echo = getattr(also, "id", None)
     try:
         await asyncio.to_thread(partial(jobs.ring_posted, ring_id, posted, lesson=lesson))
+        if isinstance(echo, int):
+            _RING_POSTS.add(echo)
+            await asyncio.to_thread(partial(
+                jobs.ring_posted, ring_id, echo, lesson=lesson, echo=True,
+            ))
     except Exception:
         log.exception("Couldn't remember which message that was")
 
@@ -5890,7 +5970,9 @@ async def _study(bot, responder) -> None:
     used, out_of = smsreplies.used_count(lessons)
     for lesson in got["explained"]:
         sent = await responder.send(embed=_ring_lesson(lesson, used=used, out_of=out_of))
-        await _remember_post(sent, "", lesson=jobs._lesson_id(lesson))
+        await _remember_post(
+            sent, "", lesson=jobs._lesson_id(lesson), also=getattr(responder, "last_echo", None),
+        )
 
 
 

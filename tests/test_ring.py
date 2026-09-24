@@ -452,7 +452,10 @@ def test_the_channel_problem_is_said_once_where_the_pings_went(monkeypatch):
     monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
     monkeypatch.setattr(
         client, "_ring_channel",
-        lambda bot: (None, "I'm not allowed to post in #ryte-responder."),
+        lambda bot, setting="ringcentral_channel_id": (
+            (None, "I'm not allowed to post in #ryte-responder.")
+            if setting == "ringcentral_channel_id" else (None, "")
+        ),
     )
     for _ in range(2):
         asyncio.run(client._ring_once(NS(config=None)))
@@ -1613,3 +1616,132 @@ def test_only_a_few_corrections_are_worked_out_a_minute(monkeypatch):
     jobs.ring_study(NS(secrets=None), now=NOW)
 
     assert len(asked["lessons"]) == jobs.STUDY_LESSONS
+
+
+
+# ------------------------------------------------ the team's second screen
+
+
+class Posting:
+    """A channel, keeping what was posted in it."""
+
+    def __init__(self, channel_id, *, fails=False):
+        self.channel_id, self.requester_id, self.fails = channel_id, None, fails
+        self.got, self.next = [], channel_id * 100
+
+    async def send(self, content=None, **kw):
+        if self.fails:
+            raise RuntimeError("Missing Access")
+        file = kw.get("file")
+        self.got.append((content, kw.get("embed"), file.fp.read() if file else None))
+        self.next += 1
+        return NS(id=self.next)
+
+
+def test_the_team_sees_everything_with_nobody_tagged():
+    """"its juts like a second screen ... but Ryte wont press me or anyone
+    unlike on my server"."""
+    from wilbyte.bot import client, embeds
+
+    mine, team = Posting(1), Posting(2)
+    both = client.AlsoThere(mine, team)
+    card = embeds.ring_ping(who="Shelby", said="paused?", drafted={"reply": "Yes!"})
+
+    sent = asyncio.run(both.send("<@42>", embed=card))
+
+    assert mine.got == [("<@42>", card, None)]
+    assert team.got == [(None, card, None)]
+    assert sent.id == 101 and both.last_echo.id == 201
+
+
+def test_words_stay_and_only_the_tags_go():
+    from wilbyte.bot import client
+
+    assert client._untagged("<@42> <@!7> <@&9> @everyone @here heads up") == "heads up"
+    assert client._untagged("<@42>") is None
+    assert client._untagged(None) is None
+
+
+def test_a_file_goes_to_both():
+    import io
+
+    import discord
+
+    from wilbyte.bot import client
+
+    mine, team = Posting(1), Posting(2)
+    asyncio.run(client.AlsoThere(mine, team).send(
+        "📘 playbook", file=discord.File(io.BytesIO(b"## How she writes"), filename="p.md"),
+    ))
+
+    assert mine.got[0][2] == b"## How she writes" and team.got[0][2] == b"## How she writes"
+
+
+def test_the_team_copy_failing_never_costs_franklin_his_ping():
+    from wilbyte.bot import client
+
+    mine = Posting(1)
+    both = client.AlsoThere(mine, Posting(2, fails=True))
+
+    sent = asyncio.run(both.send("<@42> hi"))
+
+    assert mine.got == [("<@42> hi", None, None)] and sent.id == 101
+    assert both.last_echo is None
+
+
+def test_a_reply_on_the_team_screen_teaches_the_same(monkeypatch):
+    """Faith replying there with the real reason is the best teacher there is."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_RING_POSTS", set())
+    ringtexts.save({"pending": [{"id": "5"}], "lessons": [dict(LESSON)]})
+
+    asyncio.run(client._remember_post(NS(id=101), "5", also=NS(id=201)))
+    asyncio.run(client._remember_post(NS(id=102), "", lesson=jobs._lesson_id(LESSON), also=NS(id=202)))
+
+    assert client._RING_POSTS == {101, 201, 102, 202}
+    assert jobs.ring_posts(ringtexts.load()) == {101, 201, 102, 202}
+    assert jobs.ring_told("201", "we call these ones") == "ping"
+    assert jobs.ring_told("202", "she knew the date") == "lesson"
+    data = ringtexts.load()
+    assert data["pending"][0]["note"] == "we call these ones"
+    assert data["lessons"][0]["note"] == "she knew the date"
+
+
+def _screens(monkeypatch, mine, shared):
+    from wilbyte.bot import client
+
+    channels = {"ringcentral_channel_id": mine, "ringcentral_shared_channel_id": shared}
+    monkeypatch.setattr(client, "_ring_channel",
+                        lambda bot, setting="ringcentral_channel_id": (channels[setting], ""))
+    monkeypatch.setattr(client, "_board_responder", lambda bot: None)
+    return client._ring_responder(NS())
+
+
+def test_with_a_second_screen_set_both_are_posted_to(monkeypatch):
+    from wilbyte.bot import client
+
+    got = _screens(monkeypatch, NS(id=1), NS(id=2))
+
+    assert isinstance(got, client.AlsoThere)
+    assert got.main.channel_id == 1 and got.shared.channel_id == 2
+
+
+def test_without_one_it_is_franklins_channel_as_before(monkeypatch):
+    from wilbyte.bot import client
+
+    assert not isinstance(_screens(monkeypatch, NS(id=1), None), client.AlsoThere)
+    # the same channel named twice is one channel, not two copies of everything
+    assert not isinstance(_screens(monkeypatch, NS(id=1), NS(id=1)), client.AlsoThere)
+
+
+def test_ryte_answers_on_the_team_screen_too():
+    from wilbyte.bot import client
+
+    config = NS(secrets=NS(discord_channel_ids=["9"], discord_sop_channel_ids=[],
+                           ringcentral_channel_id="1", ringcentral_shared_channel_id="2",
+                           discord_role_ids=[]))
+
+    assert client.is_allowed(channel_id=2, user=NS(), config=config)[0]
+    assert client.is_allowed(channel_id=1, user=NS(), config=config)[0]
+    assert not client.is_allowed(channel_id=3, user=NS(), config=config)[0]

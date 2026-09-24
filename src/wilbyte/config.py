@@ -262,6 +262,9 @@ class Secrets:
     ringcentral_extension: str | None = None
     # Where the suggested replies go. Falls back to the board channel.
     ringcentral_channel_id: str | None = None
+    # A second screen: the same cards again in the team's server, with nobody
+    # tagged. Franklin's own channel keeps its mention.
+    ringcentral_shared_channel_id: str | None = None
     # Names, comma-separated, of colleagues who text into the line - never an
     # agent waiting on a reply. The line's own owner is always one.
     ringcentral_team: str | None = None
@@ -400,6 +403,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 ringcentral_jwt=_env("RINGCENTRAL_JWT"),
                 ringcentral_extension=_env("RINGCENTRAL_EXTENSION"),
                 ringcentral_channel_id=_env("RINGCENTRAL_CHANNEL_ID"),
+                ringcentral_shared_channel_id=_env("RINGCENTRAL_SHARED_CHANNEL_ID"),
                 ringcentral_team=_env("RINGCENTRAL_TEAM"),
                 ringcentral_faith_number=_env("RINGCENTRAL_FAITH_NUMBER"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),
