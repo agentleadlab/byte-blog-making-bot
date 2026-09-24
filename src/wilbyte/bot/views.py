@@ -201,8 +201,14 @@ class ConfirmView(discord.ui.View):
         self.answered = True
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(content=note, view=self)
-        self.stop()
+        # The answer counts whether or not the message could be redrawn. A
+        # press Discord took too long to acknowledge makes this edit fail, and
+        # stopping only after it meant whatever was waiting on the press
+        # waited twelve hours for a button that had already been pressed.
+        try:
+            await interaction.response.edit_message(content=note, view=self)
+        finally:
+            self.stop()
 
     async def on_timeout(self) -> None:
         self.confirmed = False

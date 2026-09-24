@@ -185,6 +185,7 @@ class WilByteBot(discord.Client):
         self.day_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
+        self.offered_the_run = False
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -292,6 +293,11 @@ class WilByteBot(discord.Client):
         # produces is a message to him. Idle until .env has the keys.
         if self.ring_task is None or self.ring_task.done():
             self.ring_task = self.loop.create_task(ring_loop(self))
+        # A quiet run the restart cut short. Once a start, not once a
+        # reconnect: on_ready fires again after every dropped connection.
+        if not self.offered_the_run:
+            self.offered_the_run = True
+            _also_running(self.loop.create_task(_offer_the_run(self)))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -2748,7 +2754,8 @@ async def _quiet_channels(
 
 
 async def _all_of_them(
-    bot: "WilByteBot", responder: Responder, config: Config, names: list
+    bot: "WilByteBot", responder: Responder, config: Config, names: list,
+    *, earlier: dict | None = None,
 ) -> None:
     """Down the whole list, one at a time, asking the same two each time.
 
@@ -2761,14 +2768,39 @@ async def _all_of_them(
     code that deletes a channel and it is watched; a run that had its own
     would be a second one that wasn't.
     """
-    from .. import clearout
+    from .. import clearout, quietrun
 
-    went, left, trouble, wrong_in_a_row = [], [], [], 0
+    earlier = earlier or {}
+    went = list(earlier.get("went") or [])
+    left = list(earlier.get("left") or [])
+    trouble = list(earlier.get("trouble") or [])
+    wrong_in_a_row = 0
     stopped = ""
+    # Written down at every step, so a restart halfway through is a run that
+    # can be carried on rather than one that silently isn't there any more.
+    run = {
+        "channel_id": getattr(responder, "channel_id", None),
+        "requester_id": getattr(responder, "requester_id", None),
+        "names": list(names), "at": 0,
+        "went": went, "left": left, "trouble": trouble,
+    }
     for number, name in enumerate(names, start=1):
-        how = await _clear_out(
-            bot, responder, config, name, run=(number, len(names)),
-        )
+        run["at"] = number - 1
+        _keep_the_run(quietrun, run)
+        try:
+            how = await _clear_out(
+                bot, responder, config, name, run=(number, len(names)),
+            )
+        except Exception as exc:
+            # One client's channel breaking something is that client's
+            # problem. Raised out of here, it ended the run for everyone after
+            # them, and said so only in the terminal.
+            log.exception("The quiet run broke on #%s", name)
+            await responder.send(
+                f"⚠ Something broke on **#{name}**: {_readable(exc)}. Nothing "
+                "more was done to it — on to the next."
+            )
+            how = "trouble"
         if how == "stopped":
             stopped = f"Stopped at **#{name}** — {number} of {len(names)}."
             break
@@ -2791,10 +2823,76 @@ async def _all_of_them(
             )
             break
 
+    quietrun.clear()
     await responder.send(clearout.how_the_run_went(
         went, left, trouble,
         over=stopped or f"Went through all {len(names)}.",
     ))
+
+
+async def _offer_the_run(bot: "WilByteBot") -> None:
+    try:
+        await _carry_on_the_run(bot)
+    except Exception:
+        log.exception("Couldn't offer to carry on the quiet run")
+
+
+def _keep_the_run(quietrun, run: dict) -> None:
+    """Remember where the run is. Worth doing, not worth stopping it over."""
+    try:
+        quietrun.save(run)
+    except Exception:
+        log.warning("Couldn't write down where the quiet run is", exc_info=True)
+
+
+async def _carry_on_the_run(bot: "WilByteBot") -> None:
+    """After a restart, offer to carry on a quiet run that was cut short.
+
+    Asked, not done: it may be hours later and nobody at the desk. Anybody
+    the run was for can press it; the two questions still come on every
+    channel after that.
+    """
+    from .. import quietrun
+
+    run = quietrun.load()
+    if not quietrun.unfinished(run):
+        quietrun.clear()
+        return
+    channel = bot.get_channel(int(run["channel_id"])) if str(run.get("channel_id") or "").isdigit() else None
+    where = (bot.config.secrets.discord_clients_guild_id or "").strip()
+    guild = bot.get_guild(int(where)) if where.isdigit() else None
+    if channel is None or guild is None:
+        log.warning("A quiet run was cut short, but its channel or server is gone")
+        quietrun.clear()
+        return
+    names = list(run["names"])
+    at = int(run.get("at") or 0)
+    rest = quietrun.still_there(names[at:], [one.name for one in guild.text_channels])
+    if not rest:
+        quietrun.clear()
+        return
+    requester = run.get("requester_id")
+    responder = ChannelResponder(channel, requester_id=int(requester) if requester else None)
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=bot.config.discord.approval_timeout_seconds,
+        label="Carry on the run",
+        emoji="🧹",
+    )
+    done = len(run.get("went") or [])
+    await responder.send(
+        f"🧹 I was restarted in the middle of the quiet run — I'd got to "
+        f"**#{names[at]}**, {at + 1} of {len(names)}"
+        + (f", with {done} deleted so far" if done else "")
+        + f". {len(rest)} left to go. Carry on from there?",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        quietrun.clear()
+        await responder.send("Left it. `@RYTE quiet` starts a fresh list whenever you want.")
+        return
+    await _all_of_them(bot, responder, bot.config, rest, earlier=run)
 
 
 def _can_read(guild, channel) -> bool:

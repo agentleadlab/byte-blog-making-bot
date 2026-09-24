@@ -2986,3 +2986,217 @@ def test_the_delete_button_names_a_channel_you_can_open(monkeypatch):
     assert whole.count("discord.com/channels/") >= 2, (
         "the delete question named a channel with no way to look at it"
     )
+
+
+# ------------------------------------------- a restart in the middle of a run
+
+
+def test_the_run_writes_down_where_it_is_at_every_step(monkeypatch):
+    """"it stopped and didnt go thru the list" - a restart for an update ended
+    it without a word, and nothing remembered where it had got to."""
+    from wilbyte import quietrun
+    from wilbyte.bot import client as bot_client
+
+    seen = []
+
+    async def clearing(bot, responder, config, name, *, run=None):
+        seen.append(dict(quietrun.load()))
+        return "deleted"
+
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    async def send(content=None, **kw):
+        return None
+
+    monkeypatch.setattr(bot_client, "_clear_out", clearing)
+    asyncio.run(bot_client._all_of_them(
+        None, NS(send=send, requester_id=7, channel_id=99), None, ["a", "b", "c"],
+    ))
+
+    assert [(one["at"], one["went"]) for one in seen] == [(0, []), (1, ["a"]), (2, ["a", "b"])]
+    assert seen[0]["channel_id"] == 99 and seen[0]["requester_id"] == 7
+    assert quietrun.load() is None, "a finished run was left to be offered back"
+
+
+def test_a_stopped_run_is_not_offered_back(monkeypatch):
+    from wilbyte import quietrun
+
+    _ran(monkeypatch, ["deleted", "stopped"])
+
+    assert quietrun.load() is None
+
+
+def test_one_channel_breaking_does_not_end_the_run(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    asked, said = [], []
+
+    async def clearing(bot, responder, config, name, *, run=None):
+        asked.append(name)
+        if name == "b":
+            raise RuntimeError("Discord had a moment")
+        return "deleted"
+
+    async def send(content=None, **kw):
+        said.append(str(content or ""))
+
+    monkeypatch.setattr(bot_client, "_clear_out", clearing)
+    asyncio.run(bot_client._all_of_them(None, NS(send=send, requester_id=1), None, ["a", "b", "c"]))
+
+    assert asked == ["a", "b", "c"]
+    assert "Something broke on **#b**: Discord had a moment" in said[0]
+    assert "Couldn't finish 1 — #b" in said[-1]
+
+
+def test_a_run_carried_on_counts_what_it_did_before(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    out = []
+
+    async def clearing(bot, responder, config, name, *, run=None):
+        return "deleted"
+
+    async def send(content=None, **kw):
+        out.append(str(content or ""))
+
+    monkeypatch.setattr(bot_client, "_clear_out", clearing)
+    asyncio.run(bot_client._all_of_them(
+        None, NS(send=send, requester_id=1), None, ["c"],
+        earlier={"went": ["a", "b"], "left": ["x"]},
+    ))
+
+    assert "Deleted 3 — #a, #b, #c" in out[-1] and "Left 1 — #x" in out[-1]
+
+
+def test_an_unfinished_run_is_recent_and_has_somewhere_left_to_go():
+    from datetime import datetime, timedelta, timezone
+
+    from wilbyte import quietrun
+
+    now = datetime(2026, 9, 24, 15, tzinfo=timezone.utc)
+    run = {"names": ["a", "b"], "at": 1, "saved": (now - timedelta(hours=3)).isoformat()}
+
+    assert quietrun.unfinished(run, now=now)
+    assert not quietrun.unfinished({**run, "at": 2}, now=now)
+    assert not quietrun.unfinished({**run, "saved": (now - timedelta(days=3)).isoformat()}, now=now)
+    assert not quietrun.unfinished(None, now=now)
+    assert quietrun.still_there(["a", "Gone", "b"], ["b", "A"]) == ["a", "b"]
+
+
+class _Place:
+    def __init__(self, names, channel):
+        self.text_channels = [NS_(name=one) for one in names]
+        self.channel = channel
+
+
+def NS_(**kw):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**kw)
+
+
+def _restarted(monkeypatch, run, *, press=True, names=("b", "c")):
+    import asyncio
+
+    from wilbyte import quietrun
+    from wilbyte.bot import client as bot_client
+
+    if run is not None:
+        quietrun.save(run)
+    said, carried = [], []
+
+    class Here:
+        id = 99
+
+        async def send(self, content=None, **kw):
+            said.append(str(content or ""))
+
+    class Press:
+        def __init__(self, **kw):
+            self.kw, self.confirmed = kw, press
+
+        async def wait(self):
+            pass
+
+    async def all_of_them(bot, responder, config, names, *, earlier=None):
+        carried.append((list(names), earlier, responder.requester_id))
+
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Press)
+    monkeypatch.setattr(bot_client, "_all_of_them", all_of_them)
+    place = _Place(names, Here())
+    bot = NS_(
+        get_channel=lambda cid: place.channel if cid == 99 else None,
+        get_guild=lambda gid: place if gid == 5 else None,
+        config=NS_(secrets=NS_(discord_clients_guild_id="5"),
+                   discord=NS_(approval_timeout_seconds=60)),
+    )
+    asyncio.run(bot_client._carry_on_the_run(bot))
+    return said, carried
+
+
+RUN = {"channel_id": 99, "requester_id": 7, "names": ["a", "b", "gone", "c"], "at": 1,
+       "went": ["a"], "left": [], "trouble": []}
+
+
+def test_after_a_restart_it_offers_to_carry_on_from_where_it_was(monkeypatch):
+    said, carried = _restarted(monkeypatch, RUN)
+
+    assert said[0] == ("🧹 I was restarted in the middle of the quiet run — I'd got to "
+                       "**#b**, 2 of 4, with 1 deleted so far. 2 left to go. Carry on from there?")
+    # the one deleted before the restart is not in the list any more
+    assert carried == [(["b", "c"], {**RUN, "saved": carried[0][1]["saved"]}, 7)]
+
+
+def test_saying_no_forgets_the_run(monkeypatch):
+    from wilbyte import quietrun
+
+    said, carried = _restarted(monkeypatch, RUN, press=False)
+
+    assert carried == [] and quietrun.load() is None
+    assert "Left it" in said[-1]
+
+
+def test_nothing_is_offered_when_no_run_was_cut_short(monkeypatch):
+    said, carried = _restarted(monkeypatch, None)
+
+    assert said == [] and carried == []
+
+
+def test_a_run_whose_channels_are_all_gone_is_not_offered(monkeypatch):
+    from wilbyte import quietrun
+
+    said, carried = _restarted(monkeypatch, RUN, names=())
+
+    assert said == [] and quietrun.load() is None
+
+
+def test_a_press_counts_even_when_discord_wont_redraw_the_message():
+    """A press acknowledged too late makes the edit fail. Stopping only after
+    it left whatever waited on the press waiting twelve hours."""
+    import asyncio
+
+    import pytest as _pytest
+
+    from wilbyte.bot import views
+
+    async def go():
+        view = views.ConfirmView(requester_id=None, timeout=60, label="x", emoji="🧹")
+
+        async def failing(**kw):
+            raise RuntimeError("Unknown interaction")
+
+        interaction = NS_(response=NS_(edit_message=failing))
+        with _pytest.raises(RuntimeError):
+            await view._close(interaction, "note")
+        await asyncio.wait_for(view.wait(), 1)
+        return view
+
+    view = asyncio.run(go())
+    assert view.answered
