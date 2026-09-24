@@ -130,3 +130,20 @@ def search(texts: list, words: str, *, agent: str = "", most: int = 12) -> list:
             if len(found) >= most:
                 break
     return found
+
+
+def tally(done: list) -> list[dict]:
+    """The links in her answers, counted. [{"link", "what", "times", "last"}].
+
+    Counted here rather than by Claude: "which link does she send" is a
+    question with an exact answer, and a count is not something to guess.
+    """
+    held: dict[str, dict] = {}
+    for one in sorted(done, key=lambda swap: swap.at):
+        for link in links_in(one.answered):
+            entry = held.setdefault(same_link(link), {
+                "link": link, "what": kind_of(link)[1], "times": 0, "last": "",
+            })
+            entry["times"] += 1
+            entry["last"], entry["link"] = one.at, link
+    return sorted(held.values(), key=lambda one: (one["times"], one["last"]), reverse=True)

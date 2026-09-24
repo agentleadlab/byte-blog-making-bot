@@ -8783,3 +8783,104 @@ def _read_page(link: str) -> str:
         + (f"{htmlmod.unescape(described.group(1))}. " if described else "")
         + (f"It reads: {text[:1200]}" if text else "")
     ).strip() or "an empty page."
+
+
+# ------------------------------------------------ asking how Faith does it
+
+#: Words in "what does Faith send when agents ask…" that say nothing about
+#: what is being asked.
+_ASKING_WORDS = frozenset(
+    "faith send sends sent say says tell tells text texts reply replies respond "
+    "responds answer answers use uses usually normally always give gives agent "
+    "agents ask asks asking asked they them their when what which does how link "
+    "links".split()
+)
+
+
+def faith_answers(config: Config, done: list, question: str) -> dict:
+    """How Faith has handled something, from her own replies.
+
+    {"answer", "matched", "links", "terms"}. Her exchanges about it are found
+    first - by search terms Claude suggests, because agents say "submit my
+    sale", "where do I put my app", "wrote a policy" - and the links in her
+    answers are counted here, exactly. Claude then sums up what she does, from
+    those exchanges and nothing else.
+    """
+    from anthropic import Anthropic
+
+    from .. import smslinks, smsreplies
+
+    question = " ".join(str(question or "").split())
+    if not question:
+        raise ValueError("Ask me what you want to know - like what Faith sends "
+                         "when agents ask where to submit a sale.")
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+
+    terms = []
+    try:
+        response = client.messages.create(
+            model=config.copy.model, max_tokens=300,
+            system=(
+                "Turn a question about how a customer service person answers "
+                "insurance agents' texts into search terms for finding those "
+                "texts: the words and short phrases agents would actually type "
+                "when asking it, including misspellings and slang. Lowercase."
+            ),
+            tools=[{
+                "name": "terms", "description": "Search terms, most likely first.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"terms": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["terms"],
+                },
+            }],
+            tool_choice={"type": "tool", "name": "terms"},
+            messages=[{"role": "user", "content": question}],
+        )
+        terms = [str(one) for one in _tool_input(response, "terms").get("terms") or [] if str(one).strip()][:15]
+    except Exception:
+        import logging
+
+        logging.getLogger("wilbyte.bot").warning("Couldn't suggest search terms", exc_info=True)
+    if not terms:
+        terms = sorted(smsreplies.words_in(question) - _ASKING_WORDS)
+
+    matched = smsreplies.about(list(done), terms)
+    if not matched:
+        return {"answer": "", "matched": [], "links": [], "terms": terms}
+    links = smslinks.tally(matched)
+    shown = "\n\n".join(
+        f"{one.at[:10]} - Agent: {one.asked[:300]}\nFaith: {one.answered[:500]}"
+        + (f"\n(Why: {one.why})" if one.why else "")
+        for one in sorted(matched, key=lambda swap: swap.at, reverse=True)
+    )
+    counted = "\n".join(
+        f"- {one['link']} ({one['what']}) - in {one['times']} of these answers, last {one['last'][:10]}"
+        for one in links[:8]
+    ) or "- none"
+    response = client.messages.create(
+        model=config.copy.model, max_tokens=700,
+        system=(
+            "Franklin, the general manager of Agent Lead Lab, is asking how "
+            "Faith on the customer service team handles something agents text "
+            "about. Answer from the real exchanges given and nothing else: "
+            "what she sends or says, quoting her exact words and the exact "
+            "link, how consistently, and whether it has changed over time. "
+            "Some exchanges will be about something else that happened to "
+            "share a word - ignore those. If they do not show her handling "
+            "it, say so plainly. The link counts are exact; use them. Short: "
+            "a few lines, for Discord."
+        ),
+        messages=[{"role": "user", "content": (
+            f"Franklin asks: {question}\n\nLinks in her answers below, counted:\n"
+            f"{counted}\n\nHer exchanges that might be about it, newest first:\n\n{shown}"
+        )}],
+    )
+    answer = "".join(
+        getattr(block, "text", "") for block in response.content
+        if getattr(block, "type", "") == "text"
+    ).strip()
+    if not answer:
+        raise ValueError("The answer came back empty.")
+    return {"answer": answer, "matched": matched, "links": links, "terms": terms}

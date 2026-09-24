@@ -965,6 +965,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _respond_like_faith(responder, config, message, request.brief or "")
                 return
 
+            if request.action == "askfaith":
+                await _ask_about_faith(responder, config, request.brief or "")
+                return
+
             if request.action == "whenlive":
                 await _when_live(responder, config, request.brief or "")
                 return
@@ -6071,6 +6075,59 @@ async def _respond_like_faith(
         _ring_notes(drafted),
         *(f"⚠ {one}" for one in skipped),
     ) if line))
+
+
+async def _ask_about_faith(responder: Responder, config: Config, question: str) -> None:
+    """"@Ryte what does Faith send when…" - answered from her texts.
+
+    Read fresh from RingCentral first, so a link she started sending this
+    morning is in it. The links are counted, not summarised.
+    """
+    from .. import ringcentral, ringtexts, smsreplies
+
+    problems: list[str] = []
+    if ringcentral.configured(config.secrets):
+        data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
+    else:
+        data = await asyncio.to_thread(ringtexts.load)
+    done = smsreplies.give_reasons(
+        smsreplies.exchanges(jobs.ring_texts(config, data)), data.get("reasons") or {},
+    )
+    if not done:
+        await responder.send(
+            "I haven't read any of Faith's replies yet"
+            + (f" — {problems[0]}" if problems else " — is RingCentral set up in .env?")
+        )
+        return
+    try:
+        got = await asyncio.to_thread(jobs.faith_answers, config, done, question)
+    except Exception as exc:
+        await responder.send(f"Couldn't answer that: {_readable(exc)}")
+        return
+    stale = (
+        " · ⚠ couldn't reach RingCentral just now, so this is as of the last read"
+        if problems else ""
+    )
+    if not got["matched"]:
+        await responder.send(
+            f"I looked through {len(done)} of Faith's replies for "
+            f"{', '.join(got['terms'][:6]) or 'that'} and none of them are about it. "
+            f"Try asking it another way.{stale}"
+        )
+        return
+    answer = got["answer"]
+    if len(answer) > 1500:
+        answer = answer[:1500].rstrip() + "…"
+    lines = [answer]
+    if got["links"]:
+        lines.append("-# Links in those answers, counted: " + " · ".join(
+            f"{one['times']}× <{one['link']}>" for one in got["links"][:4]
+        ))
+    lines.append(
+        f"-# From {len(got['matched'])} of her replies that matched, out of "
+        f"{len(done)} read from RingCentral{stale}"
+    )
+    await responder.send("\n".join(lines))
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

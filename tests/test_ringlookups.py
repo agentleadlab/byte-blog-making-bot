@@ -528,3 +528,175 @@ def test_the_playbook_is_told_which_links_she_sends(monkeypatch):
     prompt = client.asked[0]["messages"][0]["content"]
     assert f"- a form: {FORM} - 40 times, 31 agents" in prompt
     assert "**Links she sends**" in prompt
+
+
+# ------------------------------------------- "what does Faith send when…"
+
+SALES_FORM = "https://link.agentleadlab.com/widget/form/sales"
+
+
+def _swap(at, asked, answered, agent="1"):
+    from wilbyte import smsreplies
+
+    return smsreplies.Exchange(agent=agent, name="", asked=asked, answered=answered,
+                               at=at, key=f"C-{agent}")
+
+
+SALES = [
+    _swap("2026-06-01", "where do i submit my sales?", f"Here you go! {SALES_FORM}?utm=sms 🙂"),
+    _swap("2026-08-01", "hey I SUBMITTED an app today where does it go", f"Put it here {SALES_FORM}"),
+    _swap("2026-09-01", "are my leads paused?", "Yes they are!"),
+    _swap("2026-09-10", "thanks", f"The sale form is {SALES_FORM} and the tracker is https://docs.google.com/spreadsheets/d/{'x' * 25}"),
+]
+
+
+def test_her_exchanges_about_something_are_found_every_way_it_is_typed():
+    from wilbyte import smsreplies
+
+    found = smsreplies.about(SALES, ["submit", "sale"])
+
+    # the agent saying it counts double; her saying it counts too
+    assert [one.at for one in found] == ["2026-06-01", "2026-08-01", "2026-09-10"]
+    assert smsreplies.about(SALES, ["refund"]) == []
+    assert smsreplies.about(SALES, ["app submitted"])[0].at == "2026-08-01"
+
+
+def test_the_links_she_sent_are_counted_not_guessed():
+    counted = smslinks.tally(SALES)
+
+    assert [(one["times"], one["what"]) for one in counted] == [(3, "a form"), (1, "a Google Sheet")]
+    assert counted[0]["link"] == SALES_FORM and counted[0]["last"] == "2026-09-10"
+
+
+class Asked:
+    def __init__(self, turns):
+        self.turns, self.asked = list(turns), []
+        self.messages = self
+
+    def create(self, **kw):
+        self.asked.append(kw)
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        return turn
+
+
+def _asking(monkeypatch, turns):
+    import anthropic
+
+    client = Asked(turns)
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key=None: client)
+    return client, NS(secrets=NS(anthropic_api_key="k", require=lambda *a: None), copy=NS(model="m"))
+
+
+def test_how_faith_answers_something_is_answered_from_her_texts(monkeypatch):
+    client, config = _asking(monkeypatch, [
+        NS(content=[_call("terms", {"terms": ["submit", "sale", "app"]})]),
+        NS(content=[NS(type="text", text=f"She sends the sales form: {SALES_FORM}")]),
+    ])
+
+    got = jobs.faith_answers(config, SALES, "what does Faith send when agents ask where to submit a sale")
+
+    assert got["answer"] == f"She sends the sales form: {SALES_FORM}"
+    assert got["terms"] == ["submit", "sale", "app"]
+    assert len(got["matched"]) == 3 and got["links"][0]["times"] == 3
+    prompt = client.asked[1]["messages"][0]["content"]
+    assert f"- {SALES_FORM} (a form) - in 3 of these answers, last 2026-09-10" in prompt
+    assert "Agent: where do i submit my sales?" in prompt
+    assert "are my leads paused" not in prompt
+    assert "nothing else" in client.asked[1]["system"]
+
+
+def test_without_search_terms_the_question_words_are_searched(monkeypatch):
+    client, config = _asking(monkeypatch, [
+        RuntimeError("overloaded"),
+        NS(content=[NS(type="text", text="The form.")]),
+    ])
+
+    got = jobs.faith_answers(config, SALES, "what does Faith send when agents ask where to submit a sale")
+
+    assert "faith" not in got["terms"] and "submit" in got["terms"] and "sale" in got["terms"]
+    assert got["matched"]
+
+
+def test_nothing_about_it_is_said_without_asking_claude_to_make_it_up(monkeypatch):
+    client, config = _asking(monkeypatch, [NS(content=[_call("terms", {"terms": ["refund"]})])])
+
+    got = jobs.faith_answers(config, SALES, "how does faith handle refunds")
+
+    assert got["matched"] == [] and got["answer"] == ""
+    assert len(client.asked) == 1
+
+
+def _answering(monkeypatch, got, *, problems=()):
+    from wilbyte import ringcentral
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(ringcentral, "configured", lambda secrets: True)
+    monkeypatch.setattr(jobs, "ring_catch_up", lambda cfg: ({"texts": []}, list(problems)))
+    monkeypatch.setattr(jobs, "ring_texts", lambda cfg, data: [])
+    from wilbyte import smsreplies
+
+    monkeypatch.setattr(smsreplies, "exchanges", lambda texts: list(SALES))
+    monkeypatch.setattr(jobs, "faith_answers", lambda cfg, done, q: got)
+    said = []
+
+    class Here:
+        async def send(self, content=None, **kw):
+            said.append(content)
+
+    asyncio.run(client._ask_about_faith(Here(), NS(secrets=None), "what does faith send"))
+    return said
+
+
+def test_the_answer_comes_with_the_links_counted(monkeypatch):
+    said = _answering(monkeypatch, {
+        "answer": "She sends the sales form.", "matched": SALES[:2], "terms": ["sale"],
+        "links": [{"link": SALES_FORM, "times": 3}],
+    })
+
+    assert said == [
+        "She sends the sales form.\n"
+        f"-# Links in those answers, counted: 3× <{SALES_FORM}>\n"
+        "-# From 2 of her replies that matched, out of 4 read from RingCentral"
+    ]
+
+
+def test_an_answer_from_old_texts_says_so(monkeypatch):
+    said = _answering(monkeypatch, {"answer": "x", "matched": SALES[:1], "terms": [], "links": []},
+                      problems=["RingCentral is down"])
+
+    assert "couldn't reach RingCentral just now" in said[0]
+
+
+def test_nothing_found_says_what_was_searched(monkeypatch):
+    said = _answering(monkeypatch, {"answer": "", "matched": [], "terms": ["refund", "money back"], "links": []})
+
+    assert said == ["I looked through 4 of Faith's replies for refund, money back and none "
+                    "of them are about it. Try asking it another way."]
+
+
+@pytest.mark.parametrize("asked, action", [
+    ("what am i sneding to agent when they ask for where they can submit their sale", "askfaith"),
+    ("what does Faith send when agents ask where to submit a sale?", "askfaith"),
+    ("how does faith handle refund requests", "askfaith"),
+    ("which link does Faith use for onboarding", "askfaith"),
+    ("ask faith about invoices", "askfaith"),
+    ("what do we text clients who want to pause", "askfaith"),
+    ("when did Faith go live?", "whenlive"),
+    ("sheet for Faith", "agentsheet"),
+    ("how do we use the tracker", "findsop"),
+    ("respond what do i send", "respond"),
+])
+def test_asking_how_faith_answers_is_told_apart(asked, action):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(f"<@1> {asked}").action == action
+
+
+def test_a_search_term_finds_the_shorter_way_an_agent_typed_it():
+    from wilbyte import smsreplies
+
+    typed = [_swap("1", "where do i submit my sale", "here")]
+
+    assert smsreplies.about(typed, ["submitted sales"]) == typed

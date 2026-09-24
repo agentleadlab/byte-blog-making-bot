@@ -537,6 +537,38 @@ CONTRACT_ASKED = re.compile(
 )
 
 
+# "what does Faith send when agents ask where to submit a sale", "how does
+# Faith answer refund requests", "what link does Faith use for…" - a question
+# about how she texts agents, answered from RingCentral. A verb about talking
+# has to follow her name, so "when did Faith go live" - an agent called
+# Faith - is still the launch question.
+FAITH_ASKED = re.compile(
+    r"\b(?:what|which|how)\b[^?\n]{0,40}?\b(?P<who>faith|we|i)\b\s+"
+    r"(?:usually\s+|normally\s+|always\s+)?"
+    r"(?:send|sends|sending|sned|sneds|sneding|sedning|sendin|sendng|snding|sedn|"
+    r"say|says|saying|tell|tells|telling|text|texts|texting|"
+    r"reply|replies|replying|respond|responds|responding|answer|answers|answering|"
+    r"use|uses|using|handle|handles|handling|give|gives|giving)\b"
+    r"|^\s*ask\s+(?P<asked>faith)\b",
+    re.IGNORECASE,
+)
+
+# "what am I sending…" is the same question as "what does Faith send…" -
+# Franklin answers from her line too - but "how do we use the tracker" is
+# not, so without her name it has to be about the agents.
+_ABOUT_AGENTS = re.compile(r"\b(?:agents?|clients?)\b", re.IGNORECASE)
+
+
+def asks_about_faith(text: str) -> bool:
+    """Whether a mention asks how Faith (or the team) answers agents."""
+    found = FAITH_ASKED.search(text or "")
+    if not found:
+        return False
+    if (found.group("who") or found.group("asked") or "").casefold() == "faith":
+        return True
+    return bool(_ABOUT_AGENTS.search(text))
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -549,6 +581,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # agent's: "when do I go live" is the launch question everywhere else.
     if _opens_with(text, ("respond",)):
         return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
+    if asks_about_faith(_without_links(text)):
+        return MentionRequest(action="askfaith", brief=text)
     # Command words are looked for in what was *typed*, not in the links. A
     # Zoom share link contains "zoom" and a blog URL can contain "status" or
     # "check" - words inside a URL are addresses, not instructions.
@@ -997,6 +1031,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > her card. Also **Faith's sheet**. The newest one when a setup was redone
 > @RYTE **respond** + a screenshot of a RingCentral thread — Faith's reply to
 > it, drafted for you and never sent. Or paste the agent's words after it
+> @RYTE **what does Faith send when agents ask where to submit a sale?** —
+> how she answers anything, from her RingCentral texts: her words, and the
+> links she sends counted. Also **how does Faith handle refund requests**
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an
 > inbox RYTE reads. PandaDoc's own are downloaded from PandaDoc for now
 > @RYTE **words** — the lead-type words you've taught me

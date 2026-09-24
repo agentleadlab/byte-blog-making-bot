@@ -552,3 +552,39 @@ def sample_for_playbook(done: list, *, most: int = 250) -> list:
         return list(done)
     step = len(done) / most
     return [done[int(at * step)] for at in range(most)]
+
+
+def _stem(word: str) -> str:
+    """Near enough to match "sales" to "sale" and "submitted" to "submit"."""
+    word = word.casefold().strip()
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        word = word[:-1]
+    return word[:5] if len(word) > 5 else word
+
+
+def about(done: list, terms, *, most: int = 40) -> list:
+    """Her exchanges about something, best first: the agent's words count
+    double, hers once, and the newest wins a tie.
+
+    `terms` are words or short phrases - "submit", "sale", "sold", "app
+    submitted" - matched on their stems, so every way an agent types it
+    counts.
+    """
+    stems = [
+        [_stem(word) for word in re.findall(r"[a-z0-9']+", str(term).casefold()) if len(word) > 2]
+        for term in terms or ()
+    ]
+    stems = [one for one in stems if one]
+    scored = []
+    for at, one in enumerate(done):
+        asked, answered = one.asked.casefold(), one.answered.casefold()
+        score = 0
+        for words in stems:
+            if all(word in asked for word in words):
+                score += 2
+            elif all(word in answered for word in words):
+                score += 1
+        if score:
+            scored.append((score, at))
+    scored.sort(reverse=True)
+    return [done[at] for _score, at in scored[:most]]
