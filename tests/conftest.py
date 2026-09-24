@@ -7,12 +7,14 @@ from wilbyte.models import CopyPackage, Headline
 @pytest.fixture(autouse=True)
 def _said_nothing_yet(tmp_path, monkeypatch):
     """Each test starts having said nothing, and writes nowhere real."""
-    from wilbyte import alreadysaid, tagreads
+    from wilbyte import alreadysaid, ringtexts, tagreads
 
     monkeypatch.setattr(alreadysaid, "SAID_PATH", tmp_path / "already-said.json")
     # And read nothing yet. A reading kept by one test and reused by the next
     # would make the second pass or fail on the order they ran in.
     monkeypatch.setattr(tagreads, "READS_PATH", tmp_path / "tag-reads.json")
+    # Nor any agent's texts, which are real people's words.
+    monkeypatch.setattr(ringtexts, "TEXTS_PATH", tmp_path / "ring-texts.json")
 
 
 @pytest.fixture

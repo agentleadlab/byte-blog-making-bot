@@ -1,0 +1,381 @@
+"""Replying the way Faith does: reading, drafting, and the ping to Franklin."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace as NS
+
+import pytest
+
+from wilbyte import ringcentral, ringtexts, smsreplies
+from wilbyte.bot import jobs
+
+NOW = datetime(2026, 9, 24, 15, 0, tzinfo=timezone.utc)
+SHELBY = "+18015550142"
+FAITH = "+18015550199"
+
+
+def record(id_, minutes_ago, text, *, inbound=True, number=SHELBY, name=""):
+    at = (NOW - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    them = {"phoneNumber": number, "name": name}
+    us = {"phoneNumber": FAITH}
+    return {
+        "id": id_, "creationTime": at, "subject": text,
+        "direction": "Inbound" if inbound else "Outbound",
+        "from": them if inbound else us, "to": [us] if inbound else [them],
+    }
+
+
+class Reading:
+    """`open_ring` as far as a catch-up goes."""
+
+    def __init__(self, records=(), *, error=None):
+        self.records, self.error, self.asked = list(records), error, []
+
+    def texts(self, *, since, until=""):
+        self.asked.append(since)
+        if self.error:
+            raise self.error
+        return list(self.records)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _ringing(monkeypatch, records=(), *, error=None):
+    box = Reading(records, error=error)
+    monkeypatch.setattr(ringcentral, "open_ring", lambda secrets: box)
+    return box
+
+
+HISTORY = [
+    record(1, 3000, "can you pause my leads for the weekend", name="Shelby Guest"),
+    record(2, 2998, "Hi Shelby! Yes of course 😊 I'll pause them Sat and Sun. "
+                    "Want them back Monday morning?", inbound=False, name="Shelby Guest"),
+    record(3, 2000, "when do my leads start"),
+    record(4, 1998, "Hi! Let me check with the team and get back to you shortly 😊",
+           inbound=False),
+]
+
+
+# ----------------------------------------------------------------- reading
+
+
+def test_the_first_read_goes_back_months(monkeypatch):
+    box = _ringing(monkeypatch, HISTORY)
+
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    first = datetime.fromisoformat(box.asked[0].replace("Z", "+00:00"))
+    assert (NOW - first).days == jobs.RING_FIRST_DAYS
+
+
+def test_later_reads_only_ask_for_whats_new(monkeypatch):
+    """A minute's watch should cost the last minute, not four months."""
+    box = _ringing(monkeypatch, HISTORY)
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    second = datetime.fromisoformat(box.asked[1].replace("Z", "+00:00"))
+    newest = NOW - timedelta(minutes=1998)
+    assert second == newest - timedelta(minutes=10), "no overlap, or from the start"
+
+
+def test_reading_the_same_texts_twice_keeps_them_once(monkeypatch):
+    _ringing(monkeypatch, HISTORY)
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert len(data["texts"]) == 4
+
+
+def test_a_failed_read_says_why_and_keeps_what_was_there(monkeypatch):
+    _ringing(monkeypatch, HISTORY)
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    _ringing(monkeypatch, error=ringcentral.RingError("RingCentral refused that."))
+
+    data, problems = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert problems == ["RingCentral refused that."]
+    assert len(data["texts"]) == 4
+
+
+# ----------------------------------------------------------------- waiting
+
+
+def test_an_unanswered_text_is_waiting(monkeypatch):
+    _ringing(monkeypatch, HISTORY + [record(5, 5, "are my leads paused?")])
+
+    found, _data, _ = jobs.ring_waiting(NS(secrets=None), now=NOW)
+
+    assert [[one.said for one in tail] for _a, _n, tail in found] == [
+        ["are my leads paused?"]
+    ]
+
+
+def test_an_agent_still_typing_is_left_a_moment(monkeypatch):
+    """They send "hey", then the question - and a draft answering "hey" is a
+    ping about nothing."""
+    _ringing(monkeypatch, HISTORY + [record(5, 0.5, "hey")])
+
+    found, _data, _ = jobs.ring_waiting(NS(secrets=None), now=NOW)
+
+    assert found == []
+
+
+def test_a_text_already_pinged_about_is_not_pinged_again(monkeypatch):
+    """A restart must not ping Franklin about the same message twice."""
+    _ringing(monkeypatch, HISTORY + [record(5, 5, "are my leads paused?")])
+    jobs.ring_pinged("5")
+
+    found, _data, _ = jobs.ring_waiting(NS(secrets=None), now=NOW)
+
+    assert found == []
+
+
+def test_a_new_text_after_a_ping_is_waiting_again(monkeypatch):
+    _ringing(monkeypatch, HISTORY + [record(5, 10, "are my leads paused?"),
+                                     record(6, 5, "hello??")])
+    jobs.ring_pinged("5")
+
+    found, _data, _ = jobs.ring_waiting(NS(secrets=None), now=NOW)
+
+    assert [one.said for one in found[0][2]] == ["are my leads paused?", "hello??"]
+
+
+# ---------------------------------------------------------------- drafting
+
+
+class Claude:
+    """Stands in for Anthropic, and remembers what it was asked."""
+
+    asked: list = []
+
+    def __init__(self, api_key=None):
+        self.messages = self
+
+    def create(self, **kw):
+        type(self).asked.append(kw)
+        return NS(stop_reason="tool_use", content=[NS(
+            type="tool_use", name="reply", input={
+                "reply": "Hi Shelby! Yes they're paused until [date] 😊",
+                "why": "She confirms and offers the date back",
+                "blanks": ["date"],
+            },
+        )])
+
+
+def _drafting(monkeypatch):
+    import anthropic
+
+    Claude.asked = []
+    monkeypatch.setattr(anthropic, "Anthropic", Claude)
+    return NS(secrets=NS(anthropic_api_key="k", require=lambda *a: None),
+              copy=NS(model="claude-test"))
+
+
+def _done():
+    texts = [one for one in (smsreplies.from_record(r) for r in HISTORY) if one]
+    return smsreplies.exchanges(texts)
+
+
+def test_a_draft_is_built_from_her_own_replies(monkeypatch):
+    config = _drafting(monkeypatch)
+
+    got = jobs.draft_like_faith(config, asked="are my leads paused?", done=_done())
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert "I'll pause them Sat and Sun" in prompt, "her replies weren't shown"
+    assert "are my leads paused?" in prompt
+    assert got["reply"].startswith("Hi Shelby!")
+    assert got["blanks"] == ["date"]
+
+
+def test_it_is_told_to_invent_nothing(monkeypatch):
+    """A reply telling an agent a launch date nobody agreed to reads exactly
+    as confident as a right one."""
+    config = _drafting(monkeypatch)
+    jobs.draft_like_faith(config, asked="when do I go live", done=_done())
+
+    system = Claude.asked[0]["system"]
+    assert "Never state a fact" in system
+    assert "bracketed blank" in system
+    assert "Nothing you write is sent" in system
+
+
+def test_with_none_of_her_replies_it_will_not_draft_in_its_own_voice(monkeypatch):
+    config = _drafting(monkeypatch)
+
+    with pytest.raises(ValueError) as said:
+        jobs.draft_like_faith(config, asked="are my leads paused?", done=[])
+
+    assert "not hers" in str(said.value)
+    assert Claude.asked == []
+
+
+# -------------------------------------------------------------- the ping
+
+
+class Heard:
+    def __init__(self):
+        self.said = []
+
+    async def send(self, content=None, **kw):
+        self.said.append(str(content or ""))
+
+
+def _once(monkeypatch, *, drafted=None, problems=(), found=True):
+    from wilbyte.bot import client
+
+    heard = Heard()
+    texts = [one for one in (smsreplies.from_record(r) for r in HISTORY) if one]
+    tail = [smsreplies.from_record(record(5, 5, "are my leads paused?"))]
+    data = {"texts": [one.as_dict() for one in texts + tail], "pinged": []}
+    marked = []
+    monkeypatch.setattr(
+        jobs, "ring_waiting",
+        lambda cfg: ([("8015550142", "Shelby Guest", tail)] if found else [],
+                     data, list(problems)),
+    )
+    monkeypatch.setattr(jobs, "ring_pinged", lambda mid: marked.append(mid))
+
+    def drafting(cfg, **kw):
+        if isinstance(drafted, Exception):
+            raise drafted
+        return drafted or {"reply": "Hi Shelby! Yes 😊", "why": "like her",
+                           "blanks": [], "examples": 2}
+
+    monkeypatch.setattr(jobs, "draft_like_faith", drafting)
+    monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
+    bot = NS(config=NS(secrets=NS(discord_notify_user_id="42"),
+                       schedule=NS(timezone="America/Chicago")))
+    asyncio.run(client._ring_once(bot))
+    return heard.said, marked
+
+
+def test_franklin_is_pinged_with_the_text_and_her_reply(monkeypatch):
+    said, marked = _once(monkeypatch)
+    (note,) = said
+
+    assert note.startswith("<@42>")
+    assert "Shelby Guest" in note and "(801) 555-0142" in note
+    assert "> are my leads paused?" in note
+    assert "```\nHi Shelby! Yes 😊\n```" in note
+    assert marked == ["5"]
+
+
+def test_a_draft_that_failed_is_tried_again_rather_than_forgotten(monkeypatch):
+    said, marked = _once(monkeypatch, drafted=RuntimeError("overloaded"))
+
+    assert said == [] and marked == []
+
+
+def test_what_to_fill_in_is_said(monkeypatch):
+    said, _ = _once(monkeypatch, drafted={
+        "reply": "They're paused until [date]", "why": "", "blanks": ["date"],
+    })
+
+    assert "fill in date" in said[0]
+
+
+def test_a_draft_cannot_break_out_of_its_box(monkeypatch):
+    """Three backticks in a draft would close the block and spill the rest."""
+    said, _ = _once(monkeypatch, drafted={
+        "reply": "use ``` this", "why": "", "blanks": [],
+    })
+
+    body = said[0].split("**Reply like Faith:**\n", 1)[1]
+    assert body.count("```") == 2
+
+
+def test_a_setup_problem_is_said_once_not_every_minute(monkeypatch):
+    from wilbyte.bot import client
+
+    client._RING_SAID.clear()
+    first, _ = _once(monkeypatch, problems=["RingCentral refused that."], found=False)
+    second, _ = _once(monkeypatch, problems=["RingCentral refused that."], found=False)
+
+    assert first == ["⚠ RingCentral: RingCentral refused that."]
+    assert second == []
+
+
+def test_nothing_is_read_until_ringcentral_is_set_up(monkeypatch):
+    from wilbyte.bot import client
+
+    asked = []
+    monkeypatch.setattr(client, "_ring_once", lambda bot: asked.append(1))
+    monkeypatch.setattr(client, "RING_CHECK_SECONDS", 0)
+
+    class Bot:
+        config = NS(secrets=NS(ringcentral_client_id="", ringcentral_client_secret="",
+                               ringcentral_jwt="", ringcentral_extension=""))
+        ticks = 0
+
+        def is_closed(self):
+            type(self).ticks += 1
+            return type(self).ticks > 2
+
+    asyncio.run(client.ring_loop(Bot()))
+
+    assert asked == []
+
+
+# ------------------------------------------------------------- @RYTE respond
+
+
+def test_respond_is_read_before_anything_else_in_the_message():
+    """The rest is an agent's words. "when do I go live" is the launch
+    question to every other part of RYTE."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse("<@1> respond when do I go live? check my leads")
+
+    assert asked.action == "respond"
+    assert asked.brief == "when do I go live? check my leads"
+
+
+def test_respond_only_counts_as_the_first_word():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> email about how to respond to agents").action == "write"
+
+
+def _respond(monkeypatch, said, *, history=True):
+    from wilbyte.bot import client
+
+    heard = Heard()
+    if history:
+        _ringing(monkeypatch, HISTORY)
+        jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    monkeypatch.setattr(
+        jobs, "draft_like_faith",
+        lambda cfg, **kw: {"reply": "Hi! Paused 😊", "why": "", "blanks": []},
+    )
+    config = NS(secrets=NS(ringcentral_client_id="", ringcentral_client_secret="",
+                           ringcentral_jwt="", ringcentral_extension=""))
+    asyncio.run(client._respond_like_faith(heard, config, said))
+    return heard.said
+
+
+def test_respond_drafts_from_what_is_remembered(monkeypatch):
+    said = _respond(monkeypatch, "are my leads paused?")
+
+    assert "```\nHi! Paused 😊\n```" in said[0]
+    assert "from 2 of her past replies" in said[0]
+
+
+def test_respond_with_nothing_learned_says_so_and_what_to_set_up(monkeypatch):
+    said = _respond(monkeypatch, "are my leads paused?", history=False)
+
+    assert "not hers" in said[0]
+    assert "RINGCENTRAL_JWT" in said[0]
+
+
+def test_respond_with_nothing_pasted_says_how(monkeypatch):
+    said = _respond(monkeypatch, "", history=False)
+
+    assert "@RYTE respond" in said[0]

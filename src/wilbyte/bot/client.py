@@ -184,6 +184,7 @@ class WilByteBot(discord.Client):
         self.setup_task: asyncio.Task | None = None
         self.day_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
+        self.ring_task: asyncio.Task | None = None
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
 
@@ -286,6 +287,11 @@ class WilByteBot(discord.Client):
             self.tags_task is None or self.tags_task.done()
         ):
             self.tags_task = self.loop.create_task(tags_loop(self))
+        # Faith's texts, read so Franklin can be told how she would answer.
+        # Always on once RingCentral is set up: it only ever reads, and all it
+        # produces is a message to him. Idle until .env has the keys.
+        if self.ring_task is None or self.ring_task.done():
+            self.ring_task = self.loop.create_task(ring_loop(self))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -934,6 +940,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "contract":
                 await _send_contract(responder, config, request.brief or "")
+                return
+
+            if request.action == "respond":
+                await _respond_like_faith(responder, config, request.brief or "")
                 return
 
             if request.action == "whenlive":
@@ -5519,6 +5529,175 @@ async def day_check_loop(bot: "WilByteBot") -> None:
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("Day check failed; will try again shortly")
         await asyncio.sleep(DAY_CHECK_SECONDS)
+
+
+# ------------------------------------------------ replying the way Faith does
+
+#: A minute, like the other watchers. One request while nothing is happening.
+RING_CHECK_SECONDS = 60
+
+#: Setup problems already said this run. A bad JWT said once is a job for
+#: somebody; said every minute it is a channel nobody reads by lunchtime.
+_RING_SAID: set = set()
+
+
+async def ring_loop(bot: "WilByteBot") -> None:
+    """Watch Faith's texts and ping Franklin with how she would answer.
+
+    "i dont need RYte to send the messages, i need him to ping me on discord
+    on how to respond to their message the way how Faith respond." It cannot
+    send - `ringcentral` has no way to - so every one of these is a message
+    to Franklin, and the words reach an agent only if he sends them himself.
+
+    Nothing here waits on a button. The tag watcher did, and one unanswered
+    button at half eight stopped it seeing anything for the rest of the day.
+    """
+    from .. import ringcentral
+
+    while not bot.is_closed():
+        try:
+            if ringcentral.configured(bot.config.secrets):
+                await _ring_once(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("RingCentral check failed; will try again shortly")
+        await asyncio.sleep(RING_CHECK_SECONDS)
+
+
+def _ring_responder(bot: "WilByteBot"):
+    """Its own channel if there is one, or the board's."""
+    configured = getattr(bot.config.secrets, "ringcentral_channel_id", None)
+    channel = bot.get_channel(int(configured)) if configured else None
+    if channel is not None:
+        return ChannelResponder(channel)
+    return _board_responder(bot)
+
+
+async def _ring_once(bot: "WilByteBot") -> None:
+    from .. import smsreplies
+
+    found, data, problems = await asyncio.to_thread(jobs.ring_waiting, bot.config)
+    responder = _ring_responder(bot)
+    fresh = [one for one in problems if one not in _RING_SAID]
+    if fresh and responder is not None:
+        _RING_SAID.update(fresh)
+        await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
+    if not found or responder is None:
+        return
+
+    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    done = smsreplies.exchanges(texts)
+    for agent, name, tail in found:
+        asked = "\n".join(one.said for one in tail)
+        try:
+            drafted = await asyncio.to_thread(
+                partial(
+                    jobs.draft_like_faith, bot.config, asked=asked, done=done,
+                    thread=smsreplies.thread(texts, agent), name=name,
+                )
+            )
+        except Exception:
+            # Not remembered as pinged, so the next minute tries again rather
+            # than the text going unanswered because Claude had a bad moment.
+            log.exception("Couldn't draft a reply for %s", agent)
+            continue
+        # Remembered before the ping rather than after, so a restart between
+        # the two cannot post the same suggestion twice.
+        await asyncio.to_thread(jobs.ring_pinged, tail[-1].id)
+        await responder.send(_ring_note(bot.config, agent, name, tail, drafted))
+
+
+def _ring_number(agent: str) -> str:
+    """"8015550142" as "(801) 555-0142"."""
+    return (
+        f"({agent[:3]}) {agent[3:6]}-{agent[6:]}" if len(agent) == 10 else agent
+    )
+
+
+def _fenced(text: str) -> str:
+    """A code block Discord will not end early. A draft containing three
+    backticks would close the block halfway through and spill the rest."""
+    return "```\n" + str(text).replace("```", "`\u200b``") + "\n```"
+
+
+def _ring_notes(drafted: dict, *extra: str) -> str:
+    notes = []
+    if drafted.get("blanks"):
+        notes.append("fill in " + ", ".join(drafted["blanks"]))
+    if drafted.get("why"):
+        notes.append(drafted["why"])
+    notes += [one for one in extra if one]
+    return ("-# " + " · ".join(notes)) if notes else ""
+
+
+def _ring_note(config: Config, agent: str, name: str, tail: list, drafted: dict) -> str:
+    """The ping: who, what they said, and how Faith would answer it."""
+    when = jobs._ring_when(tail[-1].at) if tail else None
+    local = when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None
+    said = "\n".join(one.said for one in tail)
+    if len(said) > 700:
+        said = said[:700].rstrip() + "…"
+    who = f"**{name}** · {_ring_number(agent)}" if name else f"**{_ring_number(agent)}**"
+    head = " ".join(bit for bit in (
+        _unmarked_ping(config), f"📱 {who}",
+        f"· {local:%-I:%M %p}" if local else "",
+    ) if bit)
+    lines = [
+        head,
+        "> " + "\n> ".join(said.splitlines()),
+        "**Reply like Faith:**",
+        _fenced(drafted["reply"]),
+        _ring_notes(drafted),
+    ]
+    return "\n".join(line for line in lines if line)
+
+
+async def _respond_like_faith(responder: Responder, config: Config, said: str) -> None:
+    """"@RYTE respond <what the agent texted>" - a draft on request.
+
+    For a text that came in some other way, or to see how she would answer
+    something before trusting the watcher with it.
+    """
+    from .. import ringcentral, ringtexts, smsreplies
+
+    asked = " ".join(str(said or "").split())
+    if not asked:
+        await responder.send(
+            "Paste what the agent said: `@RYTE respond can you pause my leads "
+            "this weekend?` — I'll write it the way Faith would answer."
+        )
+        return
+
+    problems = []
+    if ringcentral.configured(config.secrets):
+        data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
+    else:
+        data = await asyncio.to_thread(ringtexts.load)
+    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    done = smsreplies.exchanges(texts)
+    if not done:
+        await responder.send(
+            "I have none of Faith's replies to learn from yet, so anything I "
+            "wrote would be my voice, not hers."
+            + ("" if ringcentral.configured(config.secrets) else
+               "\n-# RingCentral isn't set up in .env — RINGCENTRAL_CLIENT_ID, "
+               "RINGCENTRAL_CLIENT_SECRET, RINGCENTRAL_JWT and RINGCENTRAL_EXTENSION.")
+            + "".join(f"\n⚠ {one}" for one in problems)
+        )
+        return
+    try:
+        drafted = await asyncio.to_thread(
+            partial(jobs.draft_like_faith, config, asked=asked, done=done)
+        )
+    except Exception as exc:
+        await responder.send(f"Couldn't draft that: {_readable(exc)}")
+        return
+    await responder.send("\n".join(line for line in (
+        "**Reply like Faith:**",
+        _fenced(drafted["reply"]),
+        _ring_notes(drafted, f"from {len(done)} of her past replies"),
+    ) if line))
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

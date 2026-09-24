@@ -1,0 +1,210 @@
+"""Faith's texts with the agents, as the exchanges they were.
+
+What an agent texted, and what Faith sent back - the pair is the lesson.
+Her reply on its own says how she writes; beside what it answered, it says
+how she handles "can you pause my leads", "when do I go live", "these leads
+are bad", which is the part worth learning: what she asks for, what she
+promises and what she will not, when she says she will check with the team.
+
+No network and no Claude in here. This is the reading of what RingCentral
+handed back, so it can be tested against real shapes without either.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Text:
+    """One SMS, from either side."""
+
+    id: str
+    at: str                 # ISO, as RingCentral gave it
+    inbound: bool           # the agent writing to Faith
+    agent: str              # the agent's number, digits only
+    name: str               # the agent's name when RingCentral knows it
+    said: str
+
+    def as_dict(self) -> dict:
+        return {"id": self.id, "at": self.at, "inbound": self.inbound,
+                "agent": self.agent, "name": self.name, "said": self.said}
+
+    @classmethod
+    def from_dict(cls, held: dict) -> "Text":
+        return cls(
+            id=str(held.get("id") or ""), at=str(held.get("at") or ""),
+            inbound=bool(held.get("inbound")), agent=str(held.get("agent") or ""),
+            name=str(held.get("name") or ""), said=str(held.get("said") or ""),
+        )
+
+
+@dataclass
+class Exchange:
+    """What an agent sent, and what Faith sent back."""
+
+    agent: str
+    name: str
+    asked: str
+    answered: str
+    at: str                 # when she answered
+    words: frozenset = field(default_factory=frozenset)
+
+
+def digits(number: str) -> str:
+    """A phone number to compare: the last ten digits, the way the US writes
+    it. "+1 (801) 555-0142" and "8015550142" are one agent."""
+    only = re.sub(r"\D", "", str(number or ""))
+    return only[-10:] if len(only) > 10 else only
+
+
+def from_record(record: dict) -> Text | None:
+    """One message-store record as a Text, or None if there is nothing in it.
+
+    The agent is whoever is not Faith: the sender of an inbound text, the
+    first recipient of an outbound one.
+    """
+    inbound = str(record.get("direction") or "").casefold() == "inbound"
+    if inbound:
+        other = record.get("from") or {}
+    else:
+        other = (record.get("to") or [{}])[0] or {}
+    said = " ".join(str(record.get("subject") or "").split())
+    if not said:
+        # A picture with no words. Kept as what it was rather than dropped:
+        # an agent sending a screenshot is still a message waiting on a reply.
+        kinds = {str(one.get("type") or "") for one in record.get("attachments") or []}
+        said = "[sent a picture]" if kinds - {"Text", ""} else ""
+    if not said:
+        return None
+    return Text(
+        id=str(record.get("id") or ""),
+        at=str(record.get("creationTime") or ""),
+        inbound=inbound,
+        agent=digits(other.get("phoneNumber") or ""),
+        name=" ".join(str(other.get("name") or "").split()),
+        said=said,
+    )
+
+
+# Words that say nothing about what a text is about.
+_QUIET = frozenset("""
+a an the and or but if so to of in on at by for with from up out as is are was
+were be been am do does did have has had i im i'm you your yours we our us me my
+it its this that these those there here what when where who how why can could
+would will just get got ok okay yes no hi hey hello thanks thank please pls
+""".split())
+
+
+def words_in(text: str) -> frozenset:
+    """What a text is about, as a set of words."""
+    return frozenset(
+        one for one in re.findall(r"[a-z0-9']+", str(text or "").casefold())
+        if len(one) > 2 and one not in _QUIET
+    )
+
+
+def exchanges(texts: list) -> list:
+    """Every time an agent texted and Faith answered, oldest first.
+
+    Several texts in a row from either side are one turn - agents send "hey"
+    then the question then "?" - and are joined. A text Faith sent first,
+    with nothing before it from the agent, is her starting a conversation
+    rather than answering one, and is not an exchange.
+    """
+    by_agent: dict[str, list] = {}
+    for one in texts:
+        if one.agent:
+            by_agent.setdefault(one.agent, []).append(one)
+
+    found = []
+    for agent, theirs in by_agent.items():
+        theirs.sort(key=lambda one: one.at)
+        asked, answered, name = [], [], ""
+        for one in theirs:
+            name = name or (one.name if one.inbound else "")
+            if one.inbound:
+                if answered:
+                    found.append(_exchange(agent, name, asked, answered))
+                    asked, answered = [], []
+                asked.append(one)
+            elif asked:
+                answered.append(one)
+        if asked and answered:
+            found.append(_exchange(agent, name, asked, answered))
+    found.sort(key=lambda one: one.at)
+    return found
+
+
+def _exchange(agent, name, asked, answered) -> Exchange:
+    question = "\n".join(one.said for one in asked)
+    return Exchange(
+        agent=agent, name=name, asked=question,
+        answered="\n".join(one.said for one in answered),
+        at=answered[0].at, words=words_in(question),
+    )
+
+
+def waiting(texts: list, *, since: str) -> list:
+    """Agents whose last word is still unanswered. [(agent, name, [texts])].
+
+    The texts since Faith's last reply to them, and only when the newest of
+    them is newer than `since` - so the first run after setting this up does
+    not bring back every agent who ever had the last word.
+    """
+    by_agent: dict[str, list] = {}
+    for one in texts:
+        if one.agent:
+            by_agent.setdefault(one.agent, []).append(one)
+
+    found = []
+    for agent, theirs in by_agent.items():
+        theirs.sort(key=lambda one: one.at)
+        tail = []
+        for one in reversed(theirs):
+            if not one.inbound:
+                break
+            tail.insert(0, one)
+        if tail and tail[-1].at >= since:
+            name = next((one.name for one in tail if one.name), "")
+            found.append((agent, name, tail))
+    found.sort(key=lambda one: one[2][-1].at)
+    return found
+
+
+def closest(done: list, message: str, *, most: int = 5, recent: int = 3) -> list:
+    """The past exchanges to show Claude: the most like this one, then recent.
+
+    Most alike, because how she handled "pause my leads" last month is how
+    she would handle it now. A few of the newest as well, whatever they were
+    about, because the way she writes drifts and her newest texts are her.
+    """
+    wanted = words_in(message)
+    scored = []
+    for at, one in enumerate(done):
+        if not wanted or not one.words:
+            continue
+        shared = len(wanted & one.words)
+        if shared:
+            scored.append((shared / math.sqrt(len(wanted) * len(one.words)), at, one))
+    scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+
+    picked, seen = [], set()
+    for _score, at, one in scored[:most]:
+        picked.append(one)
+        seen.add(at)
+    for at in range(len(done) - 1, -1, -1):
+        if len(picked) >= most + recent:
+            break
+        if at not in seen:
+            picked.append(done[at])
+            seen.add(at)
+    return picked
+
+
+def thread(texts: list, agent: str, *, most: int = 12) -> list:
+    """The last of the conversation with one agent, oldest first."""
+    theirs = sorted((one for one in texts if one.agent == agent), key=lambda one: one.at)
+    return theirs[-most:]

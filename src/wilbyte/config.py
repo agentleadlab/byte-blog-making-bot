@@ -247,13 +247,21 @@ class Secrets:
     # makes is pinned to it, so it is the boundary of what he can read rather
     # than a convenience.
     gmail_invoice_sender: str | None = None
-    # And the address the signed contracts arrive from. PandaDoc's production
-    # API is behind a sales call on this account and the sandbox key only
-    # reaches sandbox documents - but PandaDoc emails the completed document
-    # to the owner when it is signed, with the PDF on it, so the inbox is the
-    # way in. A bare domain works here: "pandadoc.com" matches whichever
-    # address they send from.
+    # Whoever signed contracts arrive from by email, if anybody. Not PandaDoc:
+    # on this account it does not email the signed PDF - "we have to download
+    # it on pandadoc" - so this is blank unless contracts reach an inbox some
+    # other way.
     gmail_contract_sender: str | None = None
+    # RingCentral, read-only: Faith's texts with the agents, so RYTE can draft
+    # replies the way she writes them and ping Franklin with them. An app on
+    # the JWT auth flow with Read Messages and Read Accounts, and a JWT made by
+    # an admin. The extension is Faith's number or name, and the only one read.
+    ringcentral_client_id: str | None = None
+    ringcentral_client_secret: str | None = None
+    ringcentral_jwt: str | None = None
+    ringcentral_extension: str | None = None
+    # Where the suggested replies go. Falls back to the board channel.
+    ringcentral_channel_id: str | None = None
     # The Google Doc the segment copy goes into, a tab per agent —
     # "YOUTUBE LINKS FOR WEBSITE POSTING". Its link or its id. Needs the
     # documents scope on the token, which Sheets and Drive do not cover.
@@ -381,6 +389,11 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
+                ringcentral_client_id=_env("RINGCENTRAL_CLIENT_ID"),
+                ringcentral_client_secret=_env("RINGCENTRAL_CLIENT_SECRET"),
+                ringcentral_jwt=_env("RINGCENTRAL_JWT"),
+                ringcentral_extension=_env("RINGCENTRAL_EXTENSION"),
+                ringcentral_channel_id=_env("RINGCENTRAL_CHANNEL_ID"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),
                 ghl_blacklist_tag=_env("GHL_BLACKLIST_TAG") or "blacklisted",
                 tracker_sheet_id=_env("TRACKER_SHEET_ID"),

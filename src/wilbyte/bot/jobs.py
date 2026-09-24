@@ -7338,3 +7338,210 @@ def _append_month(client, sheet_id: str, title: str, tab_id, lines: list):
             "**Date** heading and RYTE starts filling it."
         )
     return written, said
+
+
+# ------------------------------------------------ replying the way Faith does
+
+#: How far back the first read of Faith's texts goes. Months of her replies is
+#: plenty to learn how she handles each kind of message.
+RING_FIRST_DAYS = 120
+
+#: Only agent texts newer than this get a suggestion. The first run after
+#: setting this up would otherwise ping about every agent who ever had the
+#: last word.
+RING_FRESH_HOURS = 12
+
+#: How long an agent has to have stopped typing before a suggestion goes out.
+#: They send "hey", then the question, then "?" - and a draft answering "hey"
+#: is a ping about nothing.
+RING_SETTLE_SECONDS = 90
+
+#: Held around every read and write of the remembered texts. The watcher and
+#: a typed "@RYTE respond" both run in threads.
+_RING_FILE = threading.Lock()
+
+
+def _ring_iso(when) -> str:
+    """The timestamp shape RingCentral takes: UTC, milliseconds, a Z."""
+    from datetime import timezone
+
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _ring_when(said: str):
+    from datetime import timezone
+
+    try:
+        when = datetime.fromisoformat(str(said).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
+    """Read what Faith's extension sent and received since last time.
+
+    (what is remembered, problems). Deep the first time, then only what is
+    new, with ten minutes' overlap: a text that landed while the last read was
+    in flight, stamped a moment before it, is not one to lose.
+    """
+    from datetime import timezone
+
+    from .. import ringcentral, ringtexts, smsreplies
+
+    now = now or datetime.now(timezone.utc)
+    with _RING_FILE:
+        data = ringtexts.load()
+        last = _ring_when(ringtexts.newest(data))
+        since = (last - timedelta(minutes=10)) if last else (
+            now - timedelta(days=RING_FIRST_DAYS)
+        )
+        try:
+            with ringcentral.open_ring(config.secrets) as reading:
+                records = reading.texts(since=_ring_iso(since))
+        except ringcentral.RingError as exc:
+            return data, [str(exc)]
+        except Exception as exc:
+            return data, [f"Couldn't read RingCentral: {_short(exc, 160)}"]
+        texts = [one for one in (smsreplies.from_record(r) for r in records) if one]
+        ringtexts.keep(data, texts)
+        ringtexts.save(data)
+        return data, []
+
+
+def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:
+    """Agent texts still waiting on a reply, and not yet pinged about.
+
+    ([(agent, name, [texts])], what is remembered, problems).
+    """
+    from datetime import timezone
+
+    from .. import ringtexts, smsreplies
+
+    now = now or datetime.now(timezone.utc)
+    data, problems = ring_catch_up(config, now=now)
+    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    since = _ring_iso(now - timedelta(hours=RING_FRESH_HOURS))
+    settled = _ring_iso(now - timedelta(seconds=RING_SETTLE_SECONDS))
+    found = [
+        (agent, name, tail)
+        for agent, name, tail in smsreplies.waiting(texts, since=since)
+        if tail[-1].at <= settled and not ringtexts.was_pinged(data, tail[-1].id)
+    ]
+    return found, data, problems
+
+
+def ring_pinged(message_id: str) -> None:
+    """Remember that Franklin has been pinged about this text."""
+    from .. import ringtexts
+
+    with _RING_FILE:
+        data = ringtexts.load()
+        ringtexts.pinged(data, message_id)
+        ringtexts.save(data)
+
+
+def draft_like_faith(
+    config: Config, *, asked: str, done: list, thread: list = (), name: str = "",
+) -> dict:
+    """The reply Faith would send. {"reply", "why", "blanks", "examples"}.
+
+    Drafted, never sent - there is nothing here or in `ringcentral` that can
+    send. Faith's past exchanges are the examples: the ones most like this
+    text for how she handles it, and a few of her newest for how she writes.
+
+    Nothing invented. A reply that tells an agent a launch date or a credit
+    nobody agreed to is worse than no suggestion, because it reads exactly as
+    confident as a right one - the rebuttal learned that with an email address
+    and a card number taken off RYTE's own example. So anything only the team
+    knows is a bracketed blank, listed for Franklin to fill in.
+    """
+    from anthropic import Anthropic
+
+    from .. import smsreplies
+
+    said = " ".join(str(asked or "").split())
+    if not said:
+        raise ValueError("There's no message to reply to.")
+    examples = smsreplies.closest(list(done), said)
+    if not examples:
+        raise ValueError(
+            "I have none of Faith's replies to learn from yet, so anything I "
+            "wrote would be my voice, not hers."
+        )
+
+    lines = []
+    for at, one in enumerate(examples, start=1):
+        lines.append(f"EXAMPLE {at}\nAgent: {one.asked}\nFaith: {one.answered}")
+    so_far = [
+        f"{'Agent' if one.inbound else 'Faith'}: {one.said}" for one in thread or []
+    ]
+    if not so_far or not so_far[-1].endswith(said):
+        so_far.append(f"Agent: {said}")
+    prompt = (
+        "Here is how Faith has answered agents before:\n\n"
+        + "\n\n".join(lines)
+        + "\n\n---\nThe conversation now, oldest first"
+        + (f" (the agent is {name})" if name else "")
+        + ":\n\n" + "\n".join(so_far)
+        + "\n\nWrite the reply Faith would send to the agent's last message."
+    )
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=800,
+        system=(
+            "You help Franklin, the general manager of Agent Lead Lab, answer "
+            "text messages from insurance agents who buy leads from the "
+            "company. Faith on the customer service team normally answers "
+            "them, and Franklin wants each reply to read as Faith would write "
+            "it. Nothing you write is sent: Franklin reads it and decides.\n\n"
+            "Study her examples for how she writes - length, greeting and "
+            "sign-off, capitals, punctuation, emoji, how warm or brief - and "
+            "for how she handles each kind of message: what she asks for, what "
+            "she commits to, what she will not promise, and when she says she "
+            "will check with the team. Then write the one reply she would send.\n\n"
+            "Never state a fact that is not in the conversation or plainly a "
+            "standing habit in her examples: no dates, times, prices, lead "
+            "counts, launch days, refunds, credits or promises. Where the reply "
+            "needs one, write a bracketed blank like [launch date] and list it "
+            "in blanks. If the message needs a decision only a person can make "
+            "- a refund, a complaint about the leads, an upset agent - still "
+            "draft her holding reply, and say so in why. Match her, not a "
+            "customer-service script: if she writes two lines, write two lines."
+        ),
+        tools=[{
+            "name": "reply",
+            "description": "The reply Faith would send, and what it rests on.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "reply": {"type": "string"},
+                    "why": {
+                        "type": "string",
+                        "description": "One short line: which of her habits or "
+                                       "past replies this follows.",
+                    },
+                    "blanks": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Each bracketed blank Franklin has to fill.",
+                    },
+                },
+                "required": ["reply", "why", "blanks"],
+            },
+        }],
+        tool_choice={"type": "tool", "name": "reply"},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    got = _tool_input(response, "reply")
+    reply = str(got.get("reply") or "").strip()
+    if not reply:
+        raise ValueError("The draft came back empty.")
+    return {
+        "reply": reply,
+        "why": " ".join(str(got.get("why") or "").split()),
+        "blanks": [str(one) for one in got.get("blanks") or [] if str(one).strip()],
+        "examples": len(examples),
+    }
