@@ -42,7 +42,7 @@ def sent(monkeypatch):
         edits.append((message.id, kw))
         return message
 
-    places = {2: Place(2), 4: Place(4), 9: Place(9, fails=True)}
+    places = {1: Place(1), 2: Place(2), 4: Place(4), 7: Place(7), 9: Place(9, fails=True)}
     monkeypatch.setattr(mirror, "_SEND", send)
     monkeypatch.setattr(mirror, "_EDIT", edit)
     monkeypatch.setattr(mirror, "_CLIENT", NS(get_channel=places.get))
@@ -187,3 +187,69 @@ def test_a_reply_to_the_twin_of_a_ringcentral_card_teaches_the_same(sent, monkey
 
     assert client._RING_POSTS == {101, 102}
     assert jobs.ring_told("102", "we call these") == "ping"
+
+
+# ------------------------------------------ RYTE's own news to #announcements
+
+
+def test_ryte_announcing_himself_goes_to_announcements_not_the_channels_twin(sent, monkeypatch):
+    """"instead of this going to blog copywriter channel, it will go to
+    announcement - original server is untouched"."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(mirror, "ANNOUNCE_INTO", 4)
+    blogs = client.Announcing(Place(1))
+
+    asyncio.run(_say(blogs))
+
+    assert [where for where, _, _ in sent.got] == [1, 4], "went to blogs-copy, not announcements"
+    assert blogs.id == 1, "the channel should still read as #blogs to everything else"
+
+
+async def _say(channel):
+    # the channel's own send, as RYTE calls it, through the hook
+    import wilbyte.bot.mirror as m
+
+    class Hooked:
+        def __init__(self, place):
+            self.place, self.id = place, place.id
+
+        async def send(self, content=None, **kw):
+            return await m._send(self.place, content, **kw)
+
+    channel._channel = Hooked(channel._channel)
+    await channel.send("🔄 Updating myself — back in a moment.")
+
+
+def test_everything_else_in_that_channel_still_goes_to_its_twin(sent, monkeypatch):
+    monkeypatch.setattr(mirror, "ANNOUNCE_INTO", 4)
+
+    asyncio.run(mirror._send(Place(1), "📝 blog card"))
+
+    assert [where for where, _, _ in sent.got] == [1, 2]
+
+
+def test_announcing_with_no_announcements_channel_set_is_as_before(sent, monkeypatch):
+    monkeypatch.setattr(mirror, "ANNOUNCE_INTO", None)
+
+    with mirror.copying_into(mirror.ANNOUNCE_INTO):
+        asyncio.run(mirror._send(Place(1), "🔄 Updating myself"))
+
+    assert [where for where, _, _ in sent.got] == [1, 2]
+
+
+def test_announcing_into_the_channel_itself_is_said_once(sent):
+    with mirror.copying_into(1):
+        asyncio.run(mirror._send(Place(1), "🔄 Updating myself"))
+
+    assert [where for where, _, _ in sent.got] == [1]
+
+
+def test_a_channel_with_no_twin_keeps_its_tags_when_its_news_is_copied(sent):
+    """Only a paired channel goes quiet. One whose announcements alone are
+    copied still tags as it always did."""
+    with mirror.copying_into(4):
+        asyncio.run(mirror._send(Place(7), "<@42> heads up"))
+
+    assert [where for where, _, _ in sent.got] == [7, 4]
+    assert "allowed_mentions" not in sent.got[0][2]

@@ -180,6 +180,7 @@ class WilByteBot(discord.Client):
         mirror.configure(
             self, mirror.parse_pairs(getattr(config.secrets, "discord_copies", "") or ""),
             tags_in_copies_only=getattr(config.secrets, "discord_tag_in_copies_only", False),
+            announce_into=getattr(config.secrets, "discord_announce_copy_channel_id", None),
         )
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
@@ -3716,15 +3717,35 @@ def _recordings_channel(bot: WilByteBot):
 
 
 def _announce_channel(bot: WilByteBot):
-    """Where to say a post went live: the first allowed channel, if there is one."""
+    """Where to say a post went live: the first allowed channel, if there is one.
+
+    RYTE's own news - updates, "is live" - and so copied into Ryte The Goat's
+    announcements rather than wherever the rest of this channel is copied.
+    """
     for raw in bot.config.secrets.discord_channel_ids:
         try:
             channel = bot.get_channel(int(raw))
         except (TypeError, ValueError):
             continue
         if channel is not None:
-            return channel
+            return Announcing(channel)
     return None
+
+
+class Announcing:
+    """A channel whose messages are copied into the announcements twin."""
+
+    def __init__(self, channel):
+        self._channel = channel
+
+    def __getattr__(self, name):
+        return getattr(self._channel, name)
+
+    async def send(self, *args, **kw):
+        from . import mirror
+
+        with mirror.copying_into(mirror.ANNOUNCE_INTO):
+            return await self._channel.send(*args, **kw)
 
 
 # --------------------------------------------------------------------- commands

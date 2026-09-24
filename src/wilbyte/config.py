@@ -271,6 +271,9 @@ class Secrets:
     # Tag people in the copies only; the originals still show "@Luna" but
     # notify nobody.
     discord_tag_in_copies_only: bool = False
+    # Where RYTE's own announcements are copied - "Updating myself", "is
+    # live" - instead of the twin of the channel they are posted in.
+    discord_announce_copy_channel_id: str | None = None
     # Names, comma-separated, of colleagues who text into the line - never an
     # agent waiting on a reply. The line's own owner is always one.
     ringcentral_team: str | None = None
@@ -413,6 +416,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_copies=_env("DISCORD_COPIES"),
                 discord_tag_in_copies_only=(_env("DISCORD_TAG_IN_COPIES_ONLY") or "").strip().lower()
                 in ("1", "true", "yes"),
+                discord_announce_copy_channel_id=_env("DISCORD_ANNOUNCE_COPY_CHANNEL_ID"),
                 ringcentral_team=_env("RINGCENTRAL_TEAM"),
                 ringcentral_faith_number=_env("RINGCENTRAL_FAITH_NUMBER"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),

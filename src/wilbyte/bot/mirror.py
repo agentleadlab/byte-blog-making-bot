@@ -23,6 +23,8 @@ import asyncio
 import io
 import logging
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import discord
 
@@ -34,6 +36,11 @@ PAIRS: dict[int, int] = {}
 TAGS_IN_COPIES_ONLY = False
 #: The bot, for finding the copy channels.
 _CLIENT = None
+#: Where RYTE's own announcements are copied - updates, "is live" - when
+#: that is not where the rest of their channel goes.
+ANNOUNCE_INTO: int | None = None
+#: Set around one send to copy it somewhere other than its channel's twin.
+_INTO: ContextVar = ContextVar("copy_into", default=None)
 
 #: Original message id -> its copy, for edits. The newest few hundred.
 _COPIES: "OrderedDict[int, discord.Message]" = OrderedDict()
@@ -66,14 +73,28 @@ def parse_pairs(said: str) -> dict[int, int]:
     }
 
 
-def configure(client, pairs: dict[int, int], *, tags_in_copies_only: bool = False) -> None:
-    global _CLIENT, TAGS_IN_COPIES_ONLY
+def configure(client, pairs: dict[int, int], *, tags_in_copies_only: bool = False,
+              announce_into=None) -> None:
+    global _CLIENT, TAGS_IN_COPIES_ONLY, ANNOUNCE_INTO
     _CLIENT = client
     PAIRS.clear()
     PAIRS.update(pairs)
     TAGS_IN_COPIES_ONLY = bool(tags_in_copies_only and pairs)
-    if pairs:
+    said = str(announce_into or "").strip().lstrip("#")
+    ANNOUNCE_INTO = int(said) if said.isdigit() else None
+    if pairs or ANNOUNCE_INTO:
         install()
+
+
+@contextmanager
+def copying_into(channel_id):
+    """Copy whatever is sent inside this into `channel_id`, instead of into
+    the twin of the channel it is sent in. Nothing, when it is None."""
+    token = _INTO.set(channel_id)
+    try:
+        yield
+    finally:
+        _INTO.reset(token)
 
 
 def copy_of_message(message_id) -> "discord.Message | None":
@@ -134,12 +155,13 @@ async def _send(self, content=None, **kw):
         channel = await self._get_channel()
     except Exception:
         channel = None
-    copy_id = copy_of(getattr(channel, "id", None)) if PAIRS else None
-    if copy_id is None:
+    here = getattr(channel, "id", None)
+    copy_id = _INTO.get() or (copy_of(here) if PAIRS else None)
+    if copy_id is None or copy_id == here:
         return await _SEND(self, content, **kw)
 
     mine, theirs = _files_twice(kw)
-    if TAGS_IN_COPIES_ONLY:
+    if TAGS_IN_COPIES_ONLY and copy_of(here):
         # Still reads "@Luna" - nobody is told.
         mine["allowed_mentions"] = discord.AllowedMentions.none()
     sent = await _SEND(self, content, **mine)
