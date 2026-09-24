@@ -39,6 +39,9 @@ _CLIENT = None
 #: Where RYTE's own announcements are copied - updates, "is live" - when
 #: that is not where the rest of their channel goes.
 ANNOUNCE_INTO: int | None = None
+#: Where the clear-outs and the quiet run are copied - Channel Deletion -
+#: rather than the twin of the channel they were started in.
+CLEAROUT_INTO: int | None = None
 #: Set around one send to copy it somewhere other than its channel's twin.
 _INTO: ContextVar = ContextVar("copy_into", default=None)
 
@@ -115,16 +118,21 @@ def parse_pairs(said: str, secrets=None) -> dict[int, int]:
     }
 
 
+def _an_id(said) -> int | None:
+    said = str(said or "").strip().lstrip("#")
+    return int(said) if said.isdigit() else None
+
+
 def configure(client, pairs: dict[int, int], *, tags_in_copies_only: bool = False,
-              announce_into=None) -> None:
-    global _CLIENT, TAGS_IN_COPIES_ONLY, ANNOUNCE_INTO
+              announce_into=None, clearout_into=None) -> None:
+    global _CLIENT, TAGS_IN_COPIES_ONLY, ANNOUNCE_INTO, CLEAROUT_INTO
     _CLIENT = client
     PAIRS.clear()
     PAIRS.update(pairs)
     TAGS_IN_COPIES_ONLY = bool(tags_in_copies_only and pairs)
-    said = str(announce_into or "").strip().lstrip("#")
-    ANNOUNCE_INTO = int(said) if said.isdigit() else None
-    if pairs or ANNOUNCE_INTO:
+    ANNOUNCE_INTO = _an_id(announce_into)
+    CLEAROUT_INTO = _an_id(clearout_into)
+    if pairs or ANNOUNCE_INTO or CLEAROUT_INTO:
         install()
 
 
@@ -145,7 +153,7 @@ def in_copies_server(guild_id) -> bool:
     original, and is where the clear-outs get run."""
     if guild_id is None or _CLIENT is None:
         return False
-    for copy in set(PAIRS.values()) | ({ANNOUNCE_INTO} if ANNOUNCE_INTO else set()):
+    for copy in set(PAIRS.values()) | {one for one in (ANNOUNCE_INTO, CLEAROUT_INTO) if one}:
         where = _CLIENT.get_channel(copy)
         if getattr(getattr(where, "guild", None), "id", None) == guild_id:
             return True

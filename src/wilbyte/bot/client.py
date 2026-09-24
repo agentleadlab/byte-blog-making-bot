@@ -42,7 +42,7 @@ from ..scheduler import SchedulerError, next_open_slots
 from ..state import Ledger
 from ..writer import WriterError
 from ..youtube import IngestError
-from . import embeds, jobs, mentions
+from . import embeds, jobs, mentions, mirror
 from .responders import (
     ChannelResponder,
     InteractionResponder,
@@ -183,6 +183,7 @@ class WilByteBot(discord.Client):
             ),
             tags_in_copies_only=getattr(config.secrets, "discord_tag_in_copies_only", False),
             announce_into=getattr(config.secrets, "discord_announce_copy_channel_id", None),
+            clearout_into=getattr(config.secrets, "discord_clearout_copy_channel_id", None),
         )
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
@@ -948,7 +949,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "clearout":
-                await _clear_out(bot, responder, config, request.brief or "")
+                with mirror.copying_into(mirror.CLEAROUT_INTO):
+                    await _clear_out(bot, responder, config, request.brief or "")
                 return
 
             if request.action == "blacklist":
@@ -960,7 +962,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "quiet":
-                await _quiet_channels(bot, responder, config, request.brief or "")
+                # Wherever it was asked, a copy in Channel Deletion - the whole
+                # run, buttons and all.
+                with mirror.copying_into(mirror.CLEAROUT_INTO):
+                    await _quiet_channels(bot, responder, config, request.brief or "")
                 return
 
             if request.action == "access":
@@ -2860,7 +2865,10 @@ async def _all_of_them(
 
 async def _offer_the_run(bot: "WilByteBot") -> None:
     try:
-        await _carry_on_the_run(bot)
+        from . import mirror
+
+        with mirror.copying_into(mirror.CLEAROUT_INTO):
+            await _carry_on_the_run(bot)
     except Exception:
         log.exception("Couldn't offer to carry on the quiet run")
 

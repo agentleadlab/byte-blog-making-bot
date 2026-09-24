@@ -304,3 +304,82 @@ def test_every_channel_in_ryte_the_goat_answers(sent, monkeypatch):
     assert client.is_allowed(channel_id=77, user=NS(), config=config, guild_id=500)[0]
     assert not client.is_allowed(channel_id=77, user=NS(), config=config, guild_id=600)[0]
     assert not client.is_allowed(channel_id=77, user=NS(), config=config)[0]
+
+
+# ------------------------------------------- clear-outs to Channel Deletion
+
+
+def _asked(monkeypatch, config, words, action_name):
+    """@Ryte asked something in a channel; what was copied where while it ran."""
+    from dataclasses import replace
+
+    from wilbyte.bot import client
+
+    seen = []
+
+    async def running(bot, responder, config, asked):
+        seen.append(mirror._INTO.get())
+
+    monkeypatch.setattr(client, action_name, running)
+    monkeypatch.setattr(mirror, "CLEAROUT_INTO", 1552803120671629322)
+    secrets = replace(config.secrets, discord_channel_ids=("555",))
+    replies = []
+
+    async def reply(*a, **k):
+        replies.append(a)
+
+    async def send(*a, **k):
+        replies.append(a)
+
+    message = NS(
+        content=f"<@999> {words}", embeds=[], attachments=[], mentions=[NS(id=999)],
+        mention_everyone=False, reference=None, guild=None,
+        channel=NS(id="555", name="dispute-channel", send=send, typing=lambda: None),
+        author=NS(id=7, bot=False, roles=[]), reply=reply,
+    )
+    bot = NS(config=replace(config, secrets=secrets), user=NS(id=999), run_lock=asyncio.Lock())
+    asyncio.run(client.handle_mention(bot, message))
+    return seen
+
+
+def test_the_quiet_run_is_copied_into_channel_deletion(monkeypatch, config):
+    """"the Ryte quiet, and clearout channel will they go on 1552803120671629322"."""
+    assert _asked(monkeypatch, config, "quiet", "_quiet_channels") == [1552803120671629322]
+
+
+def test_a_clearout_is_copied_into_channel_deletion(monkeypatch, config):
+    from wilbyte.bot import client
+
+    seen = []
+
+    async def clearing(bot, responder, config, name, *, run=None):
+        seen.append(mirror._INTO.get())
+        return "left"
+
+    monkeypatch.setattr(client, "_clear_out", clearing)
+    _asked(monkeypatch, config, "clearout Jay Rodriguez", "_blacklist_them")
+
+    assert seen == [1552803120671629322]
+
+
+def test_the_clearout_copy_never_outlives_the_clearout(sent, monkeypatch):
+    monkeypatch.setattr(mirror, "CLEAROUT_INTO", 2)
+
+    with mirror.copying_into(mirror.CLEAROUT_INTO):
+        asyncio.run(mirror._send(Place(3), "🧹 1 of 5"))
+    asyncio.run(mirror._send(Place(3), "a dispute"))
+
+    # the clear-out went to Channel Deletion (2); the dispute after it to its twin (4)
+    assert [where for where, _, _ in sent.got] == [3, 2, 3, 4]
+
+
+def test_channel_deletion_is_read_from_env(monkeypatch):
+    monkeypatch.setattr(mirror, "PAIRS", {})
+    monkeypatch.setattr(mirror, "install", lambda: None)
+
+    mirror.configure(None, {}, clearout_into="1552803120671629322", announce_into="#1552802072330772611")
+
+    assert mirror.CLEAROUT_INTO == 1552803120671629322
+    assert mirror.ANNOUNCE_INTO == 1552802072330772611
+    mirror.configure(None, {}, clearout_into="", announce_into=None)
+    assert mirror.CLEAROUT_INTO is None and mirror.ANNOUNCE_INTO is None
