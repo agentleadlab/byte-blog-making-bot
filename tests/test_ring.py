@@ -322,3 +322,100 @@ def test_nothing_is_read_until_ringcentral_is_set_up(monkeypatch):
     asyncio.run(client.ring_loop(Bot()))
 
     assert asked == []
+
+
+# ------------------------------------------------- which channel, by name
+
+
+def _channel(name, *, cid=1, send=True, view=True):
+    import discord
+
+    guild = NS(me=object())
+    one = NS(id=cid, name=name, type=discord.ChannelType.text, guild=guild)
+    one.permissions_for = lambda me: NS(view_channel=view, send_messages=send)
+    return one
+
+
+def _bot(wanted, channels):
+    return NS(
+        config=NS(secrets=NS(ringcentral_channel_id=wanted)),
+        get_all_channels=lambda: list(channels),
+        get_channel=lambda cid: next((one for one in channels if one.id == cid), None),
+    )
+
+
+def test_the_channel_can_be_named_the_way_it_reads():
+    """"#ryte-responder" is what Franklin sees. An id means Developer Mode."""
+    from wilbyte.bot import client
+
+    theirs = _channel("ryte-responder", cid=7)
+    got, trouble = client._ring_channel(_bot("#ryte-responder", [
+        _channel("general", cid=1), theirs,
+    ]))
+
+    assert got is theirs and trouble == ""
+
+
+def test_or_by_its_id():
+    from wilbyte.bot import client
+
+    theirs = _channel("ryte-responder", cid=7)
+    got, trouble = client._ring_channel(_bot("7", [theirs]))
+
+    assert got is theirs and trouble == ""
+
+
+def test_a_private_channel_it_cannot_post_in_is_said_not_swallowed():
+    """Every ping would fail, and from where Franklin sits that is the same
+    as no agent having texted."""
+    from wilbyte.bot import client
+
+    got, trouble = client._ring_channel(_bot("ryte-responder", [
+        _channel("ryte-responder", send=False),
+    ]))
+
+    assert got is None
+    assert "not allowed to post in #ryte-responder" in trouble
+    assert "Send Messages" in trouble
+
+
+def test_a_channel_it_cannot_see_at_all_says_to_give_it_access():
+    from wilbyte.bot import client
+
+    got, trouble = client._ring_channel(_bot("ryte-responder", [_channel("general")]))
+
+    assert got is None
+    assert "give my role access" in trouble
+
+
+def test_two_channels_with_the_name_are_not_guessed_between():
+    from wilbyte.bot import client
+
+    got, trouble = client._ring_channel(_bot("ryte-responder", [
+        _channel("ryte-responder", cid=1), _channel("ryte-responder", cid=2),
+    ]))
+
+    assert got is None and "2 channels" in trouble
+
+
+def test_nothing_set_is_the_board_channel_and_no_complaint():
+    from wilbyte.bot import client
+
+    assert client._ring_channel(_bot("", [])) == (None, "")
+
+
+def test_the_channel_problem_is_said_once_where_the_pings_went(monkeypatch):
+    from wilbyte.bot import client
+
+    client._RING_SAID.clear()
+    heard = Heard()
+    monkeypatch.setattr(jobs, "ring_waiting", lambda cfg: ([], {"texts": []}, []))
+    monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
+    monkeypatch.setattr(
+        client, "_ring_channel",
+        lambda bot: (None, "I'm not allowed to post in #ryte-responder."),
+    )
+    for _ in range(2):
+        asyncio.run(client._ring_once(NS(config=None)))
+
+    assert heard.said == ["⚠ RingCentral: I'm not allowed to post in #ryte-responder."]

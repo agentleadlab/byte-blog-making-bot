@@ -5561,10 +5561,59 @@ async def ring_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(RING_CHECK_SECONDS)
 
 
+def _ring_channel(bot: "WilByteBot") -> tuple:
+    """(the channel the suggestions go to or None, what is wrong with it or "").
+
+    By id or by name. "#ryte-responder" is what Franklin sees; an id means
+    turning on Developer Mode to go and find one, and the name is enough to
+    find it by when only one channel RYTE is in carries it.
+
+    Checked for RYTE being allowed to post there. The channel is private, and
+    a channel RYTE cannot see is one every ping silently fails to reach - the
+    loop logs it and Discord shows nothing, which from where Franklin sits is
+    exactly the same as no agent having texted.
+    """
+    wanted = str(getattr(bot.config.secrets, "ringcentral_channel_id", "") or "").strip()
+    wanted = wanted.lstrip("#").strip()
+    if not wanted:
+        return None, ""
+    if wanted.isdigit():
+        channel = bot.get_channel(int(wanted))
+        if channel is None:
+            return None, (
+                f"I can't find channel {wanted} for the RingCentral suggestions, "
+                "or I'm not allowed to see it. Posting them here instead."
+            )
+    else:
+        named = [
+            one for one in bot.get_all_channels()
+            if getattr(one, "type", None) == discord.ChannelType.text
+            and str(one.name).casefold() == wanted.casefold()
+        ]
+        if len(named) != 1:
+            return None, (
+                f"I can see {'no' if not named else len(named)} channel"
+                f"{'' if len(named) == 1 else 's'} called #{wanted}, so the "
+                "RingCentral suggestions are coming here instead. "
+                + ("If it's private, give my role access to it."
+                   if not named else "Put its id in RINGCENTRAL_CHANNEL_ID.")
+            )
+        channel = named[0]
+    me = getattr(getattr(channel, "guild", None), "me", None)
+    if me is not None:
+        allowed = channel.permissions_for(me)
+        if not (allowed.view_channel and allowed.send_messages):
+            return None, (
+                f"I'm not allowed to post in #{channel.name}, so the RingCentral "
+                "suggestions are coming here instead. Give my role View Channel "
+                "and Send Messages there."
+            )
+    return channel, ""
+
+
 def _ring_responder(bot: "WilByteBot"):
-    """Its own channel if there is one, or the board's."""
-    configured = getattr(bot.config.secrets, "ringcentral_channel_id", None)
-    channel = bot.get_channel(int(configured)) if configured else None
+    """Its own channel if it can be posted in, or the board's."""
+    channel, _trouble = _ring_channel(bot)
     if channel is not None:
         return ChannelResponder(channel)
     return _board_responder(bot)
@@ -5575,6 +5624,10 @@ async def _ring_once(bot: "WilByteBot") -> None:
 
     found, data, problems = await asyncio.to_thread(jobs.ring_waiting, bot.config)
     responder = _ring_responder(bot)
+    # Where they are going wrong is said where they are going instead, once.
+    _where, trouble = _ring_channel(bot)
+    if trouble:
+        problems = [trouble] + list(problems)
     fresh = [one for one in problems if one not in _RING_SAID]
     if fresh and responder is not None:
         _RING_SAID.update(fresh)
