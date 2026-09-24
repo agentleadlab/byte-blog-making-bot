@@ -265,6 +265,12 @@ class Secrets:
     # A second screen: the same cards again in the team's server, with nobody
     # tagged. Franklin's own channel keeps its mention.
     ringcentral_shared_channel_id: str | None = None
+    # Ryte The Goat: every channel RYTE talks in, copied into a twin in
+    # Franklin's own server - "original:copy" pairs of channel ids.
+    discord_copies: str | None = None
+    # Tag people in the copies only; the originals still show "@Luna" but
+    # notify nobody.
+    discord_tag_in_copies_only: bool = False
     # Names, comma-separated, of colleagues who text into the line - never an
     # agent waiting on a reply. The line's own owner is always one.
     ringcentral_team: str | None = None
@@ -404,6 +410,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 ringcentral_extension=_env("RINGCENTRAL_EXTENSION"),
                 ringcentral_channel_id=_env("RINGCENTRAL_CHANNEL_ID"),
                 ringcentral_shared_channel_id=_env("RINGCENTRAL_SHARED_CHANNEL_ID"),
+                discord_copies=_env("DISCORD_COPIES"),
+                discord_tag_in_copies_only=(_env("DISCORD_TAG_IN_COPIES_ONLY") or "").strip().lower()
+                in ("1", "true", "yes"),
                 ringcentral_team=_env("RINGCENTRAL_TEAM"),
                 ringcentral_faith_number=_env("RINGCENTRAL_FAITH_NUMBER"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),

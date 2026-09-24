@@ -174,6 +174,13 @@ class WilByteBot(discord.Client):
     def __init__(self, config: Config):
         super().__init__(intents=_intents())
         self.config = config
+        # Ryte The Goat: every channel's twin, when any are set.
+        from . import mirror
+
+        mirror.configure(
+            self, mirror.parse_pairs(getattr(config.secrets, "discord_copies", "") or ""),
+            tags_in_copies_only=getattr(config.secrets, "discord_tag_in_copies_only", False),
+        )
         self.tree = app_commands.CommandTree(self)
         self.run_lock = asyncio.Lock()
         self.publisher_task: asyncio.Task | None = None
@@ -408,8 +415,7 @@ def is_payment(message, config: Config) -> bool:
     exactly this.
     """
     where = config.secrets.discord_payment_channel_id
-    channel = getattr(message, "channel", None)
-    return bool(where) and str(getattr(channel, "id", "")) == str(where)
+    return bool(where) and str(where) in _channels_of(message)
 
 
 def is_dispute(message, config: Config) -> bool:
@@ -420,8 +426,7 @@ def is_dispute(message, config: Config) -> bool:
     channel for exactly this.
     """
     where = config.secrets.discord_dispute_channel_id
-    channel = getattr(message, "channel", None)
-    return bool(where) and str(getattr(channel, "id", "")) == str(where)
+    return bool(where) and str(where) in _channels_of(message)
 
 
 def is_watched(message, config: Config) -> bool:
@@ -445,9 +450,16 @@ def is_sop_channel(message, config: Config) -> bool:
     one nobody trusts.
     """
     channels = config.secrets.discord_sop_channel_ids
-    return bool(channels) and str(
-        getattr(message, "channel", None) and message.channel.id
-    ) in channels
+    return bool(channels) and bool(_channels_of(message) & set(channels))
+
+
+def _channels_of(message) -> set[str]:
+    """The channel a message is in - and, in a Ryte The Goat copy, the channel
+    it is a copy of, so what works in one works in its twin."""
+    from . import mirror
+
+    here = getattr(getattr(message, "channel", None), "id", None)
+    return {str(one) for one in (here, mirror.original_of(here)) if one is not None}
 
 
 def message_files(message) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -651,7 +663,11 @@ def is_allowed(
             for setting in ("ringcentral_channel_id", "ringcentral_shared_channel_id")
         )
     )
-    if channels and not ring_here and str(channel_id) not in set(channels) | allowed_anyway:
+    from . import mirror
+
+    # A copy in Ryte The Goat answers the same as the channel it copies.
+    a_copy = mirror.original_of(channel_id) is not None
+    if channels and not ring_here and not a_copy and str(channel_id) not in set(channels) | allowed_anyway:
         return False, "RYTE isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids
@@ -5928,10 +5944,20 @@ async def _ring_once(bot: "WilByteBot") -> None:
 async def _remember_post(sent, ring_id: str, *, lesson: str = "", also=None) -> None:
     """Which Discord message this went out as - and its copy on the team's
     screen - for replies to either."""
+    from . import mirror
+
     posted = getattr(sent, "id", None)
     if not isinstance(posted, int):
         return
     _RING_POSTS.add(posted)
+    # Its copy in Ryte The Goat, when there is one, before the team's.
+    twin = getattr(mirror.copy_of_message(posted), "id", None)
+    if isinstance(twin, int):
+        _RING_POSTS.add(twin)
+        try:
+            await asyncio.to_thread(partial(jobs.ring_posted, ring_id, twin, lesson=lesson, echo=True))
+        except Exception:
+            log.exception("Couldn't remember the copy of that message")
     echo = getattr(also, "id", None)
     try:
         await asyncio.to_thread(partial(jobs.ring_posted, ring_id, posted, lesson=lesson))
