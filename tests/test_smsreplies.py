@@ -291,3 +291,100 @@ def test_a_text_with_no_thread_falls_back_to_the_number():
     lone = Text(id="1", at="2026-09-24", inbound=True, agent="555", name="", said="hi")
 
     assert lone.key == "555"
+
+
+# --------------------------------------------- the team texting into the line
+
+# Arnold hands an agent over from his own cell, into the line Faith answers
+# from. RingCentral names the cell "Arnold Tarpley", the same as the line.
+ARNOLD_CELL = "+14125550177"
+ADRIAN = "+13125550188"
+
+
+def into(id_, at, text, *, who, number, conversation="C-adrian", inbound=True):
+    return smsreplies.from_record({
+        "id": id_, "creationTime": f"2026-09-24T{at}:00.000Z", "subject": text,
+        "direction": "Inbound" if inbound else "Outbound",
+        "from": {"phoneNumber": number, "name": who} if inbound
+                else {"phoneNumber": ARNOLD, "name": "Arnold Tarpley"},
+        "to": [{"phoneNumber": ARNOLD}] if inbound
+              else [{"phoneNumber": ADRIAN, "name": "Adrian Pacheco"}],
+        "conversationId": conversation,
+    })
+
+
+ADRIAN_THREAD = [
+    into(1, "11:43", "With Wolfpack so take care of him",
+         who="Arnold Tarpley", number=ARNOLD_CELL),
+    into(2, "11:44", "Hi faith this is Adrian Pacheco paid for OTP Trucker IUL leads",
+         who="Arnold Tarpley", number=ARNOLD_CELL),
+    into(3, "12:01", "👍", who="Adrian Pacheco", number=ADRIAN),
+]
+
+
+def test_the_owner_texting_in_is_the_team_not_an_agent():
+    smsreplies.mark_team(ADRIAN_THREAD, ["Arnold Tarpley"])
+
+    assert [one.team for one in ADRIAN_THREAD] == [True, True, False]
+
+
+def test_arnold_handing_an_agent_over_is_never_what_is_waiting():
+    """Read as an agent, Franklin is pinged to reply like Faith to Arnold."""
+    texts = smsreplies.mark_team(list(ADRIAN_THREAD), ["Arnold Tarpley"])
+
+    ((agent, name, tail),) = smsreplies.waiting(texts, since="2026-09-01")
+
+    assert name == "Adrian Pacheco"
+    assert [one.said for one in tail] == ["👍"]
+
+
+def test_nobody_but_the_team_texting_leaves_nobody_waiting():
+    texts = smsreplies.mark_team(list(ADRIAN_THREAD[:2]), ["Arnold Tarpley"])
+
+    assert smsreplies.waiting(texts, since="2026-09-01") == []
+
+
+def test_arnold_chiming_in_does_not_answer_the_agent_either():
+    """The agent asked, Arnold said something, Faith has not replied: the
+    agent is still waiting."""
+    texts = smsreplies.mark_team([
+        into(1, "11:00", "when do my leads start", who="Adrian Pacheco", number=ADRIAN),
+        into(2, "11:05", "Faith can you check this", who="Arnold Tarpley",
+             number=ARNOLD_CELL),
+    ], ["Arnold Tarpley"])
+
+    ((_agent, _name, tail),) = smsreplies.waiting(texts, since="2026-09-01")
+
+    assert [one.said for one in tail] == ["when do my leads start"]
+
+
+def test_the_team_is_never_learned_from_as_a_question():
+    texts = smsreplies.mark_team(list(ADRIAN_THREAD) + [
+        into(4, "12:05", "Welcome Adrian! So glad to have you", who="",
+             number=ADRIAN, inbound=False),
+    ], ["Arnold Tarpley"])
+
+    (done,) = smsreplies.exchanges(texts)
+
+    assert done.asked == "👍"
+    assert "Wolfpack" not in done.asked
+
+
+def test_what_faith_sent_is_never_the_team():
+    """Outbound is Faith, whoever the line is named for."""
+    texts = smsreplies.mark_team([
+        into(1, "12:05", "Welcome!", who="", number=ADRIAN, inbound=False),
+    ], ["Arnold Tarpley"])
+
+    assert texts[0].team is False
+
+
+def test_faiths_group_reply_is_hers_even_when_it_went_to_arnolds_other_number():
+    """A group reply can go first to Arnold's other line, which RingCentral
+    also names "Arnold Tarpley". Marked as the team, her answer would be
+    passed over and Jay left looking as if he were still waiting."""
+    texts = smsreplies.mark_team(list(JAY_THREAD[:2]), ["Arnold Tarpley"])
+
+    assert texts[1].team is False
+    assert smsreplies.waiting(texts, since="2026-09-01") == []
+    assert len(smsreplies.exchanges(texts)) == 1

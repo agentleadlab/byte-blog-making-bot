@@ -39,6 +39,9 @@ class Reading:
             raise self.error
         return list(self.records)
 
+    def owner(self):
+        return "Arnold Tarpley"
+
     def __enter__(self):
         return self
 
@@ -506,3 +509,45 @@ def test_half_set_up_is_said_once_by_the_loop(monkeypatch):
     asyncio.run(client.ring_loop(Bot()))
 
     assert heard.said == ["⚠ RingCentral is half set up — missing RINGCENTRAL_JWT in .env."]
+
+
+# ------------------------------------------------ the team, in the draft
+
+
+def test_the_line_owner_is_remembered_from_the_read(monkeypatch):
+    _ringing(monkeypatch, HISTORY)
+
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert data["owner"] == "Arnold Tarpley"
+
+
+def test_more_colleagues_can_be_named(monkeypatch):
+    """Anybody else who texts into the line from their own number."""
+    data = {"owner": "Arnold Tarpley", "texts": [
+        {"id": "1", "at": "2026-09-24", "inbound": True, "agent": "1",
+         "name": "Tre Tarpley", "said": "faith take care of this one"},
+        {"id": "2", "at": "2026-09-24", "inbound": True, "agent": "2",
+         "name": "Adrian Pacheco", "said": "hi"},
+    ]}
+
+    texts = jobs.ring_texts(NS(secrets=NS(ringcentral_team="Tre Tarpley, Andrea")), data)
+
+    assert [one.team for one in texts] == [True, False]
+
+
+def test_the_draft_is_told_which_lines_are_the_team(monkeypatch):
+    config = _drafting(monkeypatch)
+    handed = smsreplies.mark_team([
+        smsreplies.Text(id="1", at="1", inbound=True, agent="9", name="Arnold Tarpley",
+                        said="With Wolfpack so take care of him"),
+        smsreplies.Text(id="2", at="2", inbound=True, agent="8", name="Adrian Pacheco",
+                        said="👍"),
+    ], ["Arnold Tarpley"])
+
+    jobs.draft_like_faith(config, asked="👍", done=_done(), thread=handed)
+
+    prompt = Claude.asked[0]["messages"][0]["content"]
+    assert "Team: With Wolfpack so take care of him" in prompt
+    assert "Agent: 👍" in prompt
+    assert "Lines marked Team are colleagues" in prompt

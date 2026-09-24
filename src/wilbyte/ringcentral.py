@@ -68,6 +68,7 @@ class RingClient:
         self._token = ""
         self._token_until = 0.0
         self._extension_id = ""
+        self._owner = ""
 
     def __enter__(self) -> "RingClient":
         return self
@@ -155,6 +156,7 @@ class RingClient:
                 seen.append((number, name))
                 if wanted in (number.casefold(), name.casefold()):
                     self._extension_id = str(one.get("id") or "")
+                    self._owner = name
                     return self._extension_id
             if not (got.get("navigation") or {}).get("nextPage"):
                 break
@@ -167,6 +169,11 @@ class RingClient:
             f"No extension “{self._extension}” on the account. "
             + (f"It has: {listed}." if listed else "It listed none at all.")
         )
+
+    def owner(self) -> str:
+        """Whose line this is, as RingCentral names it - "Arnold Tarpley"."""
+        self.extension_id()
+        return self._owner
 
     def texts(self, *, since: str, until: str = "") -> list[dict]:
         """Every SMS on this one extension from `since` on, oldest first.

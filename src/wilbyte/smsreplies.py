@@ -34,6 +34,14 @@ class Text:
     #: was filed under nobody: not learned from, and Jay left looking as if he
     #: were still waiting.
     conversation: str = ""
+    #: Somebody on the team texting into the line rather than an agent.
+    #: Arnold texts Ext. 101 from his own cell to hand agents over - "With
+    #: Wolfpack so take care of him", "Hi faith this is Adrian Pacheco paid
+    #: for OTP Trucker IUL leads" - and read as an agent, that is Franklin
+    #: pinged to reply like Faith to Arnold, and Arnold's introduction taken
+    #: for Adrian's own words. Kept, for what it tells the draft; never an
+    #: agent waiting, and never a question Faith was answering.
+    team: bool = False
 
     @property
     def key(self) -> str:
@@ -125,6 +133,18 @@ def words_in(text: str) -> frozenset:
     )
 
 
+def mark_team(texts: list, names) -> list:
+    """Mark what the team sent into the line, by the name RingCentral shows.
+
+    By name, because RingCentral names a number from the company's contacts:
+    Arnold's cell arrives as "Arnold Tarpley", the same as the line itself.
+    """
+    wanted = {" ".join(str(one).split()).casefold() for one in names or () if str(one).strip()}
+    for one in texts:
+        one.team = bool(one.inbound and one.name and one.name.casefold() in wanted)
+    return texts
+
+
 def exchanges(texts: list) -> list:
     """Every time an agent texted and Faith answered, oldest first.
 
@@ -137,6 +157,8 @@ def exchanges(texts: list) -> list:
     for theirs in _by_conversation(texts).values():
         asked, answered = [], []
         for one in theirs:
+            if one.team:
+                continue
             if one.inbound:
                 if answered:
                     found.append(_exchange(asked, answered))
@@ -185,6 +207,10 @@ def waiting(texts: list, *, since: str) -> list:
     for theirs in _by_conversation(texts).values():
         tail = []
         for one in reversed(theirs):
+            # Arnold chiming in does not answer the agent, and is not the
+            # agent either: passed over, in both directions.
+            if one.team:
+                continue
             if not one.inbound:
                 break
             tail.insert(0, one)

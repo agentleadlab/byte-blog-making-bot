@@ -262,6 +262,9 @@ class Secrets:
     ringcentral_extension: str | None = None
     # Where the suggested replies go. Falls back to the board channel.
     ringcentral_channel_id: str | None = None
+    # Names, comma-separated, of colleagues who text into the line - never an
+    # agent waiting on a reply. The line's own owner is always one.
+    ringcentral_team: str | None = None
     # The Google Doc the segment copy goes into, a tab per agent —
     # "YOUTUBE LINKS FOR WEBSITE POSTING". Its link or its id. Needs the
     # documents scope on the token, which Sheets and Drive do not cover.
@@ -394,6 +397,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 ringcentral_jwt=_env("RINGCENTRAL_JWT"),
                 ringcentral_extension=_env("RINGCENTRAL_EXTENSION"),
                 ringcentral_channel_id=_env("RINGCENTRAL_CHANNEL_ID"),
+                ringcentral_team=_env("RINGCENTRAL_TEAM"),
                 segments_doc_id=_env("SEGMENTS_DOC_ID"),
                 ghl_blacklist_tag=_env("GHL_BLACKLIST_TAG") or "blacklisted",
                 tracker_sheet_id=_env("TRACKER_SHEET_ID"),

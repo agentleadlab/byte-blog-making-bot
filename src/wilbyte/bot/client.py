@@ -5665,7 +5665,7 @@ async def _ring_once(bot: "WilByteBot") -> None:
     if fresh and responder is not None:
         _RING_SAID.update(fresh)
         await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
-    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    texts = jobs.ring_texts(bot.config, data)
     done = smsreplies.exchanges(texts)
     if not problems and not _RING_READY and responder is not None:
         _RING_READY.append(True)

@@ -7399,14 +7399,36 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
         try:
             with ringcentral.open_ring(config.secrets) as reading:
                 records = reading.texts(since=_ring_iso(since))
+                owner = reading.owner()
         except ringcentral.RingError as exc:
             return data, [str(exc)]
         except Exception as exc:
             return data, [f"Couldn't read RingCentral: {_short(exc, 160)}"]
         texts = [one for one in (smsreplies.from_record(r) for r in records) if one]
         ringtexts.keep(data, texts)
+        if owner:
+            data["owner"] = owner
         ringtexts.save(data)
         return data, []
+
+
+def ring_texts(config: Config, data: dict) -> list:
+    """What is remembered, as Texts, with the team's own marked.
+
+    The team is whoever owns the line - texting it from another number is
+    the owner handing an agent over - and anybody named in RINGCENTRAL_TEAM.
+    Worked out each time rather than stored, so a name added to .env applies
+    to the months already read.
+    """
+    from .. import smsreplies
+
+    names = [str(data.get("owner") or "")] + [
+        one for one in str(
+            getattr(getattr(config, "secrets", None), "ringcentral_team", "") or ""
+        ).split(",")
+    ]
+    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    return smsreplies.mark_team(texts, names)
 
 
 def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:
@@ -7420,7 +7442,7 @@ def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:
 
     now = now or datetime.now(timezone.utc)
     data, problems = ring_catch_up(config, now=now)
-    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
+    texts = ring_texts(config, data)
     since = _ring_iso(now - timedelta(hours=RING_FRESH_HOURS))
     settled = _ring_iso(now - timedelta(seconds=RING_SETTLE_SECONDS))
     found = [
@@ -7474,7 +7496,8 @@ def draft_like_faith(
     for at, one in enumerate(examples, start=1):
         lines.append(f"EXAMPLE {at}\nAgent: {one.asked}\nFaith: {one.answered}")
     so_far = [
-        f"{'Agent' if one.inbound else 'Faith'}: {one.said}" for one in thread or []
+        f"{'Team' if one.team else 'Agent' if one.inbound else 'Faith'}: {one.said}"
+        for one in thread or []
     ]
     if not so_far or not so_far[-1].endswith(said):
         so_far.append(f"Agent: {said}")
@@ -7484,7 +7507,9 @@ def draft_like_faith(
         + "\n\n---\nThe conversation now, oldest first"
         + (f" (the agent is {name})" if name else "")
         + ":\n\n" + "\n".join(so_far)
-        + "\n\nWrite the reply Faith would send to the agent's last message."
+        + "\n\nWrite the reply Faith would send to the agent's last message. "
+        "Lines marked Team are colleagues texting into the thread - an agent "
+        "being handed over, say - and are context, not the agent."
     )
 
     config.secrets.require("anthropic_api_key")
