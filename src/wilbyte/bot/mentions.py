@@ -543,13 +543,6 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
     lowered = text.lower()
-
-    # "respond <what the agent texted>". Before anything else looks at the
-    # words, because the rest is an agent's text: "when do I go live" would be
-    # read as the launch question, "check my leads" as the health check. Only
-    # as the first word, so no copy brief is ever taken for it.
-    if _opens_with(text, ("respond",)):
-        return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
     # Command words are looked for in what was *typed*, not in the links. A
     # Zoom share link contains "zoom" and a blog URL can contain "status" or
     # "check" - words inside a URL are addresses, not instructions.
@@ -998,8 +991,6 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > her card. Also **Faith's sheet**. The newest one when a setup was redone
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an
 > inbox RYTE reads. PandaDoc's own are downloaded from PandaDoc for now
-> @RYTE **respond** + what an agent texted — the reply Faith would send.
-> Drafted for you, never sent
 > @RYTE **words** — the lead-type words you've taught me
 > @RYTE **words STNDRD = standard** — teach me one. A word can mean a family
 > (iul, fex, mtg, vet, widows, phnx), a tier (standard, plus) or a qualifier

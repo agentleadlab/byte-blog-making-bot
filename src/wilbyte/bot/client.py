@@ -942,10 +942,6 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_contract(responder, config, request.brief or "")
                 return
 
-            if request.action == "respond":
-                await _respond_like_faith(responder, config, request.brief or "")
-                return
-
             if request.action == "whenlive":
                 await _when_live(responder, config, request.brief or "")
                 return
@@ -5651,53 +5647,6 @@ def _ring_note(config: Config, agent: str, name: str, tail: list, drafted: dict)
         _ring_notes(drafted),
     ]
     return "\n".join(line for line in lines if line)
-
-
-async def _respond_like_faith(responder: Responder, config: Config, said: str) -> None:
-    """"@RYTE respond <what the agent texted>" - a draft on request.
-
-    For a text that came in some other way, or to see how she would answer
-    something before trusting the watcher with it.
-    """
-    from .. import ringcentral, ringtexts, smsreplies
-
-    asked = " ".join(str(said or "").split())
-    if not asked:
-        await responder.send(
-            "Paste what the agent said: `@RYTE respond can you pause my leads "
-            "this weekend?` — I'll write it the way Faith would answer."
-        )
-        return
-
-    problems = []
-    if ringcentral.configured(config.secrets):
-        data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
-    else:
-        data = await asyncio.to_thread(ringtexts.load)
-    texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
-    done = smsreplies.exchanges(texts)
-    if not done:
-        await responder.send(
-            "I have none of Faith's replies to learn from yet, so anything I "
-            "wrote would be my voice, not hers."
-            + ("" if ringcentral.configured(config.secrets) else
-               "\n-# RingCentral isn't set up in .env — RINGCENTRAL_CLIENT_ID, "
-               "RINGCENTRAL_CLIENT_SECRET, RINGCENTRAL_JWT and RINGCENTRAL_EXTENSION.")
-            + "".join(f"\n⚠ {one}" for one in problems)
-        )
-        return
-    try:
-        drafted = await asyncio.to_thread(
-            partial(jobs.draft_like_faith, config, asked=asked, done=done)
-        )
-    except Exception as exc:
-        await responder.send(f"Couldn't draft that: {_readable(exc)}")
-        return
-    await responder.send("\n".join(line for line in (
-        "**Reply like Faith:**",
-        _fenced(drafted["reply"]),
-        _ring_notes(drafted, f"from {len(done)} of her past replies"),
-    ) if line))
 
 
 async def agent_loop(bot: "WilByteBot") -> None:
