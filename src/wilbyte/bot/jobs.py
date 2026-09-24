@@ -7393,6 +7393,14 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
     with _RING_FILE:
         data = ringtexts.load()
         last = _ring_when(ringtexts.newest(data))
+        # Read from the start again, once, if what is remembered was read
+        # before outgoing texts carried the number they went from. Without
+        # it Tre's texts from (412) and Faith's from (878) cannot be told
+        # apart, and the months already read would go on teaching Tre's way
+        # of writing as hers. The re-read replaces each text by its id.
+        sent = [one for one in data.get("texts") or [] if not one.get("inbound")]
+        if sent and not any("sender" in one for one in sent):
+            last = None
         since = (last - timedelta(minutes=10)) if last else (
             now - timedelta(days=RING_FIRST_DAYS)
         )

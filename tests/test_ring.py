@@ -611,3 +611,23 @@ def test_faiths_number_can_be_said_outright(monkeypatch):
     assert [one.team for one in worked_out][-1] is True
     assert [one.team for one in said_so][:5] == [True] * 5
     assert said_so[-1].team is False
+
+
+
+def test_texts_read_before_senders_were_kept_are_read_again_once(monkeypatch):
+    """Without the sender, Tre's texts and Faith's cannot be told apart, and
+    the months already read would go on teaching Tre's writing as hers."""
+    old = {"texts": [
+        {"id": "1", "at": "2026-09-20T10:00:00.000Z", "inbound": False,
+         "agent": "5", "name": "", "said": "hi"},
+    ], "pinged": []}
+    ringtexts.save(old)
+    box = _ringing(monkeypatch, HISTORY)
+
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    first = datetime.fromisoformat(box.asked[0].replace("Z", "+00:00"))
+    second = datetime.fromisoformat(box.asked[1].replace("Z", "+00:00"))
+    assert (NOW - first).days == jobs.RING_FIRST_DAYS, "not read again from the start"
+    assert (NOW - second).days < 5, "read from the start every time"
