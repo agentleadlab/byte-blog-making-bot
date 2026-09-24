@@ -7,6 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -3404,7 +3405,48 @@ def _lines_from(
     return [made] if made is not None else []
 
 
+#: Held while a batch of comments is being read, so two looks at the same
+#: moment wait for one reading rather than making two. The watcher and a
+#: hand-typed "@RYTE tags" both run in threads, and both reading the same
+#: comment at once is exactly how it came back two different ways.
+_READING_TAGS = threading.Lock()
+
+
 def _ask_about_tags(config: Config, notes: list, people: dict) -> dict:
+    """{comment id: [{"person", "summary", "kind"}, ...]}, the same every time.
+
+    The first reading of a comment is kept and reused - see `tagreads`. Only
+    comments not read before go to Claude. A reading that fails is not kept,
+    so the next look tries again rather than remembering nothing.
+    """
+    from .. import tagreads
+
+    with _READING_TAGS:
+        held = tagreads.load()
+        who = tagreads.people_key(people)
+        written: dict = {}
+        fresh = []
+        for note in notes:
+            key = tagreads.key_for(note.comment_id, note.text, who)
+            if key in held:
+                if held[key]:
+                    written[note.comment_id] = held[key]
+            else:
+                fresh.append(note)
+        if not fresh:
+            return written
+
+        got = _read_tags_fresh(config, fresh, people)
+        for note in fresh:
+            lines = got.get(note.comment_id) or []
+            held[tagreads.key_for(note.comment_id, note.text, who)] = lines
+            if lines:
+                written[note.comment_id] = lines
+        tagreads.save(held)
+        return written
+
+
+def _read_tags_fresh(config: Config, notes: list, people: dict) -> dict:
     """{comment id: [{"person", "summary", "kind"}, ...]}, written by Claude.
 
     A list rather than one entry, because one comment is often several jobs
