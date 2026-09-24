@@ -4429,3 +4429,35 @@ def test_the_invoice_line_reaches_the_checklist_readably():
     )
 
     assert agents.checklist_item(one.url, one.stated).endswith("25 x MTG Standard")
+
+
+# "Fresh Veterans: 35" - the leads, a colon, and how many.
+
+FORGIONE = (
+    "Christopher forgione\n\n631-555-0142\n\nsomeone@example.com\n\nOH, VA, SC, NJ\n\n"
+    "Fresh Veterans: 35\n\nAEP\n\nLIVE EOD, SEPT 24"
+)
+
+
+def test_the_leads_before_a_colon_are_the_leads_not_a_label():
+    """Christopher Forgione's card sat in In Que: "Fresh Veterans:" was read
+    as a label like "Lead Type:", and all that was left of the order was 35."""
+    assert agents.tidy_lead_type("Fresh Veterans: 35") == "35 Fresh Veterans"
+    assert agents.tidy_lead_type("OTP FEX: 20 leads") == "20 OTP FEX"
+
+
+def test_a_real_label_before_a_colon_still_comes_off():
+    assert agents.tidy_lead_type("Lead Type: OTP VETS") == "OTP VETS"
+    assert agents.tidy_lead_type("Lead Type: 35") == "35"
+    assert agents.tidy_lead_type("States: 4") == "4"
+
+
+def test_a_card_written_that_way_is_filed():
+    agent = agents.read_agent(
+        {"id": "c", "name": "NEW AGENT- Christopher forgione"},
+        text=FORGIONE, today=date(2026, 9, 24),
+    )
+
+    assert agent.stated == "35 Fresh Veterans"
+    assert agent.launch == date(2026, 9, 24)
+    assert agents.cannot_read(agent, needs_lead_type=True) == ""

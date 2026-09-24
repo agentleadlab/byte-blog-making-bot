@@ -774,6 +774,12 @@ _RATE_TAIL = re.compile(r"\s*@\s*\$.*$", re.DOTALL)
 # label is the form's word for the field, not anything about the leads.
 _LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
 
+# The leads, a colon, and how many: "Fresh Veterans: 35", "OTP FEX: 20 leads".
+_COUNT_AFTER = re.compile(
+    r"^(?P<what>[A-Za-z][A-Za-z '&/+-]{1,40}?)\s*:\s*(?P<many>\d{1,4})\s*(?:leads?)?\s*$",
+    re.IGNORECASE,
+)
+
 
 # How somebody types an order into a card: "let's do 40 Text-Verified Veteran
 # Leads". The sentence is not the lead type, and it goes onto three people's
@@ -870,6 +876,13 @@ def tidy_lead_type(phrase: str) -> str:
     that does.
     """
     said = " ".join((phrase or "").split())
+    # "Fresh Veterans: 35" is not a label and its value. The part before the
+    # colon is what the leads are and the part after is how many - read as a
+    # label, it came back as "35", the leads went with the label, and
+    # Christopher Forgione's card sat in In Que with no lead type.
+    counted = _COUNT_AFTER.match(said)
+    if counted and (families_in(counted.group("what")) or qualifiers_of(counted.group("what"))):
+        said = f"{counted.group('many')} {counted.group('what').strip()}"
     said = _LABEL_PREFIX.sub("", said)
     said = _PRICE_PREFIX.sub("", said).strip(" -–—:")
     said = _RATE_TAIL.sub("", said)
