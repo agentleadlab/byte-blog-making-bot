@@ -2414,15 +2414,23 @@ def test_one_of_each_is_reported_as_the_serious_one():
 # ------------------------------------------------- unticked, on a day you name
 
 
-def _unticked(monkeypatch, config, said, *, found=(), top_ups=(), ticked=None):
-    """Run the handler and report what reached the board. (asked, sent)"""
+def _unticked(monkeypatch, config, said, *, found=(), top_ups=(), ticked=None,
+              soon=()):
+    """Run the handler and report what reached the board. (asked, sent)
+
+    `found` answers the question asked; `soon` answers the look ahead that a
+    clean named day now gets as well. `asked["day"]` is the first question,
+    and `asked["calls"]` is every one.
+    """
     from wilbyte.bot import client
 
-    asked = {}
+    asked = {"calls": []}
 
     def reading(cfg, *, day=None, ahead=True):
-        asked["day"], asked["ahead"] = day, ahead
-        return list(found), []
+        asked["calls"].append((day, ahead))
+        asked.setdefault("day", day)
+        asked.setdefault("ahead", ahead)
+        return (list(found) if len(asked["calls"]) == 1 else list(soon)), []
 
     def top_up_check(cfg, *, day=None, ahead=True, found=None):
         asked["offered"] = list(found or [])
@@ -6772,3 +6780,57 @@ def test_an_unpressed_top_up_does_not_hold_up_the_board(monkeypatch, config):
 
     assert marked == [step], "the step was not recorded as done"
     assert offered, "the top-ups were never offered at all"
+
+
+
+# ------------- "all ticked" for the day asked is not "all clear" for today
+
+
+THURSDAY = [
+    {"name": "NEW AGENT- VANESSA POWELL", "url": "", "when": "Thu Sep 24"},
+    {"name": "New Agent - Don Alimi", "url": "", "when": "Thu Sep 24"},
+    {"name": "New Agent - Brandon Sena", "url": "", "when": "Thu Sep 24"},
+    {"name": "New Agent - Marcel Trifan", "url": "", "when": "Thu Sep 24"},
+]
+
+
+def test_a_clean_day_still_says_what_is_about_to_go_live_unticked(config, monkeypatch):
+    """"unticked yesterday" at ten past one in the morning: every Wednesday
+    launch was ticked, so "all ticked" was the whole answer - while four
+    Thursday launches, hours away, sat unticked on the card he had open."""
+    asked, sent = _unticked(
+        monkeypatch, config, "unticked yesterday", found=[], soon=THURSDAY,
+    )
+    words = " ".join(str(getattr(one, "content", one) or "") for one in sent)
+
+    assert asked["calls"][0][0] == date(2026, 9, 3), "the question asked came first"
+    assert asked["calls"][1] == (None, True), "never looked ahead"
+    assert "has been ticked for" in words, "dropped the answer to what was asked"
+    assert "But 4 going live" in words
+
+
+def test_a_clean_day_with_nothing_coming_is_plainly_clean(config, monkeypatch):
+    asked, sent = _unticked(monkeypatch, config, "unticked yesterday", found=[])
+    words = " ".join(str(getattr(one, "content", one) or "") for one in sent)
+
+    assert "has been ticked for" in words
+    assert "But" not in words
+
+
+def test_a_day_with_its_own_unticked_does_not_also_look_ahead(config, monkeypatch):
+    """It already has something to say, about the day that was asked."""
+    asked, _ = _unticked(
+        monkeypatch, config, "unticked yesterday",
+        found=[{"name": "New Agent - Someone", "url": "", "when": "Thu Sep 03"}],
+        soon=THURSDAY,
+    )
+
+    assert len(asked["calls"]) == 1
+
+
+def test_no_day_named_is_asked_once(config, monkeypatch):
+    """The plain question already looks ahead - asking twice would be the
+    same question twice."""
+    asked, _ = _unticked(monkeypatch, config, "unticked", found=[], soon=THURSDAY)
+
+    assert asked["calls"] == [(None, True)]

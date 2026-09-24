@@ -1404,6 +1404,29 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
     if problems:
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
+    if not found and day is not None:
+        # The day asked about is clean. Whatever is running out of time is
+        # still worth saying, because "all ticked" reads as "all clear".
+        # Franklin asked "unticked yesterday" at ten past one in the morning:
+        # every Wednesday launch was ticked, so that was the whole answer -
+        # while four Thursday launches, hours away, sat unticked on the card
+        # he had open.
+        try:
+            soon, _trouble = await asyncio.to_thread(
+                partial(jobs.unmarked_agents, ahead=True), config, day=None,
+            )
+        except PIPELINE_ERRORS:
+            soon = []
+        if soon:
+            ahead = dailyops.days_chased(_today(config))
+            await responder.send(
+                f"Every New Agent card in {dailyops.DONE} has been ticked for "
+                f"{covers}. **But {len(soon)} going live {ahead} "
+                f"{'isn' if len(soon) == 1 else 'aren'}'t:**",
+                embed=_unmarked_card(soon, days=ahead),
+            )
+            await _offer_the_top_ups(responder, config, soon)
+            return
     if not found:
         await responder.send(
             f"Every New Agent card in {dailyops.DONE} has been ticked"
