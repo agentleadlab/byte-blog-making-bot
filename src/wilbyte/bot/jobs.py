@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import ghl, pipeline, prefs, youtube
@@ -7934,6 +7934,10 @@ REASON_BATCH = 20
 REASON_SETTLE_MINUTES = 60
 
 
+#: Older than any card Trello ever made - for a card whose id says nothing.
+_NEVER = datetime.fromtimestamp(0, tz=timezone.utc)
+
+
 def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | None:
     """The agent's New Agent card, found by the number texting or by name.
 
@@ -7962,7 +7966,13 @@ def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | No
             found = [one for one in agents.named_that(name, cards)]
         if not found:
             return None
-        card = max(found, key=lambda one: str(one.get("dateLastActivity") or ""))
+        # By when the card was made, not when it was last touched: RYTE keeps
+        # the unticked ones floated to the top of Done, and moving an old
+        # order's card there touches it without making it the newest order.
+        card = max(found, key=lambda one: (
+            agents.made_at(str(one.get("id") or "")) or _NEVER,
+            str(one.get("dateLastActivity") or ""),
+        ))
         lists = {
             str(one.get("id") or ""): str(one.get("name") or "")
             for one in client.board_lists(config.secrets.trello_board_id)
@@ -8926,3 +8936,47 @@ def faith_answers(config: Config, done: list, question: str) -> dict:
     if not answer:
         raise ValueError("The answer came back empty.")
     return {"answer": answer, "matched": matched, "links": links, "terms": terms}
+
+
+# -------------------------------------------- unticked cards on top of Done
+
+#: Cards floated per pass, at most. The first pass can find weeks of them.
+FLOAT_AT_MOST = 60
+
+
+def float_unticked(config: Config) -> tuple[list[str], list[str]]:
+    """Keep every unticked New Agent card at the top of Done. (moved, problems).
+
+    "i want ryte to always move unticked new agent card above / on top" - the
+    green tick is how the team says an agent is set up, and one without it
+    sitting under a hundred and fifty finished cards is one nobody sees.
+
+    Only what is out of place moves: the unticked cards already on top stay
+    where they are, and the ones below the first ticked card go up above
+    them, keeping their order among themselves. Once ticked, a card is left
+    where it is - the next unticked one below it floats past it.
+    """
+    from .. import agents, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        done = trello.find_list(lists, agents.DONE)
+        if done is None:
+            return [], [f"The board has no list called {agents.DONE!r}"]
+        done_id = str(done.get("id") or "")
+        cards = client.list_cards(done_id)
+        unticked = [
+            not card.get("dueComplete") and agents.is_agent_card(str(card.get("name") or ""))
+            for card in cards
+        ]
+        top = next((at for at, waiting in enumerate(unticked) if not waiting), len(cards))
+        below = [card for at, card in enumerate(cards) if at > top and unticked[at]]
+        below = below[:FLOAT_AT_MOST]
+        # Bottom one first, so each goes on top of the last and they end up
+        # in the order they were in.
+        for card in reversed(below):
+            client.move_card(str(card.get("id") or ""), done_id, position="top")
+        return [str(card.get("name") or "") for card in below], []
+    finally:
+        client.close()

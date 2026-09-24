@@ -192,6 +192,7 @@ class WilByteBot(discord.Client):
         self.caption_task: asyncio.Task | None = None
         self.board_task: asyncio.Task | None = None
         self.agent_task: asyncio.Task | None = None
+        self.float_task: asyncio.Task | None = None
         self.setup_task: asyncio.Task | None = None
         self.day_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
@@ -279,6 +280,12 @@ class WilByteBot(discord.Client):
             self.agent_task is None or self.agent_task.done()
         ):
             self.agent_task = self.loop.create_task(agent_loop(self))
+        # Unticked agents kept on top of Done - the same switch: it is about
+        # the agents, and it moves cards.
+        if self.config.secrets.trello_agents_auto and (
+            self.float_task is None or self.float_task.done()
+        ):
+            self.float_task = self.loop.create_task(float_loop(self))
         # Same switch: both are about the agents rather than about the board's
         # own routine, and wanting one is wanting the other.
         if self.config.secrets.trello_agents_auto and (
@@ -6308,6 +6315,28 @@ async def _ask_about_faith(responder: Responder, config: Config, question: str) 
         question, got["answer"], links=got["links"], matched=len(got["matched"]),
         read=len(done), stale=bool(problems),
     ))
+
+
+#: How often Done is checked for unticked cards sunk below ticked ones. One
+#: request when nothing is out of place.
+FLOAT_CHECK_SECONDS = 120
+
+
+async def float_loop(bot: "WilByteBot") -> None:
+    """Keep the unticked New Agent cards on top of Done, all day. Quietly -
+    it is tidying, and a message every time a card floats is noise."""
+    while not bot.is_closed():
+        try:
+            moved, problems = await asyncio.to_thread(jobs.float_unticked, bot.config)
+            if moved:
+                log.info("Floated to the top of Done: %s", ", ".join(moved))
+            for one in problems:
+                log.warning("%s", one)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Couldn't keep Done in order; will try again shortly")
+        await asyncio.sleep(FLOAT_CHECK_SECONDS)
 
 
 async def agent_loop(bot: "WilByteBot") -> None:
