@@ -1745,3 +1745,82 @@ def test_ryte_answers_on_the_team_screen_too():
     assert client.is_allowed(channel_id=2, user=NS(), config=config)[0]
     assert client.is_allowed(channel_id=1, user=NS(), config=config)[0]
     assert not client.is_allowed(channel_id=3, user=NS(), config=config)[0]
+
+
+# ------------------------------------------------ a year of her texts, once
+
+
+class Reaching(Reading):
+    """RingCentral answering each read with the texts in its window."""
+
+    def __init__(self, records, **kw):
+        super().__init__(records, **kw)
+        self.windows = []
+
+    def texts(self, *, since, until=""):
+        self.windows.append((since, until))
+        if self.error:
+            raise self.error
+        return [one for one in self.records
+                if one["creationTime"] >= since and (not until or one["creationTime"] < until)]
+
+
+def _stored(minutes_ago):
+    one = smsreplies.from_record(record(f"s{minutes_ago}", minutes_ago, "stored"))
+    return one.as_dict() | {"sender": ""}
+
+
+def test_the_months_before_the_first_read_are_read_once(monkeypatch):
+    """"learning from 1680 of Faith's replies (6000 texts)" - the first read
+    went back 120 days and the cap dropped the rest. Both are raised, and what
+    is older is still on RingCentral."""
+    days = 24 * 60
+    old = record("old", 200 * days, "can I get a refund", inbound=True)
+    box = Reaching([old, record("new", 5, "hi")])
+    monkeypatch.setattr(ringcentral, "open_ring", lambda secrets: box)
+    ringtexts.save({"texts": [_stored(100 * days), _stored(60)], "pinged": []})
+
+    data, problems = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+    again, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert problems == []
+    since, until = box.windows[1]
+    assert (NOW - jobs._ring_when(since)).days == jobs.RING_FIRST_DAYS
+    assert until == _stored(100 * days)["at"]
+    assert "old" in {one["id"] for one in data["texts"]}
+    assert data["texts"][0]["id"] == "old", "kept oldest first"
+    assert data["reach"] == jobs.RING_FIRST_DAYS
+    assert len(box.windows) == 3, "reached back again on the next read"
+
+
+def test_reaching_back_failing_costs_that_read_nothing(monkeypatch):
+    box = Reaching([record("new", 5, "hi")])
+    monkeypatch.setattr(ringcentral, "open_ring", lambda secrets: box)
+    ringtexts.save({"texts": [_stored(100 * 24 * 60)], "pinged": []})
+    reads = []
+
+    def texts(*, since, until=""):
+        reads.append(until)
+        if until:
+            raise ringcentral.RingError("rate limited")
+        return [record("new", 5, "hi")]
+
+    box.texts = texts
+    data, problems = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert problems == []
+    assert "new" in {one["id"] for one in data["texts"]}
+    assert "reach" not in data, "gave up on the older months after one failure"
+
+
+def test_the_very_first_read_already_went_all_the_way_back(monkeypatch):
+    box = Reaching(HISTORY)
+    monkeypatch.setattr(ringcentral, "open_ring", lambda secrets: box)
+
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert len(box.windows) == 1 and data["reach"] == jobs.RING_FIRST_DAYS
+
+
+def test_a_couple_of_years_of_texts_are_kept():
+    assert ringtexts.KEEP_TEXTS >= 40000

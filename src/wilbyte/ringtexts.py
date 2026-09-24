@@ -18,9 +18,12 @@ from .state import _state_dir
 
 TEXTS_PATH = _state_dir() / "ring-texts.json"
 
-#: How many texts are kept. A few months of one person's messages with every
-#: agent, which is plenty to learn how she writes.
-KEEP_TEXTS = 6000
+#: How many texts are kept. Six thousand filled inside four months - "learning
+#: from 1680 of Faith's replies (6000 texts)" - and everything older was
+#: dropped as the new came in. This is a couple of years of the line at that
+#: rate: the refunds, the pauses and the price talk that come round once a
+#: season stay in reach.
+KEEP_TEXTS = 40000
 
 #: How many pinged-about message ids are kept. Days of them.
 KEEP_PINGED = 2000

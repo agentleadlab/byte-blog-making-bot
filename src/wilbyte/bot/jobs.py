@@ -7343,9 +7343,9 @@ def _append_month(client, sheet_id: str, title: str, tab_id, lines: list):
 
 # ------------------------------------------------ replying the way Faith does
 
-#: How far back the first read of Faith's texts goes. Months of her replies is
-#: plenty to learn how she handles each kind of message.
-RING_FIRST_DAYS = 120
+#: How far back the first read of Faith's texts goes - a year, so what comes
+#: round once a season is in it.
+RING_FIRST_DAYS = 365
 
 #: Only agent texts newer than this get a suggestion. The first run after
 #: setting this up would otherwise ping about every agent who ever had the
@@ -7430,9 +7430,45 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
             data["owner"] = owner
         if numbers:
             data["numbers"] = numbers
+        if last is None:
+            # This read went all the way back already.
+            data["reach"] = RING_FIRST_DAYS
+        _reach_back(config, data, now=now)
         _learn_what_was_sent(config, data, now=now)
         ringtexts.save(data)
         return data, []
+
+
+def _reach_back(config: Config, data: dict, *, now) -> None:
+    """Once: read what is older than the oldest text remembered, back to
+    RING_FIRST_DAYS.
+
+    The first read went back 120 days and kept six thousand texts; both
+    have been raised, and the months before them are still on RingCentral.
+    Once rather than every minute - `reach` says how far back has been read
+    - and a read that fails is tried again on the next pass, costing that
+    pass nothing.
+    """
+    import logging
+
+    from .. import ringcentral, ringtexts, smsreplies
+
+    if int(data.get("reach") or 0) >= RING_FIRST_DAYS:
+        return
+    texts = data.get("texts") or []
+    oldest = _ring_when(texts[0].get("at")) if texts else None
+    since = now - timedelta(days=RING_FIRST_DAYS)
+    if oldest is not None and oldest > since:
+        try:
+            with ringcentral.open_ring(config.secrets) as reading:
+                records = reading.texts(since=_ring_iso(since), until=_ring_iso(oldest))
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning(
+                "Couldn't read the older texts yet; trying again next time", exc_info=True
+            )
+            return
+        ringtexts.keep(data, [one for one in (smsreplies.from_record(r) for r in records) if one])
+    data["reach"] = RING_FIRST_DAYS
 
 
 def _learn_what_was_sent(config: Config, data: dict, *, now) -> None:
