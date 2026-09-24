@@ -5842,9 +5842,10 @@ async def _ring_once(bot: "WilByteBot") -> None:
                 "name": name,
             },
         ))
-        sent = await responder.send(_ring_note(
+        content, card = _ring_card(
             bot.config, agent, name, tail, drafted, card=known.get("card"),
-        ))
+        )
+        sent = await responder.send(content or None, embed=card)
         await _remember_post(sent, tail[-1].id)
 
     if done and not problems:
@@ -5888,37 +5889,15 @@ async def _study(bot, responder) -> None:
     lessons = list((await asyncio.to_thread(ringtexts.load)).get("lessons") or [])
     used, out_of = smsreplies.used_count(lessons)
     for lesson in got["explained"]:
-        sent = await responder.send(_ring_lesson(lesson, used=used, out_of=out_of))
+        sent = await responder.send(embed=_ring_lesson(lesson, used=used, out_of=out_of))
         await _remember_post(sent, "", lesson=jobs._lesson_id(lesson))
 
 
-def _quoted(text: str, most: int = 400) -> str:
-    text = str(text or "")
-    if len(text) > most:
-        text = text[:most].rstrip() + "…"
-    return "\n".join("> " + line for line in text.splitlines() or [""])
 
-
-def _ring_lesson(lesson: dict, *, used: int = 0, out_of: int = 0) -> str:
+def _ring_lesson(lesson: dict, *, used: int = 0, out_of: int = 0):
     """What was learned from one suggestion that was not sent as written."""
     who = lesson.get("name") or _ring_number(str(lesson.get("agent") or "")) or "an agent"
-    lines = [f"📝 **Learned from {who}** — my suggestion wasn't sent as written."]
-    lines += ["**I suggested:**", _quoted(lesson.get("suggested"))]
-    if lesson.get("sent"):
-        lines += ["**What was sent:**", _quoted(lesson.get("sent"))]
-    else:
-        lines.append("**Nothing was texted back.**")
-    if lesson.get("note"):
-        lines.append(f"**You told me:** {lesson['note']}")
-    lines.append(f"**Why:** {lesson.get('why')}")
-    if lesson.get("rule"):
-        lines.append(f"**Next time:** {lesson['rule']}")
-    foot = []
-    if out_of:
-        foot.append(f"Used as written or nearly: {used} of my last {out_of}")
-    foot.append("Wrong reason? Reply to this and tell me the real one")
-    lines.append("-# " + " · ".join(foot))
-    return "\n".join(lines)
+    return embeds.ring_lesson(lesson, who=f"From {who}", used=used, out_of=out_of)
 
 
 def _is_ring_reply(message) -> bool:
@@ -5974,23 +5953,6 @@ def _ring_number(agent: str) -> str:
     )
 
 
-def _fenced(text: str) -> str:
-    """A code block Discord will not end early. A draft containing three
-    backticks would close the block halfway through and spill the rest."""
-    return "```\n" + str(text).replace("```", "`\u200b``") + "\n```"
-
-
-def _ring_notes(drafted: dict, *extra: str) -> str:
-    notes = []
-    if drafted.get("blanks"):
-        notes.append("fill in " + ", ".join(drafted["blanks"]))
-    if drafted.get("why"):
-        notes.append(drafted["why"])
-    checked = list(dict.fromkeys(drafted.get("checked") or []))
-    if checked:
-        notes.append("checked " + ", ".join(checked))
-    notes += [one for one in extra if one]
-    return ("-# " + " · ".join(notes)) if notes else ""
 
 
 async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
@@ -6028,35 +5990,21 @@ async def _write_the_playbook(bot, responder, data: dict, done: list) -> None:
     )
 
 
-def _ring_note(
+def _ring_card(
     config: Config, agent: str, name: str, tail: list, drafted: dict,
     *, card: dict | None = None,
-) -> str:
-    """The ping: who, what they said, and how Faith would answer it."""
+):
+    """The ping: (who to tap on the shoulder, the card).
+
+    The mention outside the card, where Discord notifies for it; inside an
+    embed it renders and nobody hears it.
+    """
     when = jobs._ring_when(tail[-1].at) if tail else None
-    local = when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None
-    said = "\n".join(one.said for one in tail)
-    if len(said) > 700:
-        said = said[:700].rstrip() + "…"
-    who = f"**{name}** · {_ring_number(agent)}" if name else f"**{_ring_number(agent)}**"
-    head = " ".join(bit for bit in (
-        _unmarked_ping(config), f"📱 {who}",
-        f"· {local:%-I:%M %p}" if local else "",
-    ) if bit)
-    known = ""
-    if card and card.get("url"):
-        known = f"-# Knew them from [their card](<{card['url']}>)" + (
-            f" · {card['list']}" if card.get("list") else ""
-        )
-    lines = [
-        head,
-        "> " + "\n> ".join(said.splitlines()),
-        "**Reply like Faith:**",
-        _fenced(drafted["reply"]),
-        _ring_notes(drafted),
-        known,
-    ]
-    return "\n".join(line for line in lines if line)
+    who = f"{name} · {_ring_number(agent)}" if name else _ring_number(agent)
+    return _unmarked_ping(config), embeds.ring_ping(
+        who=who, said="\n".join(one.said for one in tail), drafted=drafted,
+        when=when, card=card,
+    )
 
 
 async def _respond_like_faith(
@@ -6166,13 +6114,13 @@ async def _respond_like_faith(
     except Exception as exc:
         await responder.send(f"Couldn't draft that: {_readable(exc)}")
         return
-    head = f"**Reply like Faith{f' to {name}' if name else ''}:**"
-    await responder.send("\n".join(line for line in (
-        head,
-        _fenced(drafted["reply"]),
-        _ring_notes(drafted),
-        *(f"⚠ {one}" for one in skipped),
-    ) if line))
+    await responder.send(
+        "\n".join(f"⚠ {one}" for one in skipped) or None,
+        embed=embeds.ring_ping(
+            who=f"Reply like Faith to {name}" if name else "Reply like Faith",
+            said="", drafted=drafted, card=known.get("card"),
+        ),
+    )
 
 
 async def _ask_about_faith(responder: Responder, config: Config, question: str) -> None:
@@ -6213,19 +6161,10 @@ async def _ask_about_faith(responder: Responder, config: Config, question: str) 
             f"Try asking it another way.{stale}"
         )
         return
-    answer = got["answer"]
-    if len(answer) > 1500:
-        answer = answer[:1500].rstrip() + "…"
-    lines = [answer]
-    if got["links"]:
-        lines.append("-# Links in those answers, counted: " + " · ".join(
-            f"{one['times']}× <{one['link']}>" for one in got["links"][:4]
-        ))
-    lines.append(
-        f"-# From {len(got['matched'])} of her replies that matched, out of "
-        f"{len(done)} read from RingCentral{stale}"
-    )
-    await responder.send("\n".join(lines))
+    await responder.send(embed=embeds.ring_answer(
+        question, got["answer"], links=got["links"], matched=len(got["matched"]),
+        read=len(done), stale=bool(problems),
+    ))
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

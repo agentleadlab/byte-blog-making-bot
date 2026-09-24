@@ -229,12 +229,24 @@ def test_with_none_of_her_replies_it_will_not_draft_in_its_own_voice(monkeypatch
 # -------------------------------------------------------------- the ping
 
 
+def flat(content=None, embed=None) -> str:
+    """A message as text - what it says, card and all - for asserting on."""
+    parts = [str(content or "")]
+    if embed is not None:
+        parts += [embed.author.name or "", embed.title or "", embed.description or ""]
+        parts += [f"{one.name}: {one.value}" for one in embed.fields]
+        parts += [embed.footer.text or ""]
+    return "\n".join(one for one in parts if one)
+
+
 class Heard:
     def __init__(self):
         self.said = []
+        self.cards = []
 
     async def send(self, content=None, **kw):
-        self.said.append(str(content or ""))
+        self.cards.append(kw.get("embed"))
+        self.said.append(flat(content, kw.get("embed")))
 
 
 def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
@@ -306,7 +318,7 @@ def test_what_to_fill_in_is_said(monkeypatch):
         "reply": "They're paused until [date]", "why": "", "blanks": ["date"],
     })
 
-    assert "fill in date" in said[0]
+    assert "✏️ Fill in: date" in said[0]
 
 
 def test_a_draft_cannot_break_out_of_its_box(monkeypatch):
@@ -315,7 +327,7 @@ def test_a_draft_cannot_break_out_of_its_box(monkeypatch):
         "reply": "use ``` this", "why": "", "blanks": [],
     })
 
-    body = said[0].split("**Reply like Faith:**\n", 1)[1]
+    body = said[0].split("**Reply like Faith**\n", 1)[1]
     assert body.count("```") == 2
 
 
@@ -1142,7 +1154,7 @@ def test_the_ping_is_drafted_with_what_is_known_and_graded_later(monkeypatch):
     })
 
     assert marked == ["5"]
-    assert "Knew them from [their card](<https://trello.com/c/adrian>) · In Que" in said[0]
+    assert "Their card: [In Que](https://trello.com/c/adrian)" in said[0]
     pending = jobs.ring_pinged.pending
     assert pending["draft"] == "Hi Shelby! Yes 😊"
     assert pending["asked"] == "are my leads paused?"
@@ -1487,7 +1499,7 @@ class Posted:
         self.said, self.next = [], 700
 
     async def send(self, content=None, **kw):
-        self.said.append(str(content or ""))
+        self.said.append(flat(content, kw.get("embed")))
         self.next += 1
         return NS(id=self.next)
 
@@ -1506,10 +1518,10 @@ def test_each_lesson_is_told_to_franklin(monkeypatch):
     asyncio.run(client._study(NS(config=None), here))
 
     (said,) = here.said
-    assert said.startswith("📝 **Learned from Adrian Pacheco**")
+    assert said.startswith("📝 Learned something\nFrom Adrian Pacheco")
     assert "> Hi! They start [launch date] 😊" in said and "> Hi Adrian! Friday 🙂" in said
-    assert "**Why:** She knew it off the card." in said
-    assert "**Next time:** Use the card." in said
+    assert "Why: She knew it off the card." in said
+    assert "Next time: Use the card." in said
     assert "Used as written or nearly: 1 of my last 2" in said
     assert "Reply to this" in said
     assert client._RING_POSTS == {701}
@@ -1536,11 +1548,11 @@ def test_studying_that_failed_waits_before_trying_again(monkeypatch):
 def test_a_lesson_franklin_told_shows_his_words(monkeypatch):
     from wilbyte.bot import client
 
-    said = client._ring_lesson({**LESSON, "sent": "", "note": "I called him",
-                                "why": "It was handled by phone.", "rule": ""})
+    said = flat(embed=client._ring_lesson({**LESSON, "sent": "", "note": "I called him",
+                                           "why": "It was handled by phone.", "rule": ""}))
 
-    assert "**Nothing was texted back.**" in said
-    assert "**You told me:** I called him" in said
+    assert "What was sent: *Nothing was texted back.*" in said
+    assert "You told me: I called him" in said
     assert "Next time" not in said
 
 

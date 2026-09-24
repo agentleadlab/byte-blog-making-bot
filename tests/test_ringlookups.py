@@ -470,9 +470,12 @@ def test_the_draft_opens_the_links_and_says_what_it_checked(monkeypatch):
 def test_the_ping_says_what_was_checked():
     from wilbyte.bot import client
 
-    note = client._ring_notes({"why": "like her", "checked": ["Stripe", "the lead sheet", "Stripe"]})
+    from wilbyte.bot import embeds
 
-    assert note == "-# like her · checked Stripe, the lead sheet"
+    card = embeds.ring_ping(who="Shelby", said="paused?", drafted={
+        "reply": "Yes!", "why": "like her", "checked": ["Stripe", "the lead sheet", "Stripe"]})
+
+    assert {one.name: one.value for one in card.fields}["Checked"] == "Stripe · the lead sheet"
 
 
 def test_a_lesson_is_explained_knowing_what_its_links_are(monkeypatch):
@@ -643,7 +646,11 @@ def _answering(monkeypatch, got, *, problems=()):
 
     class Here:
         async def send(self, content=None, **kw):
-            said.append(content)
+            card = kw.get("embed")
+            said.append(content if card is None else "\n".join(
+                [card.author.name, card.title, card.description]
+                + [f"{one.name}: {one.value}" for one in card.fields] + [card.footer.text]
+            ))
 
     asyncio.run(client._ask_about_faith(Here(), NS(secrets=None), "what does faith send"))
     return said
@@ -656,9 +663,9 @@ def test_the_answer_comes_with_the_links_counted(monkeypatch):
     })
 
     assert said == [
-        "She sends the sales form.\n"
-        f"-# Links in those answers, counted: 3× <{SALES_FORM}>\n"
-        "-# From 2 of her replies that matched, out of 4 read from RingCentral"
+        "💬 How Faith handles it\nwhat does faith send\nShe sends the sales form.\n"
+        f"Links in those answers, counted: **3×** <{SALES_FORM}>\n"
+        "From 2 of her replies that matched, out of 4 read from RingCentral"
     ]
 
 
@@ -713,3 +720,38 @@ def test_a_search_term_finds_the_shorter_way_an_agent_typed_it():
     typed = [_swap("1", "where do i submit my sale", "here")]
 
     assert smsreplies.about(typed, ["submitted sales"]) == typed
+
+
+def _size(card) -> int:
+    return (len(card.title or "") + len(card.description or "") + len(card.author.name or "")
+            + len(card.footer.text or "") + sum(len(one.name) + len(one.value) for one in card.fields))
+
+
+def test_a_ping_card_never_goes_over_what_discord_takes():
+    """Over 6,000 characters and Discord refuses the whole message: the ping
+    would never arrive at all."""
+    from wilbyte.bot import embeds
+
+    card = embeds.ring_ping(
+        who="X" * 400, said="long text " * 500,
+        drafted={"reply": "use ``` this " * 400, "why": "w " * 2000,
+                 "blanks": [f"b{at}" for at in range(300)],
+                 "checked": [f"c{at}" for at in range(400)]},
+        card={"url": "https://trello.com/c/x", "list": "In Que"},
+    )
+
+    assert _size(card) < 6000
+    assert len(card.description) <= 4096
+    # the draft's box is whole, however long the draft
+    body = card.description.split("**Reply like Faith**\n", 1)[1]
+    assert body.startswith("```\n") and body.endswith("\n```")
+    assert body.count("```") == 2
+
+
+def test_a_lesson_card_never_goes_over_what_discord_takes():
+    from wilbyte.bot import embeds
+
+    card = embeds.ring_lesson({key: "x " * 3000 for key in ("suggested", "sent", "note", "why", "rule")},
+                              who="Y" * 400, used=1, out_of=20)
+
+    assert _size(card) < 6000

@@ -417,3 +417,126 @@ def spread_conflicts(found: list[dict], *, shown: int) -> discord.Embed:
 
 def error(message: str) -> discord.Embed:
     return discord.Embed(title="Something went wrong", description=_truncate(message, 4000), colour=RED)
+
+
+# ------------------------------------------------------------ RingCentral
+
+#: RingCentral's own orange, so a text from an agent is told apart from the
+#: board's cards at a glance.
+RING = 0xFF7A1A
+#: A lesson - something learned from a reply that was sent differently.
+LESSON = 0x9B7BFF
+#: An answer about how Faith handles something.
+ASKED = 0xE8559B
+
+
+def _quoted(text: str, limit: int) -> str:
+    text = str(text or "").strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "…"
+    return "\n".join("> " + line for line in text.splitlines() or [""])
+
+
+def _code(text: str) -> str:
+    """A code block Discord will not end early - a draft with three backticks
+    in it would close the block halfway and spill the rest."""
+    return "```\n" + str(text).replace("```", "`​``") + "\n```"
+
+
+def _field(embed: discord.Embed, name: str, value: str, *, inline: bool = False) -> None:
+    value = str(value or "").strip()
+    if value:
+        embed.add_field(name=name, value=_truncate(value, 1024), inline=inline)
+
+
+def ring_ping(
+    *, who: str, said: str, drafted: dict, when: datetime | None = None,
+    card: dict | None = None,
+) -> discord.Embed:
+    """An agent's text and the reply Faith would send, as one card.
+
+    The draft sits in a code block so it copies whole. Nothing on this card
+    is sent anywhere - the footer says so, because a card this tidy looks
+    like something that already went out.
+    """
+    # Each part cut to size on its own, so the whole stays under Discord's
+    # 6,000 for a card - over it, the ping is refused outright - and the
+    # draft is cut before it goes in its box, never the box cut through.
+    draft = str(drafted.get("reply") or "")
+    if len(draft) > 1800:
+        draft = draft[:1800].rstrip() + "…"
+    embed = discord.Embed(
+        title=_truncate(who, 256),
+        description=(_quoted(said, 700) + "\n\n" if said else "")
+        + "**Reply like Faith**\n" + _code(draft),
+        colour=RING,
+    )
+    embed.set_author(name="📱 Text from an agent")
+    if drafted.get("blanks"):
+        _field(embed, "✏️ Fill in", _truncate(", ".join(drafted["blanks"]), 300))
+    _field(embed, "Why this reply", _truncate(drafted.get("why") or "", 900))
+    checked = list(dict.fromkeys(drafted.get("checked") or []))
+    if checked:
+        _field(embed, "Checked", _truncate(" · ".join(checked), 400), inline=True)
+    if card and card.get("url"):
+        _field(embed, "Their card", f"[{card.get('list') or 'Trello'}]({card['url']})", inline=True)
+    embed.set_footer(text="Read-only — nothing is sent from here")
+    if when is not None:
+        embed.timestamp = when
+    return embed
+
+
+def ring_lesson(lesson: dict, *, who: str, used: int = 0, out_of: int = 0) -> discord.Embed:
+    """What was learned from a suggestion that was not sent as written."""
+    embed = discord.Embed(
+        title=_truncate(who, 256),
+        description="My suggestion wasn't sent as written.",
+        colour=LESSON,
+    )
+    embed.set_author(name="📝 Learned something")
+    _field(embed, "I suggested", _quoted(lesson.get("suggested"), 500))
+    if lesson.get("sent"):
+        _field(embed, "What was sent", _quoted(lesson.get("sent"), 500))
+    else:
+        _field(embed, "What was sent", "*Nothing was texted back.*")
+    if lesson.get("note"):
+        _field(embed, "You told me", lesson["note"])
+    _field(embed, "Why", lesson.get("why") or "")
+    _field(embed, "Next time", lesson.get("rule") or "")
+    foot = ["Wrong reason? Reply to this and tell me the real one"]
+    if out_of:
+        foot.insert(0, f"Used as written or nearly: {used} of my last {out_of}")
+    embed.set_footer(text=" · ".join(foot))
+    when = _iso(lesson.get("at"))
+    if when is not None:
+        embed.timestamp = when
+    return embed
+
+
+def ring_answer(question: str, answer: str, *, links: list, matched: int,
+                read: int, stale: bool = False) -> discord.Embed:
+    """How Faith handles something, answered from her texts."""
+    embed = discord.Embed(
+        title=_truncate(" ".join(str(question or "").split()), 256),
+        description=_truncate(answer, 4096),
+        colour=ASKED,
+    )
+    embed.set_author(name="💬 How Faith handles it")
+    if links:
+        _field(embed, "Links in those answers, counted", "\n".join(
+            f"**{one['times']}×** <{one['link']}>" for one in links[:4]
+        ))
+    embed.set_footer(text=(
+        f"From {matched} of her replies that matched, out of {read} read from RingCentral"
+        + (" · couldn't reach RingCentral just now, so as of the last read" if stale else "")
+    ))
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
+
+
+def _iso(text) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(text or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
