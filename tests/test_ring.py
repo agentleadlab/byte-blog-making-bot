@@ -631,3 +631,217 @@ def test_texts_read_before_senders_were_kept_are_read_again_once(monkeypatch):
     second = datetime.fromisoformat(box.asked[1].replace("Z", "+00:00"))
     assert (NOW - first).days == jobs.RING_FIRST_DAYS, "not read again from the start"
     assert (NOW - second).days < 5, "read from the start every time"
+
+
+# ------------------------------------------ "@Ryte respond" + a screenshot
+
+
+class Shot:
+    def __init__(self, name="thread.png", data=b"png", size=100, fails=False):
+        self.filename, self.data, self.size, self.fails = name, data, size, fails
+
+    async def read(self):
+        if self.fails:
+            raise RuntimeError("Discord said no")
+        return self.data
+
+
+ADRIAN_SHOT = [
+    {"side": "team", "name": "Arnold Tarpley", "text": "With Wolfpack so take care of him"},
+    {"side": "team", "name": "Arnold Tarpley",
+     "text": "Hi faith this is Adrian Pacheco paid for OTP Trucker IUL leads"},
+    {"side": "agent", "name": "Adrian Pacheco", "text": "👍"},
+]
+
+
+def _responding(monkeypatch, *, said="", shots=(), read=ADRIAN_SHOT, history=True,
+                read_fails=False):
+    from wilbyte.bot import client
+
+    heard, asked = Heard(), {}
+    if history:
+        _ringing(monkeypatch, HISTORY)
+        jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    def reading(cfg, got, *, line_name=""):
+        asked["shots"], asked["line_name"] = got, line_name
+        if read_fails:
+            raise RuntimeError("overloaded")
+        return list(read)
+
+    def drafting(cfg, **kw):
+        asked["draft"] = kw
+        return {"reply": "Welcome Adrian! 😊", "why": "like her welcomes", "blanks": []}
+
+    monkeypatch.setattr(jobs, "read_texts_off", reading)
+    monkeypatch.setattr(jobs, "draft_like_faith", drafting)
+    config = NS(secrets=NS(ringcentral_client_id="", ringcentral_client_secret="",
+                           ringcentral_jwt="", ringcentral_extension=""))
+    asyncio.run(client._respond_like_faith(
+        heard, config, NS(attachments=list(shots)), said,
+    ))
+    return heard.said, asked
+
+
+def test_a_screenshot_is_read_and_answered_as_faith(monkeypatch):
+    said, asked = _responding(monkeypatch, shots=[Shot()])
+
+    assert asked["shots"] == [("thread.png", b"png")]
+    assert asked["draft"]["asked"] == "👍"
+    assert asked["draft"]["name"] == "Adrian Pacheco"
+    assert "Reply like Faith to Adrian Pacheco" in said[0]
+    assert "```\nWelcome Adrian! 😊\n```" in said[0]
+
+
+def test_tres_handover_in_the_screenshot_is_context_not_the_question(monkeypatch):
+    """The draft sees it, labelled, so it knows Adrian is new and what he
+    bought - but it is not what Adrian asked."""
+    _said, asked = _responding(monkeypatch, shots=[Shot()])
+
+    thread = asked["draft"]["thread"]
+    assert [one.team for one in thread] == [True, True, False]
+    assert "Wolfpack" not in asked["draft"]["asked"]
+
+
+def test_the_lines_own_name_is_what_the_reader_is_told_is_the_team(monkeypatch):
+    _said, asked = _responding(monkeypatch, shots=[Shot()])
+
+    assert asked["line_name"] == "Arnold Tarpley"
+
+
+def test_a_screenshot_faith_already_answered_says_so(monkeypatch):
+    said, asked = _responding(monkeypatch, shots=[Shot()], read=ADRIAN_SHOT + [
+        {"side": "faith", "name": "", "text": "Welcome Adrian!"},
+    ])
+
+    assert "already answered" in said[0]
+    assert "draft" not in asked
+
+
+def test_the_agents_words_can_be_pasted_instead(monkeypatch):
+    said, asked = _responding(monkeypatch, said="can you pause my leads")
+
+    assert asked["draft"]["asked"] == "can you pause my leads"
+    assert "shots" not in asked
+
+
+def test_nothing_sent_says_how(monkeypatch):
+    said, _ = _responding(monkeypatch, history=False)
+
+    assert "screenshot" in said[0] and "@Ryte respond" in said[0]
+
+
+def test_a_screenshot_too_big_to_read_is_said(monkeypatch):
+    said, _ = _responding(
+        monkeypatch, shots=[Shot(size=jobs.RING_SHOT_BYTES + 1)], history=False,
+    )
+
+    assert "over 5MB" in said[0]
+
+
+def test_only_pictures_are_read(monkeypatch):
+    said, asked = _responding(
+        monkeypatch, shots=[Shot(name="notes.pdf"), Shot(name="shot.JPG")],
+    )
+
+    assert asked["shots"] == [("shot.JPG", b"png")]
+
+
+def test_a_screenshot_that_could_not_be_read_says_so(monkeypatch):
+    said, asked = _responding(monkeypatch, shots=[Shot()], read_fails=True)
+
+    assert "Couldn't read that screenshot" in said[0]
+    assert "draft" not in asked
+
+
+def test_with_none_of_her_replies_it_still_will_not_draft(monkeypatch):
+    said, asked = _responding(monkeypatch, shots=[Shot()], history=False)
+
+    assert "not hers" in said[0]
+    assert "shots" not in asked
+
+
+def test_respond_is_read_before_anything_else_again():
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse("<@1> respond when do I go live? check my leads")
+
+    assert asked.action == "respond"
+    assert asked.brief == "when do I go live? check my leads"
+
+
+def test_respond_only_counts_as_the_first_word_again():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> email about how to respond to agents").action == "write"
+
+
+# ----------------------------------------------- reading the screenshot
+
+
+def test_the_screenshot_goes_to_claude_as_a_picture(monkeypatch):
+    config = _drafting(monkeypatch)
+    real = Claude.create
+
+    def conversation(self, **kw):
+        Claude.asked.append(kw)
+        return NS(stop_reason="tool_use", content=[NS(
+            type="tool_use", name="conversation", input={"messages": [
+                {"side": "team", "name": "Arnold Tarpley", "text": "take care of him"},
+                {"side": "agent", "name": "Adrian Pacheco", "text": " 👍 "},
+                {"side": "nonsense", "name": "", "text": "dropped"},
+                {"side": "agent", "name": "", "text": "  "},
+            ]},
+        )])
+
+    monkeypatch.setattr(Claude, "create", conversation)
+    got = jobs.read_texts_off(config, [("thread.png", b"\x89PNG")],
+                              line_name="Arnold Tarpley")
+    monkeypatch.setattr(Claude, "create", real)
+
+    content = Claude.asked[0]["messages"][0]["content"]
+    assert content[0]["type"] == "image"
+    assert content[0]["source"]["media_type"] == "image/png"
+    assert '"Arnold Tarpley"' in content[-1]["text"]
+    assert got == [
+        {"side": "team", "name": "Arnold Tarpley", "text": "take care of him"},
+        {"side": "agent", "name": "Adrian Pacheco", "text": "👍"},
+    ]
+
+
+def test_no_picture_is_not_sent_to_be_read(monkeypatch):
+    config = _drafting(monkeypatch)
+
+    with pytest.raises(ValueError):
+        jobs.read_texts_off(config, [("thread.png", b"")])
+
+    assert Claude.asked == []
+
+
+# ------------------------------------------- RYTE may talk in that channel
+
+
+def _allowed(channel_id, name, ring):
+    from wilbyte.bot import client
+
+    return client.is_allowed(
+        channel_id=channel_id, user=NS(roles=[]), channel_name=name,
+        config=NS(secrets=NS(discord_channel_ids=["1"], discord_sop_channel_ids=[],
+                             discord_role_ids=[], ringcentral_channel_id=ring)),
+    )[0]
+
+
+def test_the_suggestions_channel_is_one_ryte_talks_in():
+    """"@Ryte respond" there went unanswered: named for RYTE to post in, and
+    missing from the list of channels it answers in."""
+    assert _allowed(1359897310242279596, "ryte-responder", "1359897310242279596")
+    assert _allowed(555, "ryte-responder", "ryte-responder")
+    assert _allowed(555, "ryte-responder", "#ryte-responder")
+
+
+def test_every_other_channel_is_as_it_was():
+    assert _allowed(1, "general", "ryte-responder")
+    assert not _allowed(2, "general", "ryte-responder")
+    assert not _allowed(2, "general", "")
+    # An id is matched as an id, never against a channel's name.
+    assert not _allowed(2, "555", "555")

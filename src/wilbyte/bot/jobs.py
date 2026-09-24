@@ -7595,3 +7595,95 @@ def draft_like_faith(
         "blanks": [str(one) for one in got.get("blanks") or [] if str(one).strip()],
         "examples": len(examples),
     }
+
+
+#: The biggest screenshot sent to be read. Claude takes five megabytes an image.
+RING_SHOT_BYTES = 5 * 1024 * 1024
+
+
+def read_texts_off(config: Config, shots: list, *, line_name: str = "") -> list[dict]:
+    """The conversation in a RingCentral screenshot, oldest first.
+
+    [{"side": "agent" | "faith" | "team", "name", "text"}]. "@Ryte respond"
+    with a picture of a thread, for a conversation Franklin is looking at
+    and wants an answer to now.
+
+    Told how the app draws a thread rather than left to guess: blue on the
+    right is the line sending, which is Faith; grey on the left is coming in;
+    and coming in under the line's own name is Tre's cell, which RingCentral
+    labels "Arnold Tarpley" too - a colleague handing an agent over, not the
+    agent.
+    """
+    import base64
+
+    from anthropic import Anthropic
+
+    pictures = [
+        {"type": "image", "source": {
+            "type": "base64", "media_type": _media_type(name),
+            "data": base64.b64encode(data).decode("ascii"),
+        }}
+        for name, data in shots if data
+    ]
+    if not pictures:
+        raise ValueError("There was no picture to read.")
+    own = line_name or "the line's own name"
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model,
+        max_tokens=2000,
+        system=(
+            "You read screenshots of text conversations in the RingCentral "
+            "app and write down every message in them, exactly as written."
+        ),
+        tools=[{
+            "name": "conversation",
+            "description": "Every message in the screenshot, top to bottom.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "side": {"type": "string",
+                                         "enum": ["agent", "faith", "team"]},
+                                "name": {"type": "string"},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["side", "name", "text"],
+                        },
+                    }
+                },
+                "required": ["messages"],
+            },
+        }],
+        tool_choice={"type": "tool", "name": "conversation"},
+        messages=[{"role": "user", "content": pictures + [{
+            "type": "text",
+            "text": (
+                "Write down every message in this conversation, oldest first.\n"
+                "- Blue bubbles on the right were SENT from the line: side "
+                "\"faith\".\n"
+                f"- Grey bubbles on the left came IN. If the name above them is "
+                f"\"{own}\", that is a colleague texting into the thread from "
+                "another of the line's numbers: side \"team\". Anybody else "
+                "coming in is the agent: side \"agent\".\n"
+                "- A message that is only an emoji or a sticker is that emoji "
+                "(\"👍\"). A link is its address.\n"
+                "- Leave out the member list, dates, times, and the app itself."
+            ),
+        }]}],
+    )
+    got = _tool_input(response, "conversation")
+    found = []
+    for one in got.get("messages") or []:
+        text = " ".join(str(one.get("text") or "").split())
+        side = str(one.get("side") or "")
+        if text and side in ("agent", "faith", "team"):
+            found.append({"side": side, "name": str(one.get("name") or "").strip(),
+                          "text": text})
+    return found

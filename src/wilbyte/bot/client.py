@@ -614,7 +614,9 @@ def _post_channel(bot: "WilByteBot"):
 # ------------------------------------------------------------------ permissions
 
 
-def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, str]:
+def is_allowed(
+    *, channel_id: int | None, user, config: Config, channel_name: str = "",
+) -> tuple[bool, str]:
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
     # A channel named as an SOP source is already an explicit permission for
@@ -622,7 +624,15 @@ def is_allowed(*, channel_id: int | None, user, config: Config) -> tuple[bool, s
     # second list as well is a trap: he answers everywhere except the one room
     # the library is kept in.
     allowed_anyway = set(config.secrets.discord_sop_channel_ids)
-    if channels and str(channel_id) not in set(channels) | allowed_anyway:
+    # And the channel the RingCentral suggestions go to, for the same reason:
+    # it was named for RYTE to talk in. "@Ryte respond" there went unanswered
+    # because it was on one list and not the other.
+    ring = str(getattr(config.secrets, "ringcentral_channel_id", "") or "").lstrip("#").strip()
+    ring_here = bool(ring) and (
+        ring == str(channel_id)
+        or (not ring.isdigit() and ring.casefold() == str(channel_name or "").casefold())
+    )
+    if channels and not ring_here and str(channel_id) not in set(channels) | allowed_anyway:
         return False, "RYTE isn't enabled in this channel."
 
     roles = config.secrets.discord_role_ids
@@ -728,7 +738,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         return
 
     allowed, reason = is_allowed(
-        channel_id=message.channel.id, user=message.author, config=config
+        channel_id=message.channel.id, user=message.author, config=config,
+        channel_name=str(getattr(message.channel, "name", "") or ""),
     )
     if not allowed:
         # Silent where a channel allowlist exists, because RYTE now sits in a
@@ -940,6 +951,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "contract":
                 await _send_contract(responder, config, request.brief or "")
+                return
+
+            if request.action == "respond":
+                await _respond_like_faith(responder, config, message, request.brief or "")
                 return
 
             if request.action == "whenlive":
@@ -5757,6 +5772,108 @@ def _ring_note(config: Config, agent: str, name: str, tail: list, drafted: dict)
         _ring_notes(drafted),
     ]
     return "\n".join(line for line in lines if line)
+
+
+async def _respond_like_faith(
+    responder: Responder, config: Config, message, said: str,
+) -> None:
+    """"@Ryte respond" with a screenshot of a thread - Faith's reply to it now.
+
+    The pings come on their own; this is for the conversation Franklin is
+    already looking at. A screenshot is read for who said what, pasted words
+    are taken as the agent's, and the draft is written from the same 1,600 of
+    her replies the pings are.
+    """
+    from .. import ringcentral, ringtexts, smsreplies
+
+    shots, skipped = [], []
+    for attachment in getattr(message, "attachments", []) or []:
+        name = str(getattr(attachment, "filename", "") or "")
+        if not re.search(r"\.(png|jpe?g|gif|webp)$", name, re.IGNORECASE):
+            continue
+        if (getattr(attachment, "size", 0) or 0) > jobs.RING_SHOT_BYTES:
+            skipped.append(f"{name} is over 5MB")
+            continue
+        try:
+            shots.append((name, await attachment.read()))
+        except Exception as exc:
+            skipped.append(f"{name} ({jobs._short(exc, 60)})")
+    typed = " ".join(str(said or "").split())
+    if not shots and not typed:
+        await responder.send(
+            "Send a screenshot of the conversation with `@Ryte respond`, or "
+            "paste what the agent said after it — I'll write Faith's reply."
+            + "".join(f"\n⚠ {one}" for one in skipped)
+        )
+        return
+
+    problems = []
+    if ringcentral.configured(config.secrets):
+        data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
+    else:
+        data = await asyncio.to_thread(ringtexts.load)
+    done = smsreplies.exchanges(jobs.ring_texts(config, data))
+    if not done:
+        await responder.send(
+            "I have none of Faith's replies to learn from yet, so anything I "
+            "wrote would be my voice, not hers."
+            + "".join(f"\n⚠ {one}" for one in problems)
+        )
+        return
+
+    thread, name = [], ""
+    if shots:
+        try:
+            lines = await asyncio.to_thread(
+                partial(jobs.read_texts_off, config, shots,
+                        line_name=str(data.get("owner") or ""))
+            )
+        except Exception as exc:
+            await responder.send(f"Couldn't read that screenshot: {_readable(exc)}")
+            return
+        thread = [
+            smsreplies.Text(
+                id=str(at), at=f"{at:05d}", inbound=one["side"] != "faith",
+                agent="screenshot", name=one["name"], said=one["text"],
+                team=one["side"] == "team",
+            )
+            for at, one in enumerate(lines)
+        ]
+        # What the agent has said since Faith last did - the same rule the
+        # pings use, colleagues passed over.
+        tail = []
+        for one in reversed(thread):
+            if one.team:
+                continue
+            if not one.inbound:
+                break
+            tail.insert(0, one)
+        if not tail:
+            await responder.send(
+                "Faith has already answered the last thing the agent said in "
+                "that screenshot — there's nothing waiting on a reply."
+            )
+            return
+        asked = "\n".join(one.said for one in tail)
+        name = next((one.name for one in reversed(tail) if one.name), "")
+    else:
+        asked = typed
+
+    try:
+        drafted = await asyncio.to_thread(
+            partial(jobs.draft_like_faith, config, asked=asked, done=done,
+                    thread=thread, name=name)
+        )
+    except Exception as exc:
+        await responder.send(f"Couldn't draft that: {_readable(exc)}")
+        return
+    head = f"**Reply like Faith{f' to {name}' if name else ''}:**"
+    await responder.send("\n".join(line for line in (
+        head,
+        _fenced(drafted["reply"]),
+        _ring_notes(drafted),
+        *(f"⚠ {one}" for one in skipped),
+    ) if line))
 
 
 async def agent_loop(bot: "WilByteBot") -> None:

@@ -543,6 +543,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
 
     text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
     lowered = text.lower()
+
+    # "@Ryte respond" with a screenshot of a thread, or the agent's words
+    # after it. Before anything else looks at the words, because they are an
+    # agent's: "when do I go live" is the launch question everywhere else.
+    if _opens_with(text, ("respond",)):
+        return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
     # Command words are looked for in what was *typed*, not in the links. A
     # Zoom share link contains "zoom" and a blog URL can contain "status" or
     # "check" - words inside a URL are addresses, not instructions.
@@ -989,6 +995,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > cards too, so agents from months ago still answer
 > @RYTE **sheet for Faith** — the Google Sheet her setup was built on, off
 > her card. Also **Faith's sheet**. The newest one when a setup was redone
+> @RYTE **respond** + a screenshot of a RingCentral thread — Faith's reply to
+> it, drafted for you and never sent. Or paste the agent's words after it
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an
 > inbox RYTE reads. PandaDoc's own are downloaded from PandaDoc for now
 > @RYTE **words** — the lead-type words you've taught me
