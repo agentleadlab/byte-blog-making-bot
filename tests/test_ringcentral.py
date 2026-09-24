@@ -33,6 +33,11 @@ class FakeRing:
         self.read.append({"url": url, "params": params, "headers": headers})
         if self.status != 200:
             return NS(status_code=self.status, text="no", json=lambda: {})
+        if url.endswith("/phone-number"):
+            return NS(status_code=200, text="", json=lambda: {"records": [
+                {"phoneNumber": "+18785550100"}, {"phoneNumber": "+14125550177"},
+                {"usageType": "Fax"},
+            ]})
         if url.endswith("/extension"):
             return NS(status_code=200, text="",
                       json=lambda: {"records": self.extensions, "navigation": {}})
@@ -199,3 +204,20 @@ def test_configured_only_with_all_four():
 
     assert ringcentral.configured(NS(**full))
     assert not ringcentral.configured(NS(**{**full, "ringcentral_jwt": " "}))
+
+
+
+def test_the_lines_own_numbers_come_from_that_extension_only(monkeypatch):
+    client, fake = _client(monkeypatch)
+
+    got = client.own_numbers()
+
+    assert got == ["+18785550100", "+14125550177"]
+    asked = [one["url"] for one in fake.read if one["url"].endswith("/phone-number")]
+    assert asked and all("/extension/222/phone-number" in one for one in asked)
+
+
+def test_whose_line_it_is_is_known(monkeypatch):
+    client, _ = _client(monkeypatch, extension="103")
+
+    assert client.owner() == "Faith Hannah Calla"

@@ -30,8 +30,9 @@ def record(id_, minutes_ago, text, *, inbound=True, number=SHELBY, name=""):
 class Reading:
     """`open_ring` as far as a catch-up goes."""
 
-    def __init__(self, records=(), *, error=None):
+    def __init__(self, records=(), *, error=None, numbers_fail=False):
         self.records, self.error, self.asked = list(records), error, []
+        self.numbers_fail = numbers_fail
 
     def texts(self, *, since, until=""):
         self.asked.append(since)
@@ -42,6 +43,11 @@ class Reading:
     def owner(self):
         return "Arnold Tarpley"
 
+    def own_numbers(self):
+        if self.numbers_fail:
+            raise ringcentral.RingError("refused")
+        return ["+18785550100", "+14125550177"]
+
     def __enter__(self):
         return self
 
@@ -49,8 +55,8 @@ class Reading:
         return False
 
 
-def _ringing(monkeypatch, records=(), *, error=None):
-    box = Reading(records, error=error)
+def _ringing(monkeypatch, records=(), *, error=None, numbers_fail=False):
+    box = Reading(records, error=error, numbers_fail=numbers_fail)
     monkeypatch.setattr(ringcentral, "open_ring", lambda secrets: box)
     return box
 
@@ -551,3 +557,35 @@ def test_the_draft_is_told_which_lines_are_the_team(monkeypatch):
     assert "Team: With Wolfpack so take care of him" in prompt
     assert "Agent: 👍" in prompt
     assert "Lines marked Team are colleagues" in prompt
+
+
+
+def test_the_lines_own_numbers_are_remembered(monkeypatch):
+    """Both "Arnold Tarpley (me)" in the app."""
+    _ringing(monkeypatch, HISTORY)
+
+    data, _ = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert data["numbers"] == ["+18785550100", "+14125550177"]
+
+
+def test_not_being_able_to_list_them_does_not_stop_the_read(monkeypatch):
+    """Worth having, not worth losing the texts over."""
+    _ringing(monkeypatch, HISTORY, numbers_fail=True)
+
+    data, problems = jobs.ring_catch_up(NS(secrets=None), now=NOW)
+
+    assert problems == [] and len(data["texts"]) == 4
+
+
+def test_a_text_from_the_lines_other_number_is_the_team_even_unnamed(monkeypatch):
+    """RingCentral named the (412) number here, but a text that comes back
+    without a name must not become an agent waiting on a reply."""
+    data = {"owner": "Arnold Tarpley", "numbers": ["+14125550177"], "texts": [
+        {"id": "1", "at": "1", "inbound": True, "agent": "4125550177",
+         "name": "", "said": "With Wolfpack so take care of him"},
+    ]}
+
+    (text,) = jobs.ring_texts(NS(secrets=None), data)
+
+    assert text.team is True

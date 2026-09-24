@@ -7400,6 +7400,17 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
             with ringcentral.open_ring(config.secrets) as reading:
                 records = reading.texts(since=_ring_iso(since))
                 owner = reading.owner()
+                # The line's own numbers, for telling it apart from an agent.
+                # Worth having, not worth failing the read over.
+                try:
+                    numbers = reading.own_numbers()
+                except Exception:
+                    import logging
+
+                    logging.getLogger("wilbyte.bot").warning(
+                        "Couldn't list the line's own numbers", exc_info=True
+                    )
+                    numbers = []
         except ringcentral.RingError as exc:
             return data, [str(exc)]
         except Exception as exc:
@@ -7408,6 +7419,8 @@ def ring_catch_up(config: Config, *, now=None) -> tuple[dict, list[str]]:
         ringtexts.keep(data, texts)
         if owner:
             data["owner"] = owner
+        if numbers:
+            data["numbers"] = numbers
         ringtexts.save(data)
         return data, []
 
@@ -7428,7 +7441,7 @@ def ring_texts(config: Config, data: dict) -> list:
         ).split(",")
     ]
     texts = [smsreplies.Text.from_dict(one) for one in data.get("texts") or []]
-    return smsreplies.mark_team(texts, names)
+    return smsreplies.mark_team(texts, names, data.get("numbers") or [])
 
 
 def ring_waiting(config: Config, *, now=None) -> tuple[list, dict, list[str]]:

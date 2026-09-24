@@ -133,15 +133,20 @@ def words_in(text: str) -> frozenset:
     )
 
 
-def mark_team(texts: list, names) -> list:
-    """Mark what the team sent into the line, by the name RingCentral shows.
+def mark_team(texts: list, names, numbers=()) -> list:
+    """Mark what the team sent into the line, by name or by number.
 
-    By name, because RingCentral names a number from the company's contacts:
-    Arnold's cell arrives as "Arnold Tarpley", the same as the line itself.
+    By the name RingCentral shows - the (412) number arrives as "Arnold
+    Tarpley", the same as the line - and by the line's own numbers, for a
+    text that comes back without a name. Only what came in: what went out is
+    Faith, whoever the line is named for.
     """
     wanted = {" ".join(str(one).split()).casefold() for one in names or () if str(one).strip()}
+    ours = {digits(one) for one in numbers or () if digits(one)}
     for one in texts:
-        one.team = bool(one.inbound and one.name and one.name.casefold() in wanted)
+        one.team = bool(one.inbound and (
+            (one.name and one.name.casefold() in wanted) or one.agent in ours
+        ))
     return texts
 
 

@@ -175,6 +175,22 @@ class RingClient:
         self.extension_id()
         return self._owner
 
+    def own_numbers(self) -> list[str]:
+        """Every phone number on this extension, as RingCentral lists them.
+
+        A line can have more than one. Ext. 101 texts from (878) and has a
+        (412) number too - both "Arnold Tarpley (me)" in the app - and a text
+        from one of them into a thread is the line itself, not an agent.
+        """
+        got = self._get(
+            f"/restapi/v1.0/account/~/extension/{self.extension_id()}/phone-number",
+            {"perPage": PAGE},
+        )
+        return [
+            str(one.get("phoneNumber") or "")
+            for one in got.get("records") or [] if one.get("phoneNumber")
+        ]
+
     def texts(self, *, since: str, until: str = "") -> list[dict]:
         """Every SMS on this one extension from `since` on, oldest first.
 
