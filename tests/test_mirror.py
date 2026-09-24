@@ -253,3 +253,54 @@ def test_a_channel_with_no_twin_keeps_its_tags_when_its_news_is_copied(sent):
 
     assert [where for where, _, _ in sent.got] == [7, 4]
     assert "allowed_mentions" not in sent.got[0][2]
+
+
+# --------------------------------------- naming the originals instead of ids
+
+SECRETS = NS(
+    discord_channel_ids=("11", "12"), discord_post_channel_id="11",
+    discord_board_channel_id="21", discord_dispute_channel_id="31",
+    discord_chargeback_channel_id="32", discord_recordings_channel_id="",
+    discord_payment_channel_id=None, ringcentral_channel_id="#41",
+)
+
+
+def test_the_originals_can_be_named_rather_than_looked_up():
+    """Franklin had the Ryte The Goat ids; the other half is in .env already."""
+    got = mirror.parse_pairs(
+        "blogs:1552802914936954940, board:1552802506147500133, "
+        "dispute:1552803036789866498, responder:1552802770141052998",
+        SECRETS,
+    )
+
+    assert got == {
+        11: 1552802914936954940,          # blogs, and the new-video cards
+        21: 1552802506147500133,
+        31: 1552803036789866498, 32: 1552803036789866498,  # disputes and chargebacks
+        41: 1552802770141052998,
+    }
+
+
+def test_a_name_for_something_not_set_up_copies_nothing():
+    assert mirror.parse_pairs("recordings:5, payments:6, nonsense:7, board:8", SECRETS) == {21: 8}
+
+
+def test_ids_and_names_mix():
+    assert mirror.parse_pairs("board:8, 99:9", SECRETS) == {21: 8, 99: 9}
+
+
+def test_every_channel_in_ryte_the_goat_answers(sent, monkeypatch):
+    """Channel Deletion is nobody's twin, and is where the clear-outs run."""
+    from wilbyte.bot import client
+
+    goat, elsewhere = NS(id=500), NS(id=600)
+    channels = {2: NS(guild=goat), 4: NS(guild=goat), 9: NS(guild=goat)}
+    monkeypatch.setattr(mirror, "_CLIENT", NS(get_channel=channels.get))
+    config = NS(secrets=NS(discord_channel_ids=["1"], discord_sop_channel_ids=[],
+                           ringcentral_channel_id="", ringcentral_shared_channel_id="",
+                           discord_role_ids=[]))
+
+    assert mirror.in_copies_server(500) and not mirror.in_copies_server(600)
+    assert client.is_allowed(channel_id=77, user=NS(), config=config, guild_id=500)[0]
+    assert not client.is_allowed(channel_id=77, user=NS(), config=config, guild_id=600)[0]
+    assert not client.is_allowed(channel_id=77, user=NS(), config=config)[0]

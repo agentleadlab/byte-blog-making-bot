@@ -54,8 +54,43 @@ _EDIT = None
 _NOT_COPIED = ("reference", "mention_author", "nonce", "stickers", "allowed_mentions")
 
 
-def parse_pairs(said: str) -> dict[int, int]:
+#: What a name in DISCORD_COPIES means: the settings holding the channels
+#: RYTE already posts that kind of thing in. "blogs" is the first allowed
+#: channel - where "Updating myself" and "is live" go - and the one the
+#: new-video cards are posted in.
+NAMED = {
+    "blogs": ("discord_channel_ids[0]", "discord_post_channel_id"),
+    "board": ("discord_board_channel_id",),
+    "trello": ("discord_board_channel_id",),
+    "dispute": ("discord_dispute_channel_id", "discord_chargeback_channel_id"),
+    "disputes": ("discord_dispute_channel_id", "discord_chargeback_channel_id"),
+    "recordings": ("discord_recordings_channel_id",),
+    "payments": ("discord_payment_channel_id",),
+    "responder": ("ringcentral_channel_id",),
+}
+
+
+def _named(name: str, secrets) -> list[int]:
+    """The channel ids a name in DISCORD_COPIES stands for. [] if unset."""
+    found = []
+    for setting in NAMED.get(name.casefold(), ()):
+        if setting.endswith("[0]"):
+            listed = getattr(secrets, setting[:-3], None) or ()
+            value = listed[0] if listed else ""
+        else:
+            value = getattr(secrets, setting, "") or ""
+        value = str(value).strip().lstrip("#")
+        if value.isdigit():
+            found.append(int(value))
+    return found
+
+
+def parse_pairs(said: str, secrets=None) -> dict[int, int]:
     """"111:222, 333:444" as {111: 222, 333: 444}. Anything else is skipped.
+
+    The left can be a name instead of an id - "blogs", "board", "dispute",
+    "recordings", "payments", "responder" - meaning the channels RYTE
+    already uses for it, so nobody has to go and find those ids.
 
     A channel copied into itself, or into a channel that is itself an
     original, is refused - the first posts everything twice in one place,
@@ -64,9 +99,16 @@ def parse_pairs(said: str) -> dict[int, int]:
     pairs: dict[int, int] = {}
     for part in str(said or "").replace(";", ",").split(","):
         bits = [bit.strip().lstrip("#") for bit in part.replace(">", ":").split(":")]
-        if len(bits) != 2 or not all(bit.isdigit() for bit in bits):
+        if len(bits) != 2 or not bits[1].isdigit():
             continue
-        pairs[int(bits[0])] = int(bits[1])
+        if bits[0].isdigit():
+            originals = [int(bits[0])]
+        else:
+            originals = _named(bits[0], secrets)
+            if not originals:
+                log.warning("DISCORD_COPIES: %r names no channel RYTE uses", bits[0])
+        for original in originals:
+            pairs[original] = int(bits[1])
     # A channel copied into itself is copied into an original - its own.
     return {
         original: copy for original, copy in pairs.items() if copy not in pairs
@@ -95,6 +137,19 @@ def copying_into(channel_id):
         yield
     finally:
         _INTO.reset(token)
+
+
+def in_copies_server(guild_id) -> bool:
+    """Whether a server is one the copies are in - Ryte The Goat - where
+    every channel answers @Ryte, twin or not: "channel deletion" has no
+    original, and is where the clear-outs get run."""
+    if guild_id is None or _CLIENT is None:
+        return False
+    for copy in set(PAIRS.values()) | ({ANNOUNCE_INTO} if ANNOUNCE_INTO else set()):
+        where = _CLIENT.get_channel(copy)
+        if getattr(getattr(where, "guild", None), "id", None) == guild_id:
+            return True
+    return False
 
 
 def copy_of_message(message_id) -> "discord.Message | None":

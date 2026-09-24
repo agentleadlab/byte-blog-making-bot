@@ -178,7 +178,9 @@ class WilByteBot(discord.Client):
         from . import mirror
 
         mirror.configure(
-            self, mirror.parse_pairs(getattr(config.secrets, "discord_copies", "") or ""),
+            self, mirror.parse_pairs(
+                getattr(config.secrets, "discord_copies", "") or "", config.secrets,
+            ),
             tags_in_copies_only=getattr(config.secrets, "discord_tag_in_copies_only", False),
             announce_into=getattr(config.secrets, "discord_announce_copy_channel_id", None),
         )
@@ -643,6 +645,7 @@ def _post_channel(bot: "WilByteBot"):
 
 def is_allowed(
     *, channel_id: int | None, user, config: Config, channel_name: str = "",
+    guild_id: int | None = None,
 ) -> tuple[bool, str]:
     """Channel and role gating. An empty allowlist means 'no restriction'."""
     channels = config.secrets.discord_channel_ids
@@ -667,7 +670,8 @@ def is_allowed(
     from . import mirror
 
     # A copy in Ryte The Goat answers the same as the channel it copies.
-    a_copy = mirror.original_of(channel_id) is not None
+    # And every channel in the copies' own server.
+    a_copy = mirror.original_of(channel_id) is not None or mirror.in_copies_server(guild_id)
     if channels and not ring_here and not a_copy and str(channel_id) not in set(channels) | allowed_anyway:
         return False, "RYTE isn't enabled in this channel."
 
@@ -681,7 +685,8 @@ def is_allowed(
 
 async def guard(interaction: discord.Interaction, config: Config) -> bool:
     allowed, reason = is_allowed(
-        channel_id=interaction.channel_id, user=interaction.user, config=config
+        channel_id=interaction.channel_id, user=interaction.user, config=config,
+        guild_id=interaction.guild_id,
     )
     if not allowed:
         await interaction.response.send_message(reason, ephemeral=True)
@@ -776,6 +781,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
     allowed, reason = is_allowed(
         channel_id=message.channel.id, user=message.author, config=config,
         channel_name=str(getattr(message.channel, "name", "") or ""),
+        guild_id=getattr(getattr(message, "guild", None), "id", None),
     )
     if not allowed:
         # Silent where a channel allowlist exists, because RYTE now sits in a
