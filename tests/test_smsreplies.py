@@ -212,3 +212,82 @@ def test_the_thread_is_that_agent_only_and_the_newest():
     got = smsreplies.thread(texts, SHELBY, most=3)
 
     assert [one.said for one in got] == ["12", "13", "14"]
+
+
+# ------------------------------------------------------------ group texts
+
+# "Jay Rodriguez, Arnold Tarpley" - three members, Arnold in it twice. Faith
+# texts from Arnold's line, and a group reply goes to Arnold's other number
+# as well as to the agent.
+ARNOLD = "+18005550100"
+ARNOLD_TOO = "+18005550101"
+JAY_NUMBER = "+19705550123"
+
+
+def group(id_, at, text, *, inbound=True, conversation="C-jay"):
+    return smsreplies.from_record({
+        "id": id_, "creationTime": f"2026-09-24T{at}:00.000Z", "subject": text,
+        "direction": "Inbound" if inbound else "Outbound",
+        "from": {"phoneNumber": JAY_NUMBER, "name": "Jay Rodriguez"} if inbound
+                else {"phoneNumber": ARNOLD, "name": "Arnold Tarpley"},
+        # The team's other number first, the agent second.
+        "to": [{"phoneNumber": ARNOLD_TOO}, {"phoneNumber": ARNOLD}] if inbound
+              else [{"phoneNumber": ARNOLD_TOO, "name": "Arnold Tarpley"},
+                    {"phoneNumber": JAY_NUMBER, "name": "Jay Rodriguez"}],
+        "conversationId": conversation,
+    })
+
+
+JAY_THREAD = [
+    group(1, "11:09", "could you provide me the states I added on my file"),
+    group(2, "11:43", "Hi, Jay! Here's your list of states: AL,GA,HI,IA", inbound=False),
+    group(3, "11:55", "Can you remove Hawaii and Alaska for me and add Oklahoma"),
+    group(4, "11:57", "And could you resend an invoice with the updated states"),
+]
+
+
+def test_the_thread_is_read_from_the_record():
+    assert JAY_THREAD[0].conversation == "C-jay"
+    got = smsreplies.from_record({
+        "id": 9, "direction": "Inbound", "subject": "hi",
+        "from": {"phoneNumber": JAY_NUMBER}, "conversation": {"id": "C-9"},
+    })
+    assert got.conversation == "C-9"
+
+
+def test_a_reply_to_a_group_is_still_a_reply_to_the_agent():
+    """Filed by the first number it went to, it was filed under Arnold's
+    other line and learned from as nobody's."""
+    done = smsreplies.exchanges(JAY_THREAD[:2])
+
+    assert len(done) == 1
+    assert done[0].agent == smsreplies.digits(JAY_NUMBER)
+    assert done[0].name == "Jay Rodriguez"
+    assert done[0].answered.startswith("Hi, Jay!")
+
+
+def test_an_agent_faith_answered_in_a_group_is_not_still_waiting():
+    """Otherwise Franklin is pinged about texts Faith already answered."""
+    assert smsreplies.waiting(JAY_THREAD[:2], since="2026-09-01") == []
+
+
+def test_what_is_still_waiting_in_a_group_is_the_agents_last_word():
+    ((agent, name, tail),) = smsreplies.waiting(JAY_THREAD, since="2026-09-01")
+
+    assert agent == smsreplies.digits(JAY_NUMBER) and name == "Jay Rodriguez"
+    assert [one.id for one in tail] == ["3", "4"]
+
+
+def test_the_conversation_shown_is_that_thread():
+    other = group(9, "11:58", "a different thread", conversation="C-other")
+
+    got = smsreplies.thread(JAY_THREAD + [other], "C-jay")
+
+    assert [one.id for one in got] == ["1", "2", "3", "4"]
+
+
+def test_a_text_with_no_thread_falls_back_to_the_number():
+    """Kept working for anything RingCentral hands back without one."""
+    lone = Text(id="1", at="2026-09-24", inbound=True, agent="555", name="", said="hi")
+
+    assert lone.key == "555"

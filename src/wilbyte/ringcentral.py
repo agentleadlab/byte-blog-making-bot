@@ -57,9 +57,9 @@ class RingClient:
                  server: str = PLATFORM, timeout: float = 30.0):
         if not (extension or "").strip():
             raise RingError(
-                "No extension set. RINGCENTRAL_EXTENSION in .env is Faith's "
-                "extension number (or her name as RingCentral has it), and it "
-                "is the only one this reads."
+                "No extension set. RINGCENTRAL_EXTENSION in .env is the line "
+                "Faith texts agents from - its extension number or its name - "
+                "and it is the only one this reads."
             )
         self._creds = creds
         self._extension = extension.strip()

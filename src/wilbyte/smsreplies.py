@@ -27,10 +27,24 @@ class Text:
     agent: str              # the agent's number, digits only
     name: str               # the agent's name when RingCentral knows it
     said: str
+    #: RingCentral's id for the thread. Most of these are group texts - "Jay
+    #: Rodriguez, Arnold Tarpley", three members, Arnold in it twice - and in
+    #: a group the number a reply went to first can be Arnold's other line
+    #: rather than the agent's. Matched by phone number, Faith's reply to Jay
+    #: was filed under nobody: not learned from, and Jay left looking as if he
+    #: were still waiting.
+    conversation: str = ""
+
+    @property
+    def key(self) -> str:
+        """Which conversation this belongs to: the thread, or failing that
+        the agent's number."""
+        return self.conversation or self.agent
 
     def as_dict(self) -> dict:
         return {"id": self.id, "at": self.at, "inbound": self.inbound,
-                "agent": self.agent, "name": self.name, "said": self.said}
+                "agent": self.agent, "name": self.name, "said": self.said,
+                "conversation": self.conversation}
 
     @classmethod
     def from_dict(cls, held: dict) -> "Text":
@@ -38,6 +52,7 @@ class Text:
             id=str(held.get("id") or ""), at=str(held.get("at") or ""),
             inbound=bool(held.get("inbound")), agent=str(held.get("agent") or ""),
             name=str(held.get("name") or ""), said=str(held.get("said") or ""),
+            conversation=str(held.get("conversation") or ""),
         )
 
 
@@ -86,6 +101,10 @@ def from_record(record: dict) -> Text | None:
         agent=digits(other.get("phoneNumber") or ""),
         name=" ".join(str(other.get("name") or "").split()),
         said=said,
+        conversation=str(
+            record.get("conversationId")
+            or (record.get("conversation") or {}).get("id") or ""
+        ),
     )
 
 
@@ -114,34 +133,42 @@ def exchanges(texts: list) -> list:
     with nothing before it from the agent, is her starting a conversation
     rather than answering one, and is not an exchange.
     """
-    by_agent: dict[str, list] = {}
-    for one in texts:
-        if one.agent:
-            by_agent.setdefault(one.agent, []).append(one)
-
     found = []
-    for agent, theirs in by_agent.items():
-        theirs.sort(key=lambda one: one.at)
-        asked, answered, name = [], [], ""
+    for theirs in _by_conversation(texts).values():
+        asked, answered = [], []
         for one in theirs:
-            name = name or (one.name if one.inbound else "")
             if one.inbound:
                 if answered:
-                    found.append(_exchange(agent, name, asked, answered))
+                    found.append(_exchange(asked, answered))
                     asked, answered = [], []
                 asked.append(one)
             elif asked:
                 answered.append(one)
         if asked and answered:
-            found.append(_exchange(agent, name, asked, answered))
+            found.append(_exchange(asked, answered))
     found.sort(key=lambda one: one.at)
     return found
 
 
-def _exchange(agent, name, asked, answered) -> Exchange:
+def _by_conversation(texts: list) -> dict:
+    """{conversation: [texts, oldest first]}."""
+    held: dict[str, list] = {}
+    for one in texts:
+        if one.key:
+            held.setdefault(one.key, []).append(one)
+    for theirs in held.values():
+        theirs.sort(key=lambda one: one.at)
+    return held
+
+
+def _exchange(asked, answered) -> Exchange:
+    """The agent is whoever asked. In a group, the numbers a reply went to
+    include the team's own, and none of those is the agent."""
     question = "\n".join(one.said for one in asked)
     return Exchange(
-        agent=agent, name=name, asked=question,
+        agent=asked[-1].agent,
+        name=next((one.name for one in reversed(asked) if one.name), ""),
+        asked=question,
         answered="\n".join(one.said for one in answered),
         at=answered[0].at, words=words_in(question),
     )
@@ -154,22 +181,16 @@ def waiting(texts: list, *, since: str) -> list:
     them is newer than `since` - so the first run after setting this up does
     not bring back every agent who ever had the last word.
     """
-    by_agent: dict[str, list] = {}
-    for one in texts:
-        if one.agent:
-            by_agent.setdefault(one.agent, []).append(one)
-
     found = []
-    for agent, theirs in by_agent.items():
-        theirs.sort(key=lambda one: one.at)
+    for theirs in _by_conversation(texts).values():
         tail = []
         for one in reversed(theirs):
             if not one.inbound:
                 break
             tail.insert(0, one)
         if tail and tail[-1].at >= since:
-            name = next((one.name for one in tail if one.name), "")
-            found.append((agent, name, tail))
+            name = next((one.name for one in reversed(tail) if one.name), "")
+            found.append((tail[-1].agent, name, tail))
     found.sort(key=lambda one: one[2][-1].at)
     return found
 
@@ -204,7 +225,7 @@ def closest(done: list, message: str, *, most: int = 5, recent: int = 3) -> list
     return picked
 
 
-def thread(texts: list, agent: str, *, most: int = 12) -> list:
-    """The last of the conversation with one agent, oldest first."""
-    theirs = sorted((one for one in texts if one.agent == agent), key=lambda one: one.at)
+def thread(texts: list, key: str, *, most: int = 12) -> list:
+    """The last of one conversation, oldest first. `key` is a Text's `key`."""
+    theirs = sorted((one for one in texts if one.key == key), key=lambda one: one.at)
     return theirs[-most:]

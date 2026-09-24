@@ -5679,7 +5679,7 @@ async def _ring_once(bot: "WilByteBot") -> None:
             drafted = await asyncio.to_thread(
                 partial(
                     jobs.draft_like_faith, bot.config, asked=asked, done=done,
-                    thread=smsreplies.thread(texts, agent), name=name,
+                    thread=smsreplies.thread(texts, tail[-1].key), name=name,
                 )
             )
         except Exception:
@@ -5705,7 +5705,7 @@ def _ring_ready(texts: int, replies: int) -> str:
             f"📱 Connected to RingCentral and read {texts} text"
             f"{'' if texts == 1 else 's'} — but none of them are Faith answering "
             "an agent, so there's nothing to learn her replies from. Check "
-            "RINGCENTRAL_EXTENSION is her extension."
+            "RINGCENTRAL_EXTENSION is the line she texts from."
         )
     return (
         f"📱 Connected to RingCentral — learning from {replies} of Faith's "
