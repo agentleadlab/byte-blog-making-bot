@@ -108,15 +108,16 @@ def test_the_token_goes_only_to_the_api_never_into_what_is_posted(monkeypatch):
     assert "tok-SECRET-123" not in said and "tok-SECRET-123" not in docs
     for method, url, headers in Web.asked:
         assert method == "GET"
-        if "Authorization" in headers:
+        if "x-access-token" in headers:
             assert url.startswith("https://api.payra.com/")
+            assert headers["x-access-token"] == "tok-SECRET-123"
 
 
 def test_without_a_token_nothing_is_tried(monkeypatch):
     said, _docs = _probe(monkeypatch, token="")
 
     assert "PAYRA_API_TOKEN isn't in .env" in said
-    assert not any("Authorization" in headers for _m, _u, headers in Web.asked)
+    assert not any("x-access-token" in headers for _m, _u, headers in Web.asked)
 
 
 def test_the_command_is_understood():

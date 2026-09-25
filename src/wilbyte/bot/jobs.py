@@ -9260,8 +9260,10 @@ def payra_probe(config: Config) -> tuple[str, str]:
         with httpx.Client(timeout=20, follow_redirects=False) as api:
             for url in tries:
                 try:
+                    # Payra's own words: "Every call to the API requires an
+                    # x-access-token property be added to the request headers".
                     got = api.get(url, headers={
-                        "Authorization": f"Bearer {token}", "Accept": "application/json",
+                        "x-access-token": token, "Accept": "application/json",
                     })
                 except httpx.HTTPError as exc:
                     lines.append(f"• `{url}` — couldn't reach it: {_short(exc, 100)}")
