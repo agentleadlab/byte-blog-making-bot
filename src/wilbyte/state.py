@@ -62,6 +62,10 @@ class LedgerEntry:
 class Ledger:
     path: Path = DEFAULT_LEDGER_PATH
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
+    #: The slot a post held before it was deleted in GHL, by video - so the
+    #: rerun lands back on the same day: "i will delete it ... that way he'll
+    #: schedule it again same date".
+    freed: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Ledger":
@@ -87,6 +91,9 @@ class Ledger:
                 published_at=item.get("published_at"),
             )
             ledger.entries[entry.video_id] = entry
+        ledger.freed = {
+            str(key): str(value) for key, value in (raw.get("freed") or {}).items() if value
+        }
         return ledger
 
     def save(self) -> None:
@@ -94,6 +101,7 @@ class Ledger:
         payload = {
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "entries": [e.to_dict() for e in self.entries.values()],
+            "freed": self.freed,
         }
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -122,11 +130,18 @@ class Ledger:
             published_at=published_at.isoformat() if published_at else None,
         )
         self.entries[video_id] = entry
+        # Back on the calendar: the day it was holding for itself is spent.
+        self.freed.pop(video_id, None)
         return entry
 
-    def forget(self, video_id: str) -> None:
-        """Drop an entry, freeing its day and letting the video be redone."""
-        self.entries.pop(video_id, None)
+    def forget(self, video_id: str, *, keep_slot: bool = False) -> None:
+        """Drop an entry, freeing its day and letting the video be redone.
+
+        `keep_slot` remembers the day it held, for its rerun to land on.
+        """
+        entry = self.entries.pop(video_id, None)
+        if keep_slot and entry is not None and entry.scheduled_at:
+            self.freed[video_id] = entry.scheduled_at
 
     def mark_published(self, video_id: str) -> None:
         """Record that this post is live, so it is never published twice."""

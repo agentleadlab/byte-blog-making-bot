@@ -6536,6 +6536,9 @@ def _ran_the_step(monkeypatch, step, *, added):
         jobs, "spread_to_lead_order", lambda config, **kw: (added, [], []),
     )
     monkeypatch.setattr(boardclock, "mark", lambda *a, **kw: None)
+    # The Friday-only weekend card check reads the real clock, not the day
+    # passed in - left real, every Friday this reached for Trello.
+    monkeypatch.setattr(jobs, "weekend_order_card", lambda config: ("", []))
 
     bot = SimpleNamespace(config=SimpleNamespace(
         schedule=SimpleNamespace(timezone="America/Chicago"),
@@ -6847,3 +6850,113 @@ def test_no_day_named_is_asked_once(config, monkeypatch):
     asked, _ = _unticked(monkeypatch, config, "unticked", found=[], soon=THURSDAY)
 
     assert asked["calls"] == [(None, True)]
+
+
+# ------------------------------------ deleting a post in GHL to have it redone
+
+REDO = "ZgZUQXkDweM"
+
+
+def test_a_post_deleted_to_be_redone_is_forgotten_with_its_day_kept(tmp_path):
+    """"i will delete it but ryte has to know that im deleting it that way
+    he'll schedule it again same date"."""
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "life-insurance-leads-think-its-free", when, None),
+                       ("other", "still-here", when, None))
+
+    gone = jobs.deleted_since(SlugGHL({"still-here"}), ledger,
+                              [f"https://youtu.be/{REDO}?si=x", "https://youtu.be/other123456"])
+
+    assert [one.video_id for one in gone] == [REDO]
+    assert not ledger.has(REDO) and ledger.has("other")
+    assert ledger.freed == {REDO: when.isoformat()}
+    assert Ledger.load(ledger.path).freed == {REDO: when.isoformat()}, "not saved"
+
+
+def test_only_the_videos_being_run_are_asked_about(tmp_path):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, None))
+
+    assert jobs.deleted_since(SlugGHL(set()), ledger, ["https://youtu.be/other123456"]) == []
+    assert ledger.has(REDO)
+
+
+def test_a_published_post_deleted_is_taken_down_not_redone(tmp_path):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, when))
+
+    assert jobs.deleted_since(SlugGHL(set()), ledger, [REDO]) == []
+    assert ledger.has(REDO)
+
+
+def test_ghl_not_answering_forgets_nothing(tmp_path):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, None))
+
+    assert jobs.deleted_since(SlugGHL(set(), broken={"gone"}), ledger, [REDO]) == []
+    assert ledger.has(REDO)
+
+
+def test_a_tidy_up_keeps_the_day_too(tmp_path):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, None))
+
+    jobs.reconcile(SlugGHL(set()), ledger)
+
+    assert ledger.freed == {REDO: when.isoformat()}
+
+
+def test_the_rerun_lands_back_on_its_day(tmp_path, config):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, None))
+    jobs.deleted_since(SlugGHL(set()), ledger, [REDO])
+    videos = [Video(video_id=REDO, title="", url=""), Video(video_id="new", title="", url="")]
+
+    pool, held = jobs.run_slots(videos, None, config, ledger)
+
+    assert held == {REDO: when.astimezone(ZoneInfo(config.schedule.timezone))}
+    assert len(pool) == 1 and pool[0].date() != when.date(), "gave its day to another post"
+
+
+def test_a_day_since_taken_or_gone_by_is_not_given_back(tmp_path, config):
+    past = datetime(2020, 9, 29, 10, tzinfo=ET)
+    future = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.freed = {"a": past.isoformat(), "b": future.isoformat()}
+    videos = [Video(video_id="a", title="", url=""), Video(video_id="b", title="", url="")]
+
+    assert jobs.held_for(videos, ledger, set(), config) == {
+        "b": future.astimezone(ZoneInfo(config.schedule.timezone))}
+    assert jobs.held_for(videos, ledger, {future.date()}, config) == {}
+
+
+def test_scheduling_it_again_spends_the_kept_day(tmp_path):
+    when = datetime(2099, 9, 29, 10, tzinfo=ET)
+    ledger = ledger_of(tmp_path, (REDO, "gone", when, None))
+    ledger.forget(REDO, keep_slot=True)
+
+    ledger.record(video_id=REDO, title="t", url_slug="s", scheduled_at=when, ghl_post_id="p")
+
+    assert ledger.freed == {}
+
+
+def test_forgetting_without_keeping_keeps_nothing(tmp_path):
+    ledger = ledger_of(tmp_path, (REDO, "gone", datetime(2099, 9, 29, 10, tzinfo=ET), None))
+
+    ledger.forget(REDO)
+
+    assert ledger.freed == {}
+
+
+def test_the_kept_day_is_never_handed_to_another_post_in_the_same_run(tmp_path, config):
+    """The kept day is often the very next free one - exactly the day the
+    other posts in the batch would otherwise take."""
+    soonest = jobs.open_slots(set(), 1, config)[0]
+    ledger = Ledger(path=tmp_path / "ledger.json")
+    ledger.freed = {REDO: soonest.isoformat()}
+    videos = [Video(video_id=REDO, title="", url=""), Video(video_id="new", title="", url="")]
+
+    pool, held = jobs.run_slots(videos, None, config, ledger)
+
+    assert held[REDO] == soonest
+    assert soonest.date() not in {slot.date() for slot in pool}

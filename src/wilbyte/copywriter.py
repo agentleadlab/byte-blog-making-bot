@@ -139,12 +139,29 @@ def as_options(raw) -> list[str]:
 
     options = []
     for item in raw or []:
-        cleaned = str(item).strip().strip('"').strip()
+        cleaned = no_markup(str(item).strip().strip('"').strip())
         # Models number lists even when asked not to; the digit isn't the headline.
         cleaned = re.sub(r"^\s*(?:\d+[.)]|[-*•])\s*", "", cleaned).strip()
         if cleaned:
             options.append(cleaned)
     return options
+
+
+# A tag, whole or cut off - "</", "</parameter>", "<br>" - anywhere in a line
+# that is meant to be plain words.
+# A "<" with a space after it is a sign - "leads < 30 days old" - and stays.
+_MARKUP = re.compile(r"</?[A-Za-z_][\w:.-]*[^<>]*>?|</|<$")
+
+
+def no_markup(text: str) -> str:
+    """A headline with the markup scraps taken off.
+
+    "3 Out Of 30 Leads Lie. Stop Blaming The Vendor.</" went onto the cover
+    and into GHL as the title: the model's own closing tag, cut short, left
+    on the end of a line meant to be plain words. Nobody writes a < in a
+    headline, so anything that looks like the start of a tag goes.
+    """
+    return " ".join(_MARKUP.sub(" ", str(text or "")).split()).strip()
 
 
 def _salvage(text: str) -> list[str]:
@@ -290,12 +307,12 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
         )
 
     package = CopyPackage(
-        article_h1=str(payload["article_h1"]).strip(),
+        article_h1=no_markup(str(payload["article_h1"])),
         article_html=as_markup(str(payload["article_html"])),
         headline_options=[Headline(text=o) for o in options],
-        meta_title=_truncate_clean(str(payload["meta_title"]).strip(), config.copy.meta_title_max),
+        meta_title=_truncate_clean(no_markup(str(payload["meta_title"])), config.copy.meta_title_max),
         meta_description=_truncate_clean(
-            str(payload["meta_description"]).strip(), config.copy.meta_description_max
+            no_markup(str(payload["meta_description"])), config.copy.meta_description_max
         ),
         url_slug=normalize_slug(str(payload["url_slug"])),
         cover_kicker=_strip_label(str(payload.get("cover_kicker") or "")),

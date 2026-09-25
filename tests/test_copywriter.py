@@ -322,3 +322,26 @@ def test_running_out_of_room_is_reported_as_itself():
 
     with pytest.raises(copywriter.CopywriterError, match="ran out of room"):
         copywriter._extract_tool_input(response)
+
+
+# ------------------------------------------------ markup left in a headline
+
+
+def test_a_closing_tag_left_on_a_headline_comes_off():
+    """"3 Out Of 30 Leads Lie. Stop Blaming The Vendor.</" went out as the
+    title and onto the cover."""
+    from wilbyte.copywriter import as_options, no_markup
+
+    assert no_markup("3 Out Of 30 Leads Lie. Stop Blaming The Vendor.</") == (
+        "3 Out Of 30 Leads Lie. Stop Blaming The Vendor.")
+    assert no_markup("Why Leads Say It's Free</parameter>") == "Why Leads Say It's Free"
+    assert no_markup("A <b>bold</b> claim") == "A bold claim"
+    assert as_options(["Stop Blaming The Vendor.</", "The Ad Said Free"]) == [
+        "Stop Blaming The Vendor.", "The Ad Said Free"]
+
+
+def test_a_less_than_sign_in_a_headline_stays():
+    from wilbyte.copywriter import no_markup
+
+    assert no_markup("Leads < 30 days old") == "Leads < 30 days old"
+    assert no_markup("Rates <$30 per lead") == "Rates <$30 per lead"

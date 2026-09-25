@@ -237,6 +237,85 @@ def plan_slots(
     )
 
 
+def run_slots(
+    videos: list[Video],
+    context: GHLContext | None,
+    config: Config,
+    ledger: Ledger,
+    *,
+    include_today: bool = False,
+) -> tuple[list[datetime], dict]:
+    """(the free slots for this run, {video id: the day it is getting back}).
+
+    A video whose post was deleted and is being run again gets the day that
+    post held, when it is still free; the rest share the next free days, and
+    never the one held back for it.
+    """
+    booked = taken_days(context, config, ledger)
+    held = held_for(videos, ledger, booked, config)
+    pool = open_slots(
+        booked | {slot.date() for slot in held.values()}, len(videos) - len(held), config,
+        include_today=include_today,
+    )
+    return pool, held
+
+
+def deleted_since(context: GHLContext, ledger: Ledger, sources) -> list:
+    """The posts for these videos that were deleted in GHL. Forgotten, with
+    the day each held remembered for its rerun.
+
+    "i need this remove from blog posting but i will rerun it ... ryte has to
+    know that im deleting it that way he'll schedule it again same date".
+    Asked only about the videos being run, so it costs one request each and
+    only when a video comes round again. A post that has gone out is left
+    alone: deleting a published post is taking it down, not redoing it.
+    """
+    wanted = set()
+    for source in sources or ():
+        try:
+            wanted.add(youtube.video_from_link(str(source)).video_id)
+        except Exception:
+            continue
+    gone = []
+    for video_id in wanted:
+        entry = ledger.entries.get(video_id)
+        if entry is None or entry.published_at or not entry.url_slug:
+            continue
+        try:
+            there = context.client.slug_exists(entry.url_slug)
+        except ghl.GHLError:
+            continue
+        if not there:
+            gone.append(entry)
+            ledger.forget(video_id, keep_slot=True)
+    if gone:
+        ledger.save()
+    return gone
+
+
+def held_for(videos: list[Video], ledger: Ledger, taken: set, config: Config) -> dict:
+    """{video id: the slot it held before its post was deleted}, for the ones
+    whose day is still free and still ahead - so a rerun lands back on it."""
+    from zoneinfo import ZoneInfo
+
+    from ..scheduler import parse_timestamp
+
+    tz = ZoneInfo(config.schedule.timezone)
+    soonest = datetime.now(tz) + timedelta(minutes=config.schedule.min_lead_minutes)
+    held = {}
+    for video in videos:
+        raw = ledger.freed.get(video.video_id)
+        slot = parse_timestamp(raw) if raw else None
+        if slot is None:
+            continue
+        slot = slot.astimezone(tz)
+        if slot >= soonest and slot.date() not in taken and slot.date() not in {
+            one.date() for one in held.values()
+        }:
+            held[video.video_id] = slot
+    return held
+
+
 def build(
     video: Video,
     config: Config,
@@ -664,7 +743,7 @@ def reconcile(context: GHLContext, ledger: Ledger) -> tuple[list, list, list[str
             kept.append(entry)
         else:
             gone.append(entry)
-            ledger.forget(entry.video_id)
+            ledger.forget(entry.video_id, keep_slot=True)
     if gone:
         ledger.save()
     return gone, kept, problems

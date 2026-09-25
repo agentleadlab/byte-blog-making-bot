@@ -7216,23 +7216,6 @@ async def _execute_run(
     limit = max(1, min(limit, config.discord.max_batch))
     output_dir = DEFAULT_OUTPUT_DIR
 
-    try:
-        ledger = await asyncio.to_thread(Ledger.load)
-        videos, already_done = await asyncio.to_thread(
-            jobs.resolve_many, sources, ledger,
-            limit=limit, force=force, offline=bool(transcript_text),
-        )
-    except PIPELINE_ERRORS as exc:
-        await responder.send(embed=embeds.error(str(exc)))
-        return
-
-    if not videos:
-        await responder.send(
-            f"Nothing pending — all {already_done} video(s) are already processed. "
-            "Add **force** to redo one."
-        )
-        return
-
     context = None
     if mode != "preview":
         try:
@@ -7249,14 +7232,39 @@ async def _execute_run(
             await responder.send(embed=embeds.error(str(exc)))
             return
 
+    try:
+        ledger = await asyncio.to_thread(Ledger.load)
+        # A post deleted in GHL to be redone: forgotten, with its day kept for
+        # it, before anything decides the video is already done.
+        if context is not None:
+            await asyncio.to_thread(jobs.deleted_since, context, ledger, sources)
+        videos, already_done = await asyncio.to_thread(
+            jobs.resolve_many, sources, ledger,
+            limit=limit, force=force, offline=bool(transcript_text),
+        )
+    except PIPELINE_ERRORS as exc:
+        if context:
+            await asyncio.to_thread(context.close)
+        await responder.send(embed=embeds.error(str(exc)))
+        return
+
+    if not videos:
+        if context:
+            await asyncio.to_thread(context.close)
+        await responder.send(
+            f"Nothing pending — all {already_done} video(s) are already processed. "
+            "Add **force** to redo one."
+        )
+        return
+
     created = skipped = failed = 0
     # Which videos didn't make it, so the retry doesn't mean hunting through
     # the original message for the links that got no answer.
     unfinished: list = []
     try:
-        slot_pool = await asyncio.to_thread(
+        slot_pool, held = await asyncio.to_thread(
             partial(
-                jobs.plan_slots, videos, context, config, ledger,
+                jobs.run_slots, videos, context, config, ledger,
                 include_today=include_today,
             )
         )
@@ -7271,6 +7279,10 @@ async def _execute_run(
                 else ""
             )
             + (f" Skipping {already_done} already done." if already_done else "")
+            + "".join(
+                f" Putting it back on **{slot:%a %b %d}**, the day its deleted post held."
+                for slot in held.values()
+            )
             + (
                 f" That's my {config.discord.max_batch}-per-run cap — send the "
                 f"other {trimmed} link(s) after and I'll carry on from there."
@@ -7301,8 +7313,10 @@ async def _execute_run(
                 continue
 
             # Show the slot this post would take without consuming it yet, so a
-            # skip leaves the day free for the next post in the batch.
-            post.scheduled_at = slot_pool[0] if slot_pool else None
+            # skip leaves the day free for the next post in the batch. A rerun
+            # of a deleted post has its own day, and takes nothing from the pool.
+            own = held.get(video.video_id)
+            post.scheduled_at = own or (slot_pool[0] if slot_pool else None)
 
             decision = await _review(
                 responder, post, index=index, total=len(videos), mode=mode, config=config
@@ -7335,7 +7349,7 @@ async def _execute_run(
             to_draft = status == ghl.STATUS_DRAFT
             if to_draft:
                 post.scheduled_at = None
-            elif slot_pool:
+            elif own is None and slot_pool:
                 slot_pool.pop(0)
 
             try:
@@ -7361,7 +7375,7 @@ async def _execute_run(
             except PIPELINE_ERRORS as exc:
                 failed += 1
                 unfinished.append(video)
-                if status == ghl.STATUS_SCHEDULED and post.scheduled_at:
+                if status == ghl.STATUS_SCHEDULED and post.scheduled_at and own is None:
                     slot_pool.insert(0, post.scheduled_at)  # publishing failed, free the slot
                 await responder.send(
                     embed=embeds.error(f"Failed to publish {post.title}\n{exc}")
