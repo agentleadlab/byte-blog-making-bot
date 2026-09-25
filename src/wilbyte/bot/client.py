@@ -7268,6 +7268,8 @@ async def _execute_run(
                 include_today=include_today,
             )
         )
+        # The blog's live posts, once a run: what each article may link to.
+        related = await asyncio.to_thread(jobs.link_targets, context, config, ledger)
         # Say what was left out. Ten links in and eight posts back looks like a
         # bug unless the reason is on screen.
         trimmed = max(0, len(sources) - len(videos) - already_done)
@@ -7293,8 +7295,11 @@ async def _execute_run(
         for index, video in enumerate(videos, start=1):
             try:
                 post = await asyncio.to_thread(
-                    jobs.build, video, config, output_dir,
-                    transcript_text=transcript_text if len(videos) == 1 else None,
+                    partial(
+                        jobs.build, video, config, output_dir,
+                        transcript_text=transcript_text if len(videos) == 1 else None,
+                        related=related,
+                    )
                 )
             except PIPELINE_ERRORS as exc:
                 # A video announced the minute it goes up has no captions yet.

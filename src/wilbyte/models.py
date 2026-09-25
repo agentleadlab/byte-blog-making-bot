@@ -64,6 +64,11 @@ class CopyPackage:
     # off a headline produced fragments like "WHY YOUR LIFE INSURANCE INTRO" -
     # a question with its second half missing. Empty falls back to slicing.
     cover_kicker: str = ""
+    # The search the post is written for, and what else it answers.
+    primary_keyword: str = ""
+    secondary_keywords: list[str] = field(default_factory=list)
+    # Alt text written for the cover, carrying the keyword.
+    cover_alt: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -104,6 +109,8 @@ class BlogPost:
     # through its API, and its update endpoint replaces rather than patches.
     ghl_payload_path: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # Where the target keyword landed - shown on the review card.
+    seo_line: str = ""
 
     def summary(self) -> str:
         when = self.scheduled_at.strftime("%a %b %d, %Y %I:%M %p") if self.scheduled_at else "unscheduled"

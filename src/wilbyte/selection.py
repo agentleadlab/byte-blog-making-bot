@@ -59,9 +59,29 @@ def choose_title(copy: CopyPackage, *, threshold: float = SIMILARITY_THRESHOLD) 
     *least*, not merely the first one that clears a bar. Ties go to the earlier
     option. Returns the headline and a note explaining the choice.
     """
-    scored = [(h, similarity(h.text, copy.article_h1)) for h in copy.headline_options]
+    from . import seo
+
+    keyword = getattr(copy, "primary_keyword", "")
+    options = list(copy.headline_options)
+    if keyword:
+        # Search first. The title is what Google shows and ranks, and a title
+        # picked for being unlike the keyword-bearing H1 was a title without
+        # the keyword in it - "The Lead Type That Tells You Why They Called"
+        # over "Veteran Life Insurance Leads: Why They Convert". Still the
+        # least like the H1, but only among the ones that carry the search.
+        carrying = [h for h in options if seo.has_keyword(h.text, keyword)]
+        if not carrying:
+            meta = getattr(copy, "meta_title", "")
+            if meta and seo.has_keyword(meta, keyword):
+                return Headline(text=meta), (
+                    f"meta title - no headline option carried \"{keyword}\""
+                )
+        else:
+            options = carrying
+
+    scored = [(h, similarity(h.text, copy.article_h1)) for h in options]
     best_index, (chosen, score) = min(enumerate(scored), key=lambda pair: pair[1][1])
-    index = best_index + 1
+    index = copy.headline_options.index(chosen) + 1
 
     if score < threshold:
         return chosen, f"option {index} (least similar to H1: {score:.2f})"

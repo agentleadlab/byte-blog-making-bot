@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from . import copywriter, cover, ghl, selection, youtube
+from . import copywriter, cover, ghl, selection, seo, youtube
 from .config import Config, REPO_ROOT
 from .models import BlogPost, CopyPackage, Transcript, Video
 from .state import Ledger
@@ -29,15 +29,23 @@ def build_post(
     *,
     output_dir: Path,
     report: Reporter = print,
+    related=(),
 ) -> BlogPost:
     """Generate the copy, pick the title, and render the cover image.
 
     Everything here is local - nothing is sent to GHL. Safe to run and inspect
-    before committing to a schedule.
+    before committing to a schedule. `related` is [(title, url)] for the
+    blog's published posts, the only ones the article may link to.
     """
     report(f"  writing copy for {video.video_id} ({transcript.word_count} transcript words)")
-    copy = copywriter.generate_copy(video, transcript, config)
-    return assemble_post(video, copy, config, output_dir=output_dir, report=report)
+    copy = copywriter.generate_copy(video, transcript, config, related=related)
+    # A link to a post that doesn't exist is a 404 on the page.
+    copy.article_html, gone = seo.keep_known_links(
+        copy.article_html, [url for _title, url in related or ()],
+        config.brand.canonical_link(""),
+    )
+    return assemble_post(video, copy, config, output_dir=output_dir, report=report,
+                         removed=gone)
 
 
 def assemble_post(
@@ -47,8 +55,13 @@ def assemble_post(
     *,
     output_dir: Path,
     report: Reporter = print,
+    removed=(),
 ) -> BlogPost:
-    """Turn a CopyPackage into a BlogPost with a rendered cover image."""
+    """Turn a CopyPackage into a BlogPost with a rendered cover image.
+
+    `removed` is the links to posts that don't exist taken out of the body,
+    for the review card to say so.
+    """
     title, title_note = selection.choose_title(copy)
     report(f"  title: {title.text!r} [{title_note}]")
     if "manual look" in title_note:
@@ -64,7 +77,7 @@ def assemble_post(
     cover.render_cover(cover_plan, config, cover_path)
     report(f"  cover image: {cover_path}")
 
-    alt_text = copy.url_slug if config.cover.alt_text_source == "url_slug" else title.text
+    alt_text = alt_for(copy, title.text, config)
 
     post = BlogPost(
         video=video,
@@ -75,13 +88,20 @@ def assemble_post(
         description=copy.meta_description,
         category=config.post.category,
         author=config.post.author,
-        keywords=list(config.post.keywords),
+        keywords=seo.tags(config.post.keywords, copy.primary_keyword, copy.secondary_keywords),
         cover_plan=cover_plan,
         cover_image_path=str(cover_path),
         cover_alt_text=alt_text,
     )
     if "manual look" in title_note:
         post.warnings.append(f"headline selection: {title_note}")
+    checked = seo.check(
+        keyword=copy.primary_keyword, title=post.title, slug=post.url_slug,
+        h1=copy.article_h1, html=copy.article_html, description=post.description,
+        alt=post.cover_alt_text, base=config.brand.canonical_link(""), removed=removed,
+    )
+    post.seo_line = checked.line()
+    post.warnings.extend(checked.warnings())
     if "manual look" in cover_plan.source_note:
         post.warnings.append(f"cover text: {cover_plan.source_note}")
     # An article with no tags at all publishes as a wall of plain text - or
@@ -94,6 +114,17 @@ def assemble_post(
 
     _write_local_artifacts(post, post_dir)
     return post
+
+
+def alt_for(copy: CopyPackage, title: str, config: Config) -> str:
+    """The cover's alt text: the sentence written for it, when the config says
+    to use it and there is one; the slug or the title otherwise."""
+    source = config.cover.alt_text_source
+    if source == "copy" and getattr(copy, "cover_alt", ""):
+        return copy.cover_alt
+    if source == "url_slug":
+        return copy.url_slug
+    return title
 
 
 def _write_local_artifacts(post: BlogPost, post_dir: Path) -> None:

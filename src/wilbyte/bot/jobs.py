@@ -322,11 +322,13 @@ def build(
     output_dir: Path,
     *,
     transcript_text: str | None = None,
+    related=(),
 ) -> BlogPost:
     """Transcript -> copy -> title -> cover image. No GHL contact.
 
     `transcript_text` skips the fetch entirely, which is how an attached
-    transcript gets used when YouTube refuses to serve one.
+    transcript gets used when YouTube refuses to serve one. `related` is the
+    blog's published posts, [(title, url)] - see `link_targets`.
     """
     if transcript_text:
         transcript = Transcript(
@@ -338,8 +340,46 @@ def build(
         transcript = youtube.fetch_transcript(video.video_id)
 
     return pipeline.build_post(
-        video, transcript, config, output_dir=output_dir, report=lambda _: None
+        video, transcript, config, output_dir=output_dir, report=lambda _: None,
+        related=related,
     )
+
+
+#: How many of the blog's posts are offered to link to. The newest, when
+#: there are more: enough to find three related ones in, short enough not to
+#: bury the transcript.
+LINK_TARGETS = 80
+
+
+def link_targets(context: "GHLContext | None", config: Config, ledger: Ledger | None = None) -> list:
+    """[(title, url)] for the blog's live posts - what an article may link to.
+
+    Only published ones: a link to a post still scheduled is a 404 until its
+    day comes. From GHL when it answers, so posts written by hand count too;
+    from RYTE's own record of what he published when it doesn't.
+    """
+    found: dict[str, str] = {}
+    if context is not None:
+        try:
+            for post in context.client.list_posts(context.blog_id):
+                slug = str(post.get("urlSlug") or "").strip()
+                if not slug or str(post.get("status") or "").upper() != "PUBLISHED":
+                    continue
+                if post.get("deleted") or post.get("archived"):
+                    continue
+                found[slug] = str(post.get("title") or slug).strip()
+        except Exception:
+            import logging
+
+            logging.getLogger("wilbyte.bot").warning(
+                "Couldn't list the blog's posts to link to", exc_info=True
+            )
+    if not found and ledger is not None:
+        for entry in ledger.entries.values():
+            if entry.published_at and entry.url_slug:
+                found[entry.url_slug] = entry.title or entry.url_slug
+    pairs = [(title, config.brand.canonical_link(slug)) for slug, title in found.items()]
+    return pairs[-LINK_TARGETS:]
 
 
 def publish(

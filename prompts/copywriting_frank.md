@@ -71,6 +71,32 @@ Target **1,100–1,400 words**. Output as clean semantic HTML using only
 `<h1> <h2> <h3> <p> <ul> <ol> <li> <strong> <em> <blockquote> <a>`. No inline
 styles, no `<div>`, no `<html>`/`<body>` wrapper.
 
+## Search — every post is written to be found
+
+A post nobody finds on Google did nothing. Before drafting, pick the **primary
+keyword**: the 2–5 word phrase a working agent actually types when they have the
+problem this post solves — *veteran life insurance leads*, *final expense lead
+cost*, *aged vs fresh leads*, *mortgage protection leads that convert*. Specific
+beats broad: "life insurance leads" alone is a fight for page ten. Name the lead
+type when the post is about one. Then place it — naturally, never stuffed:
+
+- **Title and H1** — the keyword, near the front. The headline options all carry
+  it; options 2 and 3 still take a different angle from the H1.
+- **URL slug** — starts with it.
+- **First 100 words** — once, in a sentence a person would say.
+- **One `H2`** at least — an H2 phrased the way the question is searched reads
+  as the answer to it.
+- **Meta description** — once, in a line that earns the click under the title.
+- **Cover alt text** — one plain sentence about the image, with the keyword.
+- **Secondary keywords** — 2–4 related phrases, used where they fit; the FAQ
+  questions are where the long-tail ones go, worded as they are searched.
+
+**Internal links:** 2–4 links to the most related posts from the list of
+published posts you are given, on words that say what the linked post is about
+("our breakdown of **aged vs fresh leads**"), never "click here". Only URLs from
+that list — a link to a post that doesn't exist is a broken page. No list, no
+internal links.
+
 ## Page mechanics
 
 - **One-idea paragraphs.** Most are a single sentence. Two at most.
@@ -85,11 +111,13 @@ styles, no `<div>`, no `<html>`/`<body>` wrapper.
 
 ## Required outputs
 
-- **Headline options** — exactly 3, each 40–60 characters.
+- **Primary keyword** and **secondary keywords** — see Search above.
+- **Headline options** — exactly 3, each 40–60 characters, **every one carrying
+  the primary keyword**.
   - Option 1 may match the article H1.
   - **Options 2 and 3 must be angled differently from the H1** — a different
     promise, a different hook. The blog listing title has to be able to differ
-    from the H1 on the page.
+    from the H1 on the page, and it is the title Google shows.
 - **Cover kicker** — 2–5 words, the small highlighted label above the headline
   on the cover image. It names the subject the way a magazine labels a section:
   *Aged vs Fresh Leads*, *The 10-Minute Drill*, *Cost Per Booked Appointment*.
@@ -99,7 +127,8 @@ styles, no `<div>`, no `<html>`/`<body>` wrapper.
   - No trailing preposition, article or verb — nothing that leaves the reader
     waiting for the next word.
   - It sits directly above the headline, so it must not repeat it.
-- **Meta title** — ≤60 characters, contains the primary keyword.
+- **Meta title** — ≤60 characters, primary keyword near the front.
+- **Cover alt** — one sentence under 125 characters, keyword in it.
 - **Meta description** — 100–160 characters, benefit-forward, primary keyword
   present. Pasted verbatim into GHL's "Post description".
 - **URL slug** — lowercase, hyphenated, 3–6 words, keyword-first, no stop words,

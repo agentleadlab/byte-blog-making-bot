@@ -57,8 +57,10 @@ headline_max_chars = 46
 # headline options. The big headline below it is a different headline option.
 kicker_min_words = 3
 kicker_max_words = 5
-# Alt text for the cover image is the URL slug (matching Wil's manual process).
-alt_text_source = "url_slug"
+# Alt text for the cover image: "copy" is the sentence the copywriter writes for
+# it, carrying the post's keyword - what search engines and screen readers
+# read. "url_slug" is the slug (Wil's manual process); "title" is the title.
+alt_text_source = "copy"
 
 [discord]
 # Show each finished post in Discord (cover image, title, slug, slot) and wait

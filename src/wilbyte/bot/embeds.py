@@ -48,6 +48,8 @@ def post_preview(post: BlogPost, *, index: int, total: int, mode: str) -> discor
         value=_truncate(post.copy.article_h1, 1024),
         inline=False,
     )
+    if getattr(post, "seo_line", ""):
+        embed.add_field(name="SEO", value=_truncate(post.seo_line, 1024), inline=False)
     embed.add_field(name="Source", value=post.video.short_url, inline=False)
 
     if post.warnings:

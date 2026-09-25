@@ -27,23 +27,46 @@ BLOG_PACKAGE_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "primary_keyword": {
+                "type": "string",
+                "description": (
+                    "The one search phrase this post is written to rank for: 2-5 "
+                    "words a working agent types into Google, lowercase - "
+                    "'veteran life insurance leads', 'final expense lead cost', "
+                    "'aged vs fresh leads'. Lead-type specific when the post is."
+                ),
+            },
+            "secondary_keywords": {
+                "type": "array",
+                "description": "2-4 related search phrases the post also answers.",
+                "items": {"type": "string"},
+            },
             "article_h1": {
                 "type": "string",
-                "description": "The H1 headline used at the top of the article body.",
+                "description": (
+                    "The H1 headline used at the top of the article body. Contains "
+                    "the primary keyword, near the front."
+                ),
             },
             "article_html": {
                 "type": "string",
                 "description": (
                     "The full article as semantic HTML, starting with the <h1>. "
                     "Allowed tags: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,a. "
-                    "Real markup, not escaped entities: write <h1>, never &lt;h1&gt;."
+                    "Real markup, not escaped entities: write <h1>, never &lt;h1&gt;. "
+                    "The primary keyword in the first 100 words and in at least one "
+                    "<h2>. 2-4 links to related posts from the list given, and "
+                    "only from that list, on words that say what the linked post "
+                    "is about."
                 ),
             },
             "headline_options": {
                 "type": "array",
                 "description": (
-                    "Exactly 3 headline options, 40-60 chars each. Options 2 and 3 "
-                    "must be angled differently from article_h1."
+                    "Exactly 3 headline options, 40-60 chars each, EVERY one "
+                    "containing the primary keyword. Options 2 and 3 must be "
+                    "angled differently from article_h1 - a different promise or "
+                    "hook - while still carrying the keyword."
                 ),
                 "items": {"type": "string"},
                 "minItems": 3,
@@ -62,14 +85,32 @@ BLOG_PACKAGE_TOOL = {
                     "not repeat it."
                 ),
             },
-            "meta_title": {"type": "string", "description": "<=60 characters."},
+            "meta_title": {
+                "type": "string",
+                "description": "<=60 characters, primary keyword near the front.",
+            },
             "meta_description": {
                 "type": "string",
-                "description": "100-160 characters. Pasted verbatim into GHL 'Post description'.",
+                "description": (
+                    "100-160 characters, primary keyword in it. Pasted verbatim "
+                    "into GHL 'Post description' - it is the line under the "
+                    "title on Google, so it has to earn the click."
+                ),
             },
             "url_slug": {
                 "type": "string",
-                "description": "lowercase-hyphenated, 3-6 words, no leading slash.",
+                "description": (
+                    "lowercase-hyphenated, 3-6 words, starting with the primary "
+                    "keyword, no leading slash."
+                ),
+            },
+            "cover_alt": {
+                "type": "string",
+                "description": (
+                    "Alt text for the cover image: one plain sentence, under 125 "
+                    "characters, saying what the image is about and containing the "
+                    "primary keyword. Not the slug, not a list of keywords."
+                ),
             },
             "keyword_map": {
                 "type": "string",
@@ -85,6 +126,7 @@ BLOG_PACKAGE_TOOL = {
             },
         },
         "required": [
+            "primary_keyword",
             "article_h1",
             "article_html",
             "headline_options",
@@ -209,18 +251,27 @@ def load_system_prompt(path: Path | None = None) -> str:
     return "".join(parts)
 
 
-def build_user_message(video: Video, transcript: Transcript) -> str:
-    """Mirror what Wil pastes by hand: the transcript, then the YouTube link."""
+def build_user_message(video: Video, transcript: Transcript, related=()) -> str:
+    """Mirror what Wil pastes by hand: the transcript, then the YouTube link -
+    and the blog's published posts, which are the only ones it can link to."""
     # The title is omitted when unknown - it's a hint, not a requirement, and an
     # empty label reads to the model as a real (blank) title.
     title_line = f"YouTube title: {video.title}\n" if video.title else ""
+    posts = "\n".join(f"- {title} — {url}" for title, url in related or ())
     return (
         "Write the Agent Lead Lab blog post for this video.\n\n"
         f"{title_line}"
         f"YouTube link: {video.short_url}\n\n"
         "TRANSCRIPT:\n"
         f"{transcript.text}\n\n"
-        "Call emit_blog_package with the finished post and its metadata."
+        + (
+            "PUBLISHED AGENT LEAD LAB POSTS - link 2-4 of the most related, using "
+            "these exact URLs and no others:\n" + posts + "\n\n"
+            if posts else
+            "There are no published posts to link to yet - add no links to "
+            "agentleadlab.com/post/.\n\n"
+        )
+        + "Call emit_blog_package with the finished post and its metadata."
     )
 
 
@@ -230,8 +281,13 @@ def generate_copy(
     config: Config,
     *,
     prompt_path: Path | None = None,
+    related=(),
 ) -> CopyPackage:
-    """Call Claude and return a validated CopyPackage."""
+    """Call Claude and return a validated CopyPackage.
+
+    `related` is [(title, url)] for the blog's published posts - what the
+    article may link to.
+    """
     config.secrets.require("anthropic_api_key")
 
     from anthropic import Anthropic
@@ -254,7 +310,7 @@ def generate_copy(
             }],
             tools=[BLOG_PACKAGE_TOOL],
             tool_choice={"type": "tool", "name": "emit_blog_package"},
-            messages=[{"role": "user", "content": build_user_message(video, transcript)}],
+            messages=[{"role": "user", "content": build_user_message(video, transcript, related)}],
         )
     except Exception as exc:
         raise CopywriterError(f"Anthropic request failed for {video.video_id}: {exc}") from exc
@@ -317,6 +373,13 @@ def parse_copy_package(payload: dict, config: Config) -> CopyPackage:
         url_slug=normalize_slug(str(payload["url_slug"])),
         cover_kicker=_strip_label(str(payload.get("cover_kicker") or "")),
         keyword_map=str(payload.get("keyword_map") or "").strip(),
+        primary_keyword=" ".join(no_markup(str(payload.get("primary_keyword") or "")).casefold().split()),
+        secondary_keywords=[
+            " ".join(no_markup(str(one)).casefold().split())
+            for one in (payload.get("secondary_keywords") or [])
+            if isinstance(payload.get("secondary_keywords"), list) and str(one).strip()
+        ][:5],
+        cover_alt=_truncate_clean(no_markup(str(payload.get("cover_alt") or "")), 125),
         internal_link_notes=str(payload.get("internal_link_notes") or "").strip(),
         word_count=int(payload.get("word_count") or 0),
     )
