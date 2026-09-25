@@ -196,7 +196,61 @@ def test_a_time_is_written_the_way_payra_takes_it():
 
     from wilbyte.bot import jobs
 
-    assert jobs.payra_time(datetime(2026, 8, 26, 21, 55, 55, 123456, tzinfo=timezone.utc)) == (
-        "2026-08-26T21:55:55.123")
-    assert jobs.payra_time(datetime(2026, 8, 26, 21, 55, 55, tzinfo=timezone.utc)) == (
-        "2026-08-26T21:55:55.000")
+    when = datetime(2026, 8, 26, 21, 55, 55, 123456, tzinfo=timezone.utc)
+
+    assert jobs.payra_times(when) == [
+        "2026-08-26T21:55:55.123Z", "2026-08-26T21:55:55.123+00:00",
+        "2026-08-26T21:55:55.123", "2026-08-26"]
+
+
+def test_the_way_payra_takes_a_time_is_found_and_used_for_every_list(monkeypatch):
+    import httpx
+
+    from wilbyte.bot import jobs
+
+    page = "<html><body><pre>" + PAYRA_TEXT.replace("\n", "<br>").replace(
+        "invoices", "invoices?updated_after={updated_after}") + "</pre></body></html>"
+    asked = []
+
+    class Api(Web):
+        def get(self, url, headers=None, **kw):
+            if "docs" in url:
+                return NS(status_code=200, text=page)
+            asked.append(url)
+            if url.endswith("Z"):
+                return NS(status_code=200, text="", json=lambda: {"data": []})
+            return NS(status_code=400, text="Invalid updated_after format",
+                      json=lambda: {"errors": ["Invalid updated_after format"]})
+
+    monkeypatch.setattr(httpx, "Client", Api)
+
+    said, _docs = jobs.payra_probe(NS(secrets=NS(payra_api_token="t", payra_site_id="s1")))
+
+    assert "Payra takes times written like `" in said and "Z`" in said
+    assert "✅" in said and "HTTP 400" not in said
+
+
+
+def test_a_time_with_a_plus_in_it_goes_encoded_and_a_refusal_of_all_is_said(monkeypatch):
+    import httpx
+
+    from wilbyte.bot import jobs
+
+    page = "<html><body><pre>" + PAYRA_TEXT.replace("\n", "<br>").replace(
+        "invoices", "invoices?updated_after={updated_after}") + "</pre></body></html>"
+    asked = []
+
+    class Api(Web):
+        def get(self, url, headers=None, **kw):
+            if "docs" in url:
+                return NS(status_code=200, text=page)
+            asked.append(url)
+            return NS(status_code=400, text="Invalid updated_after format",
+                      json=lambda: {"errors": ["Invalid updated_after format"]})
+
+    monkeypatch.setattr(httpx, "Client", Api)
+
+    said, _docs = jobs.payra_probe(NS(secrets=NS(payra_api_token="t", payra_site_id="s1")))
+
+    assert any("%2B00:00" in one for one in asked) and not any("+00:00" in one for one in asked)
+    assert "refused every way of writing the time" in said

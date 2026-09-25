@@ -9200,9 +9200,21 @@ def payra_payments(who: str) -> str:
 # ------------------------------------------------------------------ Payra API
 
 
-def payra_time(when: datetime) -> str:
-    """A time as Payra takes it: "2026-08-26T21:55:55.000", UTC, no zone."""
-    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}"
+def payra_time(when: datetime, *, zone: str = "Z") -> str:
+    """A time as Payra takes it: "2026-08-26T21:55:55.000Z", UTC, milliseconds."""
+    when = when.astimezone(timezone.utc)
+    return when.strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}" + zone
+
+
+def payra_times(when: datetime) -> list[str]:
+    """The ways of writing a time Payra might take, likeliest first. Its
+    error says "YYYY-MM-DDTHH:mm:ss.SSS" and refused that written exactly so."""
+    return [
+        payra_time(when),
+        payra_time(when, zone="+00:00"),
+        payra_time(when, zone=""),
+        when.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+    ]
 
 
 def payra_probe(config: Config) -> tuple[str, str]:
@@ -9212,6 +9224,8 @@ def payra_probe(config: Config) -> tuple[str, str]:
     GET; the token is sent only to the addresses the docs themselves give,
     and what comes back is described by its field names, never its values.
     """
+    from urllib.parse import quote
+
     import httpx
 
     from .. import payradocs
@@ -9256,9 +9270,11 @@ def payra_probe(config: Config) -> tuple[str, str]:
 
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
-    # Payra's own words: "updated_after format, must be YYYY-MM-DDTHH:mm:ss.SSS".
-    since = payra_time(datetime.now(timezone.utc) - timedelta(days=30))
-    tries = payradocs.worth_trying(calls, bases, site_id=site, since=since)
+    # Payra's own words: "updated_after format, must be YYYY-MM-DDTHH:mm:ss.SSS"
+    # - and it refused that written exactly so. Each likely way is tried on
+    # the first list, and the one it takes is used for the rest.
+    choices = payra_times(datetime.now(timezone.utc) - timedelta(days=30))
+    tries = payradocs.worth_trying(calls, bases, site_id=site, since=choices[0])
     reads = [path for method, path in calls if method == "GET"]
     if reads:
         lines.append("Read-only calls in the docs:\n" + "\n".join(f"• `GET {one}`" for one in reads[:15]))
@@ -9275,6 +9291,25 @@ def payra_probe(config: Config) -> tuple[str, str]:
     else:
         lines.append(f"Tried the token on {len(tries)} read-only address(es) — GET only, nothing changed:")
         with httpx.Client(timeout=20, follow_redirects=False) as api:
+            listed = next((url for url in tries if "updated_after=" in url), "")
+            if listed:
+                taken = ""
+                for choice in choices:
+                    # "+" in an address is a space; the time goes encoded.
+                    url = listed.replace(choices[0], quote(choice, safe=":"))
+                    try:
+                        got = api.get(url, headers={"x-access-token": token, "Accept": "application/json"})
+                    except httpx.HTTPError:
+                        break
+                    if not (got.status_code == 400 and "format" in str(getattr(got, "text", "")).casefold()):
+                        taken = choice
+                        break
+                if taken:
+                    lines.append(f"Payra takes times written like `{taken}`.")
+                    tries = [url.replace(choices[0], quote(taken, safe=":")) for url in tries]
+                else:
+                    lines.append("⚠ Payra refused every way of writing the time I tried: "
+                                 + ", ".join(f"`{one}`" for one in choices))
             for url in tries:
                 try:
                     # Payra's own words: "Every call to the API requires an
