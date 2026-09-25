@@ -9250,7 +9250,17 @@ def payra_probe(config: Config) -> tuple[str, str]:
         lines.append("How the docs say to send the token:\n" + "\n".join(f"> {one[:200]}" for one in auth))
 
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
-    tries = payradocs.worth_trying(calls, bases)
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    tries = payradocs.worth_trying(calls, bases, site_id=site)
+    reads = [path for method, path in calls if method == "GET"]
+    if reads:
+        lines.append("Read-only calls in the docs:\n" + "\n".join(f"• `GET {one}`" for one in reads[:15]))
+    if any("{site_id}" in one for one in reads) and not site:
+        lines.append(
+            "⚠ Those need your Payra **site id** - PAYRA_SITE_ID isn't in .env. "
+            "Ask Payra for it (api-support@hyfin.app), and whether "
+            "integrations.hyfin_api_access is turned on for the site."
+        )
     if not token:
         lines.append("⚠ PAYRA_API_TOKEN isn't in .env, so I didn't try anything with it.")
     elif not tries:
@@ -9275,5 +9285,11 @@ def payra_probe(config: Config) -> tuple[str, str]:
                     except ValueError:
                         shape = " — (not JSON)"
                 mark = "✅" if got.status_code < 300 else "🔒" if got.status_code in (401, 403) else "⚠"
-                lines.append(f"• {mark} `{url}` — HTTP {got.status_code}{shape}")
+                said = ""
+                if got.status_code >= 300:
+                    try:
+                        said = " — " + "; ".join(str(one) for one in (got.json().get("errors") or []))[:200]
+                    except (ValueError, AttributeError):
+                        said = ""
+                lines.append(f"• {mark} `{url}` — HTTP {got.status_code}{shape}{said}")
     return "\n".join(lines), docs

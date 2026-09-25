@@ -124,3 +124,55 @@ def test_the_command_is_understood():
     from wilbyte.bot import mentions
 
     assert mentions.parse("<@1> payra test").action == "payratest"
+
+
+# Payra's own pages, as RYTE read them from the office Mac.
+PAYRA_TEXT = """Stage Environment
+https: / / stage-api.payra.com
+
+Production Environment
+https: / / api.payra.com
+Endpoint
+POST {base_url} / api / v3.1 / site / {site_id} / invoice / addUpdate
+POST {base_url} / api / v3.1 / site / {site_id} / invoice / send
+GET {base_url} / api / v3.1 / site / {site_id} / invoices
+GET {base_url} / api / v3.1 / site / {site_id} / invoice / {external_id}
+Every call to the API requires an x-access-token property be added to the request headers."""
+
+
+def test_payras_spaced_out_addresses_are_read():
+    calls = payradocs.calls_in(PAYRA_TEXT)
+
+    assert ("GET", "/api/v3.1/site/{site_id}/invoices") in calls
+    assert ("POST", "/api/v3.1/site/{site_id}/invoice/send") in calls
+    assert payradocs.api_bases(PAYRA_TEXT) == ["https://api.payra.com"], "not the stage one"
+
+
+def test_nothing_under_a_site_is_tried_without_the_sites_id():
+    calls, bases = payradocs.calls_in(PAYRA_TEXT), payradocs.api_bases(PAYRA_TEXT)
+
+    assert payradocs.worth_trying(calls, bases) == []
+    assert payradocs.worth_trying(calls, bases, site_id="s1") == [
+        "https://api.payra.com/api/v3.1/site/s1/invoices"]
+
+
+def test_the_probe_says_it_needs_the_site_id(monkeypatch):
+    import httpx
+
+    from wilbyte.bot import jobs
+
+    page = "<html><body><pre>" + PAYRA_TEXT.replace("\n", "<br>") + "</pre></body></html>"
+
+    class Docs(Web):
+        def get(self, url, headers=None, **kw):
+            type(self).asked.append(("GET", url, dict(headers or {})))
+            return NS(status_code=200, text=page) if "docs" in url else NS(status_code=404, text="")
+
+    Docs.asked = []
+    monkeypatch.setattr(httpx, "Client", Docs)
+
+    said, _docs = jobs.payra_probe(NS(secrets=NS(payra_api_token="t", payra_site_id="")))
+
+    assert "`GET /api/v3.1/site/{site_id}/invoices`" in said
+    assert "PAYRA_SITE_ID isn't in .env" in said and "hyfin_api_access" in said
+    assert not any("x-access-token" in headers for _m, _u, headers in Docs.asked)

@@ -66,10 +66,20 @@ _CALL = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(https?://[^\s\"'<>`]+|/[^\
 _ABSOLUTE = re.compile(r"https?://[\w.-]+(?:/[^\s\"'<>`]*)?", re.IGNORECASE)
 
 
+def tidied(text: str) -> str:
+    """The docs as their addresses read once written out: Payra's pages set
+    them as "GET {base_url} / api / v3.1 / invoice / addUpdate" and
+    "https: / / api.payra.com", spaced for the eye."""
+    text = re.sub(r"https?\s*:\s*/\s*/\s*", lambda m: m.group(0).split(":")[0].strip() + "://", str(text or ""))
+    return re.sub(r"(?<=[\w}])\s+/\s+(?=[\w{])", "/", text)
+
+
 def calls_in(text: str) -> list[tuple[str, str]]:
-    """Every "GET /something" the docs name, in order, each once."""
+    """Every "GET /something" the docs name, in order, each once. A
+    "{base_url}" in front is written as "/" - it is the API's own address."""
     found = []
-    for method, path in _CALL.findall(str(text or "")):
+    text = tidied(text).replace("{base_url}/", "/").replace("{base_url}", "")
+    for method, path in _CALL.findall(text):
         pair = (method.upper(), path.rstrip(".,;:)"))
         if pair not in found:
             found.append(pair)
@@ -81,7 +91,12 @@ def api_bases(text: str) -> list[str]:
     addresses the docs write out, with /api or /v1 in them. A relative
     "/v1/invoices" is joined onto these."""
     found = []
-    for one in _ABSOLUTE.findall(str(text or "")):
+    text = tidied(text)
+    # Payra names its two outright: "Production Environment https://api.payra.com".
+    for named in re.findall(r"production environment\s+(https?://[\w.-]+)", text, re.IGNORECASE):
+        if named not in found:
+            found.append(named)
+    for one in _ABSOLUTE.findall(text):
         parts = urlsplit(one.rstrip("/.,;:)"))
         if "/docs/" in parts.path or not re.search(r"/(?:api|v\d)\b", parts.path + "/", re.IGNORECASE):
             continue
@@ -91,10 +106,13 @@ def api_bases(text: str) -> list[str]:
     return found
 
 
-def worth_trying(calls, bases) -> list[str]:
-    """The read-only addresses to try: GETs with nothing to fill in."""
+def worth_trying(calls, bases, *, site_id: str = "") -> list[str]:
+    """The read-only addresses to try: GETs with nothing left to fill in once
+    the site's id is in - every invoice and payment call is under a site."""
     urls = []
     for method, path in calls:
+        if site_id:
+            path = path.replace("{site_id}", site_id)
         if method != "GET" or re.search(r"[{}:<>]|\$\w", path.split("://", 1)[-1]):
             continue
         if path.startswith("http"):
