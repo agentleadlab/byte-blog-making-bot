@@ -2651,11 +2651,15 @@ async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
             f"“{clearout.their_folder(clearout.Plan(name=who, member_name=str(was)))}”. "
             + (f"Should be **{right.display_name}** → `@RYTE redo bell {who}`"
                if right is not None else
-               "Nobody in the server is them — that picture should just be deleted.")
+               "No member's name matches theirs in full, so there's nothing to "
+               "redraw — delete that ring-da-bell picture.")
         )
     lines.append(
-        "-# Their own channel's picture and the sheet in Ryte Collection are "
-        "not affected. I can't delete in Drive: remove the wrong pictures by hand."
+        "-# In each of those folders delete **only the ring-da-bell pictures**. "
+        "Their own channel's picture is right and is the only copy left - it "
+        "sits in the wrongly named folder, so move it to one named for them, "
+        "don't delete it. The sheets in Ryte Collection are not affected. I "
+        "can't delete or move in Drive, so this is by hand."
     )
     # Split across messages by the responder when it runs long.
     await responder.send("\n".join(lines))

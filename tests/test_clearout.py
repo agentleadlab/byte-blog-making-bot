@@ -3485,7 +3485,8 @@ def test_the_clear_outs_that_used_somebody_elses_messages_are_listed(monkeypatch
     assert "2 of 3 clear-outs" in text
     assert "**dylan_rankin-vet**" in text and "Should be **Dylan Rankin**" in text
     assert "`@RYTE redo bell dylan_rankin-vet`" in text
-    assert "**demetrios_brooks-fex**" in text and "Nobody in the server is them" in text
+    assert "**demetrios_brooks-fex**" in text and "nothing to redraw" in text
+    assert "only the ring-da-bell pictures" in text and "don't delete it" in text
     assert "seth_essien" not in text
     assert "“d_1234”" in text
 
