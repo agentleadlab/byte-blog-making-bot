@@ -317,6 +317,10 @@ class WilByteBot(discord.Client):
             self.offered_the_run = True
             _also_running(self.loop.create_task(_offer_the_run(self)))
             _also_running(self.loop.create_task(_catch_up_payra(self)))
+            if getattr(self.config.secrets, "payra_api_token", None) and getattr(
+                self.config.secrets, "payra_site_id", None
+            ):
+                _also_running(self.loop.create_task(payra_loop(self)))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -6819,6 +6823,25 @@ async def _payments_in(bot: "WilByteBot", year: int, month: int) -> tuple[list, 
             "history. Give it Read Message History."
         )
     return found, ""
+
+
+#: How often Payra is asked what changed.
+PAYRA_SYNC_SECONDS = 600
+
+
+async def payra_loop(bot: "WilByteBot") -> None:
+    """Keep the copy of Payra's invoices and payments up to date, all day.
+    A failure is logged and the next pass carries on from where it stopped."""
+    while not bot.is_closed():
+        try:
+            counts = await asyncio.to_thread(jobs.payra_sync, bot.config)
+            if any(counts.values()):
+                log.info("Payra: %s", ", ".join(f"{n} {kind}" for kind, n in counts.items()))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Couldn't read Payra; trying again shortly", exc_info=True)
+        await asyncio.sleep(PAYRA_SYNC_SECONDS)
 
 
 def _keep_payment(message_id, paid) -> None:

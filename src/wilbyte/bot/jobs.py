@@ -8681,8 +8681,9 @@ class RingLookups:
             tool("stripe_customer", "The agent in Stripe: their invoices "
                  "(paid or not, how much, when) and recent payments.",
                  who=("string", "Their email, phone number or full name.")),
-            tool("payra_payments", "The agent's payments through Payra, as "
-                 "Payra announced them: when, how much, for what.",
+            tool("payra_payments", "The agent in Payra: their invoices - "
+                 "number, total, dates, and each payment made on it with its "
+                 "status - and their payments.",
                  who=("string", "Their phone number, email or full name.")),
             tool("ghl_contact", "The agent's contact in GoHighLevel: email, "
                  "phone, tags, when they were added.",
@@ -9188,13 +9189,35 @@ def cleared_out(config: Config) -> tuple[list[dict], list[str]]:
 
 
 def payra_payments(who: str) -> str:
-    """The agent's Payra payments, from what the payments channel announced."""
-    from .. import payra
+    """The agent in Payra: their invoices and what was paid on each, from the
+    API copy; and the payments the channel announced, when there are any."""
+    from .. import payra, payraapi
 
+    said = []
+    account = payraapi.account(payraapi.load(), who)
+    if account:
+        said.append(account)
     found = payra.find(payra.load(), who)
-    if not found:
-        return f"No Payra payment on record for {who}."
-    return "Payra payments, newest first:\n" + payra.described(found)
+    if found and not account:
+        said.append("Payra payments announced in the payments channel, newest first:\n"
+                    + payra.described(found))
+    return "\n\n".join(said) or f"No Payra invoice or payment on record for {who}."
+
+
+def payra_sync(config: Config) -> dict:
+    """Read what changed in Payra since last time. {kind: how many}."""
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    data = payraapi.load()
+    try:
+        with payraapi.PayraClient(token, site) as client:
+            counts = payraapi.sync(data, client)
+    finally:
+        # Whatever was read before a failure is kept, and so is where it got to.
+        payraapi.save(data)
+    return counts
 
 
 # ------------------------------------------------------------------ Payra API

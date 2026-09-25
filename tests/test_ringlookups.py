@@ -811,11 +811,34 @@ def test_the_responder_can_check_payra(monkeypatch):
 
     got = look.run("payra_payments", {"who": "312-555-0188"})
 
-    assert got.startswith("Payra payments, newest first:")
+    assert got.startswith("Payra payments announced in the payments channel, newest first:")
     assert "2026-09-20 $700.00 for OTP VETS - Adrian Pacheco <a@x.com>" in got
     assert look.checked == ["Payra"]
     assert look.run("payra_payments", {"who": "Nobody Known"}) == (
-        "No Payra payment on record for Nobody Known.")
+        "No Payra invoice or payment on record for Nobody Known.")
+
+
+def test_the_responder_reads_payra_invoices_first(monkeypatch):
+    """With the API copy there, the invoice and what was paid on it is the
+    answer - the channel's announcements of the same payments add nothing."""
+    from wilbyte import payra, payraapi
+    from wilbyte.bot import jobs
+
+    data = payra.load()
+    payra.remember(data, 1, _paid("Adrian Pacheco", "a@x.com", "3125550188", 70000))
+    payra.save(data)
+    kept = payraapi.load()
+    kept["invoices"]["i1"] = {"id": "i1", "number": "1042", "total": 700, "invoice_date": "2026-09-19",
+                              "name": "Adrian Pacheco", "email": "a@x.com", "phone": "3125550188"}
+    kept["payments"]["p1"] = {"id": "p1", "amount": 700, "status": "Settled", "paid_on": "2026-09-20T01:00:00Z",
+                              "invoice_id": "i1"}
+    payraapi.save(kept)
+
+    got = jobs.RingLookups(None, []).run("payra_payments", {"who": "312-555-0188"})
+
+    assert got.startswith("Payra account for Adrian Pacheco:")
+    assert "Invoice #1042 2026-09-19: $700.00 - payments: $700.00 Settled 2026-09-20" in got
+    assert "announced" not in got
 
 
 def test_a_payra_post_is_kept_whoever_it_is_for(monkeypatch):
