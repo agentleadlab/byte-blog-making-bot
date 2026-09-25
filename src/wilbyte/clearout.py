@@ -162,6 +162,45 @@ def tidy(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (name or "").casefold())
 
 
+#: What a client channel's name carries after the person: "justin_schwartz-
+#: otp-vet", "mujeeb_anwari-standard-vet", "joseph_temple-fb-iul".
+LEAD_ENDINGS = frozenset(
+    "vet vets veteran fex iul otp standard std mtg mp mortgage widows widow "
+    "spanish trucker fb aged fresh plus phnx phoenix uprise ta wle term life "
+    "leads lead".split()
+)
+
+
+def person_in(name: str) -> str:
+    """The person's name in a client channel's name, tidied - the lead-type
+    words off the end. "dylan_rankin-vet" -> "dylanrankin"."""
+    words = tidy_words(name).split()
+    while len(words) > 1 and words[-1] in LEAD_ENDINGS:
+        words.pop()
+    return tidy(" ".join(words))
+
+
+def name_match(wanted: str, said: str) -> int:
+    """How well a member's name matches the one wanted, both tidied. 0 is not.
+
+    3 the same; 2 their name holds the whole of it ("dylanrankin0523");
+    1 it holds theirs, and theirs is most of it - "dylanrankin" inside the
+    channel's "dylanrankinvet". Never a scrap: a member called "D" is inside
+    "dylanrankin" and "demetriosbrooks" both, and was taken for each of them -
+    his two messages from 2024 kept as theirs, and Dylan's own sales in
+    ring-da-bell never looked for.
+    """
+    if not wanted or not said:
+        return 0
+    if said == wanted:
+        return 3
+    if wanted in said:
+        return 2
+    if said in wanted and len(said) >= max(5, (len(wanted) * 2 + 2) // 3):
+        return 1
+    return 0
+
+
 def matches(name: str, channel: Channel) -> bool:
     """Whether this channel is that agent's.
 

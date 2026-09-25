@@ -3200,3 +3200,84 @@ def test_a_press_counts_even_when_discord_wont_redraw_the_message():
 
     view = asyncio.run(go())
     assert view.answered
+
+
+# ------------------------------------------- whose messages are whose
+
+
+def _server(*people):
+    from types import SimpleNamespace as NS
+
+    return NS(members=[
+        NS(id=at, display_name=display, global_name=None, name=user)
+        for at, (display, user) in enumerate(people, start=1)
+    ])
+
+
+def test_a_member_called_by_an_initial_is_nobody_elses():
+    """"ryte didnt flag these" - a member called "D" is inside "dylanrankin"
+    and "demetriosbrooks" both, and his two ring-da-bell messages from 2024
+    were kept as Dylan's, and as Demetrios's before him - while Dylan's own
+    sales were never looked for."""
+    from wilbyte.bot import client
+
+    guild = _server(("D", "d_1234"), ("Dylan Rankin", "dylanrankin_0523"),
+                    ("Demetrios Brooks", "dbrooks"))
+
+    assert client._member_called(guild, "dylan_rankin-vet").display_name == "Dylan Rankin"
+    assert client._member_called(guild, "Dylan Rankin").display_name == "Dylan Rankin"
+    assert client._member_called(guild, "demetrios_brooks-fex").display_name == "Demetrios Brooks"
+
+
+def test_nobody_by_that_name_is_nobody_not_the_nearest():
+    from wilbyte.bot import client
+
+    guild = _server(("D", "d_1234"), ("Dylan", "dylan77"), ("Rankin", "rankin"))
+
+    assert client._member_called(guild, "dylan_rankin-vet") is None
+
+
+def test_two_people_as_likely_as_each_other_is_nobody():
+    from wilbyte.bot import client
+
+    guild = _server(("Jay Rodriguez", "jayrod1"), ("Jay Rodriguez", "jayrod2"))
+
+    assert client._member_called(guild, "jay-rodriguez") is None
+
+
+def test_the_closest_match_wins_over_a_looser_one():
+    from wilbyte.bot import client
+
+    guild = _server(("Dylan Rankin Jr", "djr"), ("Dylan Rankin", "dylanr"))
+
+    assert client._member_called(guild, "Dylan Rankin").name == "dylanr"
+
+
+def test_their_username_is_them_too():
+    from wilbyte.bot import client
+
+    guild = _server(("🔥 closer", "dylanrankin_0523"))
+
+    assert client._member_called(guild, "Dylan Rankin").name == "dylanrankin_0523"
+
+
+def test_the_lead_type_on_a_channel_name_is_not_part_of_the_person():
+    assert clearout.person_in("mujeeb_anwari-standard-vet") == "mujeebanwari"
+    assert clearout.person_in("joseph-temple-fb-iul") == "josephtemple"
+    assert clearout.person_in("vet") == "vet"
+
+
+def test_an_initial_alone_is_never_taken_for_the_client():
+    from wilbyte.bot import client
+
+    assert client._member_called(_server(("D", "d_1234")), "dylan_rankin-vet") is None
+
+
+def test_a_long_lead_type_on_the_channel_name_still_finds_them():
+    """"seth_essien-standard-vet" is mostly lead type; read whole, Seth's own
+    name is too small a part of it to count."""
+    from wilbyte.bot import client
+
+    guild = _server(("Seth Essien", "sethe"))
+
+    assert client._member_called(guild, "seth_essien-standard-vet").name == "sethe"

@@ -2988,19 +2988,29 @@ def _member_called(guild, name: str):
     """
     from .. import clearout
 
-    wanted = clearout.tidy(name)
+    # As typed, and as the person in a channel's name - "dylan_rankin-vet" is
+    # Dylan Rankin, the "vet" is what he bought.
+    wanted = {one for one in (clearout.tidy(name), clearout.person_in(name)) if one}
     if not wanted:
         return None
+    best, found = 0, []
     for member in guild.members:
-        for called in (
-            getattr(member, "display_name", ""),
-            getattr(member, "global_name", "") or "",
-            getattr(member, "name", ""),
-        ):
-            said = clearout.tidy(called)
-            if said and (said == wanted or wanted in said or said in wanted):
-                return member
-    return None
+        score = max((
+            clearout.name_match(each, clearout.tidy(called))
+            for each in wanted
+            for called in (
+                getattr(member, "display_name", ""),
+                getattr(member, "global_name", "") or "",
+                getattr(member, "name", ""),
+            )
+        ), default=0)
+        if score > best:
+            best, found = score, [member]
+        elif score and score == best and member not in found:
+            found.append(member)
+    # Two people as good a match as each other is a question, not an answer:
+    # the wrong one's messages kept as the client's are worse than none.
+    return found[0] if len(found) == 1 else None
 
 
 def _all_of_it(message) -> str:
