@@ -9251,7 +9251,8 @@ def payra_probe(config: Config) -> tuple[str, str]:
 
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
-    tries = payradocs.worth_trying(calls, bases, site_id=site)
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tries = payradocs.worth_trying(calls, bases, site_id=site, since=since)
     reads = [path for method, path in calls if method == "GET"]
     if reads:
         lines.append("Read-only calls in the docs:\n" + "\n".join(f"• `GET {one}`" for one in reads[:15]))
@@ -9281,7 +9282,7 @@ def payra_probe(config: Config) -> tuple[str, str]:
                 shape = ""
                 if got.status_code < 300:
                     try:
-                        shape = " — " + payradocs.shape_of(got.json())[:300]
+                        shape = " — " + payradocs.shape_of(got.json())[:600]
                     except ValueError:
                         shape = " — (not JSON)"
                 mark = "✅" if got.status_code < 300 else "🔒" if got.status_code in (401, 403) else "⚠"

@@ -106,13 +106,17 @@ def api_bases(text: str) -> list[str]:
     return found
 
 
-def worth_trying(calls, bases, *, site_id: str = "") -> list[str]:
+def worth_trying(calls, bases, *, site_id: str = "", since: str = "") -> list[str]:
     """The read-only addresses to try: GETs with nothing left to fill in once
-    the site's id is in - every invoice and payment call is under a site."""
+    the site's id is in - every invoice and payment call is under a site -
+    and, for the lists, `since` as what changed after: "invoices?
+    updated_after={updated_after}"."""
     urls = []
     for method, path in calls:
         if site_id:
             path = path.replace("{site_id}", site_id)
+        if since:
+            path = path.replace("{updated_after}", since)
         if method != "GET" or re.search(r"[{}:<>]|\$\w", path.split("://", 1)[-1]):
             continue
         if path.startswith("http"):

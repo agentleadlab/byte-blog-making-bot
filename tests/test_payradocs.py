@@ -176,3 +176,13 @@ def test_the_probe_says_it_needs_the_site_id(monkeypatch):
     assert "`GET /api/v3.1/site/{site_id}/invoices`" in said
     assert "PAYRA_SITE_ID isn't in .env" in said and "hyfin_api_access" in said
     assert not any("x-access-token" in headers for _m, _u, headers in Docs.asked)
+
+
+
+def test_the_lists_are_asked_for_what_changed_lately():
+    calls = [("GET", "/api/v3.1/site/{site_id}/payments?updated_after={updated_after}"),
+             ("GET", "/api/v3.1/site/{site_id}/payment/{external_id}")]
+
+    assert payradocs.worth_trying(calls, ["https://api.payra.com"], site_id="s1",
+                                  since="2026-08-26T00:00:00Z") == [
+        "https://api.payra.com/api/v3.1/site/s1/payments?updated_after=2026-08-26T00:00:00Z"]
