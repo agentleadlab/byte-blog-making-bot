@@ -367,7 +367,8 @@ class Guild:
 
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
-             on_card="https://sheet", in_channel="", rows=None, unread=False):
+             on_card="https://sheet", in_channel="", rows=None, unread=False,
+             welcomed=True):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -394,9 +395,12 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
     async def said_in_there(_channel):
         if unread:
             return [], ["Couldn't read that channel's history: 403 Forbidden"]
+        # Faith's welcome tags the client - how the channel says who they are.
+        welcome = [clearout.Said(who="Faith", when="May 20", text="Hey, this is your channel",
+                                 mentions=("7",))] if welcomed else []
         if not in_channel:
-            return [], []
-        return [clearout.Said(who="bot", when="May 24", text=in_channel)], []
+            return welcome, []
+        return welcome + [clearout.Said(who="bot", when="May 24", text=in_channel)], []
 
     monkeypatch.setattr(bot_client, "_last_said", said_in_there)
 
@@ -2188,7 +2192,7 @@ def test_one_picture_goes_to_drive_for_each_channel(monkeypatch):
         return [clearout.Said(who="artur.rushiti", when="May 24",
                               text="got them, thanks",
                               at=datetime(2026, 5, 24),
-                              where="artur_rushiti-vet")], []
+                              where="artur_rushiti-vet", author_id="7")], []
 
     async def elsewhere(*a, **kw):
         return [clearout.Said(who="Artur | NOVA |", when="May 08",
@@ -2236,7 +2240,7 @@ def test_a_channel_with_nothing_in_it_says_so_rather_than_going_quiet(monkeypatc
         __import__("wilbyte.bot.jobs", fromlist=["x"]), "keep_the_picture",
         lambda config, page, called, **kw: ("https://drive/p.png", []),
     )
-    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False])
+    _guild, _channel, said, _buttons = _closing(monkeypatch, says=[True, False], welcomed=False)
     whole = "\n".join(said)
 
     assert "nothing in the channel to draw" in whole
@@ -3583,3 +3587,85 @@ def test_the_channel_is_who_they_were_when_the_name_typed_was_short(monkeypatch)
     asyncio.run(client._check_clearouts(None, here, None))
 
     assert "Should be **Dylan Rankin**" in said[0]
+
+
+
+# ----------------------------- the channel says who the client is, not the name
+
+
+def test_a_name_that_fits_but_never_appears_in_their_channel_is_not_used(monkeypatch):
+    """"Make sure it wont make the same mistake". A member found by name who
+    never wrote in the client's channel and was never tagged in it is a name
+    that happens to fit: nothing of theirs from ring-da-bell is kept."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    asked = []
+
+    async def elsewhere(guild, member, channels):
+        asked.append(member)
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_also_said", elsewhere)
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], welcomed=False,
+        in_channel="Check it here: https://docs.google.com/spreadsheets/d/" + "x" * 30,
+    )
+    whole = "\n".join(said)
+
+    assert asked == [None], "used a member the channel never mentions"
+    assert "has their name but never wrote in or was tagged" in whole
+
+
+def test_the_client_tagged_in_their_welcome_is_confirmed(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    asked = []
+
+    async def elsewhere(guild, member, channels):
+        asked.append(getattr(member, "display_name", None))
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_also_said", elsewhere)
+    _closing(monkeypatch, says=[True, False])
+
+    assert asked == ["Jay Rodriguez"]
+
+
+def test_seen_in_their_channel_by_writing_or_by_being_tagged():
+    wrote = clearout.Said(who="Dylan", when="", text="thanks", author_id="42")
+    tagged = clearout.Said(who="Faith", when="", text="Hey", mentions=("42", "9"))
+    other = clearout.Said(who="D", when="", text="hi", author_id="5")
+
+    assert clearout.seen_in([other, wrote], 42)
+    assert clearout.seen_in([tagged], "42")
+    assert not clearout.seen_in([other], 42)
+    assert not clearout.seen_in([], 42)
+    assert not clearout.seen_in([wrote], "")
+
+
+def test_a_discord_message_keeps_who_wrote_it_and_who_it_tagged():
+    from datetime import datetime
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client as bot_client
+
+    message = NS(
+        author=NS(id=11, display_name="Faith | Agent Lead Lab", bot=False, display_avatar=None),
+        mentions=[NS(id=42), NS(id=9)], created_at=datetime(2026, 5, 27, 23, 31),
+        content="Hey @Dylan Rankin this will be the primary channel", embeds=[],
+        attachments=[], reactions=[],
+    )
+
+    said = bot_client._as_said(message, "dylan_rankin-vet")
+
+    assert said.author_id == "11" and said.mentions == ("42", "9")
+
+
+def test_nobody_is_seen_in_a_channel_by_having_no_id():
+    """A message with no author id and a member with no id are not a match."""
+    assert not clearout.seen_in([clearout.Said(who="bot", when="", text="lead")], "")
+    assert not clearout.seen_in([clearout.Said(who="bot", when="", text="lead")], None)

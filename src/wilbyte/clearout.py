@@ -124,6 +124,10 @@ class Said:
     #: Their profile picture, as a url Chromium can fetch. A Discord message
     #: without one does not look like a Discord message.
     avatar: str = ""
+    #: Who wrote it, and who it tagged, by Discord id - for knowing who the
+    #: client actually is without going by names at all.
+    author_id: str = ""
+    mentions: tuple = ()
 
 
 @dataclass
@@ -392,6 +396,24 @@ def read_rows(rows: list) -> list[dict]:
         if got.get("name") or got.get("channel"):
             found.append(got)
     return found
+
+
+def seen_in(messages, member_id) -> bool:
+    """Whether this member wrote in the client's channel or was tagged in it.
+
+    The channel is the client's by definition, and Faith's welcome tags them
+    in it - "Hey @Dylan Rankin this will be the primary channel". A member
+    found by name who never appears there is a name that happens to fit, and
+    what they said elsewhere is not kept as the client's.
+    """
+    wanted = str(member_id or "")
+    if not wanted:
+        return False
+    return any(
+        str(getattr(one, "author_id", "") or "") == wanted
+        or wanted in {str(tag) for tag in getattr(one, "mentions", ()) or ()}
+        for one in messages or []
+    )
 
 
 def old_member(members, name: str):

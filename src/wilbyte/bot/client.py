@@ -2424,6 +2424,18 @@ async def _clear_out(
         guild.get_channel(int(plan.channel.channel_id))
     )
     plan.problems += unread
+    # The name found somebody; the channel says whether it is them. A member
+    # who never wrote in the client's own channel and was never tagged in it
+    # is a name that happens to fit - their messages elsewhere are not kept
+    # as the client's, and the Drive folder is named for the channel instead.
+    if member is not None and not clearout.seen_in(messages, member.id):
+        plan.notes.append(
+            f"{member.display_name} has their name but never wrote in or was "
+            f"tagged in #{plan.channel.name} — not keeping anything of theirs "
+            "from other channels."
+        )
+        member = None
+        plan.member_id, plan.member_name = "", ""
     # The card's link first - it is the one the team chose, and the card is
     # only found when exactly one client on the board has this name. The
     # channel's when there is none; and when the two disagree, both are
@@ -3223,6 +3235,11 @@ def _as_said(message, where: str):
         where=where,
         reactions=_reacted(message),
         avatar=_face(author),
+        author_id=str(getattr(author, "id", "") or ""),
+        mentions=tuple(
+            str(getattr(one, "id", "")) for one in getattr(message, "mentions", None) or []
+            if getattr(one, "id", None) is not None
+        ),
     )
 
 
