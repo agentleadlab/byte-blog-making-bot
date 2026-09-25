@@ -350,7 +350,8 @@ def test_a_long_answer_is_cut_to_size(monkeypatch):
 def test_nothing_it_can_look_up_writes_anything():
     names = {one["name"] for one in jobs.RingLookups(None, []).tools()}
 
-    assert names == {"open_link", "trello_card", "stripe_customer", "ghl_contact", "search_texts"}
+    assert names == {"open_link", "trello_card", "stripe_customer", "payra_payments",
+                     "ghl_contact", "search_texts"}
 
 
 # ------------------------------------------------ thinking, then replying
@@ -755,3 +756,147 @@ def test_a_lesson_card_never_goes_over_what_discord_takes():
                               who="Y" * 400, used=1, out_of=20)
 
     assert _size(card) < 6000
+
+
+
+# ------------------------------------------------------------------ Payra
+
+
+def _paid(name, email, phone, cents, product="OTP VETS", day="2026-09-20"):
+    from datetime import datetime
+
+    from wilbyte.levinson import Payment
+
+    return Payment(name=name, email=email, phone=phone, cents=cents, product=product,
+                   paid_at=datetime.fromisoformat(day + "T10:00:00"))
+
+
+def test_every_payra_payment_is_remembered_once_by_its_message():
+    from wilbyte import payra
+
+    data = payra.load()
+    payra.remember(data, 900, _paid("Dylan Rankin", "d@x.com", "3125550188", 70000))
+    payra.remember(data, 900, _paid("Dylan Rankin", "d@x.com", "3125550188", 70000))
+    payra.remember(data, 901, _paid("Shelby Guest", "s@x.com", "4358173162", 35000))
+    payra.save(data)
+
+    kept = payra.load()
+    assert len(kept["payments"]) == 2 and kept["newest"] == "901"
+
+
+def test_an_agent_is_found_by_phone_email_or_whole_name_never_part_of_one():
+    from wilbyte import payra
+
+    data = payra.load()
+    payra.remember(data, 1, _paid("Dylan Rankin", "d@x.com", "13125550188", 70000, day="2026-06-02"))
+    payra.remember(data, 2, _paid("Dylan Rankin", "d@x.com", "3125550188", 18240, day="2026-06-03"))
+    payra.remember(data, 3, _paid("D", "other@x.com", "6025550199", 99900))
+
+    assert [one["cents"] for one in payra.find(data, "(312) 555-0188")] == [18240, 70000]
+    assert len(payra.find(data, "D@X.com")) == 2
+    assert len(payra.find(data, "Dylan Rankin")) == 2
+    assert payra.find(data, "Dylan") == [], "a first name is not a person"
+    assert payra.find(data, "dylan_rankin-vet") != []
+    assert payra.find(data, "") == []
+
+
+def test_the_responder_can_check_payra(monkeypatch):
+    from wilbyte import payra
+    from wilbyte.bot import jobs
+
+    data = payra.load()
+    payra.remember(data, 1, _paid("Adrian Pacheco", "a@x.com", "3125550188", 70000))
+    payra.save(data)
+    look = jobs.RingLookups(None, [])
+
+    got = look.run("payra_payments", {"who": "312-555-0188"})
+
+    assert got.startswith("Payra payments, newest first:")
+    assert "2026-09-20 $700.00 for OTP VETS - Adrian Pacheco <a@x.com>" in got
+    assert look.checked == ["Payra"]
+    assert look.run("payra_payments", {"who": "Nobody Known"}) == (
+        "No Payra payment on record for Nobody Known.")
+
+
+def test_a_payra_post_is_kept_whoever_it_is_for(monkeypatch):
+    """Kept before the Levinson check - most payments aren't Levinson's, and
+    every one is something an agent may text about."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    from wilbyte import levinson, payra
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(levinson, "read_payment",
+                        lambda text, paid_at: _paid("Shelby Guest", "s@x.com", "4358173162", 35000))
+
+    async def nobody(bot):
+        return [], ["no members"]
+
+    async def quiet(*a, **kw):
+        return None
+
+    monkeypatch.setattr(client, "_levinson_members", nobody)
+    monkeypatch.setattr(client, "_grumble", quiet)
+    message = NS(id=777, created_at=datetime(2026, 9, 20, tzinfo=timezone.utc),
+                 content="payment", embeds=[])
+    bot = NS(config=NS(schedule=NS(timezone="America/Chicago")))
+
+    asyncio.run(client.handle_payment(bot, message))
+
+    assert "777" in payra.load()["payments"]
+
+
+def test_what_payra_posted_while_ryte_was_off_is_read_back(monkeypatch):
+    import asyncio
+    from datetime import datetime, timezone
+
+    import discord
+
+    from wilbyte import levinson, payra
+    from wilbyte.bot import client
+
+    reads = []
+
+    class Payments:
+        def history(self, **how):
+            reads.append(how)
+
+            async def gen():
+                for mid in (10, 11):
+                    yield NS(id=mid, created_at=datetime(2026, 9, 20, tzinfo=timezone.utc),
+                             content="Payra", embeds=[])
+            return gen()
+
+    monkeypatch.setattr(levinson, "read_payment",
+                        lambda text, paid_at: _paid("Shelby Guest", "s@x.com", "4358173162", 35000))
+    bot = NS(config=NS(secrets=NS(discord_payment_channel_id="55"),
+                       schedule=NS(timezone="America/Chicago")),
+             get_channel=lambda cid: Payments() if cid == 55 else None)
+
+    asyncio.run(client._catch_up_payra(bot))
+    asyncio.run(client._catch_up_payra(bot))
+
+    assert isinstance(reads[0]["after"], datetime), "the first read goes back a year"
+    assert isinstance(reads[1]["after"], discord.Object) and reads[1]["after"].id == 11
+    assert set(payra.load()["payments"]) == {"10", "11"}
+
+
+def test_a_longer_name_is_not_a_shorter_ones_payment():
+    """"Dylan Rankin Jr" asking is not "Dylan Rankin" who paid - father and son."""
+    from wilbyte import payra
+
+    data = payra.load()
+    payra.remember(data, 1, _paid("Dylan Rankin", "d@x.com", "3125550188", 70000))
+
+    assert payra.find(data, "Dylan Rankin Jr") == []
+
+
+def test_catching_up_never_goes_backwards():
+    from wilbyte import payra
+
+    data = payra.load()
+    payra.remember(data, 901, _paid("A B", "a@x.com", "", 1))
+    payra.remember(data, 900, _paid("C D", "c@x.com", "", 1))
+
+    assert data["newest"] == "901"

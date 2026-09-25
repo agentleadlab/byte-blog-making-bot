@@ -316,6 +316,7 @@ class WilByteBot(discord.Client):
         if not self.offered_the_run:
             self.offered_the_run = True
             _also_running(self.loop.create_task(_offer_the_run(self)))
+            _also_running(self.loop.create_task(_catch_up_payra(self)))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -6800,6 +6801,51 @@ async def _payments_in(bot: "WilByteBot", year: int, month: int) -> tuple[list, 
     return found, ""
 
 
+def _keep_payment(message_id, paid) -> None:
+    from .. import payra
+
+    data = payra.load()
+    payra.remember(data, message_id, paid)
+    payra.save(data)
+
+
+#: How far back the first read of the payments channel goes.
+PAYRA_FIRST_DAYS = 365
+
+
+async def _catch_up_payra(bot: "WilByteBot") -> None:
+    """Read what Payra posted while RYTE wasn't listening - the channel's last
+    year the first time, then only what is new. Once a start."""
+    from datetime import timedelta
+
+    from .. import levinson, payra
+
+    where = str(bot.config.secrets.discord_payment_channel_id or "").strip()
+    channel = bot.get_channel(int(where)) if where.isdigit() else None
+    if channel is None:
+        return
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    data = await asyncio.to_thread(payra.load)
+    newest = str(data.get("newest") or "")
+    how = (
+        {"after": discord.Object(id=int(newest)), "oldest_first": True}
+        if newest.isdigit() else
+        {"after": datetime.now(zone) - timedelta(days=PAYRA_FIRST_DAYS)}
+    )
+    count = 0
+    try:
+        async for old in channel.history(limit=PAYMENT_SCAN * 5, **how):
+            paid = levinson.read_payment(_all_text(old), paid_at=old.created_at.astimezone(zone))
+            if paid is not None:
+                payra.remember(data, old.id, paid)
+                count += 1
+    except Exception:
+        log.warning("Couldn't read back the payments channel", exc_info=True)
+    if count:
+        await asyncio.to_thread(payra.save, data)
+        log.info("Remembered %d Payra payment(s)", count)
+
+
 def _all_text(message) -> str:
     """A message and its embeds as one blob.
 
@@ -6943,6 +6989,12 @@ async def handle_payment(bot: "WilByteBot", message) -> None:
     )
     if paid is None:
         return
+    # Every payment, Levinson's or not - for the RingCentral drafts to check
+    # when an agent asks whether theirs went through.
+    try:
+        await asyncio.to_thread(_keep_payment, getattr(message, "id", ""), paid)
+    except Exception:
+        log.warning("Couldn't remember that payment", exc_info=True)
 
     # Not knowing who the Levinson agents are is not the same as knowing this
     # isn't one of them, and a payment dropped in silence is the failure this

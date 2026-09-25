@@ -7889,11 +7889,12 @@ def draft_like_faith(
             "and check it rather than guess. You have RYTE's own read-only "
             "access: open any link (lead sheets, Trello cards, Stripe payment "
             "links, Loom videos, web pages), find the agent's card on the "
-            "team's Trello board, their payments and invoices in Stripe, their "
+            "team's Trello board, their payments in Payra and their payments "
+            "and invoices in Stripe - the company takes both - their "
             "contact in GoHighLevel, and search every text the line has sent "
             "or received. Leads not coming, or the wrong ones: open their sheet "
             "and see when the last lead landed and what it was. A payment or "
-            "an invoice: Stripe. Launch day, states or setup: the card. "
+            "an invoice: Payra and Stripe both. Launch day, states or setup: the card. "
             "Something another agent may have said too: search the texts. A "
             "few look-ups, not a survey - then reply. What you find is fact "
             "you may use, and say in why what you checked. Faith's standing "
@@ -8680,6 +8681,9 @@ class RingLookups:
             tool("stripe_customer", "The agent in Stripe: their invoices "
                  "(paid or not, how much, when) and recent payments.",
                  who=("string", "Their email, phone number or full name.")),
+            tool("payra_payments", "The agent's payments through Payra, as "
+                 "Payra announced them: when, how much, for what.",
+                 who=("string", "Their phone number, email or full name.")),
             tool("ghl_contact", "The agent's contact in GoHighLevel: email, "
                  "phone, tags, when they were added.",
                  who=("string", "Their phone number, email or full name.")),
@@ -8714,6 +8718,9 @@ class RingLookups:
             elif name == "ghl_contact":
                 got = ghl_contact(self.config, said)
                 self.checked.append("GHL")
+            elif name == "payra_payments":
+                got = payra_payments(said)
+                self.checked.append("Payra")
             elif name == "search_texts":
                 from .. import smslinks
 
@@ -8732,7 +8739,7 @@ class RingLookups:
             # In the trail too: "checked Stripe (couldn't)" under a ping says
             # the key needs a permission, where silence would say it looked.
             self.checked.append({
-                "trello_card": "Trello", "stripe_customer": "Stripe",
+                "trello_card": "Trello", "stripe_customer": "Stripe", "payra_payments": "Payra",
                 "ghl_contact": "GHL", "search_texts": "past texts",
             }.get(name, "a link") + " (couldn't)")
             return f"Couldn't look that up: {_short(exc, 200)}"
@@ -9177,3 +9184,14 @@ def cleared_out(config: Config) -> tuple[list[dict], list[str]]:
     if not rows:
         return [], []
     return clearout.read_rows(rows), []
+
+
+
+def payra_payments(who: str) -> str:
+    """The agent's Payra payments, from what the payments channel announced."""
+    from .. import payra
+
+    found = payra.find(payra.load(), who)
+    if not found:
+        return f"No Payra payment on record for {who}."
+    return "Payra payments, newest first:\n" + payra.described(found)
