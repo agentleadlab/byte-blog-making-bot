@@ -9200,6 +9200,11 @@ def payra_payments(who: str) -> str:
 # ------------------------------------------------------------------ Payra API
 
 
+def payra_time(when: datetime) -> str:
+    """A time as Payra takes it: "2026-08-26T21:55:55.000", UTC, no zone."""
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}"
+
+
 def payra_probe(config: Config) -> tuple[str, str]:
     """Read Payra's API docs and try the token on what they name. Reads only.
 
@@ -9251,7 +9256,8 @@ def payra_probe(config: Config) -> tuple[str, str]:
 
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
-    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Payra's own words: "updated_after format, must be YYYY-MM-DDTHH:mm:ss.SSS".
+    since = payra_time(datetime.now(timezone.utc) - timedelta(days=30))
     tries = payradocs.worth_trying(calls, bases, site_id=site, since=since)
     reads = [path for method, path in calls if method == "GET"]
     if reads:

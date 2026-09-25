@@ -187,3 +187,16 @@ def test_the_lists_are_asked_for_what_changed_lately():
     assert payradocs.worth_trying(calls, ["https://api.payra.com"], site_id="s1",
                                   since="2026-08-26T00:00:00Z") == [
         "https://api.payra.com/api/v3.1/site/s1/payments?updated_after=2026-08-26T00:00:00Z"]
+
+
+
+def test_a_time_is_written_the_way_payra_takes_it():
+    """Payra: "updated_after format, must be YYYY-MM-DDTHH:mm:ss.SSS"."""
+    from datetime import datetime, timezone
+
+    from wilbyte.bot import jobs
+
+    assert jobs.payra_time(datetime(2026, 8, 26, 21, 55, 55, 123456, tzinfo=timezone.utc)) == (
+        "2026-08-26T21:55:55.123")
+    assert jobs.payra_time(datetime(2026, 8, 26, 21, 55, 55, tzinfo=timezone.utc)) == (
+        "2026-08-26T21:55:55.000")
