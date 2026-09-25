@@ -615,6 +615,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Looking back over the clear-outs already done, and redrawing one
     # client's ring-da-bell picture from their own messages. Before the
     # action words: "clearout" in "check clearouts" is not a clear-out.
+    if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
+        return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*check\s+clear[\s-]*outs?\b", text, re.IGNORECASE):
         return MentionRequest(action="checkclearouts", brief=text)
     redo = re.match(r"\s*redo\s+(?:the\s+)?(?:ring[\s-]*da[\s-]*)?bell\b(?:\s+(?:for|of))?\s*", text, re.IGNORECASE)
@@ -1077,6 +1079,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **what does Faith send when agents ask where to submit a sale?** —
 > how she answers anything, from her RingCentral texts: her words, and the
 > links she sends counted. Also **how does Faith handle refund requests**
+> @RYTE **payra test** — read Payra's API docs and try the token on what they
+> name, read-only; posts the docs as a file and what the token could see
 > @RYTE **check clearouts** — the clear-outs already done whose ring-da-bell
 > picture came from somebody else, and whose Drive folder is misnamed
 > @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from

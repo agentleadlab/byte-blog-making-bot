@@ -956,6 +956,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "payratest":
+                await _payra_test(responder, config)
+                return
+
             if request.action == "checkclearouts":
                 await _check_clearouts(bot, responder, config)
                 return
@@ -2611,6 +2615,22 @@ async def _clear_out(
         or "Nothing happened, which shouldn't be possible — check the channel."
     )
     return "deleted" if done else "trouble"
+
+
+async def _payra_test(responder: Responder, config: Config) -> None:
+    """Payra's docs, read from here, and what the token can see. Reads only."""
+    import io
+
+    await responder.send("📖 Reading Payra's API docs and trying the token — read-only, a minute or so…")
+    try:
+        said, docs = await asyncio.to_thread(jobs.payra_probe, config)
+    except Exception as exc:
+        await responder.send(f"Couldn't finish: {_readable(exc)}")
+        return
+    await responder.send(
+        said + "\n-# Send the attached file to Claude to build the connection.",
+        file=discord.File(io.BytesIO(docs.encode("utf-8")), filename="payra-docs.md"),
+    )
 
 
 def _clients_guild(bot, config):

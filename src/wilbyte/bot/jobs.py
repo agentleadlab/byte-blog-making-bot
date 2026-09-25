@@ -9195,3 +9195,83 @@ def payra_payments(who: str) -> str:
     if not found:
         return f"No Payra payment on record for {who}."
     return "Payra payments, newest first:\n" + payra.described(found)
+
+
+# ------------------------------------------------------------------ Payra API
+
+
+def payra_probe(config: Config) -> tuple[str, str]:
+    """Read Payra's API docs and try the token on what they name. Reads only.
+
+    (what was found, the docs as one markdown file). Every request here is a
+    GET; the token is sent only to the addresses the docs themselves give,
+    and what comes back is described by its field names, never its values.
+    """
+    import httpx
+
+    from .. import payradocs
+
+    headers = {"User-Agent": "Mozilla/5.0 RYTE"}
+    seen, queue, pages = set(), [payradocs.DOCS_START], []
+    with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as web:
+        while queue and len(pages) < payradocs.MOST_PAGES:
+            url = queue.pop(0)
+            if url in seen:
+                continue
+            seen.add(url)
+            try:
+                got = web.get(url)
+            except httpx.HTTPError as exc:
+                pages.append((url, f"(couldn't open: {_short(exc, 120)})"))
+                continue
+            if got.status_code >= 400:
+                pages.append((url, f"(HTTP {got.status_code})"))
+                continue
+            pages.append((url, payradocs.page_text(got.text)))
+            queue += [one for one in payradocs.doc_links(got.text, url) if one not in seen]
+
+    everything = "\n\n".join(text for _url, text in pages)
+    docs = "\n\n---\n\n".join(f"# {url}\n\n{text}" for url, text in pages)
+    calls = payradocs.calls_in(everything)
+    bases = payradocs.api_bases(everything)
+    auth = [
+        line for line in everything.splitlines()
+        if re.search(r"authoriz|bearer|api[\s_-]?key|x-api|token", line, re.IGNORECASE)
+    ][:4]
+
+    lines = [
+        f"📄 Read **{len(pages)}** page(s) of Payra's docs"
+        + (f" — they name **{len(calls)}** API call(s)" if calls else
+           " — but found no API calls in them (the docs may only draw in a browser)"),
+    ]
+    if bases:
+        lines.append("API address: " + ", ".join(f"`{one}`" for one in bases))
+    if auth:
+        lines.append("How the docs say to send the token:\n" + "\n".join(f"> {one[:200]}" for one in auth))
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    tries = payradocs.worth_trying(calls, bases)
+    if not token:
+        lines.append("⚠ PAYRA_API_TOKEN isn't in .env, so I didn't try anything with it.")
+    elif not tries:
+        lines.append("Nothing to try the token on yet — the docs didn't give a read-only address I could fill in.")
+    else:
+        lines.append(f"Tried the token on {len(tries)} read-only address(es) — GET only, nothing changed:")
+        with httpx.Client(timeout=20, follow_redirects=False) as api:
+            for url in tries:
+                try:
+                    got = api.get(url, headers={
+                        "Authorization": f"Bearer {token}", "Accept": "application/json",
+                    })
+                except httpx.HTTPError as exc:
+                    lines.append(f"• `{url}` — couldn't reach it: {_short(exc, 100)}")
+                    continue
+                shape = ""
+                if got.status_code < 300:
+                    try:
+                        shape = " — " + payradocs.shape_of(got.json())[:300]
+                    except ValueError:
+                        shape = " — (not JSON)"
+                mark = "✅" if got.status_code < 300 else "🔒" if got.status_code in (401, 403) else "⚠"
+                lines.append(f"• {mark} `{url}` — HTTP {got.status_code}{shape}")
+    return "\n".join(lines), docs

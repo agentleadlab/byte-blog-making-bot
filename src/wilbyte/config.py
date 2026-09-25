@@ -241,6 +241,8 @@ class Secrets:
     # goes. The whole link out of the browser bar, gid and all - the tab is
     # resolved from it rather than typed.
     clients_sheet_link: str | None = None
+    # Payra's API token, for reading invoices and payments. Read-only use.
+    payra_api_token: str | None = None
     # The Drive folder a screenshot of their channel goes into.
     clients_drive_folder: str | None = None
     # The address Summit Pay's invoices arrive from. Every Gmail search RYTE
@@ -407,6 +409,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 discord_chargeback_channel_id=_env("DISCORD_CHARGEBACK_CHANNEL_ID"),
                 discord_clients_guild_id=_env("DISCORD_CLIENTS_GUILD_ID"),
                 clients_sheet_link=_env("CLIENTS_SHEET_LINK"),
+                payra_api_token=_env("PAYRA_API_TOKEN"),
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
