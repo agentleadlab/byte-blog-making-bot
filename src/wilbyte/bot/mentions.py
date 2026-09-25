@@ -612,6 +612,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
     if asks_about_faith(_without_links(text)):
         return MentionRequest(action="askfaith", brief=text)
+    # Looking back over the clear-outs already done, and redrawing one
+    # client's ring-da-bell picture from their own messages. Before the
+    # action words: "clearout" in "check clearouts" is not a clear-out.
+    if re.match(r"\s*check\s+clear[\s-]*outs?\b", text, re.IGNORECASE):
+        return MentionRequest(action="checkclearouts", brief=text)
+    redo = re.match(r"\s*redo\s+(?:the\s+)?(?:ring[\s-]*da[\s-]*)?bell\b(?:\s+(?:for|of))?\s*", text, re.IGNORECASE)
+    if redo:
+        return MentionRequest(action="redobell", brief=text[redo.end():].strip())
     # Command words are looked for in what was *typed*, not in the links. A
     # Zoom share link contains "zoom" and a blog URL can contain "status" or
     # "check" - words inside a URL are addresses, not instructions.
@@ -1069,6 +1077,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **what does Faith send when agents ask where to submit a sale?** —
 > how she answers anything, from her RingCentral texts: her words, and the
 > links she sends counted. Also **how does Faith handle refund requests**
+> @RYTE **check clearouts** — the clear-outs already done whose ring-da-bell
+> picture came from somebody else, and whose Drive folder is misnamed
+> @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from
+> their own messages, into a folder named for them
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an
 > inbox RYTE reads. PandaDoc's own are downloaded from PandaDoc for now
 > @RYTE **words** — the lead-type words you've taught me

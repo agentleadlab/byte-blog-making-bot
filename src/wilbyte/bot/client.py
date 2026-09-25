@@ -955,6 +955,15 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "checkclearouts":
+                await _check_clearouts(bot, responder, config)
+                return
+
+            if request.action == "redobell":
+                with mirror.copying_into(mirror.CLEAROUT_INTO):
+                    await _redo_bell(bot, responder, config, request.brief or "")
+                return
+
             if request.action == "clearout":
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
                     await _clear_out(bot, responder, config, request.brief or "")
@@ -2589,6 +2598,126 @@ async def _clear_out(
         or "Nothing happened, which shouldn't be possible — check the channel."
     )
     return "deleted" if done else "trouble"
+
+
+def _clients_guild(bot, config):
+    where = (config.secrets.discord_clients_guild_id or "").strip()
+    return bot.get_guild(int(where)) if where.isdigit() else None
+
+
+async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
+    """The clear-outs already done that matched the wrong person. Reads only.
+
+    Until names had to match word for word, a clear-out took the first member
+    whose name was inside the client's - a member called "D" for Dylan Rankin
+    and for Demetrios Brooks. That member's ring-da-bell messages were drawn
+    as the client's, and the Drive folder was named after them. Each clear-out
+    in Ryte Collection is matched again both ways; where the two disagree, it
+    says whose messages were used and who it should have been.
+    """
+    from .. import clearout
+
+    guild = _clients_guild(bot, config)
+    if guild is None:
+        await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID isn't it.")
+        return
+    try:
+        rows, problems = await asyncio.to_thread(jobs.cleared_out, config)
+    except Exception as exc:
+        await responder.send(f"Couldn't read Ryte Collection: {_readable(exc)}")
+        return
+    if problems:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+        return
+    wrong = []
+    for row in rows:
+        who = row.get("channel") or row.get("name")
+        was = clearout.old_member(guild.members, who)
+        right = _member_called(guild, who)
+        if was is not None and (right is None or was.id != right.id):
+            wrong.append((row, was, right))
+    if not wrong:
+        await responder.send(
+            f"✅ Checked all {len(rows)} clear-outs in Ryte Collection — every one "
+            "matched the right person, or nobody."
+        )
+        return
+    lines = [f"⚠ **{len(wrong)} of {len(rows)} clear-outs used somebody else's messages:**"]
+    for row, was, right in wrong:
+        who = row.get("channel") or row.get("name")
+        lines.append(
+            f"• **{who}** ({row.get('when') or '?'}) — ring-da-bell picture is "
+            f"**{getattr(was, 'display_name', was)}**'s, in the Drive folder "
+            f"“{clearout.their_folder(clearout.Plan(name=who, member_name=str(was)))}”. "
+            + (f"Should be **{right.display_name}** → `@RYTE redo bell {who}`"
+               if right is not None else
+               "Nobody in the server is them — that picture should just be deleted.")
+        )
+    lines.append(
+        "-# Their own channel's picture and the sheet in Ryte Collection are "
+        "not affected. I can't delete in Drive: remove the wrong pictures by hand."
+    )
+    # Split across messages by the responder when it runs long.
+    await responder.send("\n".join(lines))
+
+
+def _corrected(called: str) -> str:
+    """"2 — dylan_rankin-vet — ring-da-bell — 2026-09-25 (corrected).png"."""
+    stem, dot, kind = str(called).rpartition(".")
+    return f"{stem} (corrected).{kind}" if dot else f"{called} (corrected)"
+
+
+async def _redo_bell(bot, responder: Responder, config: Config, name: str) -> None:
+    """Draw a client's ring-da-bell picture again, from their own messages,
+    into a Drive folder named for them."""
+    from datetime import datetime
+
+    from .. import clearout
+
+    name = " ".join(str(name or "").split())
+    if not name:
+        await responder.send("Whose? `@RYTE redo bell Dylan Rankin`")
+        return
+    guild = _clients_guild(bot, config)
+    if guild is None:
+        await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID isn't it.")
+        return
+    member = _member_called(guild, name)
+    if member is None:
+        await responder.send(
+            f"Nobody in the server is **{name}** — not by that whole name, and "
+            "never by a part of it. Nothing drawn."
+        )
+        return
+    channels = [
+        clearout.Channel(channel_id=str(one.id), name=str(one.name),
+                         category=str(getattr(one.category, "name", "") or ""))
+        for one in guild.text_channels
+    ]
+    found, notes = await _also_said(guild, member, channels)
+    if not found:
+        await responder.send(
+            f"Nothing of **{member.display_name}**'s in ring-da-bell or the other "
+            "shared channels, so there's no picture to draw."
+        )
+        return
+    plan = clearout.Plan(name=name, member_id=str(member.id), member_name=str(member))
+    today = datetime.now(ZoneInfo(config.schedule.timezone))
+    kept = [f"🔔 **{member.display_name}** — {len(found)} message(s) of theirs:"]
+    for number, (where, group) in enumerate(clearout.by_channel(found), start=2):
+        picture, trouble = await asyncio.to_thread(partial(
+            jobs.keep_the_picture, config, clearout.as_page(plan, group),
+            _corrected(clearout.picture_name(plan, when=today, where=where, order=number)),
+            into=clearout.their_folder(plan),
+        ))
+        kept.append(
+            f"✅ #{where} → <{picture}>" if picture else f"⚠ #{where} — " + "; ".join(trouble)
+        )
+    kept.append(
+        f"-# In the folder “{clearout.their_folder(plan)}”. Delete the wrong "
+        "picture from the old folder by hand — I can't delete in Drive."
+    )
+    await responder.send("\n".join(kept))
 
 
 async def _blacklist_them(responder: Responder, config: Config, asked: str) -> None:

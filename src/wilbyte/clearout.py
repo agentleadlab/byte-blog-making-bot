@@ -372,6 +372,47 @@ def collected(plan: Plan, *, when: datetime) -> dict:
     }
 
 
+def read_rows(rows: list) -> list[dict]:
+    """The Ryte Collection tab back as clear-outs, by its own headings - the
+    same patterns it was written by. A tab with no recognised headings is
+    read in the order rows have always been written in."""
+    head = [" ".join(str(one or "").split()).casefold() for one in rows[0]] if rows else []
+    where = {}
+    for at, heading in enumerate(head):
+        for name, pattern in COLLECTS:
+            if heading and name not in where and re.search(pattern, heading, re.IGNORECASE):
+                where[name] = at
+                break
+    body = rows[1:] if where else rows
+    if not where:
+        where = {name: at for at, (name, _pattern) in enumerate(COLLECTS)}
+    found = []
+    for row in body:
+        got = {name: (str(row[at]).strip() if at < len(row) else "") for name, at in where.items()}
+        if got.get("name") or got.get("channel"):
+            found.append(got)
+    return found
+
+
+def old_member(members, name: str):
+    """Who the clear-out matched before names had to match - the first
+    member whose tidied name was inside the one wanted, or the other way
+    round. Kept to find the clear-outs it got wrong, and for nothing else."""
+    wanted = tidy(name)
+    if not wanted:
+        return None
+    for member in members:
+        for called in (
+            getattr(member, "display_name", ""),
+            getattr(member, "global_name", "") or "",
+            getattr(member, "name", ""),
+        ):
+            said = tidy(called)
+            if said and (said == wanted or wanted in said or said in wanted):
+                return member
+    return None
+
+
 def row_for(plan: Plan, *, when: datetime, headings=None) -> list:
     """That, as a row laid out for the tab it is going in.
 

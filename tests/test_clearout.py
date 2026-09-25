@@ -3205,12 +3205,21 @@ def test_a_press_counts_even_when_discord_wont_redraw_the_message():
 # ------------------------------------------- whose messages are whose
 
 
+class _Member:
+    """A server member as discord.py has one: printed as their username."""
+
+    def __init__(self, id, display_name, name):
+        self.id, self.display_name, self.global_name, self.name = id, display_name, None, name
+
+    def __str__(self):
+        return self.name
+
+
 def _server(*people):
     from types import SimpleNamespace as NS
 
     return NS(members=[
-        NS(id=at, display_name=display, global_name=None, name=user)
-        for at, (display, user) in enumerate(people, start=1)
+        _Member(at, display, user) for at, (display, user) in enumerate(people, start=1)
     ])
 
 
@@ -3414,3 +3423,162 @@ def test_one_clients_orders_are_one_person_whatever_the_card_says():
         {"desc": "Phone: 312-555-0101\nSpouse: 602-555-0100"},
     ])
     assert jobs.different_people([{"desc": "312-555-0101"}, {"desc": "602-555-0199"}])
+
+
+# ------------------------------------------- the clear-outs already done
+
+
+def test_the_collection_tab_is_read_back_by_its_headings():
+    rows = [["Client Name", "Sheet Link", "Discord Channel", "Date Removed"],
+            ["dylan_rankin-vet", "https://s", "dylan_rankin-vet", "2026-09-25"],
+            ["", "", "", ""]]
+
+    assert clearout.read_rows(rows) == [
+        {"name": "dylan_rankin-vet", "sheet": "https://s", "channel": "dylan_rankin-vet",
+         "when": "2026-09-25"}]
+
+
+def test_a_tab_with_no_headings_is_read_in_the_order_it_was_written():
+    assert clearout.read_rows([["artur_rushiti-vet", "https://s", "artur_rushiti-vet", "2026-09-01"]]) == [
+        {"name": "artur_rushiti-vet", "sheet": "https://s", "channel": "artur_rushiti-vet",
+         "when": "2026-09-01"}]
+
+
+def test_the_old_rule_is_kept_to_find_what_it_got_wrong():
+    guild = _server(("D", "d_1234"), ("Dylan Rankin", "dylanrankin_0523"))
+
+    assert clearout.old_member(guild.members, "dylan_rankin-vet").display_name == "D"
+
+
+def _goat(monkeypatch, rows, *people):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client, jobs
+
+    guild = _server(*people)
+    guild.text_channels = []
+    monkeypatch.setattr(client, "_clients_guild", lambda bot, config: guild)
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: (rows, []))
+    said = []
+
+    class Here:
+        async def send(self, content=None, **kw):
+            said.append(str(content or ""))
+
+    return guild, Here(), said
+
+
+def test_the_clear_outs_that_used_somebody_elses_messages_are_listed(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "dylan_rankin-vet", "channel": "dylan_rankin-vet", "when": "2026-09-25"},
+            {"name": "demetrios_brooks-fex", "channel": "demetrios_brooks-fex", "when": "2026-09-24"},
+            {"name": "seth_essien-iul", "channel": "seth_essien-iul", "when": "2026-09-23"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("D", "d_1234"), ("Dylan Rankin", "dylanr"),
+                               ("Seth Essien", "sethe"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    text = said[0]
+    assert "2 of 3 clear-outs" in text
+    assert "**dylan_rankin-vet**" in text and "Should be **Dylan Rankin**" in text
+    assert "`@RYTE redo bell dylan_rankin-vet`" in text
+    assert "**demetrios_brooks-fex**" in text and "Nobody in the server is them" in text
+    assert "seth_essien" not in text
+    assert "“d_1234”" in text
+
+
+def test_all_matched_right_is_said(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "seth_essien-iul", "channel": "seth_essien-iul", "when": "x"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("Seth Essien", "sethe"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    assert said[0].startswith("✅ Checked all 1 clear-outs")
+
+
+def test_redrawing_uses_only_their_own_messages(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    rows = []
+    guild, here, said = _goat(monkeypatch, rows, ("D", "d_1234"), ("Dylan Rankin", "dylanr"))
+    asked = []
+
+    async def their(g, member, channels):
+        asked.append(member.display_name)
+        return [clearout.Said(who="Dylan Rankin", when="Jun 3", text="$1872 Vet", where="ring-da-bell")], []
+
+    kept = []
+    monkeypatch.setattr(client, "_also_said", their)
+    monkeypatch.setattr(jobs, "keep_the_picture",
+                        lambda config, page, called, into="": kept.append((called, into)) or ("https://drive/x", []))
+    config = type("C", (), {"schedule": type("S", (), {"timezone": "America/Chicago"})()})()
+
+    asyncio.run(client._redo_bell(None, here, config, "dylan_rankin-vet"))
+
+    assert asked == ["Dylan Rankin"]
+    assert kept[0][0].endswith(" (corrected).png") and kept[0][1] == "dylanr"
+    assert "✅ #ring-da-bell → <https://drive/x>" in said[0]
+
+
+def test_nobody_by_that_whole_name_draws_nothing(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    _guild, here, said = _goat(monkeypatch, [], ("D", "d_1234"))
+
+    asyncio.run(client._redo_bell(None, here, None, "dylan_rankin-vet"))
+
+    assert "Nothing drawn" in said[0]
+
+
+@pytest.mark.parametrize("asked, action, brief", [
+    ("check clearouts", "checkclearouts", None),
+    ("check clear-outs", "checkclearouts", None),
+    ("redo bell Dylan Rankin", "redobell", "Dylan Rankin"),
+    ("redo ring da bell for dylan_rankin-vet", "redobell", "dylan_rankin-vet"),
+    ("clearout Dylan Rankin", "clearout", None),
+])
+def test_the_commands_are_told_apart(asked, action, brief):
+    from wilbyte.bot import mentions
+
+    got = mentions.parse(f"<@1> {asked}")
+    assert got.action == action
+    if brief is not None:
+        assert got.brief == brief
+
+
+def test_a_clear_out_that_matched_nobody_then_is_not_listed(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "zora_quill-vet", "channel": "zora_quill-vet", "when": "x"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("Seth Essien", "sethe"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    assert said[0].startswith("✅")
+
+
+def test_the_channel_is_who_they_were_when_the_name_typed_was_short(monkeypatch):
+    """"Dylan" was typed; the channel it deleted says which Dylan."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "Dylan", "channel": "dylan_rankin-vet", "when": "x"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("D", "d_1234"), ("Dylan Rankin", "dylanr"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    assert "Should be **Dylan Rankin**" in said[0]

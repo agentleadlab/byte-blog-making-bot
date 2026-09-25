@@ -9154,3 +9154,26 @@ def float_unticked(config: Config) -> tuple[list[str], list[str]]:
         return [str(card.get("name") or "") for card in below], []
     finally:
         client.close()
+
+
+
+def cleared_out(config: Config) -> tuple[list[dict], list[str]]:
+    """Every clear-out RYTE has done, from the Ryte Collection tab. (rows,
+    problems). Each row {"name", "sheet", "channel", "when"} by its heading.
+    Reads only."""
+    from .. import clearout, gsheets
+
+    link = (getattr(config.secrets, "clients_sheet_link", "") or "").strip()
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return [], ["CLIENTS_SHEET_LINK in .env isn't a spreadsheet link."]
+    with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+        titles = [str((one.get("properties") or one).get("title") or "") for one in client.tabs(sheet_id)]
+        tab = next((one for one in titles
+                    if " ".join(one.split()).casefold() == clearout.COLLECTION_TAB.casefold()), "")
+        if not tab:
+            return [], [f"No tab called “{clearout.COLLECTION_TAB}” in that spreadsheet."]
+        rows = client.rows(sheet_id, f"'{tab}'!A1:Z5000")
+    if not rows:
+        return [], []
+    return clearout.read_rows(rows), []
