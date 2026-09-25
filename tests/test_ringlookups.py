@@ -433,7 +433,8 @@ def test_after_a_few_look_ups_it_has_to_reply(monkeypatch):
     jobs._think_then_reply(client, model="m", system="s", prompt="p", reply_tool=REPLY, look=Look())
 
     assert client.asked[-1]["tool_choice"] == {"type": "tool", "name": "reply"}
-    assert client.asked[-1]["tools"] == [REPLY]
+    assert client.asked[-1]["tools"] == client.asked[0]["tools"], "a changed tool list loses the cache"
+    assert all(one["cache_control"] == {"type": "ephemeral"} for one in client.asked)
 
 
 def test_no_reply_at_all_is_a_failure():

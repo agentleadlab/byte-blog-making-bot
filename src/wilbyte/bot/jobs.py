@@ -7953,15 +7953,17 @@ def _think_then_reply(client, *, model: str, system: str, prompt: str,
     RYTE's read-only look-ups a few times, each answer handed back, and must
     reply on the last turn whatever it has found by then.
     """
+    # The same tools on every turn, and the conversation cached as it grows:
+    # each look-up sends everything before it again, and a cached read of it
+    # is a tenth of the price. Changing the tools would throw the cache away.
     tools = [reply_tool] + (look.tools() if look is not None else [])
     messages = [{"role": "user", "content": prompt}]
     for turn in range(LOOKUPS + 1):
         last = look is None or turn == LOOKUPS
         response = client.messages.create(
-            model=model, max_tokens=1500, system=system,
-            tools=[reply_tool] if last else tools,
+            model=model, max_tokens=1500, system=system, tools=tools,
             tool_choice={"type": "tool", "name": "reply"} if last else {"type": "any"},
-            messages=messages,
+            messages=messages, cache_control={"type": "ephemeral"},
         )
         blocks = list(getattr(response, "content", None) or [])
         calls = [one for one in blocks if getattr(one, "type", "") == "tool_use"]

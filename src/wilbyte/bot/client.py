@@ -174,6 +174,10 @@ class WilByteBot(discord.Client):
     def __init__(self, config: Config):
         super().__init__(intents=_intents())
         self.config = config
+        # What each job spends on Claude, counted as the answers come back.
+        from .. import usage
+
+        usage.install()
         # Ryte The Goat: every channel's twin, when any are set.
         from . import mirror
 
@@ -958,6 +962,12 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "spread":
                 await _spread_setup(responder, config, request.brief or "")
+                return
+
+            if request.action == "cost":
+                from .. import usage
+
+                await responder.send(usage.report(await asyncio.to_thread(usage.load)))
                 return
 
             if request.action == "payratest":
