@@ -2402,7 +2402,7 @@ async def _clear_out(
     if member is not None:
         plan.member_id, plan.member_name = str(member.id), str(member)
 
-    plan.sheet, trouble = await asyncio.to_thread(jobs.sheet_for_agent, config, name)
+    from_card, trouble = await asyncio.to_thread(jobs.sheet_for_agent, config, name)
 
     # Read once, before anything is offered: the picture needs it, and so does
     # the sheet when the board has no card for them. Artur Rushiti has no New
@@ -2415,11 +2415,20 @@ async def _clear_out(
         guild.get_channel(int(plan.channel.channel_id))
     )
     plan.problems += unread
-    if not plan.sheet:
-        plan.sheet = clearout.sheet_in(messages)
-        if plan.sheet:
-            plan.from_channel = True
-            trouble = []
+    # The card's link first - it is the one the team chose, and the card is
+    # only found when exactly one client on the board has this name. The
+    # channel's when there is none; and when the two disagree, both are
+    # shown, so the one going into ALL CLIENTS is seen before it goes.
+    own = clearout.sheet_in(messages)
+    if from_card:
+        plan.sheet = from_card
+        if own and not clearout.same_sheet(from_card, own):
+            plan.notes.append(
+                f"Their channel has a different sheet: {own} — keeping the one "
+                "on their Trello card."
+            )
+    elif own:
+        plan.sheet, plan.from_channel, trouble = own, True, []
     plan.problems += trouble
 
     view = views.ConfirmView(
@@ -2988,16 +2997,14 @@ def _member_called(guild, name: str):
     """
     from .. import clearout
 
-    # As typed, and as the person in a channel's name - "dylan_rankin-vet" is
-    # Dylan Rankin, the "vet" is what he bought.
-    wanted = {one for one in (clearout.tidy(name), clearout.person_in(name)) if one}
-    if not wanted:
+    # Word by word, the lead type off a channel's name - "dylan_rankin-vet"
+    # is Dylan Rankin, the "vet" is what he bought.
+    if not clearout.words_of(name):
         return None
     best, found = 0, []
     for member in guild.members:
         score = max((
-            clearout.name_match(each, clearout.tidy(called))
-            for each in wanted
+            clearout.name_match(name, called)
             for called in (
                 getattr(member, "display_name", ""),
                 getattr(member, "global_name", "") or "",

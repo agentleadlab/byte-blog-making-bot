@@ -380,6 +380,9 @@ def test_what_the_stray_word_cost_the_clear_out():
     channels = [rules.Channel(channel_id="1", name="jay-rodriguez")]
     cards = [{"name": "New Agent - Jay Rodriguez", "id": "c1"}]
 
-    assert rules.channels_for("clearout Jay Rodriguez", channels), "the channel was fine"
+    # Stricter now: a stray word in front of the name matches no channel at
+    # all, rather than whichever one happens to be inside it.
+    assert rules.channels_for("clearout Jay Rodriguez", channels) == []
+    assert rules.channels_for("Jay Rodriguez", channels)
     assert agents.named_that("clearout Jay Rodriguez", cards) == []
     assert agents.named_that("Jay Rodriguez", cards) == cards

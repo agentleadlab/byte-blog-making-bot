@@ -3281,3 +3281,136 @@ def test_a_long_lead_type_on_the_channel_name_still_finds_them():
     guild = _server(("Seth Essien", "sethe"))
 
     assert client._member_called(guild, "seth_essien-standard-vet").name == "sethe"
+
+
+@pytest.mark.parametrize("wanted, said, score", [
+    ("dylan_rankin-vet", "D", 0),
+    ("demetrios_brooks-fex", "D", 0),
+    ("dylan_rankin-vet", "Dylan Rankin", 3),
+    ("dylan_rankin-vet", "dylanrankin_0523", 2),
+    ("Dylan Rankin", "Dylan Rankin Jr", 2),
+    ("Jay Rodriguez Jr", "jay-rodriguez", 1),
+    ("Ann Smith", "Joann Smith", 0),
+    ("Jay", "Jay Rodriguez", 0),
+    ("clearout Jay Rodriguez", "jay-rodriguez", 0),
+    ("seth_essien-standard-vet", "Seth Essien", 3),
+])
+def test_a_name_matches_word_for_word(wanted, said, score):
+    assert clearout.name_match(wanted, said) == score
+
+
+def test_a_channel_picked_from_the_list_is_that_channel_alone():
+    """The quiet run names the channel exactly; the same person's other
+    channel is not a second candidate for it."""
+    both = [channel("dylan_rankin-vet"), channel("dylan_rankin-fex")]
+
+    assert [one.name for one in clearout.channels_for("dylan_rankin-vet", both)] == ["dylan_rankin-vet"]
+
+
+def test_a_person_typed_out_is_every_channel_of_theirs():
+    both = [channel("dylan_rankin-vet"), channel("dylan_rankin-fex"), channel("dylan-rankins")]
+
+    assert [one.name for one in clearout.channels_for("Dylan Rankin", both)] == [
+        "dylan_rankin-vet", "dylan_rankin-fex"]
+
+
+def test_a_first_name_alone_finds_no_channel():
+    assert clearout.channels_for("Jay", [channel("jay-rodriguez")]) == []
+    assert clearout.channels_for("Ann Smith", [channel("joann-smith")]) == []
+
+
+def test_their_card_is_found_by_their_whole_name():
+    from wilbyte.bot import jobs
+
+    cards = [
+        {"id": "1", "name": "New Agent - Dylan Rankin"},
+        {"id": "2", "name": "New Agent - Dylan Rankins"},
+        {"id": "3", "name": "NEW AGENT- Dylan"},
+        {"id": "4", "name": "AGED LEAD - Dylan Rankin"},
+    ]
+
+    assert [one["id"] for one in jobs.client_cards("dylan_rankin-vet", cards)] == ["1", "4"]
+    assert [one["id"] for one in jobs.client_cards("Dylan", cards)] == ["3"]
+
+
+def test_two_clients_with_the_name_give_no_sheet(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    class Board:
+        def board_cards(self, board, *, archived=False):
+            return [{"id": "a", "name": "New Agent - Maria Lopez", "desc": "Phone: 312-555-0101"},
+                    {"id": "b", "name": "NEW AGENT- maria lopez", "desc": "Phone: (602) 555-0199"}]
+
+        def card_comments(self, card_id):
+            raise AssertionError("read a card it couldn't be sure of")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Board())
+    config = NS(secrets=NS(trello_board_id="b"))
+
+    sheet, problems = jobs.sheet_for_agent(config, "Maria Lopez")
+
+    assert sheet == "" and "not guessing" in problems[0]
+
+
+def test_a_repeat_clients_newest_card_gives_the_sheet(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    old, new = "5f000000" + "0" * 16, "68000000" + "0" * 16
+    read = []
+
+    class Board:
+        def board_cards(self, board, *, archived=False):
+            return [{"id": new, "name": "New Agent - Dylan Rankin"},
+                    {"id": old, "name": "New Agent - Dylan Rankin"}]
+
+        def card_comments(self, card_id):
+            read.append(card_id)
+            return ["Sheet link: https://docs.google.com/spreadsheets/d/" + "n" * 30 + "/edit"]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Board())
+
+    jobs.sheet_for_agent(NS(secrets=NS(trello_board_id="b")), "Dylan Rankin")
+
+    assert read == [new]
+
+
+def test_a_card_and_a_channel_that_disagree_are_both_shown(monkeypatch):
+    rows = []
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False],
+        on_card="https://docs.google.com/spreadsheets/d/onthecard", in_channel=LEAD_POST,
+        rows=rows,
+    )
+
+    assert rows[0][1] == "https://docs.google.com/spreadsheets/d/onthecard"
+    assert any("Their channel has a different sheet" in one for one in said)
+
+
+def test_the_same_sheet_whatever_tab_or_tail():
+    link = "https://docs.google.com/spreadsheets/d/1pX9NheBB7CQdoPNpOrjJjBI8saBil11or8JB9OdnXcQ"
+
+    assert clearout.same_sheet(link + "/edit?usp=sharing", link + "/edit#gid=77")
+    assert not clearout.same_sheet(link, "https://docs.google.com/spreadsheets/d/" + "x" * 30)
+    assert not clearout.same_sheet("", link)
+
+
+
+def test_one_clients_orders_are_one_person_whatever_the_card_says():
+    from wilbyte.bot import jobs
+
+    assert not jobs.different_people([
+        {"desc": "Phone: 312-555-0101"}, {"desc": "copied\nPhone: +1 (312) 555-0101"},
+        {"desc": "no number on this one"},
+        {"desc": "Phone: 312-555-0101\nSpouse: 602-555-0100"},
+    ])
+    assert jobs.different_people([{"desc": "312-555-0101"}, {"desc": "602-555-0199"}])

@@ -5065,6 +5065,44 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     return found
 
 
+def client_cards(name: str, cards: list[dict]) -> list[dict]:
+    """The cards of the client with this name - by the whole name, not a
+    word of it. "dylan_rankin-vet" and "Dylan Rankin" are the person Dylan
+    Rankin; "Dylan" alone is whoever is called exactly that, not every Dylan.
+    """
+    from .. import agents as rules
+    from .. import clearout
+
+    person = clearout.person_in(name)
+    if not person:
+        return []
+    return [
+        one for one in cards or []
+        if rules.is_client_card(str(one.get("name") or ""))
+        and clearout.tidy(rules.agent_name(str(one.get("name") or ""))) == person
+    ]
+
+
+def different_people(cards: list[dict]) -> bool:
+    """Whether cards under one name are two people, not one client's orders.
+
+    A name can't tell two Maria Lopezes apart; the phone number on each card
+    can. Two cards whose numbers have nothing in common are two people. A
+    card with no number says nothing either way - repeat orders are copied
+    from the last card, number and all.
+    """
+    from .. import smsreplies
+
+    numbers = [
+        smsreplies.phones_in(str(one.get("desc") or "")) for one in cards
+    ]
+    numbers = [one for one in numbers if one]
+    return any(
+        not (numbers[at] & numbers[other])
+        for at in range(len(numbers)) for other in range(at + 1, len(numbers))
+    )
+
+
 def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
     """The delivered-leads sheet for one agent, off their own card. (link, problems).
 
@@ -5081,13 +5119,30 @@ def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
     if not (name or "").strip():
         return "", ["No name to look up."]
 
+    from .. import clearout
+
     client = open_trello(config)
     try:
         every = client.board_cards(config.secrets.trello_board_id, archived=True)
-        cards = rules.named_that(name, every)
+        cards = client_cards(name, every)
         if not cards:
             return "", [f"No New Agent card for “{name}” anywhere on the board."]
-        said = client.card_comments(str(cards[0].get("id") or ""))
+        if different_people(cards):
+            # Two clients with the one name - the cards say so by carrying
+            # different phone numbers. Their sheet in ALL CLIENTS is the
+            # record of what they had; somebody else's is worse than none,
+            # and the channel's own link is looked for next.
+            return "", [
+                f"More than one client on the board is called “{name}” (their "
+                "cards have different phone numbers) - not guessing which."
+            ]
+        # A repeat client has a card per order; the newest is the round they
+        # were on when they stopped.
+        newest = max(cards, key=lambda one: (
+            rules.is_agent_card(str(one.get("name") or "")),
+            rules.made_at(str(one.get("id") or "")) or _NEVER,
+        ))
+        said = client.card_comments(str(newest.get("id") or ""))
     except Exception as exc:
         return "", [f"Couldn't read their card: {_short(exc, 140)}"]
     finally:

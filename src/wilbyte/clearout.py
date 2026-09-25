@@ -140,6 +140,8 @@ class Plan:
     #: id as well as the channel's, and the one place that knows both is where
     #: the channel was found.
     guild_id: str = ""
+    #: Worth saying, not in the way: a different sheet on their Trello card.
+    notes: list = field(default_factory=list)
     #: Whether the sheet link came out of the channel rather than off a Trello
     #: card. Worth saying: it means the link is about to be deleted along with
     #: the channel, and the row in ALL CLIENTS is the only place it will live.
@@ -171,32 +173,49 @@ LEAD_ENDINGS = frozenset(
 )
 
 
+def words_of(name: str) -> list[str]:
+    """A name as its words, lowercased, the lead-type words off the end.
+    "dylan_rankin-vet" -> ["dylan", "rankin"]; "🔥 Dylan Rankin" the same."""
+    words = [re.sub(r"[^a-z0-9]", "", one) for one in tidy_words(name).split()]
+    words = [one for one in words if one]
+    while len(words) > 1 and words[-1] in LEAD_ENDINGS:
+        words.pop()
+    return words
+
+
 def person_in(name: str) -> str:
     """The person's name in a client channel's name, tidied - the lead-type
     words off the end. "dylan_rankin-vet" -> "dylanrankin"."""
-    words = tidy_words(name).split()
-    while len(words) > 1 and words[-1] in LEAD_ENDINGS:
-        words.pop()
-    return tidy(" ".join(words))
+    return "".join(words_of(name))
+
+
+def _run(part: list, whole: list) -> bool:
+    """Whether `part` sits in `whole` word for word, in one piece."""
+    return any(whole[at:at + len(part)] == part for at in range(len(whole) - len(part) + 1))
 
 
 def name_match(wanted: str, said: str) -> int:
-    """How well a member's name matches the one wanted, both tidied. 0 is not.
+    """How well a name matches the one wanted, as written. 0 is not a match.
 
-    3 the same; 2 their name holds the whole of it ("dylanrankin0523");
-    1 it holds theirs, and theirs is most of it - "dylanrankin" inside the
-    channel's "dylanrankinvet". Never a scrap: a member called "D" is inside
-    "dylanrankin" and "demetriosbrooks" both, and was taken for each of them -
-    his two messages from 2024 kept as theirs, and Dylan's own sales in
-    ring-da-bell never looked for.
+    Word by word, never letters inside a word. 3 the same name; 2 theirs
+    holds the whole of it - "Dylan Rankin Jr", or the username
+    "dylanrankin_0523" that is the name run together with digits on; 1 it
+    holds theirs, when theirs is two words or more and most of it.
+
+    Never a scrap and never one word typed alone. A member called "D" is
+    inside "dylanrankin" and "demetriosbrooks" both, and was taken for each
+    of them - his messages from 2024 kept as theirs, Dylan's own sales never
+    looked for. "Ann Smith" is not "Joann Smith", and "Jay" is not every Jay.
     """
-    if not wanted or not said:
+    w, s = words_of(wanted), words_of(said)
+    if not w or not s:
         return 0
-    if said == wanted:
+    jw, js = "".join(w), "".join(s)
+    if jw == js:
         return 3
-    if wanted in said:
+    if len(w) >= 2 and (_run(w, s) or (js.startswith(jw) and js[len(jw):].isdigit())):
         return 2
-    if said in wanted and len(said) >= max(5, (len(wanted) * 2 + 2) // 3):
+    if len(s) >= 2 and _run(s, w) and len(js) * 3 >= len(jw) * 2:
         return 1
     return 0
 
@@ -221,9 +240,28 @@ def channels_for(name: str, channels) -> list:
     coming back is the answer, not a failure: which of two channels is theirs
     is a question for somebody who knows, and guessing deletes the wrong one.
     """
-    wanted = tidy(name)
-    found = [one for one in channels or [] if matches(name, one) and not off_limits(one)]
-    return sorted(found, key=lambda one: (tidy(one.name) != wanted, len(one.name)))
+    wanted, person = tidy(name), person_in(name)
+    open_ = [one for one in channels or [] if not off_limits(one)]
+    # In tiers, and only the best tier that has anything in it: the channel
+    # called exactly that; then the channels of that person, whatever lead
+    # type is on the end; then a close match - never a scrap of a name. A run
+    # through the quiet list names the channel exactly, so it gets exactly
+    # that one, not every other channel the same person has.
+    exact = [one for one in open_ if tidy(one.name) == wanted]
+    # A channel's own name - no spaces, as the quiet list and the picker pass
+    # it - is that channel and nothing else. A person's name typed out is
+    # every channel of theirs, and two of them is a question for whoever
+    # typed it, not for RYTE.
+    if exact and not re.search(r"\s", (name or "").strip()):
+        return exact
+    theirs = [one for one in open_ if person and person_in(one.name) == person]
+    for tier in (
+        exact + [one for one in theirs if one not in exact],
+        [one for one in open_ if name_match(name, one.name)],
+    ):
+        if tier:
+            return sorted(tier, key=lambda one: (tidy(one.name) != wanted, len(one.name)))
+    return []
 
 
 def off_limits(channel: Channel) -> bool:
@@ -275,6 +313,13 @@ def tidy_words(name: str) -> str:
 _A_SHEET = re.compile(
     r"https?://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]{20,}[^\s<>\])]*"
 )
+
+
+def same_sheet(one: str, other: str) -> bool:
+    """Whether two sheet links are the same spreadsheet, whatever tab or
+    tracking tail each carries."""
+    ids = [re.search(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", str(link or "")) for link in (one, other)]
+    return all(ids) and ids[0].group(1) == ids[1].group(1)
 
 
 def sheet_in(messages) -> str:
@@ -674,6 +719,7 @@ def describe(plan: Plan) -> str:
         else "• Member — **not in the server**, so there is nobody to ban"
     )
     lines += [f"⚠ {one}" for one in plan.problems]
+    lines += [f"-# {one}" for one in plan.notes]
     # Under the list rather than inside it, and on a line of its own: "-#" is
     # Discord's small text only at the start of one, and in the middle of the
     # sheet line it rendered as the two characters.
