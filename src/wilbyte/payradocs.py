@@ -117,7 +117,9 @@ def worth_trying(calls, bases, *, site_id: str = "", since: str = "") -> list[st
             path = path.replace("{site_id}", site_id)
         if since:
             path = path.replace("{updated_after}", since)
-        if method != "GET" or re.search(r"[{}:<>]|\$\w", path.split("://", 1)[-1]):
+        # Anything still to fill in - "{id}", "/:id", "<id>", "$id" - is not
+        # tried. A colon inside a filled-in time is not a blank.
+        if method != "GET" or re.search(r"[{}<>]|/:\w|\$\w", path.split("://", 1)[-1]):
             continue
         if path.startswith("http"):
             url = path

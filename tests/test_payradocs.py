@@ -181,7 +181,8 @@ def test_the_probe_says_it_needs_the_site_id(monkeypatch):
 
 def test_the_lists_are_asked_for_what_changed_lately():
     calls = [("GET", "/api/v3.1/site/{site_id}/payments?updated_after={updated_after}"),
-             ("GET", "/api/v3.1/site/{site_id}/payment/{external_id}")]
+             ("GET", "/api/v3.1/site/{site_id}/payment/{external_id}"),
+             ("GET", "/api/v3.1/site/{site_id}/customer/:id")]
 
     assert payradocs.worth_trying(calls, ["https://api.payra.com"], site_id="s1",
                                   since="2026-08-26T00:00:00Z") == [
