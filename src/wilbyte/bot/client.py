@@ -5922,6 +5922,24 @@ async def day_check_loop(bot: "WilByteBot") -> None:
 #: A minute, like the other watchers. One request while nothing is happening.
 RING_CHECK_SECONDS = 60
 
+#: The days the responder rests, Monday being 0. "i dont need ryte responder
+#: running on the weekends" - nobody reads the cards then, and every one is a
+#: Claude bill. Nothing piles up for Monday: only the last twelve hours of
+#: texts are ever drafted.
+RING_DAYS_OFF = (5, 6)
+
+#: The weekends already said to be resting, by their Saturday.
+_RING_RESTING: set = set()
+
+
+def ring_resting(config, now: datetime | None = None) -> str:
+    """The Saturday of this weekend when the responder is resting, else ""."""
+    now = now or datetime.now(ZoneInfo(config.schedule.timezone))
+    if now.weekday() not in RING_DAYS_OFF:
+        return ""
+    return (now.date() - timedelta(days=now.weekday() - RING_DAYS_OFF[0])).isoformat()
+
+
 #: Setup problems already said this run. A bad JWT said once is a job for
 #: somebody; said every minute it is a channel nobody reads by lunchtime.
 _RING_SAID: set = set()
@@ -5980,7 +5998,20 @@ async def ring_loop(bot: "WilByteBot") -> None:
 
     while not bot.is_closed():
         try:
-            if ringcentral.configured(bot.config.secrets):
+            on = ringcentral.configured(bot.config.secrets)
+            resting = ring_resting(bot.config) if on else ""
+            if resting:
+                # Said once a weekend, so a quiet channel isn't mistaken for
+                # a broken one.
+                if resting not in _RING_RESTING:
+                    _RING_RESTING.add(resting)
+                    responder = _ring_responder(bot)
+                    if responder is not None:
+                        await responder.send(
+                            "😴 Responder is off for the weekend — back Monday. "
+                            "`@RYTE respond` with a screenshot still works if you need one."
+                        )
+            elif on:
                 await _ring_once(bot)
             else:
                 missing = _ring_half_set(bot.config.secrets)

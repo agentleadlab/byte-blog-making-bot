@@ -548,6 +548,43 @@ def test_half_set_up_is_said_once_by_the_loop(monkeypatch):
     assert heard.said == ["⚠ RingCentral is half set up — missing RINGCENTRAL_JWT in .env."]
 
 
+def test_the_responder_rests_at_the_weekend():
+    from datetime import datetime
+
+    from wilbyte.bot import client
+
+    config = NS(schedule=NS(timezone="America/New_York"))
+    assert client.ring_resting(config, datetime(2026, 9, 25, 23, 59)) == "", "Friday"
+    assert client.ring_resting(config, datetime(2026, 9, 26, 0, 1)) == "2026-09-26"
+    assert client.ring_resting(config, datetime(2026, 9, 27, 23, 59)) == "2026-09-26", "same weekend"
+    assert client.ring_resting(config, datetime(2026, 9, 28, 0, 1)) == "", "Monday"
+
+
+def test_at_the_weekend_nothing_is_drafted_and_it_says_so_once(monkeypatch):
+    from wilbyte.bot import client
+
+    client._RING_RESTING.clear()
+    heard, drafted = Heard(), []
+    monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
+    monkeypatch.setattr(client, "_ring_once", lambda bot: drafted.append(1))
+    monkeypatch.setattr(client, "ring_resting", lambda config: "2026-09-26")
+    monkeypatch.setattr(client, "RING_CHECK_SECONDS", 0)
+
+    class Bot:
+        config = NS(secrets=NS(ringcentral_client_id="a", ringcentral_client_secret="b",
+                               ringcentral_jwt="c", ringcentral_extension="103"))
+        ticks = 0
+
+        def is_closed(self):
+            type(self).ticks += 1
+            return type(self).ticks > 3
+
+    asyncio.run(client.ring_loop(Bot()))
+
+    assert drafted == []
+    assert len(heard.said) == 1 and heard.said[0].startswith("😴 Responder is off for the weekend")
+
+
 # ------------------------------------------------ the team, in the draft
 
 
