@@ -4574,3 +4574,83 @@ def test_the_board_is_read_in_one_request_where_the_client_can():
 
     assert jobs._cards_of(OneAsk(), "B", [{"id": "1"}, {"id": "2"}]) == [
         {"id": "x", "board": "B", "lists": 2}]
+
+
+# Two orders on two days, one of them today.
+
+OLSEN_HEAD = "Name: Alex Olsen\nLead Type: Text Verified VETERAN LEADS\n\nEVERLIFE\n"
+OLSEN_VET = "15 OTP VET LEADS - Live Tuesday, September 29"
+OLSEN_WIDOW = "21 OTP WIDOW LEADS - Live Monday, September 28 EOD"
+OLSEN_BOARD = [
+    {"id": "tue", "name": "Agent Setup Going Live Tuesday 09/29"},
+    {"id": "gen", "name": "💎 General 09/28/26"},
+    {"id": "op", "name": "💻 Ops 09/28/26"},
+    {"id": "ad", "name": "📊 Ads 09/28/26"},
+]
+
+
+def _olsen(body, cards=OLSEN_BOARD, day=date(2026, 9, 28)):
+    from wilbyte import dailyops
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent({"id": "c", "name": "New Agent - Alex Olsen"},
+                              text=OLSEN_HEAD + body, today=day)
+    return jobs._plan_for(
+        Stub(), agent, day=day, tomorrow=day + timedelta(days=1),
+        dated=dailyops.cards_covering(cards, day), every_card=cards,
+    )
+
+
+@pytest.mark.parametrize("body", [OLSEN_VET + "\n" + OLSEN_WIDOW, OLSEN_WIDOW + "\n" + OLSEN_VET])
+def test_an_order_live_today_is_the_same_day_job_and_tomorrows_goes_on_its_setup_card(body):
+    """Alex Olsen's card sat in In Que: the Monday order looked for a Monday
+    setup card, and with none there held the Tuesday order up too."""
+    plan = _olsen(body)
+
+    assert plan.doable and plan.problems == [] and plan.move_to == agents.DONE
+    placed = {(step.card_id, step.item.split(" · ")[-1] if " · " in step.item else step.item)
+              for step in plan.steps}
+    on = {card_id for card_id, _ in placed}
+    assert on == {"tue", "ad", "op"}, "nothing on the Lead Order or General card"
+    for step in plan.steps:
+        if step.card_id == "tue":
+            assert "15 OTP VET LEADS" in step.item and "WIDOW" not in step.item
+        else:
+            assert "21 OTP WIDOW LEADS" in step.item and "VET" not in step.item
+
+
+def test_an_order_on_a_span_card_is_labelled_with_its_own_day():
+    """It would have written "21 OTP WIDOW LEADS TUESDAY" on the Saturday to
+    Monday card - the day of the card's first order, not this one's."""
+    friday_card = [
+        {"id": "wknd", "name": "Agent Setup Going Live Saturday-Monday 09/26-09/28"},
+        {"id": "tue", "name": "Agent Setup Going Live Tuesday 09/29"},
+    ]
+    plan = _olsen(OLSEN_VET + "\n21 OTP WIDOW LEADS - Live Monday, September 28",
+                  cards=friday_card, day=date(2026, 9, 25))
+
+    weekend = [step.item for step in plan.steps if step.card_id == "wknd"]
+    assert weekend and all("MONDAY" in one.upper() and "TUESDAY" not in one.upper() for one in weekend)
+
+
+def test_two_orders_with_no_cards_yet_wait_quietly_in_franklins_list():
+    plan = _olsen(OLSEN_VET + "\n21 OTP WIDOW LEADS - Live Wednesday, September 30",
+                  cards=[], day=date(2026, 9, 25))
+
+    assert plan.problems == [] and plan.steps == []
+    assert plan.move_to == agents.PARKED
+
+
+def test_one_order_filed_and_one_still_waiting_holds_the_card():
+    plan = _olsen(OLSEN_VET + "\n21 OTP WIDOW LEADS - Live Wednesday, September 30",
+                  cards=OLSEN_BOARD, day=date(2026, 9, 28))
+
+    assert not plan.doable
+    assert plan.problems == ["Alex Olsen — no setup card yet for 21 OTP WIDOW LEADS — live Wed Sep 30"]
+
+
+def test_an_order_live_today_with_no_ads_card_holds_the_card():
+    plan = _olsen(OLSEN_VET + "\n" + OLSEN_WIDOW, cards=[OLSEN_BOARD[0], OLSEN_BOARD[2]])
+
+    assert not plan.doable and plan.move_to != agents.DONE
+    assert plan.problems == ["No 📊 Ads card dated 09/28/26 anywhere on the board"]
