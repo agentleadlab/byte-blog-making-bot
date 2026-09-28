@@ -2515,6 +2515,8 @@ class AgentPlan:
     #: available."
     park_to: str = ""
     problems: list[str] = field(default_factory=list)
+    #: Anything about where it is going that isn't plain from the cards.
+    note: str = ""
 
     @property
     def doable(self) -> bool:
@@ -2562,6 +2564,8 @@ def describe(plans: list[AgentPlan], *, today: date | None = None) -> str:
         if plan.problems:
             lines.extend(f"  ⚠ {problem}" for problem in plan.problems)
             continue
+        if plan.note:
+            lines.append(f"  · {plan.note}")
         for step in plan.steps:
             made = " (new checklist)" if step.make_checklist else ""
             lines.append(f"  → {step.card_title} · {step.checklist}{made}")

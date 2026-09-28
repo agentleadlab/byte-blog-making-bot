@@ -4461,3 +4461,60 @@ def test_a_card_written_that_way_is_filed():
     assert agent.stated == "35 Fresh Veterans"
     assert agent.launch == date(2026, 9, 24)
     assert agents.cannot_read(agent, needs_lead_type=True) == ""
+
+
+# A same-day card at the weekend goes on the next working day's Ops and Ads.
+
+SEPE = (
+    "-- New Client Onboarded --\n\nFirst Name: Derrick\nLast Name: Sepe\n"
+    "Phone: 404-555-0101\nEmail: someone@example.com\nPackage Selected: Text Verified\n"
+    "Lead Type: VETS\nTarget Areas for Marketing :FL, GA\n\n20 OTP VET\n\n"
+    "add it to his current order"
+)
+
+MONDAY_CARDS = [
+    {"id": "gen", "name": "💎 General 09/28/26"},
+    {"id": "op", "name": "💻 Ops 09/28/26"},
+    {"id": "ad", "name": "📊 Ads 09/28/26"},
+]
+
+
+def _weekend_plan(day, cards=MONDAY_CARDS):
+    from wilbyte import dailyops
+    from wilbyte.bot import jobs
+
+    agent = agents.read_agent({"id": "c", "name": "NEW AGENT- Derrick Sepe"}, text=SEPE, today=day)
+    return jobs._plan_for(
+        Stub(), agent, day=day, tomorrow=day + timedelta(days=1),
+        dated=dailyops.cards_covering(cards, day), every_card=cards,
+    )
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 26), date(2026, 9, 27)])
+def test_a_same_day_card_at_the_weekend_goes_on_mondays_ops_and_ads(day):
+    """Derrick Sepe's "add it to his current order" landed on a Saturday and
+    sat in In Que: there is no Ads card dated Saturday, because nobody is at
+    the board at the weekend."""
+    plan = _weekend_plan(day)
+
+    assert plan.doable and plan.problems == []
+    assert {step.card_id for step in plan.steps} == {"op", "ad"}
+    assert plan.move_to == agents.DONE
+    assert "Monday's (09/28)" in plan.note
+    assert "no Ops or Ads cards at the weekend, so onto Monday's (09/28)" in agents.describe(
+        [plan], today=day)
+
+
+def test_on_a_weekday_a_missing_card_is_still_said():
+    friday_without = [{"id": "op", "name": "💻 Ops 09/25/26"}, *MONDAY_CARDS]
+    plan = _weekend_plan(date(2026, 9, 25), friday_without)
+
+    assert not plan.doable
+    assert plan.problems == ["No 📊 Ads card dated 09/25/26 anywhere on the board"]
+    assert plan.note == ""
+
+
+def test_the_weekend_waits_when_there_is_no_working_day_card_yet():
+    plan = _weekend_plan(date(2026, 9, 26), [MONDAY_CARDS[1]])
+
+    assert not plan.doable, "Monday's Ads card isn't there - nothing half-filed"

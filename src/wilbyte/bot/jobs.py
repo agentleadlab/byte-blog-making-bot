@@ -6578,6 +6578,21 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
     # have a new agent going live same day ... dont do that anymore, just add
     # it on ops and ads". The Lead Order card is still written by
     # `spread_to_lead_order`, from the setup card, when it is asked for.
+    #
+    # At the weekend there are no Ops or Ads cards - nobody is at the board -
+    # and a same-day card that lands on a Saturday ("add it to his current
+    # order") is the next working day's job. Derrick Sepe's sat in In Que all
+    # weekend for want of an Ads card dated Saturday. Only at the weekend: on
+    # a weekday a missing card is one Zapier missed, and is said.
+    if day.weekday() >= dailyops.SATURDAY and not (dated.get("ads") and dated.get("ops")):
+        for ahead in range(1, dailyops.LOOK_AHEAD):
+            when = day + timedelta(days=ahead)
+            there = dailyops.cards_covering(every_card, when)
+            if there.get("ads") and there.get("ops"):
+                dated = there
+                plan.note = (f"no Ops or Ads cards at the weekend, so onto "
+                             f"{when:%A}'s ({when:%m/%d})")
+                break
     for kind, people in (("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE)):
         card = dated.get(kind)
         if card is None:
