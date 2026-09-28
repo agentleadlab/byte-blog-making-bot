@@ -123,7 +123,7 @@ def test_kept_is_only_what_a_reply_needs():
         "id": "inv1", "number": "1001", "total": 700, "description": "OTP VETS",
         "invoice_date": "2026-09-19", "due_date": "2026-09-26", "active": True,
         "name": "Adrian Pacheco", "email": "a@x.com", "phone": "3125550188",
-        "lines": [], "sent": [], "created": "",
+        "lines": [], "payment_ids": [], "paid_here": [], "sent": [], "created": "",
         "updated": "2026-09-20T00:00:00.000Z",
     }
     paid = payraapi.slim_payment(_payment(1, "inv1", refund=True))
@@ -482,7 +482,7 @@ def test_the_pdf_is_made_or_it_says_why_not(monkeypatch):
 
     pdf, found, problem = jobs.paid_invoice_pdf("Jose Zambrano")
     assert pdf.startswith(b"%PDF") and len(found) == 2 and problem == ""
-    assert "No paid Payra invoice for “Nobody Known”" in jobs.paid_invoice_pdf("Nobody Known")[2]
+    assert "No Payra invoice for “Nobody Known” among the 3 I hold" in jobs.paid_invoice_pdf("Nobody Known")[2]
 
 
 def test_the_invoice_is_sent_as_a_file(monkeypatch):
@@ -514,3 +514,69 @@ def test_a_brief_that_mentions_an_invoice_is_still_a_brief():
 
     assert mentions.parse("<@1> write a paid ad about how easy our invoices are for agents").action == "write"
     assert mentions.parse("<@1> David Pereira paid invoice").action == "invoice"
+
+
+# ------------------------------------------------ however Payra links a payment to its invoice
+#
+# David Pereira's INV-18089, $1,360, paid 09/04 in Payra, and RYTE said he had
+# no paid invoice: only the payment's own invoice field was read.
+
+
+def _pereira(**payment_fields):
+    data = payraapi.load()
+    invoice = _invoice(89, name="David Pereira", phone="4045550111", email="dp@example.com", total=1360)
+    invoice.update(invoice_number="INV-18089", _id="invDP", payments=payment_fields.pop("listed", []))
+    one = payraapi.slim_invoice(invoice)
+    data["invoices"][one["id"]] = one
+    if payment_fields.pop("record", True):
+        paid = {**_payment(89, "", amount=1360), "paid_on": "2026-09-04T16:00:00.000Z",
+                "customer_display": "", "invoice": None, **payment_fields}
+        pay = payraapi.slim_payment(paid)
+        data["payments"][pay["id"]] = pay
+    return data
+
+
+@pytest.mark.parametrize("how", [
+    {"invoice": {"_id": "invDP"}},
+    {"allocations": [{"invoice": {"_id": "invDP"}, "amount": 1360}]},
+    {"allocations": [{"invoice_id": "invDP", "amount": 1360}]},
+    {"invoice_number": "INV-18089"},
+    {"listed": ["pay89"]},
+    {"listed": [{"_id": "pay89", "amount": 1360}]},
+])
+def test_a_payment_is_found_on_its_invoice_however_payra_links_them(how):
+    found = payraapi.paid_invoices(_pereira(**how), "David Pereira")
+
+    assert [one["invoice"]["number"] for one in found] == ["INV-18089"]
+    assert found[0]["paid_cents"] == 136000
+
+
+def test_the_invoices_own_list_of_payments_is_enough_on_its_own():
+    data = _pereira(record=False, listed=[{"_id": "gone", "amount": 1360, "status": "Settled",
+                                           "paid_on": "2026-09-04T16:00:00.000Z", "last_4": "1111"}])
+
+    found = payraapi.paid_invoices(data, "David Pereira")
+
+    assert found and found[0]["paid_cents"] == 136000
+    assert found[0]["payments"][0]["last_4"] == "1111"
+    page = payraapi.invoice_html(found, made_on="x")
+    assert "Paid in full" in page and "September 4, 2026" in page
+
+
+def test_the_responder_and_the_rebuttal_see_the_same_payment():
+    data = _pereira(allocations=[{"invoice_id": "invDP", "amount": 1360}])
+
+    assert "Invoice #INV-18089 2026-09-19: $1,360.00 for OTP VETS, due 2026-09-26 - payments: $1,360.00 Settled 2026-09-04" in (
+        payraapi.account(data, "David Pereira"))
+    said, sure = payraapi.for_dispute(data, name="David Pereira", amount="$1,360.00", paid_on=date(2026, 9, 4))
+    assert sure and "Payment disputed: $1,360.00 on September 4, 2026" in said
+    assert "Invoice #INV-18089" in said
+
+
+def test_when_none_is_paid_it_says_what_it_did_find(monkeypatch):
+    from wilbyte.bot import jobs
+
+    payraapi.save(_pereira(record=False))
+    said = jobs.paid_invoice_pdf("David Pereira")[2]
+    assert said.startswith("I have 1 Payra invoice for “David Pereira” but can't see a payment on it:")
+    assert "• #INV-18089 — $1,360.00, dated September 19, 2026 — no payment I can see on it" in said

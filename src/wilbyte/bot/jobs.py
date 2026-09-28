@@ -5375,10 +5375,31 @@ def paid_invoice_pdf(who: str) -> tuple[bytes, list[dict], str]:
                          "says whether it's connected.")
     found = payraapi.paid_invoices(data, who)
     if not found:
-        return b"", [], (f"No paid Payra invoice for “{who}” in the last year. "
-                         "The whole name, their email or their phone number finds them.")
+        return b"", [], _no_paid_invoice(data, who)
     made_on = f"{date.today():%B} {date.today().day}, {date.today().year}"
     return _print_pdf(payraapi.invoice_html(found, made_on=made_on)), found, ""
+
+
+def _no_paid_invoice(data: dict, who: str) -> str:
+    """What was found instead, so "none" is never a guess."""
+    from .. import payraapi
+
+    theirs = payraapi.theirs_listed(data, who)
+    held = len(data.get("invoices") or {})
+    when = payraapi.status(data).split(" from Payra, last read ")[-1].split(".")[0] \
+        if data.get("synced_at") else "not yet"
+    if not theirs:
+        return (f"No Payra invoice for “{who}” among the {held:,} I hold (last read {when}). "
+                "The whole name as it is in Payra, their email or their phone number finds them.")
+    listed = "\n".join(
+        f"• #{one.get('number') or '?'} — {payraapi._money(one.get('total'))}, dated "
+        f"{payraapi._spelled(one.get('invoice_date'))} — no payment I can see on it"
+        for one in theirs
+    )
+    return (f"I have {len(theirs)} Payra invoice{'' if len(theirs) == 1 else 's'} for “{who}” "
+            f"but can't see a payment on {'it' if len(theirs) == 1 else 'any of them'}:\n{listed}\n"
+            "-# Payra may still be reading its year of records again after an update — "
+            "try again in a few minutes.")
 
 
 def _print_pdf(html: str) -> bytes:

@@ -34,7 +34,7 @@ MOST_PAGES = 20
 #: What is kept of each record. Raised when more is kept, so everything
 #: already held is read again with it - a rebuttal wants the card's last four
 #: and the transaction id, which the first copy did not keep.
-SHAPE = 3
+SHAPE = 4
 
 
 class PayraError(RuntimeError):
@@ -132,6 +132,61 @@ def _small(one) -> dict | str:
     }
 
 
+def _id_of(one) -> str:
+    if isinstance(one, str):
+        return one
+    if isinstance(one, dict):
+        return str(one.get("_id") or one.get("id") or "")
+    return ""
+
+
+def _invoices_named(payment: dict) -> list[str]:
+    """The invoices a payment record points at, wherever it says so."""
+    found = [_id_of(payment.get("invoice") or "")]
+    for one in payment.get("allocations") or []:
+        if not isinstance(one, dict):
+            continue
+        for key, value in one.items():
+            if "invoice" in str(key).casefold():
+                found.append(_id_of(value))
+    return [one for at, one in enumerate(found) if one and one not in found[:at]]
+
+
+def payments_on(data: dict, invoice: dict) -> list[dict]:
+    """Every payment on an invoice, however Payra linked the two: the
+    payment's invoice or allocations naming it, the same invoice number, or
+    the invoice listing the payment. When none of the payment records can be
+    found, the payments as the invoice itself lists them."""
+    number = invoice.get("number")
+    listed = set(invoice.get("payment_ids") or [])
+    found = [
+        one for one in (data.get("payments") or {}).values()
+        if invoice["id"] in (one.get("invoice_ids") or [])
+        or one.get("invoice_id") == invoice["id"]
+        or (number and one.get("invoice_number") == number)
+        or one.get("id") in listed
+    ]
+    if found:
+        return found
+    return [_as_payment(one) for one in invoice.get("paid_here") or [] if _as_payment(one).get("amount") is not None]
+
+
+def _as_payment(one: dict) -> dict:
+    """A payment as the invoice lists it, in the shape of a payment record."""
+    when = next((value for key, value in one.items()
+                 if any(word in key.casefold() for word in ("paid", "date", "_at")) and _day(value)), "")
+    status = str(_first(one, "status") or "")
+    return {
+        "amount": _first(one, "amount", "total", "paid_amount"),
+        "paid_on": when, "status": status,
+        "refund": bool(_first(one, "is_refund", "refund")),
+        "how": str(_first(one, "display_name", "method", "payment_type") or ""),
+        "last_4": str(_first(one, "last_4") or ""),
+        "transaction": str(_first(one, "gateway_transaction_id") or ""),
+        "reference": str(_first(one, "reference_number") or ""),
+    }
+
+
 def _first(one: dict, *names):
     for name in names:
         for key, value in one.items():
@@ -187,6 +242,11 @@ def slim_invoice(record: dict) -> dict:
         "email": str(who.get("email") or "").strip().casefold(),
         "phone": _digits(who.get("mobile_phone")),
         "lines": [_small(one) for one in (record.get("lines") or [])[:6]],
+        # The payments Payra lists on the invoice itself - the way it marks
+        # one paid - by id, and as they are, for when the payment's own
+        # record doesn't point back.
+        "payment_ids": [pid for pid in (_id_of(one) for one in record.get("payments") or []) if pid],
+        "paid_here": [_small(one) for one in (record.get("payments") or [])[:10] if isinstance(one, dict)],
         "sent": [_small(one) for one in (record.get("notifications") or [])[:6]],
         "created": str(record.get("created_at") or ""),
         "updated": str(record.get("updated_at") or ""),
@@ -204,6 +264,10 @@ def slim_payment(record: dict) -> dict:
         "customer": str(record.get("customer_display") or ""),
         "invoice_number": str(record.get("invoice_number") or ""),
         "invoice_id": str((record.get("invoice") or {}).get("_id") or ""),
+        # Every invoice the payment is put against: its own invoice field,
+        # and its allocations - which is where a payment says which invoice
+        # it paid when the invoice field is empty.
+        "invoice_ids": _invoices_named(record),
         "last_4": str(record.get("last_4") or ""),
         "transaction": str(record.get("gateway_transaction_id") or ""),
         "reference": str(record.get("reference_number") or ""),
@@ -277,17 +341,14 @@ def account(data: dict, who: str) -> str:
     invoices = [one for one in data.get("invoices", {}).values()
                 if theirs(one.get("name", ""), one.get("email", ""), one.get("phone", ""))]
     ids = {one["id"] for one in invoices}
-    numbers = {one["number"] for one in invoices if one.get("number")}
-    payments = [
+    by_invoice = {one["id"]: payments_on(data, one) for one in invoices}
+    on_theirs = {id(pay) for pays in by_invoice.values() for pay in pays}
+    payments = [pay for pays in by_invoice.values() for pay in pays] + [
         one for one in data.get("payments", {}).values()
-        if one.get("invoice_id") in ids or (one.get("invoice_number") and one["invoice_number"] in numbers)
-        or (not phone and not email and theirs(one.get("customer", "")))
+        if id(one) not in on_theirs and not phone and not email and theirs(one.get("customer", ""))
     ]
     if not invoices and not payments:
         return ""
-    by_invoice: dict[str, list] = {}
-    for one in payments:
-        by_invoice.setdefault(one.get("invoice_id") or "", []).append(one)
     lines = []
     for one in sorted(invoices, key=lambda inv: inv.get("invoice_date") or "", reverse=True)[:8]:
         paid = [
@@ -303,7 +364,7 @@ def account(data: dict, who: str) -> str:
             + (" - payments: " + "; ".join(paid) if paid else " - no payment on it")
             + ("" if one.get("active", True) else " (inactive)")
         )
-    loose = [pay for pay in payments if pay.get("invoice_id") not in ids]
+    loose = [pay for pay in payments if id(pay) not in on_theirs]
     for pay in sorted(loose, key=lambda one: one.get("paid_on") or "", reverse=True)[:5]:
         lines.append(
             f"- Payment {str(pay.get('paid_on'))[:10]} {_money(pay.get('amount'))} "
@@ -393,9 +454,13 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
         return bool(email and one.get("email") == email) or name_match(name, one.get("name", "")) >= 2
 
     invoices = {one["id"]: one for one in data.get("invoices", {}).values() if theirs_invoice(one)}
-    payments = [
+    paid_on_invoice = {}
+    for one in invoices.values():
+        for pay in payments_on(data, one):
+            paid_on_invoice[id(pay)] = (pay, one)
+    payments = [pay for pay, _one in paid_on_invoice.values()] + [
         one for one in data.get("payments", {}).values()
-        if one.get("invoice_id") in invoices or name_match(name, one.get("customer", "")) >= 2
+        if id(one) not in paid_on_invoice and name_match(name, one.get("customer", "")) >= 2
     ]
     if four:
         payments = [one for one in payments if not one.get("last_4") or one["last_4"] == four]
@@ -431,7 +496,8 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
             + (f" — transaction {disputed['transaction']}" if disputed.get("transaction") else "")
             + (f" — reference {disputed['reference']}" if disputed.get("reference") else "")
         )
-    invoice = invoices.get(str((disputed or {}).get("invoice_id") or ""))
+    invoice = paid_on_invoice.get(id(disputed), (None, None))[1] if disputed else None
+    invoice = invoice or invoices.get(str((disputed or {}).get("invoice_id") or ""))
     if invoice is None and disputed and disputed.get("invoice_number"):
         invoice = next((one for one in invoices.values()
                         if one.get("number") == disputed["invoice_number"]), None)
@@ -496,9 +562,7 @@ def paid_invoices(data: dict, who: str, *, most: int = 12) -> list[dict]:
     for invoice in data.get("invoices", {}).values():
         if not theirs(invoice):
             continue
-        on_it = [one for one in data.get("payments", {}).values()
-                 if one.get("invoice_id") == invoice["id"]
-                 or (invoice.get("number") and one.get("invoice_number") == invoice["number"])]
+        on_it = payments_on(data, invoice)
         payments = sorted((one for one in on_it if _went_through(one)),
                           key=lambda one: str(one.get("paid_on") or ""))
         if not payments:
@@ -607,3 +671,20 @@ th { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .05em; color: 
 ul { margin: 4px 0 0; padding-left: 18px; }
 footer { margin-top: 28px; font-size: 8.5pt; color: #777; border-top: 1px solid #ddd; padding-top: 8px; }
 </style></head><body>""" + "".join(pages) + "</body></html>"
+
+
+def theirs_listed(data: dict, who: str, *, most: int = 6) -> list[dict]:
+    """Every invoice of theirs, paid or not, newest first - for saying what
+    was found when none of it is paid."""
+    from .clearout import name_match
+
+    who = " ".join(str(who or "").split())
+    phone, email = _digits(who), who.casefold() if "@" in who else ""
+    if not who:
+        return []
+    found = [
+        one for one in data.get("invoices", {}).values()
+        if (one.get("phone") == phone if phone else one.get("email") == email if email
+            else name_match(who, one.get("name", "")) >= 2)
+    ]
+    return sorted(found, key=lambda one: str(one.get("invoice_date") or ""), reverse=True)[:most]
