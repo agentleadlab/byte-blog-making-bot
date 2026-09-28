@@ -31,6 +31,11 @@ FIRST_DAYS = 365
 #: Pages read per kind in one pass. A year of invoices is a few pages.
 MOST_PAGES = 20
 
+#: What is kept of each record. Raised when more is kept, so everything
+#: already held is read again with it - a rebuttal wants the card's last four
+#: and the transaction id, which the first copy did not keep.
+SHAPE = 2
+
 
 class PayraError(RuntimeError):
     pass
@@ -102,6 +107,19 @@ def _digits(number) -> str:
     return only[-10:] if len(only) >= 10 else ""
 
 
+def _scalars(one, *, most: int = 160) -> str:
+    """A small record of unknown shape - an invoice line, a notification - as
+    one line of its plain values."""
+    if not isinstance(one, dict):
+        return " ".join(str(one or "").split())[:most]
+    said = [
+        f"{key}: {value}" for key, value in one.items()
+        if isinstance(value, (str, int, float, bool)) and str(value).strip()
+        and not str(key).startswith("_") and key not in ("id", "external_id")
+    ]
+    return "; ".join(said)[:most]
+
+
 def slim_invoice(record: dict) -> dict:
     who = record.get("customer") or {}
     totals = record.get("totals") or {}
@@ -118,6 +136,9 @@ def slim_invoice(record: dict) -> dict:
         "name": str(name).strip(),
         "email": str(who.get("email") or "").strip().casefold(),
         "phone": _digits(who.get("mobile_phone")),
+        "lines": [_scalars(one) for one in (record.get("lines") or [])[:6]],
+        "sent": [_scalars(one, most=120) for one in (record.get("notifications") or [])[:6]],
+        "created": str(record.get("created_at") or ""),
         "updated": str(record.get("updated_at") or ""),
     }
 
@@ -133,6 +154,11 @@ def slim_payment(record: dict) -> dict:
         "customer": str(record.get("customer_display") or ""),
         "invoice_number": str(record.get("invoice_number") or ""),
         "invoice_id": str((record.get("invoice") or {}).get("_id") or ""),
+        "last_4": str(record.get("last_4") or ""),
+        "transaction": str(record.get("gateway_transaction_id") or ""),
+        "reference": str(record.get("reference_number") or ""),
+        "kind": " ".join(str(record.get(key) or "") for key in ("payment_type", "payment_sub_type")).strip(),
+        "by": str(record.get("initiated_by") or ""),
         "updated": str(record.get("updated_at") or ""),
     }
 
@@ -148,6 +174,9 @@ def sync(data: dict, client, *, now: datetime | None = None) -> dict:
     keeps its place, so nothing is skipped - the next pass carries on from it.
     """
     now = now or datetime.now(timezone.utc)
+    if data.get("shape") != SHAPE:
+        data["cursors"] = {}
+        data["shape"] = SHAPE
     counts = {}
     for kind, slim in SLIM.items():
         after = str(data["cursors"].get(kind) or when(now - timedelta(days=FIRST_DAYS)))
@@ -269,3 +298,113 @@ def status(data: dict, *, now: datetime | None = None) -> str:
     if failed and str(data.get("failed_at") or "") >= synced:
         lines.append(f"⚠ The last read failed ({_ago(str(data.get('failed_at')), now)}): {failed}")
     return "\n".join(lines)
+
+
+# ------------------------------------------------ the record behind a dispute
+
+
+def _cents(amount) -> int | None:
+    try:
+        return round(float(str(amount).replace("$", "").replace(",", "").strip()) * 100)
+    except (TypeError, ValueError):
+        return None
+
+
+def _day(stamp) -> "date | None":
+    try:
+        return datetime.fromisoformat(str(stamp or "").replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _spelled(stamp) -> str:
+    day = _day(stamp)
+    return f"{day:%B} {day.day}, {day.year}" if day else str(stamp or "?")[:10]
+
+
+def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
+                paid_on=None, card: str = "") -> tuple[str, bool]:
+    """What Payra holds on a disputed charge. (what it says, certain?).
+
+    The payment that was disputed - matched on the amount and the day, as the
+    acquirer's notice gives them - and the invoice it paid: what it was for,
+    when it was sent to the customer, and the customer on it. Their other
+    payments with it, and any refund, which the rebuttal must not contradict.
+
+    The customer by email or whole name only; the card's last four, when the
+    notice has them, must agree. "" when Payra has nothing on them.
+    """
+    from .clearout import name_match
+
+    email = str(email or "").strip().casefold()
+    four = "".join(ch for ch in str(card or "") if ch.isdigit())[-4:]
+
+    def theirs_invoice(one):
+        return bool(email and one.get("email") == email) or name_match(name, one.get("name", "")) >= 2
+
+    invoices = {one["id"]: one for one in data.get("invoices", {}).values() if theirs_invoice(one)}
+    payments = [
+        one for one in data.get("payments", {}).values()
+        if one.get("invoice_id") in invoices or name_match(name, one.get("customer", "")) >= 2
+    ]
+    if four:
+        payments = [one for one in payments if not one.get("last_4") or one["last_4"] == four]
+    if not payments and not invoices:
+        return "", False
+
+    charges = sorted((one for one in payments if not one.get("refund")),
+                     key=lambda one: str(one.get("paid_on") or ""), reverse=True)
+    refunds = [one for one in payments if one.get("refund")]
+    wanted = _cents(amount)
+
+    def same_money(one):
+        return wanted is not None and _cents(one.get("amount")) == wanted
+
+    def same_day(one):
+        day = _day(one.get("paid_on"))
+        return bool(paid_on and day) and abs((day - paid_on).days) <= 2
+
+    disputed = (next((one for one in charges if same_money(one) and same_day(one)), None)
+                or next((one for one in charges if same_money(one)), None)
+                or next((one for one in charges if same_day(one)), None))
+    sure = disputed is not None
+    disputed = disputed or (charges[0] if charges else None)
+
+    lines = ["From Payra, read through its API:"]
+    if disputed:
+        lines.append(
+            ("Payment disputed: " if sure else "Most recent payment (not matched to the dispute): ")
+            + f"{_money(disputed.get('amount'))} on {_spelled(disputed.get('paid_on'))}"
+            + f" — {disputed.get('status') or 'status unknown'}"
+            + (f" — card ending {disputed['last_4']}" if disputed.get("last_4") else "")
+            + (f" ({disputed['how']})" if disputed.get("how") else "")
+            + (f" — transaction {disputed['transaction']}" if disputed.get("transaction") else "")
+            + (f" — reference {disputed['reference']}" if disputed.get("reference") else "")
+        )
+    invoice = invoices.get(str((disputed or {}).get("invoice_id") or ""))
+    if invoice is None and disputed and disputed.get("invoice_number"):
+        invoice = next((one for one in invoices.values()
+                        if one.get("number") == disputed["invoice_number"]), None)
+    if invoice:
+        lines.append(
+            f"Invoice #{invoice.get('number') or '?'}"
+            + (f", dated {_spelled(invoice['invoice_date'])}" if invoice.get("invoice_date") else "")
+            + (f", due {_spelled(invoice['due_date'])}" if invoice.get("due_date") else "")
+            + f": {_money(invoice.get('total'))}"
+            + (f" — {invoice['description']}" if invoice.get("description") else "")
+        )
+        for one in invoice.get("lines") or []:
+            lines.append(f"  For: {one}")
+        who = invoice.get("name") or name
+        lines.append(f"  Billed to: {who}" + (f" <{invoice['email']}>" if invoice.get("email") else ""))
+        for one in invoice.get("sent") or []:
+            lines.append(f"  Sent to the customer: {one}")
+    others = [one for one in charges if one is not disputed][:6]
+    if others:
+        lines.append("Their other Payra payments: " + "; ".join(
+            f"{_money(one.get('amount'))} {one.get('status') or ''} {_spelled(one.get('paid_on'))}".replace("  ", " ")
+            for one in others))
+    if refunds:
+        lines.append("Refunds on record: " + "; ".join(
+            f"{_money(one.get('amount'))} {_spelled(one.get('paid_on'))}" for one in refunds))
+    return "\n".join(lines), sure

@@ -5039,10 +5039,17 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         if trouble:
             found.holes.append(trouble)
 
-    # The payment confirmation, out of the inbox it was emailed to. Payra has
-    # no API, so this is the receipt: the reference, the day it was paid, the
-    # card it was paid with and the total. The customer's own name is in the
-    # subject line of it, which is what makes it findable.
+    # Payra's own record of the charge, from the copy RYTE keeps through its
+    # API: the payment, the invoice it paid and when that was sent to them.
+    record, trouble = _payra_record(dispute)
+    if record:
+        found.invoice = (found.invoice + "\n\n" if found.invoice else "") + record
+    if trouble:
+        found.holes.append(trouble)
+
+    # And the payment confirmation, out of the inbox it was emailed to: the
+    # email the customer was sent. The customer's own name is in the subject
+    # line of it, which is what makes it findable.
     receipt, trouble = _payment_receipt(config, dispute)
     if receipt:
         found.invoice = (found.invoice + "\n\n" if found.invoice else "") + receipt
@@ -5324,6 +5331,34 @@ def _photograph(html_path: Path, png_path: Path) -> None:
             page.screenshot(path=str(png_path), full_page=True)
         finally:
             browser.close()
+
+
+def _payra_record(dispute) -> tuple[str, str]:
+    """Payra's record of the disputed charge. (what it says, a problem or "").
+
+    Quiet when RYTE holds nothing from Payra - not connected is a hole about
+    RYTE, not about the dispute.
+    """
+    from .. import payraapi
+
+    data = payraapi.load()
+    if not data.get("invoices") and not data.get("payments"):
+        return "", ""
+    said, sure = payraapi.for_dispute(
+        data, name=dispute.customer_name, email=dispute.customer_email,
+        amount=dispute.amount, paid_on=dispute.paid(), card=dispute.card,
+    )
+    if not said:
+        return "", (f"Nothing in Payra for “{dispute.customer_name}” in the last year, "
+                    "so Payra's record had to be left out.")
+    if not sure:
+        return said, (
+            f"None of “{dispute.customer_name}”'s Payra payments is "
+            f"{dispute.amount or 'the disputed amount'} on "
+            f"{dispute.transaction_date or 'the transaction date'} - the most recent "
+            "is in the document; check it is the right charge."
+        )
+    return said, ""
 
 
 def _payment_receipt(config: Config, dispute) -> tuple[str, str]:

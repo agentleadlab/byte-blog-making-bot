@@ -1,7 +1,7 @@
 """The copy of Payra's invoices and payments: read in pages, kept in step,
 looked up by the whole person."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -96,6 +96,7 @@ def test_a_page_that_goes_nowhere_does_not_loop():
     stuck = [{"records": [_invoice(n)], "limit": 1, "next_updated_after": "SAME"} for n in range(5)]
     payra = Pages(invoices=stuck)
     data["cursors"]["invoices"] = "SAME"
+    data["shape"] = payraapi.SHAPE
 
     payraapi.sync(data, payra, now=NOW)
 
@@ -122,6 +123,7 @@ def test_kept_is_only_what_a_reply_needs():
         "id": "inv1", "number": "1001", "total": 700, "description": "OTP VETS",
         "invoice_date": "2026-09-19", "due_date": "2026-09-26", "active": True,
         "name": "Adrian Pacheco", "email": "a@x.com", "phone": "3125550188",
+        "lines": [], "sent": [], "created": "",
         "updated": "2026-09-20T00:00:00.000Z",
     }
     paid = payraapi.slim_payment(_payment(1, "inv1", refund=True))
@@ -285,3 +287,119 @@ def test_payra_status_is_asked_for_plainly():
     assert mentions.parse("<@1> payra status").action == "payrastatus"
     assert mentions.parse("<@1> payra?").action == "payrastatus"
     assert mentions.parse("<@1> payra test").action == "payratest"
+
+
+def test_keeping_more_reads_everything_again_once():
+    data = payraapi.load()
+    data["cursors"] = {"invoices": "T9", "payments": "T9"}
+    payra = Pages()
+
+    payraapi.sync(data, payra, now=NOW)
+    assert payra.asked[0] == ("invoices", "2025-09-25T12:00:00.316Z"), "from a year back"
+    assert data["shape"] == payraapi.SHAPE
+
+    payra.asked.clear()
+    data["cursors"]["invoices"] = "T5"
+    payraapi.sync(data, payra, now=NOW)
+    assert payra.asked[0] == ("invoices", "T5"), "and only once"
+
+
+# ------------------------------------------------ the record behind a dispute
+
+
+def _disputed_board():
+    data = payraapi.load()
+    invoice = _invoice(7, name="Jose Zambrano", phone="6025550199", email="jz@example.com", total=1407.60)
+    invoice["invoice_date"] = "2026-09-02T00:00:00.000Z"
+    invoice["lines"] = [{"name": "50 OTP VETS", "quantity": 1, "price": 1407.60}]
+    invoice["notifications"] = [{"type": "email", "sent_at": "2026-09-02T15:00:00.000Z", "_id": "n1"}]
+    earlier = _invoice(6, name="Jose Zambrano", phone="6025550199", email="jz@example.com", total=700)
+    for record in (invoice, earlier, _invoice(1)):
+        one = payraapi.slim_invoice(record)
+        data["invoices"][one["id"]] = one
+    paid = _payment(7, "inv7", amount=1407.60)
+    paid.update(paid_on="2026-09-03T14:00:00.000Z", last_4="4242", gateway_transaction_id="txn-9",
+                reference_number="R-77", customer_display="Jose Zambrano")
+    before = _payment(6, "inv6", amount=700)
+    before.update(paid_on="2026-08-01T14:00:00.000Z", last_4="4242", customer_display="Jose Zambrano")
+    for record in (paid, before, _payment(1, "inv1")):
+        one = payraapi.slim_payment(record)
+        data["payments"][one["id"]] = one
+    return data
+
+
+def test_a_dispute_gets_the_disputed_payment_and_the_invoice_it_paid():
+    said, sure = payraapi.for_dispute(
+        _disputed_board(), name="Jose Zambrano", amount="$1,407.60",
+        paid_on=date(2026, 9, 3), card="XXXX XXXX XXXX 4242",
+    )
+
+    assert sure
+    assert ("Payment disputed: $1,407.60 on September 3, 2026 — Settled — card ending 4242 "
+            "(Visa 4242) — transaction txn-9 — reference R-77") in said
+    assert "Invoice #1007, dated September 2, 2026, due September 26, 2026: $1,407.60 — OTP VETS" in said
+    assert "  For: name: 50 OTP VETS; quantity: 1; price: 1407.6" in said
+    assert "  Billed to: Jose Zambrano <jz@example.com>" in said
+    assert "  Sent to the customer: type: email; sent_at: 2026-09-02T15:00:00.000Z" in said
+    assert "Their other Payra payments: $700.00 Settled August 1, 2026" in said
+    assert "Adrian" not in said and "Refunds" not in said
+
+
+def test_a_refund_is_never_left_out_of_a_dispute():
+    data = _disputed_board()
+    back = payraapi.slim_payment({**_payment(9, "inv7", amount=1407.60, refund=True),
+                                  "paid_on": "2026-09-10T00:00:00.000Z"})
+    data["payments"][back["id"]] = back
+
+    said, sure = payraapi.for_dispute(data, name="Jose Zambrano", amount="1407.60",
+                                      paid_on=date(2026, 9, 3))
+    assert sure and "Refunds on record: $1,407.60 September 10, 2026" in said
+    assert said.index("Payment disputed") < said.index("Refunds"), "the refund is not the disputed charge"
+
+
+def test_the_disputed_charge_is_matched_on_amount_and_day():
+    data = _disputed_board()
+    said, sure = payraapi.for_dispute(data, name="Jose Zambrano", amount="$700.00",
+                                      paid_on=date(2026, 8, 1))
+    assert sure and "Payment disputed: $700.00 on August 1, 2026" in said
+
+    said, sure = payraapi.for_dispute(data, name="Jose Zambrano", amount="$99.00",
+                                      paid_on=date(2026, 6, 1))
+    assert not sure
+    assert "Most recent payment (not matched to the dispute): $1,407.60" in said
+
+
+def test_a_dispute_is_only_ever_the_whole_person_and_their_card():
+    data = _disputed_board()
+    assert payraapi.for_dispute(data, name="Jose", amount="1407.60") == ("", False)
+    assert payraapi.for_dispute(data, name="Jose Zambrano Jr", amount="1407.60") == ("", False)
+    said, _ = payraapi.for_dispute(data, name="J Z", email="JZ@example.com", amount="1407.60")
+    assert "Payment disputed: $1,407.60" in said, "by the email on the notice"
+    said, _ = payraapi.for_dispute(data, name="Jose Zambrano", amount="1407.60", card="xxxx1111")
+    assert "Payment disputed" not in said and "card ending 4242" not in said, "a different card"
+
+
+def test_the_rebuttal_says_when_payra_has_nothing_or_is_not_sure():
+    from wilbyte import rebuttal
+    from wilbyte.bot import jobs
+
+    dispute = rebuttal.Dispute(customer_name="Jose Zambrano", amount="$1,407.60",
+                               transaction_date="09/03/2026")
+    assert jobs._payra_record(dispute) == ("", ""), "nothing kept: not connected, said nowhere"
+
+    payraapi.save(_disputed_board())
+    said, trouble = jobs._payra_record(dispute)
+    assert said.startswith("From Payra, read through its API:") and trouble == ""
+
+    nobody = rebuttal.Dispute(customer_name="Nobody Known", amount="$1", transaction_date="09/03/2026")
+    assert "Nothing in Payra for “Nobody Known”" in jobs._payra_record(nobody)[1]
+
+
+def test_a_refund_is_never_taken_for_the_disputed_charge():
+    data = _disputed_board()
+    back = payraapi.slim_payment({**_payment(9, "inv7", amount=1407.60, refund=True),
+                                  "paid_on": "2026-09-10T00:00:00.000Z"})
+    data["payments"][back["id"]] = back
+
+    said, sure = payraapi.for_dispute(data, name="Jose Zambrano", amount="1407.60")
+    assert sure and "Payment disputed: $1,407.60 on September 3, 2026" in said
