@@ -214,3 +214,74 @@ def test_a_refused_token_says_what_to_check(monkeypatch):
         client.changed("invoices", "x")
     with pytest.raises(payraapi.PayraError):
         payraapi.PayraClient("", "site1")
+
+
+# ------------------------------------------------ "are we good here?"
+
+
+def test_status_says_it_is_connected_and_how_fresh():
+    data = _kept()
+    data["synced_at"] = "2026-09-25T11:55:00.316Z"
+    said = payraapi.status(data, now=NOW)
+    assert said.startswith("✅ **Connected** — RYTE has 3 invoices and 2 payments")
+    assert "last read 5 minutes ago" in said
+    assert "⚠" not in said
+
+
+def test_status_says_when_the_last_read_failed():
+    data = _kept()
+    data.update(synced_at="2026-09-25T09:00:00.000Z", failed="Payra said HTTP 500: ",
+                failed_at="2026-09-25T11:59:00.000Z")
+    said = payraapi.status(data, now=NOW)
+    assert "last read 3 hours ago" in said
+    assert "⚠ The last read failed (1 minute ago): Payra said HTTP 500" in said
+
+    data["synced_at"] = "2026-09-25T12:00:00.000Z"
+    assert "⚠" not in payraapi.status(data, now=NOW), "an old failure since put right"
+
+
+def test_status_before_the_first_read():
+    assert payraapi.status(payraapi.load(), now=NOW).startswith("⏳ RYTE hasn't read Payra yet")
+
+
+def test_a_read_remembers_whether_it_worked(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    class Fine:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            return {"records": [], "limit": 5, "next_updated_after": after}
+
+    class Broken(Fine):
+        def changed(self, kind, after):
+            raise payraapi.PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env.")
+
+    config = NS(secrets=NS(payra_api_token="tok-fake", payra_site_id="site"))
+    monkeypatch.setattr(payraapi, "PayraClient", Broken)
+    with pytest.raises(payraapi.PayraError):
+        jobs.payra_sync(config)
+    kept = payraapi.load()
+    assert "PAYRA_API_TOKEN" in kept["failed"] and kept["failed_at"] and "synced_at" not in kept
+
+    monkeypatch.setattr(payraapi, "PayraClient", Fine)
+    jobs.payra_sync(config)
+    kept = payraapi.load()
+    assert kept["synced_at"] and "failed" not in kept
+
+
+def test_payra_status_is_asked_for_plainly():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> payra status").action == "payrastatus"
+    assert mentions.parse("<@1> payra?").action == "payrastatus"
+    assert mentions.parse("<@1> payra test").action == "payratest"

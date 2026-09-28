@@ -646,6 +646,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # action words: "clearout" in "check clearouts" is not a clear-out.
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
         return MentionRequest(action="cost", brief=text)
+    if re.match(r"\s*payra(?:\s+status)?\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="payrastatus", brief=text)
     if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
         return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*check\s+clear[\s-]*outs?\b", text, re.IGNORECASE):
@@ -1114,6 +1116,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > on** when she's away. Or say **faith is away** / **faith is back**
 > @RYTE **cost** — what I've spent on Claude today, this week and this month,
 > and which of my jobs it went on
+> @RYTE **payra status** — whether RYTE is reading Payra, how much it has, when it last read
 > @RYTE **payra test** — read Payra's API docs and try the token on what they
 > name, read-only; posts the docs as a file and what the token could see
 > @RYTE **check clearouts** — the clear-outs already done whose ring-da-bell

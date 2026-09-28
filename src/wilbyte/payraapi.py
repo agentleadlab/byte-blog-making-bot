@@ -233,3 +233,39 @@ def account(data: dict, who: str) -> str:
         )
     name = next((one.get("name") for one in invoices if one.get("name")), "")
     return (f"Payra account{' for ' + name if name else ''}:\n" + "\n".join(lines))
+
+
+def _ago(stamp: str, now: datetime) -> str:
+    try:
+        then = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return "at an unknown time"
+    minutes = int((now - then).total_seconds() // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 90:
+        return f"{minutes} minute{'' if minutes == 1 else 's'} ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} hours ago"
+    return f"{hours // 24} days ago"
+
+
+def status(data: dict, *, now: datetime | None = None) -> str:
+    """Whether the connection is working, in one or two lines for Discord."""
+    now = now or datetime.now(timezone.utc)
+    invoices, payments = len(data.get("invoices") or {}), len(data.get("payments") or {})
+    synced, failed = str(data.get("synced_at") or ""), str(data.get("failed") or "")
+    lines = []
+    if synced:
+        lines.append(
+            f"✅ **Connected** — RYTE has {invoices:,} invoices and {payments:,} payments "
+            f"from Payra, last read {_ago(synced, now)}. The Responder checks them when "
+            "an agent texts."
+        )
+    elif not failed:
+        lines.append("⏳ RYTE hasn't read Payra yet — the first read runs within a few "
+                     "minutes of starting, if PAYRA_API_TOKEN and PAYRA_SITE_ID are in .env.")
+    if failed and str(data.get("failed_at") or "") >= synced:
+        lines.append(f"⚠ The last read failed ({_ago(str(data.get('failed_at')), now)}): {failed}")
+    return "\n".join(lines)

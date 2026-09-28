@@ -974,6 +974,12 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
                 return
 
+            if request.action == "payrastatus":
+                from .. import payraapi
+
+                await responder.send(payraapi.status(await asyncio.to_thread(payraapi.load)))
+                return
+
             if request.action == "payratest":
                 await _payra_test(responder, config)
                 return
@@ -2645,8 +2651,11 @@ async def _payra_test(responder: Responder, config: Config) -> None:
     except Exception as exc:
         await responder.send(f"Couldn't finish: {_readable(exc)}")
         return
+    from .. import payraapi
+
+    kept = payraapi.status(await asyncio.to_thread(payraapi.load))
     await responder.send(
-        said + "\n-# Send the attached file to Claude to build the connection.",
+        said + "\n\n**The connection:**\n" + kept + "\n-# Payra's docs, attached for reference.",
         file=discord.File(io.BytesIO(docs.encode("utf-8")), filename="payra-docs.md"),
     )
 

@@ -9296,6 +9296,12 @@ def payra_sync(config: Config) -> dict:
     try:
         with payraapi.PayraClient(token, site) as client:
             counts = payraapi.sync(data, client)
+        data["synced_at"] = payraapi.when(datetime.now(timezone.utc))
+        data.pop("failed", None)
+    except Exception as exc:
+        data["failed"] = " ".join(str(exc).split())[:200]
+        data["failed_at"] = payraapi.when(datetime.now(timezone.utc))
+        raise
     finally:
         # Whatever was read before a failure is kept, and so is where it got to.
         payraapi.save(data)
