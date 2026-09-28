@@ -2985,7 +2985,7 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
     problems: list[str] = []
     try:
         lists = client.board_lists(config.secrets.trello_board_id)
-        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        every = _cards_of(client, config.secrets.trello_board_id, lists)
         members = client.board_members(config.secrets.trello_board_id)
 
         days = days_with_cards(every, day)
@@ -6405,9 +6405,7 @@ def read_agents(config: Config, *, day=None):
             return [], {}, [f"The board has no list called {agents.IN_QUE!r}"]
         parked_id = str((watched[agents.PARKED] or {}).get("id") or "\0")
 
-        every_card = [
-            card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))
-        ]
+        every_card = _cards_of(client, config.secrets.trello_board_id, lists)
         # Covering, not "dated": a Lead Order card titled 08/29-08/31 is the
         # Lead Order card on all three of those days.
         dated = dailyops.cards_covering(every_card, day)
@@ -6436,10 +6434,10 @@ def read_agents(config: Config, *, day=None):
                     f"“{title}” says {wrong.upper()} where it should say AGENT. "
                     "Filed anyway — worth fixing on the card."
                 )
-            detail = client.card_detail(str(card.get("id") or ""))
             # One request for the comments and for whether this card was
-            # copied from another - see `agents.still_being_written`.
-            said, copied = client.card_story(str(card.get("id") or ""))
+            # copied from another - see `agents.still_being_written`. Both
+            # read again only when the card has changed.
+            detail, (said, copied) = _card_read(client, card)
             agent = agents.read_agent(
                 {**card, **detail},
                 text=str(detail.get("desc") or ""),
@@ -6475,6 +6473,50 @@ def read_agents(config: Config, *, day=None):
         return plans, where, missing, typos
     finally:
         client.close()
+
+
+def _cards_of(client, board_id, lists) -> list[dict]:
+    """Every card in these lists, top to bottom - in one request where the
+    client can, a request a list where it can't."""
+    if hasattr(client, "cards_in") and board_id:
+        return client.cards_in(str(board_id), lists)
+    return [card for bl in lists for card in client.list_cards(str(bl.get("id") or ""))]
+
+
+#: Waiting agent cards as last read: {card id: (last activity, read at,
+#: detail, story)}. They are read every twenty seconds and change rarely.
+_CARD_READS: dict = {}
+_CARD_READS_LOCK = threading.Lock()
+
+#: Read again after this long even if Trello says nothing has changed.
+CARD_READ_SECONDS = 300
+
+
+def _card_read(client, card: dict, *, now: float | None = None):
+    """(detail, (said, copied)) for a waiting agent card.
+
+    The same as last time while the card's last activity is the same - an
+    edited description or a new comment changes it - and read again anyway
+    every five minutes. A card parked for a week was read twice every twenty
+    seconds, which was most of RYTE's Trello traffic.
+    """
+    import time
+
+    now = time.time() if now is None else now
+    card_id = str(card.get("id") or "")
+    activity = str(card.get("dateLastActivity") or "")
+    with _CARD_READS_LOCK:
+        held = _CARD_READS.get(card_id)
+    if held and activity and held[0] == activity and now - held[1] < CARD_READ_SECONDS:
+        return held[2], held[3]
+    detail = client.card_detail(card_id)
+    story = client.card_story(card_id)
+    with _CARD_READS_LOCK:
+        _CARD_READS[card_id] = (activity, now, detail, story)
+        if len(_CARD_READS) > 500:
+            for old in sorted(_CARD_READS, key=lambda one: _CARD_READS[one][1])[:100]:
+                _CARD_READS.pop(old, None)
+    return detail, story
 
 
 def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):

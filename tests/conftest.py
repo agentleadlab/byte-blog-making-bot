@@ -23,6 +23,10 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(usage, "USAGE_PATH", tmp_path / "usage.json")
     # Nor switch anything of the real RYTE's - the responder off, say.
     monkeypatch.setattr(prefs, "PREFS_PATH", tmp_path / "preferences.json")
+    # Nor a card read by another test, kept as if it were this one's.
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(jobs, "_CARD_READS", {})
 
 
 @pytest.fixture

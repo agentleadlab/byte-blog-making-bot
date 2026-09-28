@@ -40,6 +40,17 @@ _AGAIN = {429, 500, 502, 503, 504}
 _SAFE_TO_REPEAT = {"GET", "HEAD", "PUT", "DELETE"}
 
 
+def _pos(card: dict) -> float:
+    try:
+        return float(card.get("pos") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+#: The longest Trello's rate limiter is waited for. Its window is ten seconds.
+MOST_WAIT = 30.0
+
+
 class TrelloError(RuntimeError):
     """Raised when the Trello API rejects a request."""
 
@@ -101,6 +112,14 @@ class TrelloClient:
             )
             if not repeatable:
                 return response
+            if response.status_code == 429:
+                # Refused for asking too often: wait out the window it names,
+                # or the whole ten-second one, rather than asking again inside it.
+                try:
+                    named = float(response.headers.get("Retry-After") or 0)
+                except ValueError:
+                    named = 0.0
+                pause = min(max(pause, named, 10.0), MOST_WAIT)
             self._wait(pause)
         raise AssertionError("unreachable")  # pragma: no cover
 
@@ -127,6 +146,22 @@ class TrelloClient:
             "GET", f"/boards/{board_id}/cards/{'all' if archived else 'open'}",
             params={"fields": "name,idList,url,shortUrl,desc,closed,dateLastActivity"},
         )
+
+    def cards_in(self, board_id: str, lists: list[dict]) -> list[dict]:
+        """The cards in these lists, as walking them with `list_cards` would
+        give them - list by list, top to bottom - in one request instead of
+        one per list.
+
+        RYTE looks for new agents every twenty seconds, and a request per list
+        each time is most of what Trello's rate limit was refusing.
+        """
+        order = {str(bl.get("id") or ""): at for at, bl in enumerate(lists or [])}
+        cards = self._request(
+            "GET", f"/boards/{board_id}/cards/open",
+            params={"fields": "name,idList,url,shortUrl,dateLastActivity,dueComplete,pos"},
+        )
+        kept = [card for card in cards or [] if str(card.get("idList") or "") in order]
+        return sorted(kept, key=lambda card: (order[str(card.get("idList"))], _pos(card)))
 
     def list_cards(self, list_id: str) -> list[dict]:
         return self._request(

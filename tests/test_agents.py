@@ -4518,3 +4518,59 @@ def test_the_weekend_waits_when_there_is_no_working_day_card_yet():
     plan = _weekend_plan(date(2026, 9, 26), [MONDAY_CARDS[1]])
 
     assert not plan.doable, "Monday's Ads card isn't there - nothing half-filed"
+
+
+# Read less: the whole board at once, and a waiting card only when it changed.
+
+
+class Counting:
+    def __init__(self):
+        self.detail = self.story = 0
+
+    def card_detail(self, card_id):
+        self.detail += 1
+        return {"desc": f"read {self.detail}"}
+
+    def card_story(self, card_id):
+        self.story += 1
+        return [], False
+
+
+def test_a_waiting_card_is_read_again_only_when_it_changed():
+    from wilbyte.bot import jobs
+
+    board = Counting()
+    card = {"id": "c1", "dateLastActivity": "2026-09-28T10:00:00.000Z"}
+
+    first = jobs._card_read(board, card, now=1000)
+    again = jobs._card_read(board, card, now=1019)
+    assert (board.detail, board.story) == (1, 1), "unchanged: nothing asked"
+    assert again == first
+
+    edited = {**card, "dateLastActivity": "2026-09-28T10:05:00.000Z"}
+    assert jobs._card_read(board, edited, now=1040)[0] == {"desc": "read 2"}, "edited: read again"
+    jobs._card_read(board, edited, now=1040 + jobs.CARD_READ_SECONDS)
+    assert board.detail == 3, "and every five minutes whatever Trello says"
+
+
+def test_a_card_that_says_nothing_about_its_activity_is_always_read():
+    from wilbyte.bot import jobs
+
+    board = Counting()
+    jobs._card_read(board, {"id": "c1"}, now=1)
+    jobs._card_read(board, {"id": "c1"}, now=2)
+    assert board.detail == 2
+
+
+def test_the_board_is_read_in_one_request_where_the_client_can():
+    from wilbyte.bot import jobs
+
+    class OneAsk:
+        def cards_in(self, board_id, lists):
+            return [{"id": "x", "board": board_id, "lists": len(lists)}]
+
+        def list_cards(self, list_id):
+            raise AssertionError("a request per list")
+
+    assert jobs._cards_of(OneAsk(), "B", [{"id": "1"}, {"id": "2"}]) == [
+        {"id": "x", "board": "B", "lists": 2}]

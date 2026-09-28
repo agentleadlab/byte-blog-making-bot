@@ -135,3 +135,56 @@ def test_saying_what_the_answer_should_be_is_safe_to_repeat(method, client):
     client._request(method, "/checklists/abc/checkItems/def")
 
     assert len(client._client.asked) == 2
+
+
+# ------------------------------------------------ asking less often
+
+
+def test_refused_for_asking_too_often_it_waits_out_the_window(monkeypatch):
+    waited = []
+    monkeypatch.setattr(TrelloClient, "_wait", staticmethod(waited.append))
+    made = TrelloClient("key", "token")
+    slow_down = httpx.Response(429, headers={"Retry-After": "15"}, content=b"",
+                               request=httpx.Request("GET", "https://api.trello.com/1/x"))
+    made._client = Answering(replied(429), slow_down, replied(429, b""), replied(200))
+
+    assert made._request("GET", "/cards/abc") == {"id": "abc"}
+    assert waited == [10.0, 15.0, 10.0], "the whole ten-second window, or longer when it says"
+
+
+def test_a_long_retry_after_is_not_waited_forever(monkeypatch):
+    waited = []
+    monkeypatch.setattr(TrelloClient, "_wait", staticmethod(waited.append))
+    made = TrelloClient("key", "token")
+    made._client = Answering(
+        httpx.Response(429, headers={"Retry-After": "600"}, content=b"",
+                       request=httpx.Request("GET", "https://api.trello.com/1/x")),
+        replied(200),
+    )
+    made._request("GET", "/cards/abc")
+    assert waited == [30.0]
+
+
+def test_a_503_still_waits_only_a_moment(monkeypatch):
+    waited = []
+    monkeypatch.setattr(TrelloClient, "_wait", staticmethod(waited.append))
+    made = TrelloClient("key", "token")
+    made._client = Answering(replied(503), replied(200))
+    made._request("GET", "/cards/abc")
+    assert waited == [1.0]
+
+
+def test_the_whole_board_in_one_request_in_the_order_the_lists_give(client):
+    import json
+
+    cards = [
+        {"id": "b2", "idList": "L2", "pos": 20}, {"id": "a2", "idList": "L1", "pos": 200},
+        {"id": "b1", "idList": "L2", "pos": 10}, {"id": "a1", "idList": "L1", "pos": 100},
+        {"id": "gone", "idList": "archived-list", "pos": 1},
+    ]
+    client._client = Answering(replied(200, json.dumps(cards).encode()))
+
+    got = client.cards_in("board", [{"id": "L1"}, {"id": "L2"}])
+
+    assert [card["id"] for card in got] == ["a1", "a2", "b1", "b2"]
+    assert client._client.asked == [("GET", "/boards/board/cards/open")]
