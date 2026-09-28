@@ -560,10 +560,9 @@ def test_the_responder_rests_at_the_weekend():
     assert client.ring_resting(config, datetime(2026, 9, 28, 0, 1)) == "", "Monday"
 
 
-def test_at_the_weekend_nothing_is_drafted_and_it_says_so_once(monkeypatch):
+def test_at_the_weekend_nothing_is_drafted_or_said(monkeypatch):
     from wilbyte.bot import client
 
-    client._RING_RESTING.clear()
     heard, drafted = Heard(), []
     monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
     monkeypatch.setattr(client, "_ring_once", lambda bot: drafted.append(1))
@@ -582,7 +581,7 @@ def test_at_the_weekend_nothing_is_drafted_and_it_says_so_once(monkeypatch):
     asyncio.run(client.ring_loop(Bot()))
 
     assert drafted == []
-    assert len(heard.said) == 1 and heard.said[0].startswith("😴 Responder is off for the weekend")
+    assert heard.said == []
 
 
 # ------------------------------------------------ the team, in the draft

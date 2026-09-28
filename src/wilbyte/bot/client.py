@@ -5928,10 +5928,6 @@ RING_CHECK_SECONDS = 60
 #: texts are ever drafted.
 RING_DAYS_OFF = (5, 6)
 
-#: The weekends already said to be resting, by their Saturday.
-_RING_RESTING: set = set()
-
-
 def ring_resting(config, now: datetime | None = None) -> str:
     """The Saturday of this weekend when the responder is resting, else ""."""
     now = now or datetime.now(ZoneInfo(config.schedule.timezone))
@@ -6001,16 +5997,9 @@ async def ring_loop(bot: "WilByteBot") -> None:
             on = ringcentral.configured(bot.config.secrets)
             resting = ring_resting(bot.config) if on else ""
             if resting:
-                # Said once a weekend, so a quiet channel isn't mistaken for
-                # a broken one.
-                if resting not in _RING_RESTING:
-                    _RING_RESTING.add(resting)
-                    responder = _ring_responder(bot)
-                    if responder is not None:
-                        await responder.send(
-                            "😴 Responder is off for the weekend — back Monday. "
-                            "`@RYTE respond` with a screenshot still works if you need one."
-                        )
+                # Quietly: "it doesnt need to notify me if ever, im just the
+                # only one seeing this anyway".
+                pass
             elif on:
                 await _ring_once(bot)
             else:
