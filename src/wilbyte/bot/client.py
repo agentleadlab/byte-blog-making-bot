@@ -6154,9 +6154,12 @@ async def _ring_once(bot: "WilByteBot") -> None:
     # Switched off while Faith is around: nothing drafted, but everything
     # above and the studying below still happen - it reads every text and
     # keeps learning from how she answers them.
-    if not await asyncio.to_thread(prefs.responder_on):
-        found = []
     for agent, name, tail in found:
+        # Asked again for every text, and again before posting: a pass with
+        # several agents waiting takes minutes, and Max Wilson's suggestion
+        # was posted after "responder off" because the pass had started.
+        if not await asyncio.to_thread(prefs.responder_on):
+            break
         asked = "\n".join(one.said for one in tail)
         try:
             known = await asyncio.to_thread(partial(
@@ -6175,6 +6178,8 @@ async def _ring_once(bot: "WilByteBot") -> None:
             # than the text going unanswered because Claude had a bad moment.
             log.exception("Couldn't draft a reply for %s", agent)
             continue
+        if not await asyncio.to_thread(prefs.responder_on):
+            break
         # Remembered before the ping rather than after, so a restart between
         # the two cannot post the same suggestion twice.
         await asyncio.to_thread(partial(

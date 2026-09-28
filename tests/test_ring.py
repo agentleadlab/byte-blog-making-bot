@@ -253,7 +253,7 @@ STUDIED: list = []
 
 
 def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
-          card=None):
+          card=None, keep_draft=False):
     from wilbyte.bot import client
 
     # Already said it's connected, unless the test is about saying so.
@@ -294,7 +294,8 @@ def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
         return drafted or {"reply": "Hi Shelby! Yes 😊", "why": "like her",
                            "blanks": [], "examples": 2}
 
-    monkeypatch.setattr(jobs, "draft_like_faith", drafting)
+    if not keep_draft:
+        monkeypatch.setattr(jobs, "draft_like_faith", drafting)
     monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
     bot = NS(config=NS(secrets=NS(discord_notify_user_id="42"),
                        schedule=NS(timezone="America/Chicago")))
@@ -568,6 +569,20 @@ def test_switched_off_nothing_is_drafted_but_it_still_studies(monkeypatch):
     prefs.set_responder(True)
     said, _ = _once(monkeypatch)
     assert said, "back on, it drafts"
+
+
+def test_switched_off_while_drafting_nothing_is_posted(monkeypatch):
+    """Max Wilson's suggestion arrived after "responder off": the pass had
+    started before it, and drafting takes a while."""
+    from wilbyte import prefs
+
+    def drafted_then_switched(cfg, **kw):
+        prefs.set_responder(False)
+        return {"reply": "Hi!", "why": "", "blanks": [], "examples": 1}
+
+    monkeypatch.setattr(jobs, "draft_like_faith", drafted_then_switched)
+    said, marked = _once(monkeypatch, drafted=None, keep_draft=True)
+    assert said == [] and marked == []
 
 
 # ------------------------------------------------ the team, in the draft
