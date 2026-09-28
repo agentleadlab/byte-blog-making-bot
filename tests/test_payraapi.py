@@ -580,3 +580,16 @@ def test_when_none_is_paid_it_says_what_it_did_find(monkeypatch):
     said = jobs.paid_invoice_pdf("David Pereira")[2]
     assert said.startswith("I have 1 Payra invoice for “David Pereira” but can't see a payment on it:")
     assert "• #INV-18089 — $1,360.00, dated September 19, 2026 — no payment I can see on it" in said
+
+
+def test_the_disputed_amount_can_include_the_card_fee():
+    """David Pereira's $1,360 invoice was disputed as $1,407.60 - 3.5% more."""
+    data = _pereira(invoice={"_id": "invDP"}, fee=47.60)
+
+    said, sure = payraapi.for_dispute(data, name="David Pereira", amount="$1,407.60")
+
+    assert sure
+    assert "Payment disputed: $1,360.00 + $47.60 card fee on September 4, 2026" in said
+    page = payraapi.invoice_html(payraapi.paid_invoices(data, "David Pereira"), made_on="x")
+    assert "+ $47.60 fee" in page
+    assert payraapi.for_dispute(data, name="David Pereira", amount="$1,400.00")[1] is False

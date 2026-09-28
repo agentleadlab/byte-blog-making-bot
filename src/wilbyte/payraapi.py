@@ -34,7 +34,7 @@ MOST_PAGES = 20
 #: What is kept of each record. Raised when more is kept, so everything
 #: already held is read again with it - a rebuttal wants the card's last four
 #: and the transaction id, which the first copy did not keep.
-SHAPE = 4
+SHAPE = 5
 
 
 class PayraError(RuntimeError):
@@ -269,6 +269,10 @@ def slim_payment(record: dict) -> dict:
         # it paid when the invoice field is empty.
         "invoice_ids": _invoices_named(record),
         "last_4": str(record.get("last_4") or ""),
+        # The card fee charged on top, when there is one: the bank's notice
+        # carries the amount with it - David Pereira's $1,360 invoice was
+        # disputed as $1,407.60, which is 3.5% more.
+        "fee": record.get("fee"),
         "transaction": str(record.get("gateway_transaction_id") or ""),
         "reference": str(record.get("reference_number") or ""),
         "kind": " ".join(str(record.get(key) or "") for key in ("payment_type", "payment_sub_type")).strip(),
@@ -473,7 +477,9 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
     wanted = _cents(amount)
 
     def same_money(one):
-        return wanted is not None and _cents(one.get("amount")) == wanted
+        paid = _cents(one.get("amount"))
+        return wanted is not None and paid is not None and wanted in (
+            paid, paid + (_cents(one.get("fee")) or 0))
 
     def same_day(one):
         day = _day(one.get("paid_on"))
@@ -489,7 +495,9 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
     if disputed:
         lines.append(
             ("Payment disputed: " if sure else "Most recent payment (not matched to the dispute): ")
-            + f"{_money(disputed.get('amount'))} on {_spelled(disputed.get('paid_on'))}"
+            + f"{_money(disputed.get('amount'))}"
+            + (f" + {_money(disputed['fee'])} card fee" if _cents(disputed.get("fee")) else "")
+            + f" on {_spelled(disputed.get('paid_on'))}"
             + f" — {disputed.get('status') or 'status unknown'}"
             + (f" — card ending {disputed['last_4']}" if disputed.get("last_4") else "")
             + (f" ({disputed['how']})" if disputed.get("how") else "")
@@ -599,7 +607,9 @@ def _payment_row(pay: dict) -> str:
     return (
         "<tr>"
         f"<td>{_esc(_spelled(pay.get('paid_on')))}</td>"
-        f"<td class=num>{_esc(_money(pay.get('amount')))}</td>"
+        f"<td class=num>{_esc(_money(pay.get('amount')))}"
+        + (f"<br><small>+ {_esc(_money(pay['fee']))} fee</small>" if _cents(pay.get("fee")) else "")
+        + "</td>"
         f"<td>{how}</td>"
         f"<td>{_esc(pay.get('status') or '')}</td>"
         f"<td class=ref>{where}</td>"
