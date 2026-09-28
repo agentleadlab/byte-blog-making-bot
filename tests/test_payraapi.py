@@ -444,6 +444,7 @@ def test_only_invoices_with_money_on_them_and_only_theirs():
     assert [one["invoice"]["number"] for one in found] == ["1006", "1007"], "newest first, paid only"
     assert found[1]["paid_cents"] == 140760
     assert payraapi.paid_invoices(data, "Jose") == []
+    assert payraapi.paid_invoices(data, "Jose Zambrano Jr") == [], "his father's invoices aren't his"
     assert payraapi.paid_invoices(data, "jz@example.com") == found
     assert payraapi.paid_invoices(data, "(602) 555-0199") == found
     assert payraapi.paid_invoices(data, "") == []
