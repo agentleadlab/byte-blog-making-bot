@@ -82,6 +82,23 @@ def weekends_on(path: Path | None = None) -> bool | None:
     return bool(value) if value is not None else None
 
 
+def set_responder(on: bool, path: Path | None = None) -> None:
+    """Whether the RingCentral responder drafts replies.
+
+    "i need ryte responder only when faith is not around" - on while she is
+    away, off when she is back. Off, it still reads and learns.
+    """
+    values = load(path)
+    values["responder"] = bool(on)
+    save(values, path)
+
+
+def responder_on(path: Path | None = None) -> bool:
+    """On unless it has been switched off."""
+    value = load(path).get("responder")
+    return True if value is None else bool(value)
+
+
 def apply(config: Config, path: Path | None = None) -> Config:
     """Overlay the saved preferences onto a config, if there are any."""
     values = load(path)

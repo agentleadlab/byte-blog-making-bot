@@ -249,6 +249,9 @@ class Heard:
         self.said.append(flat(content, kw.get("embed")))
 
 
+STUDIED: list = []
+
+
 def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
           card=None):
     from wilbyte.bot import client
@@ -279,8 +282,11 @@ def _once(monkeypatch, *, drafted=None, problems=(), found=True, ready=True,
     async def no_playbook(*a, **kw):
         return None
 
+    async def studying(*a, **kw):
+        STUDIED.append(1)
+
     monkeypatch.setattr(client, "_write_the_playbook", no_playbook)
-    monkeypatch.setattr(client, "_study", no_playbook)
+    monkeypatch.setattr(client, "_study", studying)
 
     def drafting(cfg, **kw):
         if isinstance(drafted, Exception):
@@ -548,40 +554,20 @@ def test_half_set_up_is_said_once_by_the_loop(monkeypatch):
     assert heard.said == ["⚠ RingCentral is half set up — missing RINGCENTRAL_JWT in .env."]
 
 
-def test_the_responder_rests_at_the_weekend():
-    from datetime import datetime
-
+def test_switched_off_nothing_is_drafted_but_it_still_studies(monkeypatch):
+    from wilbyte import prefs
     from wilbyte.bot import client
 
-    config = NS(schedule=NS(timezone="America/New_York"))
-    assert client.ring_resting(config, datetime(2026, 9, 25, 23, 59)) == "", "Friday"
-    assert client.ring_resting(config, datetime(2026, 9, 26, 0, 1)) == "2026-09-26"
-    assert client.ring_resting(config, datetime(2026, 9, 27, 23, 59)) == "2026-09-26", "same weekend"
-    assert client.ring_resting(config, datetime(2026, 9, 28, 0, 1)) == "", "Monday"
+    prefs.set_responder(False)
+    STUDIED.clear()
+    said, marked = _once(monkeypatch)
+    assert said == [], "nothing drafted while Faith is around"
+    assert marked == [], "and nothing marked answered - on again, it is still waiting"
+    assert STUDIED == [1], "still learning from how she answers"
 
-
-def test_at_the_weekend_nothing_is_drafted_or_said(monkeypatch):
-    from wilbyte.bot import client
-
-    heard, drafted = Heard(), []
-    monkeypatch.setattr(client, "_ring_responder", lambda bot: heard)
-    monkeypatch.setattr(client, "_ring_once", lambda bot: drafted.append(1))
-    monkeypatch.setattr(client, "ring_resting", lambda config: "2026-09-26")
-    monkeypatch.setattr(client, "RING_CHECK_SECONDS", 0)
-
-    class Bot:
-        config = NS(secrets=NS(ringcentral_client_id="a", ringcentral_client_secret="b",
-                               ringcentral_jwt="c", ringcentral_extension="103"))
-        ticks = 0
-
-        def is_closed(self):
-            type(self).ticks += 1
-            return type(self).ticks > 3
-
-    asyncio.run(client.ring_loop(Bot()))
-
-    assert drafted == []
-    assert heard.said == []
+    prefs.set_responder(True)
+    said, _ = _once(monkeypatch)
+    assert said, "back on, it drafts"
 
 
 # ------------------------------------------------ the team, in the draft
@@ -1860,3 +1846,52 @@ def test_the_very_first_read_already_went_all_the_way_back(monkeypatch):
 
 def test_a_couple_of_years_of_texts_are_kept():
     assert ringtexts.KEEP_TEXTS >= 40000
+
+
+def test_the_switch_is_said_the_way_it_happens():
+    from wilbyte.bot import mentions
+
+    for said, wanted in (
+        ("<@1> responder off", "off"), ("<@1> responder on", "on"), ("<@1> Responder", ""),
+        ("<@1> faith is away", "on"), ("<@1> Faith is back", "off"), ("<@1> faith's out today", "on"),
+        ("<@1> responder stop", "off"), ("<@1> faith is back!", "off"),
+    ):
+        got = mentions.parse(said)
+        assert (got.action, got.brief) == ("responder", wanted), said
+    assert mentions.parse("<@1> what does faith send when agents ask where to submit a sale?").action != "responder"
+
+
+def test_switching_it_on_and_off(monkeypatch):
+    from wilbyte import prefs, ringtexts
+    from wilbyte.bot import client
+
+    heard = Heard()
+    data = ringtexts.load()
+    data["playbook"] = {"text": "old", "made": "2026-09-27T00:00:00Z"}
+    ringtexts.save(data)
+
+    asyncio.run(client._set_responder(heard, "off"))
+    assert prefs.responder_on() is False
+    assert jobs.ring_playbook_due(ringtexts.load()), "written again from everything"
+    assert heard.said[-1].startswith("🔕 **Responder off**")
+
+    asyncio.run(client._set_responder(heard, "on"))
+    assert prefs.responder_on() is True
+    assert heard.said[-1].startswith("🔔 **Responder on.**")
+
+    asyncio.run(client._set_responder(heard, ""))
+    assert heard.said[-1].startswith("Responder is **on**")
+
+
+def test_on_until_it_is_switched_off():
+    from wilbyte import prefs
+
+    assert prefs.responder_on() is True
+
+
+def test_blanks_that_come_back_as_one_string_are_one_blank():
+    """Matthew Odierno's card listed its blank a letter at a time."""
+    assert jobs._listed("[leads/balance remaining]") == ["[leads/balance remaining]"]
+    assert jobs._listed('["[launch date]", "[count]"]') == ["[launch date]", "[count]"]
+    assert jobs._listed(["[a]", " ", "[b]"]) == ["[a]", "[b]"]
+    assert jobs._listed(None) == []

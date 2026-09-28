@@ -7,6 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from dataclasses import dataclass
@@ -7946,10 +7947,22 @@ def draft_like_faith(
     return {
         "reply": reply,
         "why": " ".join(str(got.get("why") or "").split()),
-        "blanks": [str(one) for one in got.get("blanks") or [] if str(one).strip()],
+        "blanks": _listed(got.get("blanks")),
         "examples": len(examples),
         "checked": list(look.checked) if look is not None else [],
     }
+
+
+def _listed(said) -> list[str]:
+    """A list Claude was asked for, however it came back. Once it came back
+    as one string, and the card listed it a letter at a time."""
+    if isinstance(said, str):
+        try:
+            parsed = json.loads(said)
+        except ValueError:
+            parsed = None
+        said = parsed if isinstance(parsed, list) else [said]
+    return [str(one).strip() for one in said or [] if str(one).strip()]
 
 
 #: Look-ups a draft may make before it has to reply. Each is one more round
@@ -8269,7 +8282,7 @@ def ring_playbook_due(data: dict, *, now=None) -> bool:
 
     held = data.get("playbook") or {}
     made = _ring_when(held.get("made") or "")
-    if not held.get("text") or made is None:
+    if not held.get("text") or made is None or held.get("stale"):
         return True
     now = now or datetime.now(timezone.utc)
     newer = [
@@ -8277,6 +8290,16 @@ def ring_playbook_due(data: dict, *, now=None) -> bool:
         if one.get("rule") and str(one.get("at") or "") > str(held.get("made") or "")
     ]
     return now - made > timedelta(days=PLAYBOOK_DAYS) or len(newer) >= PLAYBOOK_NEW_RULES
+
+
+def ring_playbook_stale() -> None:
+    """Have the playbook written again from everything, on the next pass."""
+    from .. import ringtexts
+
+    with _RING_FILE:
+        data = ringtexts.load()
+        data["playbook"] = {**(data.get("playbook") or {}), "stale": True}
+        ringtexts.save(data)
 
 
 def ring_keep_playbook(text: str, replies: int) -> None:

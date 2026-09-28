@@ -964,6 +964,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _spread_setup(responder, config, request.brief or "")
                 return
 
+            if request.action == "responder":
+                await _set_responder(responder, request.brief or "")
+                return
+
             if request.action == "cost":
                 from .. import usage
 
@@ -5922,20 +5926,6 @@ async def day_check_loop(bot: "WilByteBot") -> None:
 #: A minute, like the other watchers. One request while nothing is happening.
 RING_CHECK_SECONDS = 60
 
-#: The days the responder rests, Monday being 0. "i dont need ryte responder
-#: running on the weekends" - nobody reads the cards then, and every one is a
-#: Claude bill. Nothing piles up for Monday: only the last twelve hours of
-#: texts are ever drafted.
-RING_DAYS_OFF = (5, 6)
-
-def ring_resting(config, now: datetime | None = None) -> str:
-    """The Saturday of this weekend when the responder is resting, else ""."""
-    now = now or datetime.now(ZoneInfo(config.schedule.timezone))
-    if now.weekday() not in RING_DAYS_OFF:
-        return ""
-    return (now.date() - timedelta(days=now.weekday() - RING_DAYS_OFF[0])).isoformat()
-
-
 #: Setup problems already said this run. A bad JWT said once is a job for
 #: somebody; said every minute it is a channel nobody reads by lunchtime.
 _RING_SAID: set = set()
@@ -5994,13 +5984,7 @@ async def ring_loop(bot: "WilByteBot") -> None:
 
     while not bot.is_closed():
         try:
-            on = ringcentral.configured(bot.config.secrets)
-            resting = ring_resting(bot.config) if on else ""
-            if resting:
-                # Quietly: "it doesnt need to notify me if ever, im just the
-                # only one seeing this anyway".
-                pass
-            elif on:
+            if ringcentral.configured(bot.config.secrets):
                 await _ring_once(bot)
             else:
                 missing = _ring_half_set(bot.config.secrets)
@@ -6167,6 +6151,11 @@ async def _ring_once(bot: "WilByteBot") -> None:
     if responder is None:
         return
 
+    # Switched off while Faith is around: nothing drafted, but everything
+    # above and the studying below still happen - it reads every text and
+    # keeps learning from how she answers them.
+    if not await asyncio.to_thread(prefs.responder_on):
+        found = []
     for agent, name, tail in found:
         asked = "\n".join(one.said for one in tail)
         try:
@@ -6203,6 +6192,35 @@ async def _ring_once(bot: "WilByteBot") -> None:
 
     if done and not problems:
         await _study(bot, responder)
+
+
+async def _set_responder(responder: Responder, wanted: str) -> None:
+    """Switch the responder on while Faith is away and off when she's back.
+
+    Off, it still reads every text and learns why she answered as she did,
+    and her playbook is written again from all of her replies - so what it
+    drafts next time she is away is what she has been doing since.
+    """
+    if wanted not in ("on", "off"):
+        on = await asyncio.to_thread(prefs.responder_on)
+        await responder.send(
+            f"Responder is **{'on' if on else 'off'}**. "
+            "`@RYTE responder on` when Faith is away, `@RYTE responder off` when she's back."
+        )
+        return
+    await asyncio.to_thread(prefs.set_responder, wanted == "on")
+    if wanted == "on":
+        await responder.send(
+            "🔔 **Responder on.** I'll draft replies to agents' texts again, "
+            "starting with any from the last 12 hours nobody has answered."
+        )
+        return
+    await asyncio.to_thread(jobs.ring_playbook_stale)
+    await responder.send(
+        "🔕 **Responder off** — Faith's got it. I'm still reading every text and "
+        "learning from how she answers, and I'm rewriting her playbook from all of "
+        "her replies now. `@RYTE responder on` when she's away again."
+    )
 
 
 async def _remember_post(sent, ring_id: str, *, lesson: str = "", also=None) -> None:

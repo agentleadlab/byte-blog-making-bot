@@ -598,6 +598,32 @@ def asks_about_faith(text: str) -> bool:
     return bool(_ABOUT_AGENTS.search(text))
 
 
+_RESPONDER = re.compile(
+    r"^\s*(?:the\s+)?(?:ryte\s+)?responder(?:\s+(?:is\s+)?(on|off|start|stop|pause|resume))?\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+_FAITH_IS = re.compile(
+    r"^\s*faith(?:\s+is|'s|s)?\s+(away|out|off|gone|back|here|in)\b[\w\s,.!']*$",
+    re.IGNORECASE,
+)
+
+
+def _responder_switch(text: str) -> str | None:
+    """"on", "off", or "" to ask which - None when it isn't about that.
+
+    "responder on" and "responder off", and said the way it happens: "faith
+    is away" turns it on, "faith is back" off."""
+    said = " ".join(str(text or "").split())
+    found = _RESPONDER.match(said)
+    if found:
+        word = (found.group(1) or "").lower()
+        return "" if not word else "on" if word in ("on", "start", "resume") else "off"
+    found = _FAITH_IS.match(said)
+    if found:
+        return "on" if found.group(1).lower() in ("away", "out", "off", "gone") else "off"
+    return None
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -610,6 +636,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # agent's: "when do I go live" is the launch question everywhere else.
     if _opens_with(text, ("respond",)):
         return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
+    switch = _responder_switch(text)
+    if switch is not None:
+        return MentionRequest(action="responder", brief=switch)
     if asks_about_faith(_without_links(text)):
         return MentionRequest(action="askfaith", brief=text)
     # Looking back over the clear-outs already done, and redrawing one
@@ -1081,6 +1110,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **what does Faith send when agents ask where to submit a sale?** —
 > how she answers anything, from her RingCentral texts: her words, and the
 > links she sends counted. Also **how does Faith handle refund requests**
+> @RYTE **responder off** when Faith is around (I keep learning from her), **responder
+> on** when she's away. Or say **faith is away** / **faith is back**
 > @RYTE **cost** — what I've spent on Claude today, this week and this month,
 > and which of my jobs it went on
 > @RYTE **payra test** — read Payra's API docs and try the token on what they
