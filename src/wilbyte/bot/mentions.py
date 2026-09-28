@@ -537,6 +537,46 @@ CONTRACT_ASKED = re.compile(
 )
 
 
+# "invoice of David Pereira", "send me a copy of Max Wilson's paid invoice" -
+# their paid invoices from Payra, as a PDF. Built like CONTRACT_ASKED.
+INVOICE_ASKED = re.compile(
+    r"\b(?:paid\s+)?invoices?\s+(?:pdf\s+|copy\s+)?(?:for|of)\b"
+    r"|\b(?:paid\s+)?invoices?(?:\s+(?:pdf|copy))?\s*\??\s*$"
+    r"|^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?"
+    r"(?:copy\s+of\s+)?(?:the\s+)?(?:paid\s+)?invoices?\b",
+    re.IGNORECASE,
+)
+# The same asked plainly enough to go before the action words: "paid" is a
+# format ("a paid ad") and "copy" is a writing word, and both are in the
+# natural way of asking - "send me a copy of David Pereira's paid invoice".
+# Only the whole message being the ask counts, so a brief that mentions an
+# invoice is still a brief.
+_NAME = r"[\w.@'’-]+(?:\s+[\w.@'’-]+){0,3}"
+INVOICE_PLAINLY = re.compile(
+    r"^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?(?:copy\s+of\s+)?(?:the\s+)?"
+    r"(?:paid\s+)?invoices?\s+(?:pdf\s+|copy\s+)?(?:for|of)\s+" + _NAME + r"\s*[?.!]*\s*$"
+    r"|^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?(?:copy\s+of\s+)?"
+    + _NAME + r"(?:'s|’s)?\s+(?:paid\s+)?invoices?(?:\s+(?:pdf|copy))?\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+_INVOICE_BEFORE = re.compile(
+    r"^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?(?:copy\s+of\s+)?"
+    r"(?:the\s+)?(?:(?:paid\s+)?invoices?\s*(?:pdf\s+|copy\s+)?(?:for|of)\s+)?",
+    re.IGNORECASE,
+)
+_INVOICE_AFTER = re.compile(
+    r"(?:'s|’s|s')?\s*(?:paid\s+)?invoices?(?:\s+(?:pdf|copy))?\s*[?.!]*\s*$", re.IGNORECASE,
+)
+
+
+def who_wants_an_invoice(text: str) -> str:
+    """The agent whose paid invoice was asked for, or ""."""
+    said = " ".join(str(text or "").split())
+    left = _INVOICE_AFTER.sub("", _INVOICE_BEFORE.sub("", said, count=1), count=1)
+    left = " ".join(left.strip(" -–—:?").split())
+    return "" if left.casefold() in ("", "invoice", "invoices", "paid", "pdf", "copy") else left
+
+
 # "what does Faith send when agents ask where to submit a sale", "how does
 # Faith answer refund requests", "what link does Faith use for…" - a question
 # about how she texts agents, answered from RingCentral. A verb about talking
@@ -644,6 +684,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Looking back over the clear-outs already done, and redrawing one
     # client's ring-da-bell picture from their own messages. Before the
     # action words: "clearout" in "check clearouts" is not a clear-out.
+    if INVOICE_PLAINLY.match(_without_links(text)):
+        return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
         return MentionRequest(action="cost", brief=text)
     if re.match(r"\s*payra(?:\s+status)?\s*[.?!]*\s*$", text, re.IGNORECASE):
@@ -700,6 +742,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         and CONTRACT_ASKED.search(_without_links(text))
     ):
         return MentionRequest(action="contract", brief=text)
+
+    # "invoice of David Pereira" - their paid Payra invoices, as a PDF.
+    if (
+        not action
+        and not _first_format_word(text, find)
+        and INVOICE_ASKED.search(_without_links(text))
+    ):
+        return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
 
     # `cover` takes free text, so handle it before the link/number extraction.
     # "trello" names the board and then says what to do with it. On its own it
@@ -1123,6 +1173,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > picture came from somebody else, and whose Drive folder is misnamed
 > @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from
 > their own messages, into a folder named for them
+> @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
+> payment on each (date, amount, card ending, transaction)
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an
 > inbox RYTE reads. PandaDoc's own are downloaded from PandaDoc for now
 > @RYTE **words** — the lead-type words you've taught me

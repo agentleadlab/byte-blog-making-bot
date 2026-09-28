@@ -34,7 +34,7 @@ MOST_PAGES = 20
 #: What is kept of each record. Raised when more is kept, so everything
 #: already held is read again with it - a rebuttal wants the card's last four
 #: and the transaction id, which the first copy did not keep.
-SHAPE = 2
+SHAPE = 3
 
 
 class PayraError(RuntimeError):
@@ -120,6 +120,56 @@ def _scalars(one, *, most: int = 160) -> str:
     return "; ".join(said)[:most]
 
 
+def _small(one) -> dict | str:
+    """A small record of unknown shape, its plain values only."""
+    if not isinstance(one, dict):
+        return " ".join(str(one or "").split())[:160]
+    return {
+        str(key): (value if isinstance(value, (int, float, bool)) else str(value)[:120])
+        for key, value in list(one.items())[:16]
+        if isinstance(value, (str, int, float, bool)) and str(value).strip()
+        and not str(key).startswith("_") and key not in ("id", "external_id")
+    }
+
+
+def _first(one: dict, *names):
+    for name in names:
+        for key, value in one.items():
+            if key.casefold() == name:
+                return value
+    return None
+
+
+def line_text(one) -> str:
+    """An invoice line as a person writes it: "50 OTP VETS × 1 @ $1,407.60"."""
+    if not isinstance(one, dict):
+        return str(one or "")
+    what = _first(one, "name", "description", "item", "product", "title")
+    many = _first(one, "quantity", "qty", "count")
+    each = _first(one, "price", "rate", "unit_price", "unit_amount", "amount")
+    if what is None:
+        return _scalars(one)
+    said = str(what)
+    if many not in (None, ""):
+        said += f" × {many:g}" if isinstance(many, (int, float)) else f" × {many}"
+    if each not in (None, ""):
+        said += f" @ {_money(each)}"
+    return said
+
+
+def sent_text(one) -> str:
+    """A notification as a person writes it: "Email · September 2, 2026"."""
+    if not isinstance(one, dict):
+        return str(one or "")
+    how = _first(one, "type", "method", "channel", "medium", "kind")
+    when = next((value for key, value in one.items()
+                 if any(word in key.casefold() for word in ("sent", "date", "created", "_at"))
+                 and _day(value)), None)
+    if how is None and when is None:
+        return _scalars(one)
+    return " · ".join(bit for bit in (str(how).title() if how else "", _spelled(when) if when else "") if bit)
+
+
 def slim_invoice(record: dict) -> dict:
     who = record.get("customer") or {}
     totals = record.get("totals") or {}
@@ -136,8 +186,8 @@ def slim_invoice(record: dict) -> dict:
         "name": str(name).strip(),
         "email": str(who.get("email") or "").strip().casefold(),
         "phone": _digits(who.get("mobile_phone")),
-        "lines": [_scalars(one) for one in (record.get("lines") or [])[:6]],
-        "sent": [_scalars(one, most=120) for one in (record.get("notifications") or [])[:6]],
+        "lines": [_small(one) for one in (record.get("lines") or [])[:6]],
+        "sent": [_small(one) for one in (record.get("notifications") or [])[:6]],
         "created": str(record.get("created_at") or ""),
         "updated": str(record.get("updated_at") or ""),
     }
@@ -394,11 +444,11 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
             + (f" — {invoice['description']}" if invoice.get("description") else "")
         )
         for one in invoice.get("lines") or []:
-            lines.append(f"  For: {one}")
+            lines.append(f"  For: {line_text(one)}")
         who = invoice.get("name") or name
         lines.append(f"  Billed to: {who}" + (f" <{invoice['email']}>" if invoice.get("email") else ""))
         for one in invoice.get("sent") or []:
-            lines.append(f"  Sent to the customer: {one}")
+            lines.append(f"  Sent to the customer: {sent_text(one)}")
     others = [one for one in charges if one is not disputed][:6]
     if others:
         lines.append("Their other Payra payments: " + "; ".join(
@@ -408,3 +458,152 @@ def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
         lines.append("Refunds on record: " + "; ".join(
             f"{_money(one.get('amount'))} {_spelled(one.get('paid_on'))}" for one in refunds))
     return "\n".join(lines), sure
+
+
+# ------------------------------------------------ a copy of a paid invoice
+
+#: Payment statuses that mean the money never arrived.
+_FAILED = ("fail", "declin", "void", "error", "cancel", "reject")
+
+
+def _went_through(payment: dict) -> bool:
+    status = str(payment.get("status") or "").casefold()
+    return not payment.get("refund") and not any(word in status for word in _FAILED)
+
+
+def paid_invoices(data: dict, who: str, *, most: int = 12) -> list[dict]:
+    """Their invoices with money paid on them, newest first:
+    [{"invoice", "payments", "refunds", "paid_cents"}].
+
+    The same person `account` finds - by phone, email or the whole name, never
+    part of one.
+    """
+    from .clearout import name_match
+
+    who = " ".join(str(who or "").split())
+    phone, email = _digits(who), who.casefold() if "@" in who else ""
+    if not who:
+        return []
+
+    def theirs(one):
+        if phone:
+            return one.get("phone") == phone
+        if email:
+            return one.get("email") == email
+        return name_match(who, one.get("name", "")) >= 2
+
+    found = []
+    for invoice in data.get("invoices", {}).values():
+        if not theirs(invoice):
+            continue
+        on_it = [one for one in data.get("payments", {}).values()
+                 if one.get("invoice_id") == invoice["id"]
+                 or (invoice.get("number") and one.get("invoice_number") == invoice["number"])]
+        payments = sorted((one for one in on_it if _went_through(one)),
+                          key=lambda one: str(one.get("paid_on") or ""))
+        if not payments:
+            continue
+        found.append({
+            "invoice": invoice, "payments": payments,
+            "refunds": [one for one in on_it if one.get("refund")],
+            "paid_cents": sum(_cents(one.get("amount")) or 0 for one in payments),
+        })
+    found.sort(key=lambda one: str(one["invoice"].get("invoice_date") or ""), reverse=True)
+    return found[:most]
+
+
+def _esc(text) -> str:
+    import html
+
+    return html.escape(str(text if text is not None else ""))
+
+
+def _phone(ten: str) -> str:
+    return f"({ten[:3]}) {ten[3:6]}-{ten[6:]}" if len(ten) == 10 else ten
+
+
+def _payment_row(pay: dict) -> str:
+    """One payment on an invoice, as a row of the table."""
+    how = _esc(pay.get("how") or pay.get("kind") or "")
+    if pay.get("last_4") and pay["last_4"] not in str(pay.get("how") or ""):
+        how += f" · ending {_esc(pay['last_4'])}"
+    if pay.get("refund"):
+        how += " · <b>refund</b>"
+    where = _esc(pay.get("transaction") or "")
+    if pay.get("reference"):
+        where += f"<br>ref {_esc(pay['reference'])}"
+    return (
+        "<tr>"
+        f"<td>{_esc(_spelled(pay.get('paid_on')))}</td>"
+        f"<td class=num>{_esc(_money(pay.get('amount')))}</td>"
+        f"<td>{how}</td>"
+        f"<td>{_esc(pay.get('status') or '')}</td>"
+        f"<td class=ref>{where}</td>"
+        "</tr>"
+    )
+
+
+def invoice_html(found: list[dict], *, made_on: str) -> str:
+    """The invoices as a printable page, one to a sheet of paper.
+
+    Plainly a record read from Payra rather than Payra's own invoice: every
+    figure on it is Payra's, and it says where it came from and when.
+    """
+    pages = []
+    for one in found:
+        invoice = one["invoice"]
+        total = _cents(invoice.get("total")) or 0
+        left = total - one["paid_cents"] + sum(_cents(r.get("amount")) or 0 for r in one["refunds"])
+        standing = ("Paid in full" if left <= 0 else f"Partly paid — {_money(left / 100)} still owed")
+        if one["refunds"]:
+            standing += " · refunded " + ", ".join(_money(r.get("amount")) for r in one["refunds"])
+        rows = "".join(_payment_row(pay) for pay in one["payments"] + one["refunds"])
+        lines = "".join(f"<li>{_esc(line_text(line))}</li>" for line in invoice.get("lines") or [])
+        sent = "".join(f"<li>{_esc(sent_text(line))}</li>" for line in invoice.get("sent") or [])
+        billed = [_esc(invoice.get("name") or "")]
+        if invoice.get("email"):
+            billed.append(_esc(invoice["email"]))
+        if invoice.get("phone"):
+            billed.append(_esc(_phone(invoice["phone"])))
+        pages.append(f"""
+<section class=page>
+  <header>
+    <div><div class=label>Invoice record from Payra</div>
+      <h1>Invoice #{_esc(invoice.get('number') or '?')}</h1></div>
+    <div class="stamp{' part' if left > 0 else ''}">{_esc(standing)}</div>
+  </header>
+  <div class=grid>
+    <div><div class=label>Billed to</div><div>{'<br>'.join(billed)}</div></div>
+    <div><div class=label>Invoice date</div><div>{_esc(_spelled(invoice.get('invoice_date')))}</div>
+      <div class=label>Due</div><div>{_esc(_spelled(invoice.get('due_date')) if invoice.get('due_date') else '—')}</div></div>
+    <div><div class=label>Total</div><div class=big>{_esc(_money(invoice.get('total')))}</div></div>
+  </div>
+  <div class=label>For</div>
+  <p>{_esc(invoice.get('description') or '')}</p>
+  {f'<ul>{lines}</ul>' if lines else ''}
+  <div class=label>Payments on this invoice</div>
+  <table><thead><tr><th>Date</th><th class=num>Amount</th><th>Method</th><th>Status</th><th>Transaction</th></tr></thead>
+  <tbody>{rows}</tbody></table>
+  {f'<div class=label>Sent to the customer</div><ul>{sent}</ul>' if sent else ''}
+  <footer>Read from Payra's records on {_esc(made_on)} · Payra invoice ID {_esc(invoice.get('id') or '')}</footer>
+</section>""")
+    return """<!doctype html><html><head><meta charset=utf-8><style>
+@page { size: Letter; margin: 0.6in; }
+body { font: 11pt/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1b1b1f; margin: 0; }
+.page { page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+header { display: flex; justify-content: space-between; align-items: flex-start;
+  border-bottom: 2px solid #1b1b1f; padding-bottom: 10px; margin-bottom: 18px; }
+h1 { font-size: 22pt; margin: 2px 0 0; }
+.label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; margin-top: 12px; }
+.stamp { border: 2px solid #1d7a3a; color: #1d7a3a; font-weight: 700; padding: 6px 10px; border-radius: 4px; }
+.stamp.part { border-color: #a15c00; color: #a15c00; }
+.grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; }
+.big { font-size: 16pt; font-weight: 700; }
+table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10pt; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
+th { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .05em; color: #666; }
+.num { text-align: right; } .ref { font-family: Menlo, Consolas, monospace; font-size: 8.5pt; word-break: break-all; }
+ul { margin: 4px 0 0; padding-left: 18px; }
+footer { margin-top: 28px; font-size: 8.5pt; color: #777; border-top: 1px solid #ddd; padding-top: 8px; }
+</style></head><body>""" + "".join(pages) + "</body></html>"

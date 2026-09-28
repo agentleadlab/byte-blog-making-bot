@@ -5361,6 +5361,47 @@ def _payra_record(dispute) -> tuple[str, str]:
     return said, ""
 
 
+def paid_invoice_pdf(who: str) -> tuple[bytes, list[dict], str]:
+    """Their paid invoices from Payra as one PDF. (pdf, the invoices, a problem).
+
+    Payra's API gives the invoice as data, not as a document, so the document
+    is made here from what it gives - every figure Payra's, and saying so.
+    """
+    from .. import payraapi
+
+    data = payraapi.load()
+    if not data.get("invoices"):
+        return b"", [], ("I don't have anything from Payra yet — `@RYTE payra status` "
+                         "says whether it's connected.")
+    found = payraapi.paid_invoices(data, who)
+    if not found:
+        return b"", [], (f"No paid Payra invoice for “{who}” in the last year. "
+                         "The whole name, their email or their phone number finds them.")
+    made_on = f"{date.today():%B} {date.today().day}, {date.today().year}"
+    return _print_pdf(payraapi.invoice_html(found, made_on=made_on)), found, ""
+
+
+def _print_pdf(html: str) -> bytes:
+    """A page of HTML as a PDF, through the same Chromium the covers use."""
+    from playwright.sync_api import sync_playwright
+
+    from .. import cover
+
+    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    found = cover._chromium_executable()
+    if found:
+        launch["executable_path"] = found
+    with sync_playwright() as playing:
+        browser = playing.chromium.launch(**launch)
+        try:
+            page = browser.new_page()
+            page.set_content(html, wait_until="load")
+            return page.pdf(format="Letter", print_background=True,
+                            margin={"top": "0.6in", "bottom": "0.6in", "left": "0.6in", "right": "0.6in"})
+        finally:
+            browser.close()
+
+
 def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     """Payra's confirmation for this customer. (what it says, a problem or "").
 

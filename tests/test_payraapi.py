@@ -338,9 +338,9 @@ def test_a_dispute_gets_the_disputed_payment_and_the_invoice_it_paid():
     assert ("Payment disputed: $1,407.60 on September 3, 2026 — Settled — card ending 4242 "
             "(Visa 4242) — transaction txn-9 — reference R-77") in said
     assert "Invoice #1007, dated September 2, 2026, due September 26, 2026: $1,407.60 — OTP VETS" in said
-    assert "  For: name: 50 OTP VETS; quantity: 1; price: 1407.6" in said
+    assert "  For: 50 OTP VETS × 1 @ $1,407.60" in said
     assert "  Billed to: Jose Zambrano <jz@example.com>" in said
-    assert "  Sent to the customer: type: email; sent_at: 2026-09-02T15:00:00.000Z" in said
+    assert "  Sent to the customer: Email · September 2, 2026" in said
     assert "Their other Payra payments: $700.00 Settled August 1, 2026" in said
     assert "Adrian" not in said and "Refunds" not in said
 
@@ -403,3 +403,113 @@ def test_a_refund_is_never_taken_for_the_disputed_charge():
 
     said, sure = payraapi.for_dispute(data, name="Jose Zambrano", amount="1407.60")
     assert sure and "Payment disputed: $1,407.60 on September 3, 2026" in said
+
+
+# ------------------------------------------------ "send me a copy of his paid invoice"
+
+
+@pytest.mark.parametrize("said, who", [
+    ("<@1> invoice of David Pereira", "David Pereira"),
+    ("<@1> paid invoice for David Pereira", "David Pereira"),
+    ("<@1> send me copy of David Pereira's paid invoice", "David Pereira"),
+    ("<@1> send me a copy of the paid invoice for Max Wilson", "Max Wilson"),
+    ("<@1> Max Wilson invoice", "Max Wilson"),
+    ("<@1> invoices for jz@example.com", "jz@example.com"),
+])
+def test_asking_for_a_paid_invoice(said, who):
+    from wilbyte.bot import mentions
+
+    got = mentions.parse(said)
+    assert (got.action, got.brief) == ("invoice", who)
+
+
+def test_other_things_that_mention_invoices_are_not_this():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> what does faith send when agents ask for an invoice?").action != "invoice"
+    assert mentions.parse("<@1> contract of David Pereira").action == "contract"
+
+
+def test_only_invoices_with_money_on_them_and_only_theirs():
+    data = _disputed_board()
+    unpaid = payraapi.slim_invoice(_invoice(8, name="Jose Zambrano", email="jz@example.com"))
+    data["invoices"][unpaid["id"]] = unpaid
+    bounced = payraapi.slim_invoice(_invoice(9, name="Jose Zambrano", email="jz@example.com"))
+    data["invoices"][bounced["id"]] = bounced
+    failed = payraapi.slim_payment(_payment(19, "inv9", status="Declined"))
+    data["payments"][failed["id"]] = failed
+
+    found = payraapi.paid_invoices(data, "Jose Zambrano")
+
+    assert [one["invoice"]["number"] for one in found] == ["1006", "1007"], "newest first, paid only"
+    assert found[1]["paid_cents"] == 140760
+    assert payraapi.paid_invoices(data, "Jose") == []
+    assert payraapi.paid_invoices(data, "jz@example.com") == found
+    assert payraapi.paid_invoices(data, "(602) 555-0199") == found
+    assert payraapi.paid_invoices(data, "") == []
+
+
+def test_the_copy_says_what_it_is_and_whether_it_is_paid():
+    data = _disputed_board()
+    data["invoices"]["inv6"]["total"] = 900
+    found = payraapi.paid_invoices(data, "Jose Zambrano")
+
+    page = payraapi.invoice_html(found, made_on="September 28, 2026")
+
+    assert page.count("<section class=page>") == 2
+    assert "Invoice record from Payra" in page
+    assert "Partly paid — $200.00 still owed" in page and "Paid in full" in page
+    assert "50 OTP VETS × 1 @ $1,407.60" in page and "Email · September 2, 2026" in page
+    assert "txn-9" in page and "ref R-77" in page
+    assert "Visa 4242</td>" in page, "the last four said once"
+    assert "Read from Payra's records on September 28, 2026" in page
+
+
+def test_nothing_in_the_copy_is_taken_as_markup():
+    data = _disputed_board()
+    data["invoices"]["inv7"]["description"] = "<script>alert(1)</script>"
+    page = payraapi.invoice_html(payraapi.paid_invoices(data, "Jose Zambrano"), made_on="x")
+    assert "<script>" not in page and "&lt;script&gt;" in page
+
+
+def test_the_pdf_is_made_or_it_says_why_not(monkeypatch):
+    from wilbyte.bot import jobs
+
+    assert "don't have anything from Payra yet" in jobs.paid_invoice_pdf("Jose Zambrano")[2]
+    payraapi.save(_disputed_board())
+    monkeypatch.setattr(jobs, "_print_pdf", lambda html: b"%PDF-fake " + html[:40].encode())
+
+    pdf, found, problem = jobs.paid_invoice_pdf("Jose Zambrano")
+    assert pdf.startswith(b"%PDF") and len(found) == 2 and problem == ""
+    assert "No paid Payra invoice for “Nobody Known”" in jobs.paid_invoice_pdf("Nobody Known")[2]
+
+
+def test_the_invoice_is_sent_as_a_file(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    payraapi.save(_disputed_board())
+    monkeypatch.setattr(jobs, "_print_pdf", lambda html: b"%PDF-fake")
+    sent = []
+
+    class Heard:
+        async def send(self, content=None, **kw):
+            sent.append((content, kw.get("file")))
+
+    asyncio.run(client._send_paid_invoice(Heard(), "Jose Zambrano"))
+
+    words, file = sent[0]
+    assert words.startswith("🧾 **Jose Zambrano** — 2 paid invoices from Payra:")
+    assert "• #1007 — $1,407.60, paid September 3, 2026" in words
+    assert file.filename == "Jose Zambrano - paid invoices.pdf"
+
+    asyncio.run(client._send_paid_invoice(Heard(), ""))
+    assert sent[-1][0].startswith("Whose?")
+
+
+def test_a_brief_that_mentions_an_invoice_is_still_a_brief():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> write a paid ad about how easy our invoices are for agents").action == "write"
+    assert mentions.parse("<@1> David Pereira paid invoice").action == "invoice"

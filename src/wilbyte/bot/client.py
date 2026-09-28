@@ -1041,6 +1041,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_sheet(responder, config, request.brief or "")
                 return
 
+            if request.action == "invoice":
+                await _send_paid_invoice(responder, request.brief or "")
+                return
+
             if request.action == "contract":
                 await _send_contract(responder, config, request.brief or "")
                 return
@@ -1332,6 +1336,37 @@ def _said_sheet(one: dict) -> str:
     if len(sheets) > 1:
         line += f"\n  *(the newest of {len(sheets)} — the setup was redone)*"
     return line
+
+
+async def _send_paid_invoice(responder: Responder, who: str) -> None:
+    """Answer "invoice of David Pereira" with their paid Payra invoices, as a PDF."""
+    import io
+
+    from .. import payraapi
+
+    if not who:
+        await responder.send("Whose? `@RYTE invoice of David Pereira` — the whole name, "
+                             "their email or their phone number.")
+        return
+    try:
+        pdf, found, problem = await asyncio.to_thread(jobs.paid_invoice_pdf, who)
+    except Exception as exc:
+        await responder.send(embed=embeds.error(f"Couldn't make the invoice PDF\n{_readable(exc)}"))
+        return
+    if not pdf:
+        await responder.send(problem)
+        return
+    name = found[0]["invoice"].get("name") or who
+    listed = "\n".join(
+        f"• #{one['invoice'].get('number') or '?'} — {payraapi._money(one['invoice'].get('total'))}, "
+        f"paid {payraapi._spelled(one['payments'][-1].get('paid_on'))}"
+        + (" · refunded" if one["refunds"] else "")
+        for one in found
+    )
+    await responder.send(
+        f"🧾 **{name}** — {len(found)} paid invoice{'' if len(found) == 1 else 's'} from Payra:\n{listed}",
+        file=discord.File(io.BytesIO(pdf), filename=f"{name} - paid invoices.pdf"),
+    )
 
 
 async def _send_contract(responder: Responder, config: Config, said: str) -> None:
