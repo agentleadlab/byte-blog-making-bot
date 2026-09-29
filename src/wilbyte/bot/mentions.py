@@ -550,7 +550,7 @@ INVOICE_ASKED = re.compile(
 # the video section of leadlabcrm.com. Optional "name: ..." and "quote: ..."
 # after the link set them instead of RYTE picking.
 TESTIMONIAL = re.compile(
-    r"^\s*(?:add\s+(?:a\s+|this\s+)?)?(?:video\s+)?(?:testimonial|website\s+video|to\s+(?:the\s+)?website)\b[:\s]*(.*)$",
+    r"^\s*(?:add\s+(?:a\s+|this\s+)?)?(?:video\s+)?(?:testimonials?|testimon(?:y|ies)|website\s+videos?|to\s+(?:the\s+)?website)\b[:\s]*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 _TESTIMONIAL_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S+", re.IGNORECASE)

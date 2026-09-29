@@ -169,6 +169,10 @@ def test_otherwise_claude_picks_them_from_the_transcript(monkeypatch):
 
 @pytest.mark.parametrize("said, parts", [
     ("testimonial https://youtu.be/U1O8FXthqzQ", ("https://youtu.be/U1O8FXthqzQ", "", "")),
+    # "testimonials" with an s started a blog post instead
+    ("testimonials https://youtu.be/9Ul9Fv3Jxzs", ("https://youtu.be/9Ul9Fv3Jxzs", "", "")),
+    ("Testimonial: https://youtu.be/9Ul9Fv3Jxzs", ("https://youtu.be/9Ul9Fv3Jxzs", "", "")),
+    ("website video https://youtu.be/9Ul9Fv3Jxzs", ("https://youtu.be/9Ul9Fv3Jxzs", "", "")),
     ("add to website https://www.youtube.com/watch?v=U1O8FXthqzQ name: Emanuel Nazco quote: No miracle lead",
      ("https://www.youtube.com/watch?v=U1O8FXthqzQ", "Emanuel Nazco", "No miracle lead")),
     ("testimonial <https://youtu.be/abc> name: Cole", ("https://youtu.be/abc", "Cole", "")),
