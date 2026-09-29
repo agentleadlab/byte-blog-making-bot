@@ -784,3 +784,126 @@ def test_asking_to_find():
     assert (got.action, got.brief) == ("payrafind", "INV-18089")
     assert mentions.parse("<@1> payra search David Pereira").brief == "David Pereira"
     assert mentions.parse("<@1> payra status").action == "payrastatus"
+
+
+# ------------------------------------------------ older than Payra's week
+
+
+def test_find_asks_for_the_invoice_by_id_when_the_list_has_not_got_it(monkeypatch):
+    class WithOne(_Walk):
+        def one(self, kind, key):
+            assert (kind, key) == ("invoice", "INV-18089")
+            return _dp(9, "INV-18089", "David Pereira")
+
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    WithOne.pages, WithOne.asked = [{"records": [_dp(1)], "limit": 5}], []
+    monkeypatch.setattr(payraapi, "PayraClient", WithOne)
+    said = jobs.payra_find(NS(secrets=NS(payra_api_token="t", payra_site_id="s")), "INV-18089",
+                           now=NOW, clock=lambda: 0)
+    assert "• Asked for “INV-18089” by id: found" in said and "✅ **Found:** #INV-18089" in said
+    assert "inv9" in payraapi.load()["invoices"]
+
+
+def test_the_client_asks_for_one_invoice(monkeypatch):
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/NOPE"):
+            return httpx.Response(404, json={})
+        return httpx.Response(200, json={"record": {"_id": "x1", "invoice_number": "INV-1"}})
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    with payraapi.PayraClient("tok-fake", "site1") as client:
+        assert client.one("invoice", "INV-1")["_id"] == "x1"
+        assert client.one("invoice", "NOPE") is None
+    assert str(seen[0].url) == "https://api.payra.com/api/v3.1/site/site1/invoice/INV-1"
+    assert {one.method for one in seen} == {"GET"}
+
+
+def _inbox(monkeypatch, emails):
+    from types import SimpleNamespace as NS
+
+    from wilbyte import gmail
+
+    asked = []
+
+    class Reading:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def invoices_for(self, *terms, since=None):
+            asked.append(terms)
+            return emails
+
+    monkeypatch.setattr(gmail, "open_gmail", lambda secrets: Reading())
+    return asked, NS(secrets=NS(gmail_invoice_sender="payra@example.com"))
+
+
+def test_older_than_payras_week_it_sends_payras_own_emails(monkeypatch):
+    from wilbyte import gmail
+    from wilbyte.bot import jobs
+
+    payraapi.save(_disputed_board())
+    asked, config = _inbox(monkeypatch, [
+        gmail.Found("m1", subject="Payment Confirmation - David Pereira", when="Thu, 4 Sep 2026",
+                    body="Reference R-1\nTotal $1,407.60"),
+        gmail.Found("m2", subject="Payment Error - David Pereira", when="Wed, 3 Sep 2026", body="declined"),
+    ])
+    printed = []
+    monkeypatch.setattr(jobs, "_print_pdf", lambda html: printed.append(html) or b"%PDF-mail")
+
+    pdf, found, problem = jobs.paid_invoice_pdf("David Pereira", config)
+
+    assert pdf == b"%PDF-mail" and found == [] and problem == ""
+    assert asked == [("David Pereira",)]
+    assert "Payment Confirmation - David Pereira" in printed[0] and "Total $1,407.60" in printed[0]
+    assert "Payment Error" not in printed[0], "a failed payment isn't proof of one"
+    assert "Payment confirmation from Payra — as emailed" in printed[0]
+
+
+def test_payras_copy_comes_first_and_the_inbox_is_not_asked(monkeypatch):
+    from wilbyte.bot import jobs
+
+    payraapi.save(_disputed_board())
+    asked, config = _inbox(monkeypatch, [])
+    monkeypatch.setattr(jobs, "_print_pdf", lambda html: b"%PDF-api")
+    pdf, found, _ = jobs.paid_invoice_pdf("Jose Zambrano", config)
+    assert found and asked == []
+
+
+def test_nothing_in_either_says_what_it_found(monkeypatch):
+    from wilbyte.bot import jobs
+
+    payraapi.save(_disputed_board())
+    _asked, config = _inbox(monkeypatch, [])
+    assert "No Payra invoice for “David Pereira”" in jobs.paid_invoice_pdf("David Pereira", config)[2]
+
+
+def test_the_emails_are_sent_as_their_own_file(monkeypatch):
+    import asyncio
+
+    from wilbyte import gmail
+    from wilbyte.bot import client, jobs
+
+    _asked, config = _inbox(monkeypatch, [gmail.Found("m1", subject="Payment Confirmation", body="x")])
+    monkeypatch.setattr(jobs, "_print_pdf", lambda html: b"%PDF-mail")
+    sent = []
+
+    class Heard:
+        async def send(self, content=None, **kw):
+            sent.append((content, kw.get("file")))
+
+    asyncio.run(client._send_paid_invoice(Heard(), "David Pereira", config))
+    words, file = sent[0]
+    assert "Payra's own payment confirmation emails" in words
+    assert file.filename == "David Pereira - Payra payment confirmations.pdf"

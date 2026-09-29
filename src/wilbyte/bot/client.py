@@ -1143,7 +1143,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "invoice":
-                await _send_paid_invoice(responder, request.brief or "")
+                await _send_paid_invoice(responder, request.brief or "", config)
                 return
 
             if request.action == "contract":
@@ -1439,7 +1439,7 @@ def _said_sheet(one: dict) -> str:
     return line
 
 
-async def _send_paid_invoice(responder: Responder, who: str) -> None:
+async def _send_paid_invoice(responder: Responder, who: str, config: Config | None = None) -> None:
     """Answer "invoice of David Pereira" with their paid Payra invoices, as a PDF."""
     import io
 
@@ -1450,12 +1450,20 @@ async def _send_paid_invoice(responder: Responder, who: str) -> None:
                              "their email or their phone number.")
         return
     try:
-        pdf, found, problem = await asyncio.to_thread(jobs.paid_invoice_pdf, who)
+        pdf, found, problem = await asyncio.to_thread(jobs.paid_invoice_pdf, who, config)
     except Exception as exc:
         await responder.send(embed=embeds.error(f"Couldn't make the invoice PDF\n{_readable(exc)}"))
         return
     if not pdf:
         await responder.send(problem)
+        return
+    if not found:
+        # Out of the inbox: older than the week Payra's API lists.
+        await responder.send(
+            f"🧾 **{who}** — nothing in Payra's last week, so here are Payra's own payment "
+            "confirmation emails for them.",
+            file=discord.File(io.BytesIO(pdf), filename=f"{who} - Payra payment confirmations.pdf"),
+        )
         return
     name = found[0]["invoice"].get("name") or who
     listed = "\n".join(

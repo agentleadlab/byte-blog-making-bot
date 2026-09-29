@@ -66,6 +66,21 @@ class PayraClient:
     def __exit__(self, *exc):
         self._http.close()
 
+    def one(self, kind: str, external_id: str) -> dict | None:
+        """One record by its external id ("invoice", "payment"), or None
+        when Payra has no such record."""
+        url = f"{BASE}/site/{self.site_id}/{kind}/{quote(str(external_id), safe='')}"
+        got = self._http.get(url)
+        if got.status_code == 404:
+            return None
+        if got.status_code in (401, 403):
+            raise PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env.")
+        if got.status_code >= 400:
+            raise PayraError(f"Payra said HTTP {got.status_code}")
+        body = got.json()
+        record = body.get("record") if isinstance(body, dict) and isinstance(body.get("record"), dict) else body
+        return record if isinstance(record, dict) and (record.get("_id") or record.get("id")) else None
+
     def changed(self, kind: str, after: str) -> dict:
         """One page of `kind` ("invoices", "payments") changed after a time."""
         url = f"{BASE}/site/{self.site_id}/{kind}?updated_after={quote(after, safe=':')}"

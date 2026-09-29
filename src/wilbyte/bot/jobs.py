@@ -5361,7 +5361,7 @@ def _payra_record(dispute) -> tuple[str, str]:
     return said, ""
 
 
-def paid_invoice_pdf(who: str) -> tuple[bytes, list[dict], str]:
+def paid_invoice_pdf(who: str, config: Config | None = None) -> tuple[bytes, list[dict], str]:
     """Their paid invoices from Payra as one PDF. (pdf, the invoices, a problem).
 
     Payra's API gives the invoice as data, not as a document, so the document
@@ -5370,14 +5370,64 @@ def paid_invoice_pdf(who: str) -> tuple[bytes, list[dict], str]:
     from .. import payraapi
 
     data = payraapi.load()
-    if not data.get("invoices"):
-        return b"", [], ("I don't have anything from Payra yet — `@RYTE payra status` "
-                         "says whether it's connected.")
-    found = payraapi.paid_invoices(data, who)
+    found = payraapi.paid_invoices(data, who) if data.get("invoices") else []
     if not found:
-        return b"", [], _no_paid_invoice(data, who)
+        # Payra's API only lists about the last week. What it emailed goes
+        # back as far as the inbox does.
+        emailed, trouble = _payra_emails(config, who) if config is not None else ([], "")
+        if emailed:
+            return _print_pdf(_emails_html(emailed, who)), [], ""
+        if not data.get("invoices"):
+            return b"", [], ("I don't have anything from Payra yet — `@RYTE payra status` "
+                             "says whether it's connected.")
+        said = _no_paid_invoice(data, who)
+        return b"", [], said + (f"\n⚠ {trouble}" if trouble else "")
     made_on = f"{date.today():%B} {date.today().day}, {date.today().year}"
     return _print_pdf(payraapi.invoice_html(found, made_on=made_on)), found, ""
+
+
+def _payra_emails(config: Config, who: str) -> tuple[list, str]:
+    """Payra's payment confirmations for this name or invoice number, out of
+    the inbox they were emailed to. (the emails, a problem or "").
+
+    Only confirmations - "Payment Error", "Invoice Request" and the rest come
+    from the same address and none of them says anybody paid. Searched as the
+    exact phrase, so it is theirs and not a namesake's.
+    """
+    from .. import gmail as inbox
+
+    if not (getattr(config.secrets, "gmail_invoice_sender", "") or "").strip():
+        return [], ""
+    try:
+        with inbox.open_gmail(config.secrets) as reading:
+            found = reading.invoices_for(who)
+    except Exception as exc:
+        return [], f"Couldn't read Payra's emails: {_short(exc, 140)}"
+    return [one for one in found if "payment confirmation" in one.subject.casefold()], ""
+
+
+def _emails_html(emails: list, who: str) -> str:
+    """Payra's confirmation emails as a printable page, one to a sheet, as
+    they were sent - their words, not RYTE's."""
+    import html
+
+    pages = "".join(
+        "<section class=page><div class=label>Payment confirmation from Payra — "
+        f"as emailed</div><h1>{html.escape(one.subject)}</h1><div class=when>{html.escape(one.when)}</div>"
+        f"<pre>{html.escape(one.body)}</pre></section>"
+        for one in emails[:10]
+    )
+    return (
+        "<!doctype html><html><head><meta charset=utf-8><style>"
+        "@page { size: Letter; margin: 0.6in; }"
+        "body { font: 11pt/1.45 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b1b1f; margin: 0; }"
+        ".page { page-break-after: always; } .page:last-child { page-break-after: auto; }"
+        ".label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; }"
+        "h1 { font-size: 16pt; margin: 4px 0; } .when { color: #555; margin-bottom: 14px; }"
+        "pre { white-space: pre-wrap; font: 10.5pt/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; "
+        "border-top: 1px solid #ddd; padding-top: 12px; }"
+        f"</style></head><body>{pages}</body></html>"
+    )
 
 
 def _no_paid_invoice(data: dict, who: str) -> str:
@@ -9524,14 +9574,32 @@ def payra_find(config: Config, target: str, *, now=None, clock=None) -> str:
                 after = onward
     except Exception as exc:
         lines.append(f"• Stopped: {' '.join(str(exc).split())[:160]}")
-    finally:
-        # Whatever was read is kept - the copy is fuller for it either way.
-        payraapi.save(data)
+    # The list only reaches back about a week. One invoice asked for by its
+    # id is the other way in, for when the number is one.
+    if not found and " " not in wanted and "@" not in wanted:
+        try:
+            with payraapi.PayraClient(token, site, timeout=PAYRA_FIND_WAIT) as client:
+                record = client.one("invoice", wanted)
+            if record:
+                one = payraapi.slim_invoice(record)
+                data["invoices"][one["id"]] = one
+                found.append(one)
+                lines.append(f"• Asked for “{wanted}” by id: found")
+            else:
+                lines.append(f"• Asked for “{wanted}” by id: Payra has no invoice with that id")
+        except Exception as exc:
+            lines.append(f"• Asked for “{wanted}” by id: {' '.join(str(exc).split())[:120]}")
+    # Whatever was read is kept - the copy is fuller for it either way.
+    payraapi.save(data)
 
     head = (f"🔎 Payra's invoices from {payraapi._spelled(payraapi.when(now - timedelta(days=PAYRA_FIND_DAYS)))}, "
             f"{read:,} read:\n" + "\n".join(lines[-12:]))
     if not found:
-        return head + f"\n\n**“{wanted}” isn't in them.** Every invoice read is now in my copy."
+        return head + (
+            f"\n\n**“{wanted}” isn't in them.** Payra's list only goes back about a week, so "
+            "an older invoice won't be there — `@RYTE invoice` looks in Payra's emails instead. "
+            "Every invoice read is now in my copy."
+        )
     said = "; ".join(
         f"#{one.get('number') or '?'} {one.get('name') or '?'} {payraapi._money(one.get('total'))}, "
         f"dated {payraapi._spelled(one.get('invoice_date'))}"
