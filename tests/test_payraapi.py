@@ -627,7 +627,7 @@ def test_nothing_found_by_name_says_who_is_close(monkeypatch):
     assert said.startswith("No Payra invoice for “David Pereira” among the 1 I hold")
     assert "• Dave A. Pereira <dp@example.com> — #INV-18089 $1,360.00, dated September 19, 2026" in said
     assert "`@RYTE invoice INV-18089`" in said
-    assert payraapi.near(data, "Al Bo") == [], "short words match nobody"
+    assert payraapi.near(data, "A Smith") == [], "a middle initial is nobody's name"
 
 
 def test_status_says_when_payra_would_not_read_back_as_far_as_asked():
