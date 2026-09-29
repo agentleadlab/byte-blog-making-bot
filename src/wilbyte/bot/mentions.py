@@ -688,6 +688,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
         return MentionRequest(action="cost", brief=text)
+    finding = re.match(r"\s*payra\s+(?:find|search|look\s*up|lookup)\s+(.+?)\s*$", text, re.IGNORECASE)
+    if finding:
+        return MentionRequest(action="payrafind", brief=finding.group(1))
     if re.match(r"\s*payra(?:\s+status)?\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="payrastatus", brief=text)
     if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
@@ -1166,6 +1169,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > on** when she's away. Or say **faith is away** / **faith is back**
 > @RYTE **cost** — what I've spent on Claude today, this week and this month,
 > and which of my jobs it went on
+> @RYTE **payra find INV-18089** — look through Payra itself for an invoice my copy
+> doesn't have (a number, whole name or email), keeping what it reads
 > @RYTE **payra status** — whether RYTE is reading Payra, how much it has, when it last read
 > @RYTE **payra test** — read Payra's API docs and try the token on what they
 > name, read-only; posts the docs as a file and what the token could see

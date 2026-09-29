@@ -696,3 +696,91 @@ def test_a_full_stop_after_the_number_or_name_is_not_part_of_it():
     assert mentions.parse("<@1> invoice of David Pereira!").brief == "David Pereira"
     data = _pereira(invoice={"_id": "invDP"})
     assert payraapi.paid_invoices(data, "INV-18089.") != []
+
+
+# ------------------------------------------------ "payra find INV-18089"
+
+
+class _Walk:
+    """Payra, a page at a time, oldest first."""
+
+    pages: list = []
+
+    def __init__(self, token, site, *, timeout=60.0):
+        self.timeout = timeout
+        type(self).made = self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def changed(self, kind, after):
+        type(self).asked = getattr(type(self), "asked", []) + [after]
+        one = type(self).pages.pop(0)
+        if isinstance(one, Exception):
+            raise one
+        return one
+
+
+def _dp(n, number="INV-1", name="Someone Else", updated="2026-09-01T00:00:00.000Z"):
+    record = _invoice(n, name=name, email=f"x{n}@example.com", updated=updated)
+    record["invoice_number"] = number
+    return record
+
+
+def _find(monkeypatch, pages, target="INV-18089"):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    _Walk.pages, _Walk.asked = list(pages), []
+    monkeypatch.setattr(payraapi, "PayraClient", _Walk)
+    ticks = iter(range(0, 1000, 3))
+    return jobs.payra_find(NS(secrets=NS(payra_api_token="tok-fake", payra_site_id="s")), target,
+                           now=NOW, clock=lambda: next(ticks))
+
+
+def test_it_walks_payra_until_it_finds_the_invoice_and_keeps_what_it_read(monkeypatch):
+    said = _find(monkeypatch, [
+        {"records": [_dp(1), _dp(2)], "records_matched": 900, "limit": 2, "next_updated_after": "T1"},
+        {"records": [_dp(3), _dp(4, "INV-18089", "David Pereira", "2026-09-04T16:00:00.000Z")],
+         "records_matched": 898, "limit": 2, "next_updated_after": "T2"},
+        {"records": [_dp(5)], "records_matched": 1, "limit": 2},
+    ])
+
+    assert _Walk.asked == ["2026-04-28T12:00:00.316Z", "T1"], "stops once found"
+    assert _Walk.made.timeout == 240.0
+    assert "• Page 1: from April 28, 2026 · 900 matched, 2 returned (limit 2) · September 1, 2026 to September 1, 2026 · 3s" in said
+    assert "✅ **Found:** #INV-18089 David Pereira $700.00, dated September 19, 2026" in said
+    assert "`@RYTE invoice INV-18089` sends it" in said
+    assert set(payraapi.load()["invoices"]) == {"inv1", "inv2", "inv3", "inv4"}
+
+
+def test_by_whole_name_or_email_too(monkeypatch):
+    said = _find(monkeypatch, [{"records": [_dp(4, "INV-18089", "David Pereira")], "limit": 5}],
+                 target="David Pereira")
+    assert "✅ **Found:** #INV-18089" in said
+    said = _find(monkeypatch, [{"records": [_dp(4, "INV-18089", "David Pereira")], "limit": 5}],
+                 target="David")
+    assert "isn't in them" in said
+
+
+def test_a_page_that_times_out_keeps_what_came_before(monkeypatch):
+    said = _find(monkeypatch, [
+        {"records": [_dp(1)], "records_matched": 5, "limit": 1, "next_updated_after": "T1"},
+        TimeoutError("The read operation timed out"),
+    ])
+    assert "• Stopped: The read operation timed out" in said
+    assert "**“INV-18089” isn't in them.**" in said
+    assert "inv1" in payraapi.load()["invoices"]
+
+
+def test_asking_to_find():
+    from wilbyte.bot import mentions
+
+    got = mentions.parse("<@1> payra find INV-18089")
+    assert (got.action, got.brief) == ("payrafind", "INV-18089")
+    assert mentions.parse("<@1> payra search David Pereira").brief == "David Pereira"
+    assert mentions.parse("<@1> payra status").action == "payrastatus"

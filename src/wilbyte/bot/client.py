@@ -1063,6 +1063,18 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
                 return
 
+            if request.action == "payrafind":
+                await responder.send(
+                    f"🔎 Looking through Payra for “{request.brief}” — a page at a time, "
+                    "this can take a few minutes…"
+                )
+                try:
+                    said = await asyncio.to_thread(jobs.payra_find, config, request.brief or "")
+                except Exception as exc:
+                    said = f"Couldn't look: {_readable(exc)}"
+                await responder.send(said)
+                return
+
             if request.action == "payrastatus":
                 from .. import payraapi
 

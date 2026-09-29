@@ -9421,7 +9421,9 @@ def payra_sync(config: Config) -> dict:
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
     data = payraapi.load()
     try:
-        with payraapi.PayraClient(token, site) as client:
+        # Three minutes a page: a long stretch asked for at once takes Payra
+        # well over the one minute this used to wait.
+        with payraapi.PayraClient(token, site, timeout=180.0) as client:
             counts = payraapi.sync(data, client)
         data["synced_at"] = payraapi.when(datetime.now(timezone.utc))
         data.pop("failed", None)
@@ -9453,6 +9455,90 @@ def payra_times(when: datetime) -> list[str]:
         payra_time(when, zone=""),
         when.astimezone(timezone.utc).strftime("%Y-%m-%d"),
     ]
+
+
+#: How far back "payra find" starts. A year asked for at once takes Payra
+#: longer than RYTE will wait; a month comes back in seconds.
+PAYRA_FIND_DAYS = 150
+PAYRA_FIND_PAGES = 40
+#: Seconds a page may take. The ordinary sync gives up at sixty.
+PAYRA_FIND_WAIT = 240.0
+
+
+def payra_find(config: Config, target: str, *, now=None, clock=None) -> str:
+    """Walk Payra's invoice list page by page looking for one invoice - by its
+    number, or the whole name or email on it - keeping every invoice read on
+    the way, and saying what each page held. GET only.
+
+    INV-18089 was paid in Payra and never reached RYTE's copy: a year asked
+    for in one go timed out, so the history behind the last month never came.
+    """
+    import time
+
+    from .. import payraapi
+    from ..clearout import name_match
+
+    clock = clock or time.monotonic
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    now = now or datetime.now(timezone.utc)
+    wanted = " ".join(str(target or "").split()).strip(" .,!?;:").lstrip("#")
+    if not wanted:
+        return "What should I look for? `@RYTE payra find INV-18089` - or a whole name or email."
+
+    def is_it(record) -> bool:
+        one = payraapi.slim_invoice(record)
+        if str(one.get("number") or "").casefold() == wanted.casefold():
+            return True
+        if "@" in wanted:
+            return one.get("email") == wanted.casefold()
+        return name_match(wanted, one.get("name", "")) >= 2
+
+    data = payraapi.load()
+    after = payraapi.when(now - timedelta(days=PAYRA_FIND_DAYS))
+    lines, found, read = [], [], 0
+    try:
+        with payraapi.PayraClient(token, site, timeout=PAYRA_FIND_WAIT) as client:
+            for page in range(1, PAYRA_FIND_PAGES + 1):
+                started = clock()
+                got = client.changed("invoices", after)
+                took = clock() - started
+                records = got.get("records") or []
+                read += len(records)
+                for record in records:
+                    one = payraapi.slim_invoice(record)
+                    if one["id"]:
+                        data["invoices"][one["id"]] = one
+                    if is_it(record):
+                        found.append(one)
+                stamps = sorted(str(one.get("updated_at") or "") for one in records if one.get("updated_at"))
+                lines.append(
+                    f"• Page {page}: from {payraapi._spelled(after)} · {got.get('records_matched', '?')} "
+                    f"matched, {len(records)} returned (limit {got.get('limit', '?')}) · "
+                    + (f"{payraapi._spelled(stamps[0])} to {payraapi._spelled(stamps[-1])}" if stamps else "no dates")
+                    + f" · {took:.0f}s"
+                )
+                onward = str(got.get("next_updated_after") or "")
+                if found or not records or not onward or onward == after:
+                    break
+                after = onward
+    except Exception as exc:
+        lines.append(f"• Stopped: {' '.join(str(exc).split())[:160]}")
+    finally:
+        # Whatever was read is kept - the copy is fuller for it either way.
+        payraapi.save(data)
+
+    head = (f"🔎 Payra's invoices from {payraapi._spelled(payraapi.when(now - timedelta(days=PAYRA_FIND_DAYS)))}, "
+            f"{read:,} read:\n" + "\n".join(lines[-12:]))
+    if not found:
+        return head + f"\n\n**“{wanted}” isn't in them.** Every invoice read is now in my copy."
+    said = "; ".join(
+        f"#{one.get('number') or '?'} {one.get('name') or '?'} {payraapi._money(one.get('total'))}, "
+        f"dated {payraapi._spelled(one.get('invoice_date'))}"
+        for one in found[:4]
+    )
+    return head + (f"\n\n✅ **Found:** {said}. It's in my copy now — `@RYTE invoice "
+                   f"{found[0].get('number') or wanted}` sends it.")
 
 
 def payra_reach(config: Config, *, now=None) -> str:
