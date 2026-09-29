@@ -1,8 +1,10 @@
 <!-- ============================================================
      VIDEO TESTIMONIALS — kept up to date by RYTE.
-     Paste this ONCE at the very end of the page's HTML, after the
-     last </script>. It reads the list RYTE keeps on leadlabcrm.com
-     and redraws the video section with the page's own cards.
+     leadlabcrm.com: paste ONCE at the very end of the page's HTML.
+     GHL funnels: paste ONCE per funnel in Settings -> Tracking Code
+     -> Footer Code. It reads the list RYTE keeps on leadlabcrm.com
+     and redraws the video section - either version of it - with the
+     page's own cards. Pages without the section are left alone.
      If the list can't be read, the videos already in the page stay
      exactly as they are.
      ============================================================ -->
@@ -74,13 +76,58 @@
     if (more) more.addEventListener('click', function(){ render(size); });
   }
 
+  /* The same section as it is built on the GHL funnel pages ("llt"). */
+  function lltFrame(v, thumb, size){
+    return '<div class="llt-frame" data-vid="' + esc(v.id) + '">' +
+      '<img src="https://img.youtube.com/vi/' + esc(v.id) + '/' + thumb + '.jpg" loading="lazy" alt="' + esc(v.name) + '">' +
+      '<button class="llt-play" aria-label="Play ' + esc(v.name) + '\'s interview"><svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>' +
+    '</div>';
+  }
+  function lltMeta(v){
+    return '<div class="llt-meta"><div class="llt-name">' + esc(v.name) + '</div>' +
+      '<p class="llt-quote">' + esc(v.quote) + '</p></div>';
+  }
+  function applyLlt(data){
+    var root = document.querySelector('.llt');
+    if (!root || !data || !data.videos) return;
+    if (root.querySelector('iframe')) return;
+    var f = data.featured, feat = document.getElementById('lltFeatured');
+    if (f && feat){
+      feat.className = 'llt-featured';
+      feat.innerHTML = lltFrame(f, 'maxresdefault', 26) + lltMeta(f);
+    }
+    var grid = document.getElementById('lltGrid');
+    var more = document.getElementById('lltMore');
+    var count = document.getElementById('lltCount');
+    if (!grid) return;
+    if (more){ var fresh = more.cloneNode(true); more.parentNode.replaceChild(fresh, more); more = fresh; }
+    var list = data.videos, size = data.page_size || 8, shown = 0;
+    grid.innerHTML = '';
+    function render(k){
+      var slice = list.slice(shown, shown + k), html = '';
+      for (var i = 0; i < slice.length; i++){
+        html += '<div class="llt-card' + (shown ? ' llt-new' : '') + '">' + lltFrame(slice[i], 'mqdefault', 20) + lltMeta(slice[i]) + '</div>';
+      }
+      grid.insertAdjacentHTML('beforeend', html);
+      shown += slice.length;
+      var left = list.length - shown;
+      if (count) count.textContent = left > 0 ? shown + ' of ' + list.length + ' interviews' : 'All ' + list.length + ' interviews shown';
+      if (more){
+        if (left > 0){ more.hidden = false; more.textContent = 'Show ' + Math.min(left, size) + ' more'; }
+        else more.hidden = true;
+      }
+    }
+    render(size);
+    if (more) more.addEventListener('click', function(){ render(size); });
+  }
+
   function load(){
     fetch(LL_DATA, { cache: 'no-store' })
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(pages){
         var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
         var m = /LLVIDEOS-([0-9a-f]+)/.exec(html);
-        if (m) apply(fromHex(m[1]));
+        if (m){ var data = fromHex(m[1]); apply(data); applyLlt(data); }
       })
       .catch(function(){ /* keep what the page already shows */ });
   }
