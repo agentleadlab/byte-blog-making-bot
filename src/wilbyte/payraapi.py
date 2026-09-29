@@ -299,9 +299,18 @@ def sync(data: dict, client, *, now: datetime | None = None) -> dict:
     for kind, slim in SLIM.items():
         after = str(data["cursors"].get(kind) or when(now - timedelta(days=FIRST_DAYS)))
         count = 0
-        for _page in range(MOST_PAGES):
+        for page in range(MOST_PAGES):
+            asked = after
             got = client.changed(kind, after)
             records = got.get("records") or []
+            if page == 0:
+                # What Payra said about the ask - whether it read back as far
+                # as it was asked to - for "payra status" to show.
+                data.setdefault("reads", {})[kind] = {
+                    "asked": asked, "applied": str(got.get("updated_after_applied") or ""),
+                    "capped": bool(got.get("updated_after_capped")),
+                    "matched": got.get("records_matched"), "returned": got.get("records_returned"),
+                }
             for record in records:
                 one = slim(record)
                 if one["id"]:
@@ -313,7 +322,11 @@ def sync(data: dict, client, *, now: datetime | None = None) -> dict:
                 after = onward
             data["cursors"][kind] = after
             limit = got.get("limit")
-            if not records or not onward or stuck or (isinstance(limit, int) and len(records) < limit):
+            more = got.get("records_matched")
+            short = isinstance(limit, int) and len(records) < limit
+            if isinstance(more, int) and more > len(records):
+                short = False
+            if not records or not onward or stuck or short:
                 break
         counts[kind] = count
     return counts
@@ -410,6 +423,12 @@ def status(data: dict, *, now: datetime | None = None) -> str:
     elif not failed:
         lines.append("⏳ RYTE hasn't read Payra yet — the first read runs within a few "
                      "minutes of starting, if PAYRA_API_TOKEN and PAYRA_SITE_ID are in .env.")
+    for kind, read in sorted((data.get("reads") or {}).items()):
+        if read.get("capped"):
+            lines.append(
+                f"⚠ Payra only gave {kind} changed since {_spelled(read.get('applied'))} — "
+                "anything older can't be read this way."
+            )
     if failed and str(data.get("failed_at") or "") >= synced:
         lines.append(f"⚠ The last read failed ({_ago(str(data.get('failed_at')), now)}): {failed}")
     return "\n".join(lines)
@@ -559,7 +578,14 @@ def paid_invoices(data: dict, who: str, *, most: int = 12) -> list[dict]:
     if not who:
         return []
 
+    # An invoice number is the invoice, whoever's name is on it.
+    number = who.casefold().lstrip("#")
+    by_number = [one for one in data.get("invoices", {}).values()
+                 if str(one.get("number") or "").casefold() == number]
+
     def theirs(one):
+        if by_number:
+            return one in by_number
         if phone:
             return one.get("phone") == phone
         if email:
@@ -698,3 +724,27 @@ def theirs_listed(data: dict, who: str, *, most: int = 6) -> list[dict]:
             else name_match(who, one.get("name", "")) >= 2)
     ]
     return sorted(found, key=lambda one: str(one.get("invoice_date") or ""), reverse=True)[:most]
+
+
+def near(data: dict, who: str, *, most: int = 6) -> list[str]:
+    """Names RYTE holds that share a whole word with the one asked for - never
+    used to find anybody, only to say who else there is, so the right one can
+    be asked for by email or invoice number."""
+    from .clearout import words_of
+
+    wanted = {one for one in words_of(who) if len(one) >= 3}
+    if not wanted:
+        return []
+    said = []
+    for one in sorted(data.get("invoices", {}).values(),
+                      key=lambda inv: str(inv.get("invoice_date") or ""), reverse=True):
+        mine = set(words_of(one.get("name", ""))) | set(words_of(str(one.get("email") or "").split("@")[0]))
+        if not wanted & mine:
+            continue
+        line = (f"{one.get('name') or '?'}" + (f" <{one['email']}>" if one.get("email") else "")
+                + f" — #{one.get('number') or '?'} {_money(one.get('total'))}, dated {_spelled(one.get('invoice_date'))}")
+        if line not in said:
+            said.append(line)
+        if len(said) >= most:
+            break
+    return said

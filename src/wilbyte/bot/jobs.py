@@ -5389,8 +5389,13 @@ def _no_paid_invoice(data: dict, who: str) -> str:
     when = payraapi.status(data).split(" from Payra, last read ")[-1].split(".")[0] \
         if data.get("synced_at") else "not yet"
     if not theirs:
-        return (f"No Payra invoice for “{who}” among the {held:,} I hold (last read {when}). "
-                "The whole name as it is in Payra, their email or their phone number finds them.")
+        close = payraapi.near(data, who)
+        said = (f"No Payra invoice for “{who}” among the {held:,} I hold (last read {when}).")
+        if close:
+            return (said + " Closest names I have:\n" + "\n".join(f"• {one}" for one in close)
+                    + "\nAsk with their email or the invoice number — `@RYTE invoice INV-18089`.")
+        return (said + " The whole name as it is in Payra, their email, their phone number "
+                "or the invoice number finds them.")
     listed = "\n".join(
         f"• #{one.get('number') or '?'} — {payraapi._money(one.get('total'))}, dated "
         f"{payraapi._spelled(one.get('invoice_date'))} — no payment I can see on it"

@@ -551,7 +551,7 @@ INVOICE_ASKED = re.compile(
 # natural way of asking - "send me a copy of David Pereira's paid invoice".
 # Only the whole message being the ask counts, so a brief that mentions an
 # invoice is still a brief.
-_NAME = r"[\w.@'’-]+(?:\s+[\w.@'’-]+){0,3}"
+_NAME = r"[\w.@'’#-]+(?:\s+[\w.@'’#-]+){0,3}"
 INVOICE_PLAINLY = re.compile(
     r"^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?(?:copy\s+of\s+)?(?:the\s+)?"
     r"(?:paid\s+)?invoices?\s+(?:pdf\s+|copy\s+)?(?:for|of)\s+" + _NAME + r"\s*[?.!]*\s*$"
@@ -561,7 +561,7 @@ INVOICE_PLAINLY = re.compile(
 )
 _INVOICE_BEFORE = re.compile(
     r"^\s*(?:(?:please\s+)?(?:send|get|give)\s+(?:me\s+)?)?(?:a\s+|the\s+)?(?:copy\s+of\s+)?"
-    r"(?:the\s+)?(?:(?:paid\s+)?invoices?\s*(?:pdf\s+|copy\s+)?(?:for|of)\s+)?",
+    r"(?:the\s+)?(?:(?:paid\s+)?invoices?\s*(?:pdf\s+|copy\s+)?(?:(?:for|of)\s+)?)?",
     re.IGNORECASE,
 )
 _INVOICE_AFTER = re.compile(

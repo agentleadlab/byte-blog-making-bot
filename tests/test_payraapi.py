@@ -593,3 +593,64 @@ def test_the_disputed_amount_can_include_the_card_fee():
     page = payraapi.invoice_html(payraapi.paid_invoices(data, "David Pereira"), made_on="x")
     assert "+ $47.60 fee" in page
     assert payraapi.for_dispute(data, name="David Pereira", amount="$1,400.00")[1] is False
+
+
+# ------------------------------------------------ when a name finds nothing
+
+
+def test_an_invoice_number_finds_the_invoice_whatever_the_name():
+    data = _pereira(invoice={"_id": "invDP"})
+    data["invoices"]["invDP"]["name"] = "Dave A. Pereira"
+
+    assert payraapi.paid_invoices(data, "David Pereira") == []
+    for asked in ("INV-18089", "inv-18089", "#INV-18089"):
+        assert [one["invoice"]["number"] for one in payraapi.paid_invoices(data, asked)] == ["INV-18089"]
+
+
+def test_asking_by_invoice_number():
+    from wilbyte.bot import mentions
+
+    for said in ("<@1> invoice INV-18089", "<@1> invoice #INV-18089", "<@1> paid invoice for INV-18089"):
+        got = mentions.parse(said)
+        assert (got.action, got.brief.lstrip("#")) == ("invoice", "INV-18089"), said
+
+
+def test_nothing_found_by_name_says_who_is_close(monkeypatch):
+    from wilbyte.bot import jobs
+
+    data = _pereira(invoice={"_id": "invDP"})
+    data["invoices"]["invDP"]["name"] = "Dave A. Pereira"
+    payraapi.save(data)
+
+    said = jobs.paid_invoice_pdf("David Pereira")[2]
+
+    assert said.startswith("No Payra invoice for “David Pereira” among the 1 I hold")
+    assert "• Dave A. Pereira <dp@example.com> — #INV-18089 $1,360.00, dated September 19, 2026" in said
+    assert "`@RYTE invoice INV-18089`" in said
+    assert payraapi.near(data, "Al Bo") == [], "short words match nobody"
+
+
+def test_status_says_when_payra_would_not_read_back_as_far_as_asked():
+    data = _kept()
+    data["synced_at"] = "2026-09-25T11:55:00.316Z"
+    data["reads"] = {"invoices": {"asked": "2025-09-25T12:00:00.316Z",
+                                  "applied": "2026-08-26T12:00:00.000Z", "capped": True}}
+    assert "⚠ Payra only gave invoices changed since August 26, 2026" in payraapi.status(data, now=NOW)
+
+
+def test_it_keeps_reading_while_payra_says_more_matched():
+    data = payraapi.load()
+    payra = Pages(invoices=[
+        {"records": [_invoice(1)], "limit": 5, "records_matched": 2, "records_returned": 1,
+         "next_updated_after": "T1", "updated_after_applied": "X", "updated_after_capped": False},
+        {"records": [_invoice(2)], "limit": 5, "records_matched": 1, "next_updated_after": "T2"},
+    ])
+    payraapi.sync(data, payra, now=NOW)
+    assert set(data["invoices"]) == {"inv1", "inv2"}
+    assert data["reads"]["invoices"]["matched"] == 2 and data["reads"]["invoices"]["capped"] is False
+
+
+def test_invoice_then_the_name_without_of():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> invoice David Pereira").brief == "David Pereira"
