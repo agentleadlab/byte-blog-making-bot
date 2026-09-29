@@ -546,6 +546,29 @@ INVOICE_ASKED = re.compile(
     r"(?:copy\s+of\s+)?(?:the\s+)?(?:paid\s+)?invoices?\b",
     re.IGNORECASE,
 )
+# "testimonial <YouTube link>", "add to website <link>" - a full interview for
+# the video section of leadlabcrm.com. Optional "name: ..." and "quote: ..."
+# after the link set them instead of RYTE picking.
+TESTIMONIAL = re.compile(
+    r"^\s*(?:add\s+(?:a\s+|this\s+)?)?(?:video\s+)?(?:testimonial|website\s+video|to\s+(?:the\s+)?website)\b[:\s]*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_TESTIMONIAL_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S+", re.IGNORECASE)
+
+
+def testimonial_parts(said: str) -> tuple[str, str, str]:
+    """(the YouTube link, a name given, a quote given) off the message."""
+    text = str(said or "")
+    link = _TESTIMONIAL_LINK.search(text)
+    name = re.search(r"\bname\s*:\s*(.+?)(?=\s+quote\s*:|$)", text, re.IGNORECASE | re.DOTALL)
+    quote = re.search(r"\bquote\s*:\s*(.+)$", text, re.IGNORECASE | re.DOTALL)
+    return (
+        link.group(0).rstrip(">)") if link else "",
+        " ".join(name.group(1).split()) if name else "",
+        " ".join(quote.group(1).split()) if quote else "",
+    )
+
+
 # The same asked plainly enough to go before the action words: "paid" is a
 # format ("a paid ad") and "copy" is a writing word, and both are in the
 # natural way of asking - "send me a copy of David Pereira's paid invoice".
@@ -684,6 +707,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Looking back over the clear-outs already done, and redrawing one
     # client's ring-da-bell picture from their own messages. Before the
     # action words: "clearout" in "check clearouts" is not a clear-out.
+    # "testimonial https://youtu.be/..." - an interview for the website, not a
+    # blog post, so before a bare YouTube link is taken as one.
+    site = TESTIMONIAL.match(text)
+    if site:
+        return MentionRequest(action="testimonial", brief=site.group(1).strip())
+    if re.match(r"\s*(?:website|wordpress)\s+(?:check|test|status)\b", text, re.IGNORECASE):
+        return MentionRequest(action="websitecheck", brief=text)
     if INVOICE_PLAINLY.match(_without_links(text)):
         return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
@@ -1178,6 +1208,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > picture came from somebody else, and whose Drive folder is misnamed
 > @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from
 > their own messages, into a folder named for them
+> @RYTE **testimonial https://youtu.be/…** — a full interview for the website's video
+> section: I pick the name and a quote, you press Add. `name: …` / `quote: …` after the
+> link to set them yourself. **website check** — whether I can reach the site
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
 > payment on each (date, amount, card ending, transaction)
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an

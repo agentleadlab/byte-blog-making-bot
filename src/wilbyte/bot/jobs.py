@@ -9827,3 +9827,107 @@ def payra_probe(config: Config) -> tuple[str, str]:
                         said = ""
                 lines.append(f"• {mark} `{url}` — HTTP {got.status_code}{shape}{said}")
     return "\n".join(lines), docs
+
+
+# ------------------------------------------------------------ website videos
+
+
+def _wordpress(config: Config):
+    from .. import website
+
+    secrets = config.secrets
+    return website.WordPress(
+        str(getattr(secrets, "wordpress_url", "") or "").strip(),
+        str(getattr(secrets, "wordpress_user", "") or "").strip(),
+        str(getattr(secrets, "wordpress_app_password", "") or "").strip(),
+    )
+
+
+def website_check(config: Config) -> str:
+    """Whether RYTE can write to the site, and what list it would start from."""
+    from .. import website
+
+    with _wordpress(config) as site:
+        me = site.me()
+        held = site.load()
+        if held is None:
+            held = website.parse_live(site.live_page())
+            where = "the videos on the home page right now (I'll keep the list from the first one you add)"
+        else:
+            where = "the list I keep"
+    roles = ", ".join(me.get("roles") or []) or "?"
+    featured = (held.get("featured") or {}).get("name") or "nobody"
+    return (f"✅ Signed in to {site.url} as **{me.get('name') or me.get('slug') or '?'}** ({roles}).\n"
+            f"Reading {where}: **{featured}** featured, {len(held.get('videos') or [])} more in the grid.")
+
+
+def testimonial_draft(config: Config, link: str, *, name: str = "", quote: str = "") -> dict:
+    """The interview's name and a quote for the site, before anything is
+    added. {"id", "title", "name", "quote"}. Either one given is used as given."""
+    from .. import website
+
+    video_id = youtube.extract_video_id(link)
+    try:
+        title = youtube.fetch_video(video_id).title
+    except Exception:
+        title = ""
+    if not (name and quote):
+        transcript, problem = waiting_on_captions(link)
+        if not transcript and not title:
+            raise ValueError(f"I couldn't read that video: {problem or 'no title and no captions'}")
+        picked = _pick_testimonial(config, title, transcript)
+        name = name or picked.get("name", "")
+        quote = quote or picked.get("quote", "")
+    if not name:
+        raise ValueError("I couldn't tell whose interview it is - add `name: Their Name` to the message.")
+    return {"id": video_id, "title": title, "name": " ".join(name.split()),
+            "quote": website.quote_marks(quote)}
+
+
+def _pick_testimonial(config: Config, title: str, transcript: str) -> dict:
+    """Whose interview it is, and the one line worth putting on the site."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    tool = {
+        "name": "testimonial",
+        "description": "The agent interviewed, and one line of theirs for the website.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The interviewed agent's name as the title gives it - first and last when both are given. Never the host, Arnold Tarpley."},
+                "quote": {"type": "string", "description": "One sentence or two, 10 to 30 words, in the agent's own words from the transcript - lightly tidied of ums and repeats, never reworded. Punchy and specific: a result, a lesson, a turning point. No quote marks."},
+            },
+            "required": ["name", "quote"],
+        },
+    }
+    response = client.messages.create(
+        model=config.copy.model, max_tokens=400,
+        system=("You pick testimonials for Agent Lead Lab's website: interviews with life "
+                "insurance agents who buy its leads. Pick the line a sceptical agent would stop "
+                "scrolling for. Only words the agent actually said."),
+        tools=[tool], tool_choice={"type": "tool", "name": "testimonial"},
+        messages=[{"role": "user", "content": f"Title: {title}\n\nTranscript:\n{(transcript or '')[:30000]}"}],
+    )
+    got = next((one.input for one in response.content if getattr(one, "type", "") == "tool_use"), {}) or {}
+    return {"name": str(got.get("name") or ""), "quote": str(got.get("quote") or "")}
+
+
+def testimonial_publish(config: Config, video: dict) -> str:
+    """Put the interview on the site as the featured one. What happened, said."""
+    from .. import website
+
+    with _wordpress(config) as site:
+        held = site.load()
+        started = held is None
+        if started:
+            held = website.parse_live(site.live_page())
+        updated, moved = website.add(held, video)
+        site.save(updated)
+    said = (f"✅ **{video['name']}** is the featured interview on the website now"
+            + (f", and **{moved}** moved to the top of the grid" if moved else "") + ".")
+    if started:
+        said += (f"\n-# First one: I started from the {len(held.get('videos') or [])} interviews "
+                 "already on the page.")
+    return said

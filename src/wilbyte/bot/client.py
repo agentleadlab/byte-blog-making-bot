@@ -1142,6 +1142,18 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _send_sheet(responder, config, request.brief or "")
                 return
 
+            if request.action == "testimonial":
+                await _website_testimonial(responder, config, request.brief or "")
+                return
+
+            if request.action == "websitecheck":
+                try:
+                    said = await asyncio.to_thread(jobs.website_check, config)
+                except Exception as exc:
+                    said = f"⚠ {_readable(exc)}"
+                await responder.send(said)
+                return
+
             if request.action == "invoice":
                 await _send_paid_invoice(responder, request.brief or "", config)
                 return
@@ -1437,6 +1449,51 @@ def _said_sheet(one: dict) -> str:
     if len(sheets) > 1:
         line += f"\n  *(the newest of {len(sheets)} — the setup was redone)*"
     return line
+
+
+async def _website_testimonial(responder: Responder, config: Config, said: str) -> None:
+    """A full interview onto the website's video section, once Franklin has
+    seen the name and quote and pressed Add."""
+    link, name, quote = mentions.testimonial_parts(said)
+    if not link:
+        await responder.send(
+            "Send the YouTube link: `@RYTE testimonial https://youtu.be/…` — add "
+            "`name: …` or `quote: …` after it to set them yourself."
+        )
+        return
+    if not (name and quote):
+        await responder.send("🎬 Reading the interview for a quote…")
+    try:
+        video = await asyncio.to_thread(
+            partial(jobs.testimonial_draft, config, link, name=name, quote=quote))
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    card = discord.Embed(
+        title="🎬 New testimonial for the website",
+        description=(f"**{video['name']}**\n{video['quote']}\n\n"
+                     f"[{video.get('title') or 'The video'}](https://www.youtube.com/watch?v={video['id']})"),
+        colour=discord.Colour.green(),
+    )
+    card.set_image(url=f"https://img.youtube.com/vi/{video['id']}/hqdefault.jpg")
+    card.set_footer(text="Add makes it the featured interview on leadlabcrm.com. Wrong name or "
+                         "quote? Send it again with name: … / quote: … after the link.")
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Add to website",
+        emoji="🎬",
+    )
+    await responder.send(embed=card, view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        done = await asyncio.to_thread(jobs.testimonial_publish, config, video)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't put it on the website: {_readable(exc)}")
+        return
+    await responder.send(done)
 
 
 async def _send_paid_invoice(responder: Responder, who: str, config: Config | None = None) -> None:

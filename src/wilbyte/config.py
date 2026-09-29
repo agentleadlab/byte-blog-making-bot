@@ -245,6 +245,11 @@ class Secrets:
     payra_api_token: str | None = None
     # The site every Payra invoice and payment call is made under.
     payra_site_id: str | None = None
+    # leadlabcrm.com's WordPress, for the video testimonials list. An
+    # Application Password (Users -> Profile), not the login password.
+    wordpress_url: str | None = None
+    wordpress_user: str | None = None
+    wordpress_app_password: str | None = None
     # The Drive folder a screenshot of their channel goes into.
     clients_drive_folder: str | None = None
     # The address Summit Pay's invoices arrive from. Every Gmail search RYTE
@@ -413,6 +418,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 clients_sheet_link=_env("CLIENTS_SHEET_LINK"),
                 payra_api_token=_env("PAYRA_API_TOKEN"),
                 payra_site_id=_env("PAYRA_SITE_ID"),
+                wordpress_url=_env("WORDPRESS_URL"),
+                wordpress_user=_env("WORDPRESS_USER"),
+                wordpress_app_password=_env("WORDPRESS_APP_PASSWORD"),
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),

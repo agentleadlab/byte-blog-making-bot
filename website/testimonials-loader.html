@@ -1,0 +1,90 @@
+<!-- ============================================================
+     VIDEO TESTIMONIALS — kept up to date by RYTE.
+     Paste this ONCE at the very end of the page's HTML, after the
+     last </script>. It reads the list RYTE keeps on leadlabcrm.com
+     and redraws the video section with the page's own cards.
+     If the list can't be read, the videos already in the page stay
+     exactly as they are.
+     ============================================================ -->
+<script>
+(function(){
+  var LL_SITE = 'https://leadlabcrm.com';
+  var LL_DATA = LL_SITE + '/wp-json/wp/v2/pages?slug=ll-videos-data&_fields=content';
+
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fromHex(h){
+    var bytes = new Uint8Array(h.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(h.substr(i * 2, 2), 16);
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  }
+  function card(v){
+    return '<div class="ll-video-card ll-fadein">' +
+      '<button type="button" class="ll-video-frame" data-vid="' + esc(v.id) + '" aria-label="Play the interview with ' + esc(v.name) + '">' +
+        '<img src="https://img.youtube.com/vi/' + esc(v.id) + '/mqdefault.jpg" loading="lazy" decoding="async" width="320" height="180" alt="">' +
+        '<span class="ll-play-btn"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>' +
+      '</button>' +
+      '<div class="ll-video-meta"><div class="ll-speaker-name">' + esc(v.name) + '</div>' +
+      '<p class="ll-speaker-quote">' + esc(v.quote) + '</p></div>' +
+    '</div>';
+  }
+
+  function apply(data){
+    var root = document.querySelector('.ll-root');
+    if (!root || !data || !data.videos) return;
+    /* somebody is already watching one — leave the section alone */
+    if (root.querySelector('.ll-video-testi-section iframe')) return;
+
+    var f = data.featured, box = root.querySelector('.ll-video-featured');
+    if (f && box){
+      var frame = box.querySelector('.ll-video-frame');
+      if (frame){
+        frame.setAttribute('data-vid', f.id);
+        frame.setAttribute('aria-label', 'Play ' + f.name + "'s testimonial");
+        var img = frame.querySelector('img');
+        if (img) img.src = 'https://img.youtube.com/vi/' + f.id + '/hqdefault.jpg';
+      }
+      var n = box.querySelector('.ll-speaker-name'); if (n) n.textContent = f.name;
+      var q = box.querySelector('.ll-speaker-quote'); if (q) q.textContent = f.quote;
+    }
+
+    var grid = document.getElementById('ll-video-grid');
+    var more = document.getElementById('ll-video-more');
+    var count = document.getElementById('ll-video-count');
+    if (!grid) return;
+    if (more){ var fresh = more.cloneNode(true); more.parentNode.replaceChild(fresh, more); more = fresh; }
+    var list = data.videos, size = data.page_size || 8, shown = 0;
+    grid.innerHTML = '';
+    function render(k){
+      var slice = list.slice(shown, shown + k), html = '';
+      for (var i = 0; i < slice.length; i++) html += card(slice[i]);
+      grid.insertAdjacentHTML('beforeend', html);
+      shown += slice.length;
+      var left = list.length - shown;
+      if (count) count.textContent = left > 0 ? shown + ' of ' + list.length + ' interviews' : 'All ' + list.length + ' interviews shown';
+      if (more){
+        if (left > 0){ more.hidden = false; more.textContent = 'Show ' + Math.min(left, size) + ' more'; }
+        else more.hidden = true;
+      }
+    }
+    render(size);
+    if (more) more.addEventListener('click', function(){ render(size); });
+  }
+
+  function load(){
+    fetch(LL_DATA, { cache: 'no-store' })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(pages){
+        var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
+        var m = /LLVIDEOS-([0-9a-f]+)/.exec(html);
+        if (m) apply(fromHex(m[1]));
+      })
+      .catch(function(){ /* keep what the page already shows */ });
+  }
+  /* after the page's own script has drawn its cards */
+  if (document.readyState === 'complete') load(); else window.addEventListener('load', load);
+})();
+</script>
