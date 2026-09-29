@@ -5406,27 +5406,59 @@ def _payra_emails(config: Config, who: str) -> tuple[list, str]:
     return [one for one in found if "payment confirmation" in one.subject.casefold()], ""
 
 
+#: The fields of Payra's confirmation, in the order the email gives them.
+#: The body arrives as one line with runs of spaces between label and value.
+RECEIPT_LABELS = (
+    "Reference #", "Paid", "Customer", "Payment Method", "Invoice #", "Subtotal",
+    "Discounts", "Total", "Other Fees", "Total Paid",
+)
+
+
+def receipt_fields(body: str) -> list[tuple[str, str]]:
+    """(label, value) off a Payra confirmation, each label once."""
+    import re
+
+    bits = [" ".join(one.split()) for one in re.split(r"\s{3,}|\n", str(body or "")) if one.strip()]
+    found, seen = [], set()
+    for at, bit in enumerate(bits[:-1]):
+        if bit in RECEIPT_LABELS and bit not in seen and bits[at + 1] not in RECEIPT_LABELS:
+            seen.add(bit)
+            found.append((bit, bits[at + 1]))
+    return found
+
+
 def _emails_html(emails: list, who: str) -> str:
-    """Payra's confirmation emails as a printable page, one to a sheet, as
-    they were sent - their words, not RYTE's."""
+    """Payra's confirmation emails as a printable page, one to a sheet - the
+    fields laid out, and the email as it was sent underneath."""
     import html
 
-    pages = "".join(
-        "<section class=page><div class=label>Payment confirmation from Payra — "
-        f"as emailed</div><h1>{html.escape(one.subject)}</h1><div class=when>{html.escape(one.when)}</div>"
-        f"<pre>{html.escape(one.body)}</pre></section>"
-        for one in emails[:10]
-    )
+    pages = []
+    for one in emails[:10]:
+        fields = receipt_fields(one.body)
+        text = str(one.body or "").split("Powered by PAYRA")[0].strip()
+        rows = "".join(
+            f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+            for label, value in fields
+        )
+        pages.append(
+            "<section class=page><div class=label>Payment confirmation from Payra — as emailed</div>"
+            f"<h1>{html.escape(one.subject)}</h1><div class=when>Sent {html.escape(one.when)}</div>"
+            + (f"<table>{rows}</table>" if rows else "")
+            + f"<div class=label>The email as written</div><pre>{html.escape(text)}</pre></section>"
+        )
     return (
         "<!doctype html><html><head><meta charset=utf-8><style>"
         "@page { size: Letter; margin: 0.6in; }"
         "body { font: 11pt/1.45 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b1b1f; margin: 0; }"
         ".page { page-break-after: always; } .page:last-child { page-break-after: auto; }"
-        ".label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; }"
+        ".label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; margin-top: 18px; }"
         "h1 { font-size: 16pt; margin: 4px 0; } .when { color: #555; margin-bottom: 14px; }"
-        "pre { white-space: pre-wrap; font: 10.5pt/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; "
-        "border-top: 1px solid #ddd; padding-top: 12px; }"
-        f"</style></head><body>{pages}</body></html>"
+        "table { border-collapse: collapse; width: 100%; margin-top: 6px; }"
+        "th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #ddd; }"
+        "th { width: 36%; color: #555; font-weight: 600; }"
+        "pre { white-space: pre-wrap; font: 9pt/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; "
+        "color: #666; border-top: 1px solid #ddd; padding-top: 8px; }"
+        f"</style></head><body>{''.join(pages)}</body></html>"
     )
 
 

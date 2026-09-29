@@ -907,3 +907,31 @@ def test_the_emails_are_sent_as_their_own_file(monkeypatch):
     words, file = sent[0]
     assert "Payra's own payment confirmation emails" in words
     assert file.filename == "David Pereira - Payra payment confirmations.pdf"
+
+
+PEREIRA_EMAIL = (
+    "You Just Got Paid!      Reference #   FJZ3FZZHJC7N-PU58     Paid   September 4, 2026     Customer    David "
+    "Pereira      Payment Method   Visa **** 0000     Invoice #    INV-18089      Subtotal   $1,600.00     Discounts   "
+    "-$240.00     Total   $1,360.00     Other Fees   $47.60     Total Paid   $1,407.60     Reference #   FJZ3FZZHJC7N-"
+    "PU58        View Payment     Powered by PAYRA     Own a business and want to get paid faster?"
+)
+
+
+def test_the_confirmation_is_laid_out_field_by_field():
+    """It arrived as one run-on paragraph with Payra's advert on the end."""
+    from wilbyte.bot import jobs
+
+    fields = dict(jobs.receipt_fields(PEREIRA_EMAIL))
+    assert fields["Invoice #"] == "INV-18089"
+    assert fields["Paid"] == "September 4, 2026"
+    assert fields["Customer"] == "David Pereira"
+    assert fields["Total"] == "$1,360.00" and fields["Other Fees"] == "$47.60"
+    assert fields["Total Paid"] == "$1,407.60"
+    assert fields["Reference #"] == "FJZ3FZZHJC7N-PU58"
+
+    from wilbyte import gmail
+
+    page = jobs._emails_html([gmail.Found("m", subject="Payment confirmation", when="Fri", body=PEREIRA_EMAIL)], "x")
+    assert "<tr><th>Total Paid</th><td>$1,407.60</td></tr>" in page
+    assert "Own a business" not in page, "Payra's advert left off"
+    assert "The email as written" in page
