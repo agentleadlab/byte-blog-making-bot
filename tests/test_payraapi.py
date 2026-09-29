@@ -685,3 +685,14 @@ def test_how_far_back_payra_goes_is_read_not_guessed(monkeypatch):
     assert "• Page 1: asked from September 25, 2025, Payra used September 25, 2025 · 5000 matched, 2 returned" in said
     assert "September 1, 2026 to September 20, 2026, newest first · next from September 20, 2026" in said
     assert "• Page 2:" in said and "0 matched, 0 returned" in said
+
+
+def test_a_full_stop_after_the_number_or_name_is_not_part_of_it():
+    """"@Ryte invoice INV-18089." looked for “INV-18089.”."""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> invoice INV-18089.").brief == "INV-18089"
+    assert mentions.parse("<@1> send me a copy of David Pereira's paid invoice.").brief == "David Pereira"
+    assert mentions.parse("<@1> invoice of David Pereira!").brief == "David Pereira"
+    data = _pereira(invoice={"_id": "invDP"})
+    assert payraapi.paid_invoices(data, "INV-18089.") != []

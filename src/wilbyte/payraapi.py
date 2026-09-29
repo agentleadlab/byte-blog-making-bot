@@ -579,7 +579,7 @@ def paid_invoices(data: dict, who: str, *, most: int = 12) -> list[dict]:
         return []
 
     # An invoice number is the invoice, whoever's name is on it.
-    number = who.casefold().lstrip("#")
+    number = who.casefold().strip(" .,!?;:").lstrip("#")
     by_number = [one for one in data.get("invoices", {}).values()
                  if str(one.get("number") or "").casefold() == number]
 

@@ -573,7 +573,7 @@ def who_wants_an_invoice(text: str) -> str:
     """The agent whose paid invoice was asked for, or ""."""
     said = " ".join(str(text or "").split())
     left = _INVOICE_AFTER.sub("", _INVOICE_BEFORE.sub("", said, count=1), count=1)
-    left = " ".join(left.strip(" -–—:?").split())
+    left = " ".join(left.strip(" -–—:?.,!;").split())
     return "" if left.casefold() in ("", "invoice", "invoices", "paid", "pdf", "copy") else left
 
 
