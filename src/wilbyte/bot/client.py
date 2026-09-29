@@ -2689,6 +2689,10 @@ async def _payra_test(responder: Responder, config: Config) -> None:
     from .. import payraapi
 
     kept = payraapi.status(await asyncio.to_thread(payraapi.load))
+    try:
+        kept += "\n\n" + await asyncio.to_thread(jobs.payra_reach, config)
+    except Exception as exc:
+        kept += f"\n\nCouldn't check how far back Payra goes: {_readable(exc)}"
     await responder.send(
         said + "\n\n**The connection:**\n" + kept + "\n-# Payra's docs, attached for reference.",
         file=discord.File(io.BytesIO(docs.encode("utf-8")), filename="payra-docs.md"),

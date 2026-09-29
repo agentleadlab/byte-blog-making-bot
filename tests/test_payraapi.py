@@ -654,3 +654,34 @@ def test_invoice_then_the_name_without_of():
     from wilbyte.bot import mentions
 
     assert mentions.parse("<@1> invoice David Pereira").brief == "David Pereira"
+
+
+def test_how_far_back_payra_goes_is_read_not_guessed(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import jobs
+
+    class Newest:
+        def __init__(self, *a, **k):
+            self.pages = [
+                {"records": [{"updated_at": "2026-09-20T00:00:00.000Z"}, {"updated_at": "2026-09-01T00:00:00.000Z"}],
+                 "records_matched": 5000, "limit": 2, "updated_after_applied": "2025-09-25T12:00:00.316Z",
+                 "updated_after_capped": False, "next_updated_after": "2026-09-20T00:00:00.000Z"},
+                {"records": [], "records_matched": 0, "limit": 2},
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            return self.pages.pop(0)
+
+    monkeypatch.setattr(payraapi, "PayraClient", Newest)
+    said = jobs.payra_reach(NS(secrets=NS(payra_api_token="tok-fake", payra_site_id="s")), now=NOW)
+
+    assert "• Page 1: asked from September 25, 2025, Payra used September 25, 2025 · 5000 matched, 2 returned" in said
+    assert "September 1, 2026 to September 20, 2026, newest first · next from September 20, 2026" in said
+    assert "• Page 2:" in said and "0 matched, 0 returned" in said

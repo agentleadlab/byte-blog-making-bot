@@ -9455,6 +9455,44 @@ def payra_times(when: datetime) -> list[str]:
     ]
 
 
+def payra_reach(config: Config, *, now=None) -> str:
+    """How far back Payra's invoice list really goes, and in what order it
+    pages - read, never guessed. GET only; only counts and dates are said.
+
+    RYTE held 489 invoices for a year when 381 changed in the last month
+    alone, and nothing in "payra status" could say why.
+    """
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    now = now or datetime.now(timezone.utc)
+    lines = ["**How far back Payra's invoices go** (a year asked for, two pages read):"]
+    with payraapi.PayraClient(token, site) as client:
+        after = payraapi.when(now - timedelta(days=payraapi.FIRST_DAYS))
+        for page in (1, 2):
+            got = client.changed("invoices", after)
+            records = got.get("records") or []
+            stamps = [str(one.get("updated_at") or "") for one in records if one.get("updated_at")]
+            order = ("oldest first" if stamps == sorted(stamps) else
+                     "newest first" if stamps == sorted(stamps, reverse=True) else "in no order")
+            lines.append(
+                f"• Page {page}: asked from {payraapi._spelled(after)}, Payra used "
+                f"{payraapi._spelled(got.get('updated_after_applied')) if got.get('updated_after_applied') else '—'}"
+                f"{' (capped)' if got.get('updated_after_capped') else ''} · "
+                f"{got.get('records_matched', '?')} matched, {len(records)} returned, limit "
+                f"{got.get('limit', '?')} · "
+                + (f"{payraapi._spelled(min(stamps))} to {payraapi._spelled(max(stamps))}, {order}"
+                   if stamps else "no dates")
+                + f" · next from {payraapi._spelled(got.get('next_updated_after')) if got.get('next_updated_after') else '—'}"
+            )
+            onward = str(got.get("next_updated_after") or "")
+            if not records or not onward or onward == after:
+                break
+            after = onward
+    return "\n".join(lines)
+
+
 def payra_probe(config: Config) -> tuple[str, str]:
     """Read Payra's API docs and try the token on what they name. Reads only.
 
