@@ -939,7 +939,7 @@ def test_the_confirmation_is_laid_out_field_by_field():
 
 PAYRA_DESIGN = (
     "<html><head><style>.paid{color:#1d7a3a}</style><script>alert(1)</script></head>"
-    "<body><img src='https://example.com/payra-logo.png'><h1 class=paid>You Just Got Paid!</h1>"
+    "<body><script>steal()</script><img src='https://example.com/payra-logo.png'><h1 class=paid>You Just Got Paid!</h1>"
     "<table><tr><td>Total Paid</td><td>$1,407.60</td></tr></table></body></html>"
 )
 
