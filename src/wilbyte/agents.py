@@ -2254,7 +2254,7 @@ class Spread:
     make_checklist: bool = False
 
 
-def one_order_twice(said: str, already: str) -> bool:
+def one_order_twice(said: str, already: str, *, copies: bool = False) -> bool:
     """Whether two wordings name the same purchase rather than two of them.
 
     The person checklists on a setup card are copies, so the same agent is
@@ -2270,7 +2270,14 @@ def one_order_twice(said: str, already: str) -> bool:
         return False
     if family_of(said) != family_of(already):
         return False
-    if qualifiers_of(said) != qualifiers_of(already):
+    # Across two people's copies, one that leaves the qualifier off is the
+    # same order written thinner, the way one that leaves the tier off is.
+    # Gene Holmes and Trenton Tigney bought "Text Verified Fresh Trucker IUL
+    # 20 LEADS"; another copy of the list said "20 OTP IUL", and they were
+    # spread twice - once onto OTP IUL Plus, which they never bought. Within
+    # one person's list two lines are still two orders.
+    ours, theirs = qualifiers_of(said), qualifiers_of(already)
+    if ours != theirs and not (copies and (not ours or not theirs)):
         return False
     here, there = tier_of(said), tier_of(already)
     return here is None or there is None or here == there
@@ -2279,9 +2286,12 @@ def one_order_twice(said: str, already: str) -> bool:
 def _the_fuller(said: str, already: str) -> str:
     """Of two wordings of one order, the one that says more.
 
-    A tier beats no tier; failing that, the longer wording. "Ascend Plus
+    What the leads are beats everything - "Trucker IUL" over "OTP IUL" - then
+    a tier beats no tier; failing that, the longer wording. "Ascend Plus
     $1000/week" carries what the week is worth and "Ascend" does not.
     """
+    if len(qualifiers_of(said)) != len(qualifiers_of(already)):
+        return said if len(qualifiers_of(said)) > len(qualifiers_of(already)) else already
     if (tier_of(said) is not None) != (tier_of(already) is not None):
         return said if tier_of(said) is not None else already
     return said if len(said) > len(already) else already
@@ -2365,7 +2375,10 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
     order: list[str] = []
     links: dict[str, str] = {}
     labels: dict[str, list[str]] = {}
-    for checklist in checklists or []:
+    # Which person's copy each kept wording came from, so a thinner wording is
+    # only folded into one from somebody else's copy - see `one_order_twice`.
+    source: dict[str, list[int]] = {}
+    for at, checklist in enumerate(checklists or []):
         for item in checklist.get("checkItems") or []:
             url, label = split_item(str(item.get("name") or ""))
             if not url:
@@ -2375,6 +2388,7 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
             key = card_key(url)
             if key not in labels:
                 labels[key] = []
+                source[key] = []
                 links[key] = url
                 order.append(key)
             for part in order_parts(label):
@@ -2382,13 +2396,19 @@ def setup_agents(checklists: list[dict]) -> list[tuple[str, str]]:
                     continue
                 # The same order said again, by the next person's copy of the
                 # list. The fuller wording is kept and the thinner one dropped,
-                # rather than both being carried as two orders.
-                for number, kept in enumerate(labels[key]):
-                    if one_order_twice(part, kept):
-                        labels[key][number] = _the_fuller(part, kept)
-                        break
+                # rather than both being carried as two orders. Strictly first;
+                # a qualifier left off only between two people's copies.
+                same = next((number for number, kept in enumerate(labels[key])
+                             if one_order_twice(part, kept)), None)
+                if same is None:
+                    same = next((number for number, kept in enumerate(labels[key])
+                                 if source[key][number] != at
+                                 and one_order_twice(part, kept, copies=True)), None)
+                if same is not None:
+                    labels[key][same] = _the_fuller(part, labels[key][same])
                 else:
                     labels[key].append(part)
+                    source[key].append(at)
     return [(links[key], ORDER_JOIN.join(labels[key])) for key in order]
 
 

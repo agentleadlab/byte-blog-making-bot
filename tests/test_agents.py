@@ -4654,3 +4654,42 @@ def test_an_order_live_today_with_no_ads_card_holds_the_card():
 
     assert not plan.doable and plan.move_to != agents.DONE
     assert plan.problems == ["No 📊 Ads card dated 09/28/26 anywhere on the board"]
+
+
+# One person's copy of the setup list leaves "Trucker" off.
+
+GENE = "https://trello.com/c/abcdEFGH/1-new-agent-gene-holmes"
+ORDER_LISTS = ["OTP VETS", "OTP Blue Collar IUL", "OTP IUL Plus", "OTP IUL Standard",
+               "OTP Spanish IUL", "OTP IUL TRUCKER"]
+
+
+def _spread(*copies):
+    setup = [{"name": who, "checkItems": [{"name": f"{GENE} {line}"} for line in lines]}
+             for who, lines in copies]
+    spreads, problems = agents.plan_spread(setup, [{"name": n, "checkItems": []} for n in ORDER_LISTS])
+    return [(one.label, one.checklist) for one in spreads], problems
+
+
+@pytest.mark.parametrize("thin", ["OTP IUL", "20 OTP IUL", "IUL"])
+def test_a_copy_that_leaves_trucker_off_is_the_same_order(thin):
+    """Gene Holmes and Trenton Tigney bought Trucker IUL; another copy of the
+    setup list said "OTP IUL", and they were spread onto OTP IUL Plus too."""
+    got, problems = _spread(("Therese", [thin]), ("Nicole", ["Text Verified Fresh Trucker IUL 20 LEADS"]))
+    assert got == [("Text Verified Fresh Trucker IUL 20 LEADS", "OTP IUL TRUCKER")] and problems == []
+    got, _ = _spread(("Nicole", ["Text Verified Fresh Trucker IUL 20 LEADS"]), ("Therese", [thin]))
+    assert got == [("Text Verified Fresh Trucker IUL 20 LEADS", "OTP IUL TRUCKER")], "whichever copy comes first"
+
+
+def test_two_orders_on_one_persons_list_stay_two():
+    got, _ = _spread(("Therese", ["25 OTP IUL", "20 Trucker IUL"]), ("Nicole", ["25 OTP IUL", "20 Trucker IUL"]))
+    assert sorted(got) == [("20 Trucker IUL", "OTP IUL TRUCKER"), ("25 OTP IUL", "OTP IUL Plus")]
+
+
+def test_two_different_qualifiers_are_two_orders_even_across_copies():
+    got, _ = _spread(("Therese", ["20 Spanish IUL"]), ("Nicole", ["20 Trucker IUL"]))
+    assert sorted(got) == [("20 Spanish IUL", "OTP Spanish IUL"), ("20 Trucker IUL", "OTP IUL TRUCKER")]
+
+
+def test_what_the_leads_are_beats_a_tier():
+    got, _ = _spread(("Therese", ["20 OTP IUL"]), ("Nicole", ["Trucker IUL"]))
+    assert got == [("Trucker IUL", "OTP IUL TRUCKER")]
