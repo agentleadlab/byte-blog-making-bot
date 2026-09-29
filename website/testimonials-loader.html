@@ -122,12 +122,17 @@
   }
 
   function load(){
+    /* Nothing to do on a page without the video section - not even a request. */
+    if (!document.getElementById('ll-video-grid') && !document.getElementById('lltGrid')) return;
     fetch(LL_DATA, { cache: 'no-store' })
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(pages){
         var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
         var m = /LLVIDEOS-([0-9a-f]+)/.exec(html);
-        if (m){ var data = fromHex(m[1]); apply(data); applyLlt(data); }
+        if (!m) return;
+        var data = fromHex(m[1]);
+        try { apply(data); } catch (e) {}
+        try { applyLlt(data); } catch (e) {}
       })
       .catch(function(){ /* keep what the page already shows */ });
   }
