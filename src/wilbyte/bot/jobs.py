@@ -5428,12 +5428,32 @@ def receipt_fields(body: str) -> list[tuple[str, str]]:
 
 
 def _emails_html(emails: list, who: str) -> str:
-    """Payra's confirmation emails as a printable page, one to a sheet - the
-    fields laid out, and the email as it was sent underneath."""
-    import html
+    """Payra's confirmation emails as a printable page, one to a sheet.
 
-    pages = []
+    As they were sent - Payra's own layout, logo and all - when the email has
+    its designed version, which is the stronger thing to hand a bank: it is
+    visibly Payra's document, not RYTE's retelling of it. The fields laid out
+    in a table when it hasn't. Each is headed with what it is and when it was
+    sent.
+    """
+    import html
+    import re
+
+    styles, pages = [], []
     for one in emails[:10]:
+        meta = (
+            "<div class=ryte-meta>Payment confirmation from Payra — as emailed · "
+            f"{html.escape(one.subject)} · sent {html.escape(one.when)}</div>"
+        )
+        designed = str(getattr(one, "html", "") or "")
+        if designed.strip():
+            designed = re.sub(r"<script\b.*?</script>", "", designed, flags=re.IGNORECASE | re.DOTALL)
+            for style in re.findall(r"<style\b[^>]*>.*?</style>", designed, re.IGNORECASE | re.DOTALL):
+                if style not in styles:
+                    styles.append(style)
+            inside = re.search(r"<body\b[^>]*>(.*)</body>", designed, re.IGNORECASE | re.DOTALL)
+            pages.append(f"<section class=ryte-page>{meta}{inside.group(1) if inside else designed}</section>")
+            continue
         fields = receipt_fields(one.body)
         text = str(one.body or "").split("Powered by PAYRA")[0].strip()
         rows = "".join(
@@ -5441,22 +5461,24 @@ def _emails_html(emails: list, who: str) -> str:
             for label, value in fields
         )
         pages.append(
-            "<section class=page><div class=label>Payment confirmation from Payra — as emailed</div>"
-            f"<h1>{html.escape(one.subject)}</h1><div class=when>Sent {html.escape(one.when)}</div>"
+            f"<section class='ryte-page ryte-plain'>{meta}<h1>{html.escape(one.subject)}</h1>"
             + (f"<table>{rows}</table>" if rows else "")
-            + f"<div class=label>The email as written</div><pre>{html.escape(text)}</pre></section>"
+            + f"<div class=ryte-label>The email as written</div><pre>{html.escape(text)}</pre></section>"
         )
     return (
-        "<!doctype html><html><head><meta charset=utf-8><style>"
-        "@page { size: Letter; margin: 0.6in; }"
-        "body { font: 11pt/1.45 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b1b1f; margin: 0; }"
-        ".page { page-break-after: always; } .page:last-child { page-break-after: auto; }"
-        ".label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; margin-top: 18px; }"
-        "h1 { font-size: 16pt; margin: 4px 0; } .when { color: #555; margin-bottom: 14px; }"
-        "table { border-collapse: collapse; width: 100%; margin-top: 6px; }"
-        "th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #ddd; }"
-        "th { width: 36%; color: #555; font-weight: 600; }"
-        "pre { white-space: pre-wrap; font: 9pt/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; "
+        "<!doctype html><html><head><meta charset=utf-8>" + "".join(styles) + "<style>"
+        "@page { size: Letter; margin: 0.5in; }"
+        "body { margin: 0; }"
+        ".ryte-page { page-break-after: always; } .ryte-page:last-child { page-break-after: auto; }"
+        ".ryte-meta { font: 8.5pt/1.4 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #666; "
+        "border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 12px; }"
+        ".ryte-plain { font: 11pt/1.45 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1b1b1f; }"
+        ".ryte-plain h1 { font-size: 16pt; margin: 4px 0 12px; }"
+        ".ryte-label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #666; margin-top: 18px; }"
+        ".ryte-plain table { border-collapse: collapse; width: 100%; }"
+        ".ryte-plain th, .ryte-plain td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #ddd; }"
+        ".ryte-plain th { width: 36%; color: #555; font-weight: 600; }"
+        ".ryte-plain pre { white-space: pre-wrap; font: 9pt/1.5 -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; "
         "color: #666; border-top: 1px solid #ddd; padding-top: 8px; }"
         f"</style></head><body>{''.join(pages)}</body></html>"
     )
@@ -5502,8 +5524,16 @@ def _print_pdf(html: str) -> bytes:
     with sync_playwright() as playing:
         browser = playing.chromium.launch(**launch)
         try:
-            page = browser.new_page()
-            page.set_content(html, wait_until="load")
+            # No scripts: an email's page is for looking at. Its images - Payra's
+            # logo - are waited for, but not forever.
+            page = browser.new_page(java_script_enabled=False)
+            try:
+                page.set_content(html, wait_until="networkidle", timeout=20_000)
+            except Exception:
+                import logging
+
+                logging.getLogger("wilbyte.bot").info(
+                    "An image in the page didn't load in time; printing without it")
             return page.pdf(format="Letter", print_background=True,
                             margin={"top": "0.6in", "bottom": "0.6in", "left": "0.6in", "right": "0.6in"})
         finally:

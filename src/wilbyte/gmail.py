@@ -67,6 +67,9 @@ class Found:
     #: reference, who paid, the card, the total - and that is the exhibit.
     body: str = ""
     files: list = field(default_factory=list)
+    #: The email as it was designed - Payra's layout, logo and all - for a
+    #: copy that looks like what was sent rather than its words.
+    html: str = ""
 
 
 @dataclass
@@ -211,6 +214,7 @@ class GmailClient:
         )
         payload = got.get("payload") or {}
         found.body = _body_of(payload)
+        found.html = _first_part(payload, "text/html")
         found.files = _attachments_in(payload)
         return found
 

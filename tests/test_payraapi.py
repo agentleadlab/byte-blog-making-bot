@@ -932,6 +932,41 @@ def test_the_confirmation_is_laid_out_field_by_field():
     from wilbyte import gmail
 
     page = jobs._emails_html([gmail.Found("m", subject="Payment confirmation", when="Fri", body=PEREIRA_EMAIL)], "x")
-    assert "<tr><th>Total Paid</th><td>$1,407.60</td></tr>" in page
+    assert "<tr><th>Total Paid</th><td>$1,407.60</td></tr>" in page, "no designed version: the table"
     assert "Own a business" not in page, "Payra's advert left off"
     assert "The email as written" in page
+
+
+PAYRA_DESIGN = (
+    "<html><head><style>.paid{color:#1d7a3a}</style><script>alert(1)</script></head>"
+    "<body><img src='https://example.com/payra-logo.png'><h1 class=paid>You Just Got Paid!</h1>"
+    "<table><tr><td>Total Paid</td><td>$1,407.60</td></tr></table></body></html>"
+)
+
+
+def test_the_email_is_copied_as_payra_designed_it():
+    """"yes do option 2" - Payra's own layout, logo and all."""
+    from wilbyte import gmail
+    from wilbyte.bot import jobs
+
+    page = jobs._emails_html([gmail.Found("m", subject="Payment confirmation [Invoice #INV-18089]",
+                                          when="Fri, 4 Sep 2026", body=PEREIRA_EMAIL, html=PAYRA_DESIGN)], "x")
+
+    assert "<h1 class=paid>You Just Got Paid!</h1>" in page and "payra-logo.png" in page
+    assert "<style>.paid{color:#1d7a3a}</style>" in page, "Payra's own styles kept"
+    assert "<script" not in page
+    assert "Payment confirmation from Payra — as emailed · Payment confirmation [Invoice #INV-18089] · sent Fri, 4 Sep 2026" in page
+    assert "<tr><th>" not in page, "the table only when there is no designed email"
+
+
+def test_the_designed_email_is_read_off_gmail():
+    import base64
+
+    from wilbyte import gmail
+
+    def part(kind, text):
+        return {"mimeType": kind, "body": {"data": base64.urlsafe_b64encode(text.encode()).decode()}}
+
+    payload = {"mimeType": "multipart/alternative", "parts": [part("text/plain", "Total Paid $1"),
+                                                              part("text/html", "<b>Total Paid</b> $1")]}
+    assert gmail._first_part(payload, "text/html") == "<b>Total Paid</b> $1"
