@@ -29,6 +29,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import waiting
+from .. import watchedseen
 from .. import cover as cover_mod
 from .. import (
     fathom, formats, ghl, notion, prefs, publisher, version, writer, youtube, zoom,
@@ -194,6 +195,7 @@ class WilByteBot(discord.Client):
         self.publisher_task: asyncio.Task | None = None
         self.updater_task: asyncio.Task | None = None
         self.caption_task: asyncio.Task | None = None
+        self.watch_task: asyncio.Task | None = None
         self.board_task: asyncio.Task | None = None
         self.agent_task: asyncio.Task | None = None
         self.float_task: asyncio.Task | None = None
@@ -271,6 +273,11 @@ class WilByteBot(discord.Client):
         # up where it left off.
         if self.caption_task is None or self.caption_task.done():
             self.caption_task = self.loop.create_task(caption_loop(self))
+        # Videos announced while RYTE was offline - no wifi, the Mac asleep.
+        if self.config.secrets.discord_watch_channel_ids and (
+            self.watch_task is None or self.watch_task.done()
+        ):
+            self.watch_task = self.loop.create_task(watch_catch_up_loop(self))
         # The daily board walks itself only when asked to. It writes to a board
         # four people work off every day, on a timer, whether or not anybody is
         # looking.
@@ -599,11 +606,15 @@ async def handle_watched(bot: "WilByteBot", message: discord.Message) -> None:
     responder = ChannelResponder(channel)
 
     if bot.run_lock.locked():
+        # Not taken in hand, so the catch-up has it once this batch is done.
         await responder.send(
-            "A new video just landed but I'm mid-run — I'll need telling again "
-            f"once this batch is done:\n```\n@RYTE {' '.join(links)}\n```"
+            "A new video just landed but I'm mid-run — I'll write it up as soon "
+            "as this batch is done."
         )
         return
+    # Taken in hand from here - held for captions or written now - and never
+    # picked up again by the catch-up, whatever happens next.
+    await asyncio.to_thread(watchedseen.add, message.id)
 
     # Ask for the transcript before announcing anything. A video announced the
     # minute it goes up has no captions for another while yet, and finding that
@@ -622,6 +633,84 @@ async def handle_watched(bot: "WilByteBot", message: discord.Message) -> None:
             # YouTube for what was just fetched.
             transcript_text=ready if len(links) == 1 else None,
         )
+
+
+#: How far back the announcement channel is read for videos RYTE missed.
+WATCH_CATCH_UP_DAYS = 3
+#: ...the first time, when nothing is remembered as done yet.
+WATCH_FIRST_HOURS = 24
+#: And how often, besides every start.
+WATCH_CATCH_UP_SECONDS = 900
+
+
+def _video_ids(links) -> set[str]:
+    from .. import youtube
+
+    found = set()
+    for link in links:
+        try:
+            found.add(youtube.extract_video_id(link))
+        except Exception:
+            continue
+    return found
+
+
+async def missed_announcements(bot: "WilByteBot") -> list:
+    """Video announcements RYTE never took in hand, oldest first.
+
+    Not ones it has written, scheduled or published; not ones waiting on
+    captions; not ones whose post Franklin deleted - that slot is his to
+    rerun; and not ones it has already taken in hand.
+    """
+    first = not await asyncio.to_thread(watchedseen.exists)
+    seen = set(await asyncio.to_thread(watchedseen.load))
+    ledger = await asyncio.to_thread(Ledger.load)
+    queue = await asyncio.to_thread(waiting.Queue.load)
+    queued = _video_ids(queue.items)
+    since = datetime.now(timezone.utc) - (
+        timedelta(hours=WATCH_FIRST_HOURS) if first else timedelta(days=WATCH_CATCH_UP_DAYS)
+    )
+    missed = []
+    for wanted in bot.config.secrets.discord_watch_channel_ids or ():
+        channel = bot.get_channel(int(wanted)) if str(wanted).isdigit() else None
+        if channel is None:
+            continue
+        try:
+            async for message in channel.history(limit=50, after=since, oldest_first=True):
+                if str(message.id) in seen:
+                    continue
+                videos = _video_ids(watched_links(message))
+                if not videos:
+                    continue
+                if all(ledger.has(one) or one in ledger.freed or one in queued for one in videos):
+                    continue
+                missed.append(message)
+        except discord.HTTPException:
+            log.warning("Couldn't read back through %s for missed videos", wanted, exc_info=True)
+    return missed
+
+
+async def watch_catch_up_loop(bot: "WilByteBot") -> None:
+    """Write up any video announced while RYTE wasn't there to see it.
+
+    "i have no wifi right now ... dont want him missing posting". Everything
+    else RYTE does looks at the board or the ledger when it wakes and does
+    what is overdue; a video announcement is a message, and a message missed
+    is gone unless somebody reads back for it. On every start, and every
+    quarter of an hour, which also collects one that landed mid-run.
+    """
+    while not bot.is_closed():
+        try:
+            for message in await missed_announcements(bot):
+                while bot.run_lock.locked():
+                    await asyncio.sleep(10)
+                log.info("Catching up on a video announced while I was away: %s", message.id)
+                await handle_watched(bot, message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Catching up on missed videos failed; will try again")
+        await asyncio.sleep(WATCH_CATCH_UP_SECONDS)
 
 
 async def _hold_for_captions(bot, responder: Responder, link: str, message) -> None:

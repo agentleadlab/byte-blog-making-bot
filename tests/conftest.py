@@ -7,7 +7,7 @@ from wilbyte.models import CopyPackage, Headline
 @pytest.fixture(autouse=True)
 def _said_nothing_yet(tmp_path, monkeypatch):
     """Each test starts having said nothing, and writes nowhere real."""
-    from wilbyte import alreadysaid, payra, payraapi, prefs, quietrun, ringtexts, tagreads, usage
+    from wilbyte import alreadysaid, payra, payraapi, prefs, quietrun, ringtexts, tagreads, usage, watchedseen
 
     monkeypatch.setattr(alreadysaid, "SAID_PATH", tmp_path / "already-said.json")
     # And read nothing yet. A reading kept by one test and reused by the next
@@ -23,6 +23,7 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(usage, "USAGE_PATH", tmp_path / "usage.json")
     # Nor switch anything of the real RYTE's - the responder off, say.
     monkeypatch.setattr(prefs, "PREFS_PATH", tmp_path / "preferences.json")
+    monkeypatch.setattr(watchedseen, "SEEN_PATH", tmp_path / "watched-seen.json")
     # Nor a card read by another test, kept as if it were this one's.
     from wilbyte.bot import jobs
 
