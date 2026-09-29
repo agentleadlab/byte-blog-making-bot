@@ -553,6 +553,14 @@ TESTIMONIAL = re.compile(
     r"^\s*(?:add\s+(?:a\s+|this\s+)?)?(?:video\s+)?(?:testimonials?|testimon(?:y|ies)|website\s+videos?|to\s+(?:the\s+)?website)\b[:\s]*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
+# "testimonial remove Raymond", "remove testimonial <link>", "delete ... from
+# the website" - one interview off the site, after the button.
+TESTIMONIAL_REMOVE = re.compile(
+    r"^\s*(?:(?:testimonials?|website\s+videos?)\s+(?:remove|delete|take\s+down)"
+    r"|(?:remove|delete|take\s+down)\s+(?:the\s+)?(?:testimonials?|website\s+videos?))\b[:\s]*(.+?)"
+    r"(?:\s+from\s+(?:the\s+)?website)?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 _TESTIMONIAL_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S+", re.IGNORECASE)
 
 
@@ -709,6 +717,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # action words: "clearout" in "check clearouts" is not a clear-out.
     # "testimonial https://youtu.be/..." - an interview for the website, not a
     # blog post, so before a bare YouTube link is taken as one.
+    down = TESTIMONIAL_REMOVE.match(text)
+    if down:
+        return MentionRequest(action="testimonialremove", brief=down.group(1).strip(" .!?"))
     site = TESTIMONIAL.match(text)
     if site:
         return MentionRequest(action="testimonial", brief=site.group(1).strip())
@@ -1209,8 +1220,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from
 > their own messages, into a folder named for them
 > @RYTE **testimonial https://youtu.be/…** — a full interview for the website's video
-> section: I pick the name and a quote, you press Add. `name: …` / `quote: …` after the
-> link to set them yourself. **website check** — whether I can reach the site
+> section, with `quote: …` after the link (and `name: …` if the video doesn't say), then Add.
+> link to set them yourself. **testimonial remove Raymond** — take one off.
+> **website check** — whether I can reach the site
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
 > payment on each (date, amount, card ending, transaction)
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an

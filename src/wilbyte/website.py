@@ -119,6 +119,31 @@ def add(data: dict, video: dict) -> tuple[dict, str]:
     return {**data, "featured": video, "videos": videos}, moved
 
 
+def find(data: dict, said: str) -> list[dict]:
+    """The interviews a YouTube link, id or whole name means - featured one
+    included. A name that two interviews share (there are two Williams)
+    finds both, so the link has to settle it."""
+    wanted = str(said or "").strip()
+    link = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{11})", wanted)
+    key = link.group(1) if link else wanted
+    everyone = ([data["featured"]] if data.get("featured") else []) + list(data.get("videos") or [])
+    by_id = [one for one in everyone if one.get("id") == key]
+    if by_id:
+        return by_id
+    name = " ".join(wanted.split()).casefold()
+    return [one for one in everyone if " ".join(str(one.get("name") or "").split()).casefold() == name]
+
+
+def remove(data: dict, video_id: str) -> tuple[dict, str]:
+    """The list without that interview. (the new list, who is featured now).
+    Taking the featured one away puts the next in line back in its place."""
+    videos = [one for one in data.get("videos") or [] if one.get("id") != video_id]
+    featured = data.get("featured")
+    if featured and featured.get("id") == video_id:
+        featured = videos.pop(0) if videos else None
+    return {**data, "featured": featured, "videos": videos}, str((featured or {}).get("name") or "")
+
+
 def quote_marks(quote: str) -> str:
     """The quote in straight double quotes, as every one on the page is."""
     said = " ".join(str(quote or "").split()).strip().strip('"“”').strip()

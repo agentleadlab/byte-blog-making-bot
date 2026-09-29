@@ -9914,6 +9914,40 @@ def _pick_testimonial(config: Config, title: str, transcript: str) -> dict:
     return {"name": str(got.get("name") or ""), "quote": str(got.get("quote") or "")}
 
 
+def testimonial_lookup(config: Config, said: str) -> tuple[dict, str]:
+    """Which interview on the site "remove ..." means. (it, what's featured
+    if it goes) - or a WebsiteError saying why not."""
+    from .. import website
+
+    with _wordpress(config) as site:
+        held = site.load() or website.parse_live(site.live_page())
+    found = website.find(held, said)
+    if not found:
+        raise website.WebsiteError(f"There's no interview on the website for “{said}”.")
+    if len(found) > 1:
+        raise website.WebsiteError(
+            f"{len(found)} interviews on the website are called “{said}” - send the YouTube link instead."
+        )
+    _left, featured = website.remove(held, found[0]["id"])
+    return found[0], featured
+
+
+def testimonial_take_down(config: Config, video_id: str) -> str:
+    """Take one interview off the site. What happened, said."""
+    from .. import website
+
+    with _wordpress(config) as site:
+        held = site.load() or website.parse_live(site.live_page())
+        gone = next((one for one in website.find(held, video_id)), None)
+        if gone is None:
+            return "It's already off the website."
+        was_featured = (held.get("featured") or {}).get("id") == video_id
+        updated, featured = website.remove(held, video_id)
+        site.save(updated)
+    return (f"🗑 **{gone['name']}** is off the website."
+            + (f" **{featured}** is the featured interview again." if was_featured and featured else ""))
+
+
 def testimonial_publish(config: Config, video: dict) -> str:
     """Put the interview on the site as the featured one. What happened, said."""
     from .. import website

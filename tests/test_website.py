@@ -218,12 +218,109 @@ def test_nothing_goes_on_the_site_until_add_is_pressed(monkeypatch):
             sent.append((content, kw.get("embed")))
 
     config = NS(discord=NS(approval_timeout_seconds=60))
-    asyncio.run(client._website_testimonial(Heard(), config, "https://youtu.be/U1O8FXthqzQ"))
+    said = "https://youtu.be/U1O8FXthqzQ quote: x"
+    asyncio.run(client._website_testimonial(Heard(), config, said))
     assert published == [] and sent[-1][1].description.startswith("**Emanuel Nazco**")
 
     View.confirmed = True
-    asyncio.run(client._website_testimonial(Heard(), config, "https://youtu.be/U1O8FXthqzQ"))
+    asyncio.run(client._website_testimonial(Heard(), config, said))
     assert published and sent[-1][0] == "✅ done"
 
     asyncio.run(client._website_testimonial(Heard(), config, "no link here"))
-    assert sent[-1][0].startswith("Send the YouTube link")
+    assert sent[-1][0].startswith("Send the link and the quote together")
+
+
+def test_the_quote_is_always_franklins(monkeypatch):
+    """"i want to send him the quote every time"."""
+    from wilbyte.bot import client, jobs
+
+    monkeypatch.setattr(jobs, "testimonial_draft", lambda *a, **kw: pytest.fail("nothing read without a quote"))
+    sent = []
+
+    class Heard:
+        requester_id = 1
+
+        async def send(self, content=None, **kw):
+            sent.append(content)
+
+    asyncio.run(client._website_testimonial(Heard(), NS(), "https://youtu.be/U1O8FXthqzQ"))
+    assert sent == ["Send the link and the quote together: `@RYTE testimonial https://youtu.be/… "
+                    "quote: …` — add `name: …` too if the video doesn't say who it is."]
+
+
+# ------------------------------------------------ "can he delete that"
+
+
+def _held():
+    return {"featured": {"id": "RAY00000000", "name": "Raymond", "quote": '"a"'},
+            "videos": [{"id": "U1O8FXthqzQ", "name": "Emanuel Nazco", "quote": '"b"'},
+                       {"id": "WIL1", "name": "William", "quote": '"c"'},
+                       {"id": "WIL2", "name": "William", "quote": '"d"'}],
+            "page_size": 8}
+
+
+def test_taking_the_featured_one_away_puts_the_next_back():
+    left, featured = website.remove(_held(), "RAY00000000")
+    assert featured == "Emanuel Nazco" and left["featured"]["id"] == "U1O8FXthqzQ"
+    assert [one["id"] for one in left["videos"]] == ["WIL1", "WIL2"]
+    left, featured = website.remove(_held(), "WIL1")
+    assert featured == "Raymond" and [one["id"] for one in left["videos"]] == ["U1O8FXthqzQ", "WIL2"]
+
+
+def test_an_interview_is_found_by_link_id_or_whole_name():
+    held = _held()
+    assert [one["id"] for one in website.find(held, "https://youtu.be/RAY00000000")] == ["RAY00000000"]
+    assert [one["id"] for one in website.find(held, "raymond")] == ["RAY00000000"]
+    assert len(website.find(held, "William")) == 2
+    assert website.find(held, "Ray") == []
+
+
+@pytest.mark.parametrize("said, who", [
+    ("testimonial remove Raymond", "Raymond"),
+    ("remove testimonial https://youtu.be/9Ul9Fv3Jxzs", "https://youtu.be/9Ul9Fv3Jxzs"),
+    ("delete testimonial Raymond from the website", "Raymond"),
+    ("testimonials delete Raymond.", "Raymond"),
+])
+def test_asking_to_take_one_down(said, who):
+    from wilbyte.bot import mentions
+
+    got = mentions.parse("<@1> " + said)
+    assert (got.action, got.brief) == ("testimonialremove", who)
+
+
+def test_taking_one_down_after_the_button(site, monkeypatch):
+    from wilbyte.bot import client, jobs, views
+
+    site.page = {"id": 7, "content": {"raw": website.page_content(_held())}}
+
+    class View:
+        confirmed = True
+
+        def __init__(self, **kw):
+            pass
+
+        async def wait(self):
+            pass
+
+    monkeypatch.setattr(views, "ConfirmView", View)
+    sent = []
+
+    class Heard:
+        requester_id = 1
+
+        async def send(self, content=None, **kw):
+            sent.append(content)
+
+    config = NS(secrets=CONFIG.secrets, discord=NS(approval_timeout_seconds=60))
+    asyncio.run(client._website_take_down(Heard(), config, "Raymond"))
+
+    assert sent[0] == "Take **Raymond** off the website? **Emanuel Nazco** would be the featured interview."
+    assert sent[-1] == "🗑 **Raymond** is off the website. **Emanuel Nazco** is the featured interview again."
+    kept = website.decode(site.page["content"]["raw"])
+    assert kept["featured"]["id"] == "U1O8FXthqzQ" and "RAY00000000" not in str(kept)
+
+    asyncio.run(client._website_take_down(Heard(), config, "William"))
+    assert sent[-1] == "⚠ 2 interviews on the website are called “William” - send the YouTube link instead."
+    asyncio.run(client._website_take_down(Heard(), config, "Nobody"))
+    assert "There's no interview on the website for “Nobody”" in sent[-1]
+

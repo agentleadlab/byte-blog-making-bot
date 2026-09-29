@@ -1146,6 +1146,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _website_testimonial(responder, config, request.brief or "")
                 return
 
+            if request.action == "testimonialremove":
+                await _website_take_down(responder, config, request.brief or "")
+                return
+
             if request.action == "websitecheck":
                 try:
                     said = await asyncio.to_thread(jobs.website_check, config)
@@ -1455,14 +1459,15 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
     """A full interview onto the website's video section, once Franklin has
     seen the name and quote and pressed Add."""
     link, name, quote = mentions.testimonial_parts(said)
-    if not link:
+    # "i want to send him the quote every time" - the quote is always his.
+    if not link or not quote:
         await responder.send(
-            "Send the YouTube link: `@RYTE testimonial https://youtu.be/…` — add "
-            "`name: …` or `quote: …` after it to set them yourself."
+            "Send the link and the quote together: `@RYTE testimonial https://youtu.be/… "
+            "quote: …` — add `name: …` too if the video doesn't say who it is."
         )
         return
-    if not (name and quote):
-        await responder.send("🎬 Reading the interview for a quote…")
+    if not name:
+        await responder.send("🎬 Reading the interview for their name…")
     try:
         video = await asyncio.to_thread(
             partial(jobs.testimonial_draft, config, link, name=name, quote=quote))
@@ -1492,6 +1497,38 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
         done = await asyncio.to_thread(jobs.testimonial_publish, config, video)
     except Exception as exc:
         await responder.send(f"⚠ Couldn't put it on the website: {_readable(exc)}")
+        return
+    await responder.send(done)
+
+
+async def _website_take_down(responder: Responder, config: Config, said: str) -> None:
+    """One interview off the website, after the button."""
+    if not said:
+        await responder.send("Which one? `@RYTE testimonial remove Raymond` — or the YouTube link.")
+        return
+    try:
+        gone, featured = await asyncio.to_thread(jobs.testimonial_lookup, config, said)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Remove from website",
+        emoji="🗑",
+    )
+    await responder.send(
+        f"Take **{gone['name']}** off the website?"
+        + (f" **{featured}** would be the featured interview." if featured else ""),
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        done = await asyncio.to_thread(jobs.testimonial_take_down, config, gone["id"])
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't take it off the website: {_readable(exc)}")
         return
     await responder.send(done)
 
