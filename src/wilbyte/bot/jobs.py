@@ -9857,7 +9857,7 @@ def website_check(config: Config) -> str:
             where = "the list I keep"
     roles = ", ".join(me.get("roles") or []) or "?"
     featured = (held.get("featured") or {}).get("name") or "nobody"
-    return (f"✅ Signed in to {site.url} as **{me.get('name') or me.get('slug') or '?'}** ({roles}).\n"
+    return (f"✅ Signed in to <{site.url}> as **{me.get('name') or me.get('slug') or '?'}** ({roles}).\n"
             f"Reading {where}: **{featured}** featured, {len(held.get('videos') or [])} more in the grid.")
 
 

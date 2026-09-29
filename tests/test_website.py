@@ -139,7 +139,7 @@ def test_the_check_says_who_and_what(site):
     from wilbyte.bot import jobs
 
     said = jobs.website_check(CONFIG)
-    assert said.startswith("✅ Signed in to https://leadlabcrm.com as **Franklin** (administrator).")
+    assert said.startswith("✅ Signed in to <https://leadlabcrm.com> as **Franklin** (administrator).")
     assert "**Emanuel Nazco** featured, 2 more in the grid" in said
 
 
