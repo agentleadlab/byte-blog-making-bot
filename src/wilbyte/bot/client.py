@@ -6110,22 +6110,31 @@ def _whose(task) -> str:
     return "list:" + " ".join(str(task.checklist or "").split()).casefold()
 
 
+def _words_of(task) -> str:
+    """A short fingerprint of the comment's words, so an edited comment can be
+    told from the same comment found again."""
+    import hashlib
+
+    said = " ".join(str(task.note.text or "").split())
+    return hashlib.sha1(said.encode("utf-8")).hexdigest()[:10]
+
+
 def _said_key(task) -> str:
     """What makes one offered line the same line as another.
 
-    The comment it came from and whose it is - never the summary. The summary
-    is written fresh every run and comes back reworded: the same comment gave
-    "Let them know Everlife aged lead 20% off, code everlife20" one minute and
-    the same sentence without the comma the next, and a comma was enough to
-    make it a line nobody had seen before. Pressing "leave it" then meant
-    nothing.
+    The comment it came from, its words, and whose it is - never the summary.
+    The summary is written fresh every run and comes back reworded: the same
+    comment gave "Let them know Everlife aged lead 20% off, code everlife20"
+    one minute and the same sentence without the comma the next, and a comma
+    was enough to make it a line nobody had seen before. Pressing "leave it"
+    then meant nothing.
 
     A description line has no comment to be identified by, so there its own
     words do the job - which is safe, because those go on as they were written
     rather than being summarised.
     """
     if task.note.comment_id:
-        return f"comment|{task.note.comment_id}|{_whose(task)}"
+        return f"comment|{task.note.comment_id}|{_whose(task)}|{_words_of(task)}"
     return f"description|{task.kind}|{task.checklist}|{task.summary}"
 
 
@@ -6148,6 +6157,27 @@ def _said_keys(tasks) -> list:
     return _numbered(_said_key(one) for one in tasks)
 
 
+def _what_was_shown(lately) -> tuple[set, dict]:
+    """(comments shown to somebody, as they were worded then; how many lines
+    each person was shown from each comment, whatever its wording)."""
+    shown, most = set(), {}
+    for key in lately:
+        base, _, number = str(key).partition("#")
+        if not base.startswith("comment|"):
+            shown.add(base)
+            continue
+        parts = base.split("|")
+        # comment|id|whose|words - or comment|id|whose, written on the
+        # afternoon of 30 September before the words were part of it.
+        whose = "|".join(parts[:3])
+        shown.add(base if len(parts) > 3 else whose)
+        try:
+            most[whose] = max(most.get(whose, 0), int(number or 0))
+        except ValueError:
+            pass
+    return shown, most
+
+
 def _not_shown_yet(tasks, *, today: set, lately: set) -> list:
     """The tasks nobody has been shown.
 
@@ -6155,12 +6185,32 @@ def _not_shown_yet(tasks, *, today: set, lately: set) -> list:
     belongs to one card, and a line left alone on tomorrow's card yesterday
     afternoon is the same line once that card is today's. A description line
     only today - the same words on each day's card are each day's job.
+
+    And a comment once shown to somebody is shown to them, whatever a later
+    pass makes of it. Jenn's "Same folder broken down ABO setup" came back at
+    4:44 and again at 4:53 with nothing restarted in between: that pass found
+    the comment one more time, which made her line the second of two, and the
+    second had never been shown. Only an edit to the comment makes more of it
+    new - and then only the lines past the ones already shown.
     """
+    shown, most = _what_was_shown(lately)
     old = _numbered(_already_said(one) for one in tasks)
-    fresh = []
+    fresh, taken = [], set()
     for one, key, before in zip(tasks, _said_keys(tasks), old):
-        seen = lately if one.note.comment_id else today
-        if key in seen or before in seen:
+        if one.note.comment_id:
+            base, _, number = key.partition("#")
+            whose = "|".join(base.split("|")[:3])
+            if base in shown or whose in shown or before.split("#", 1)[0] in shown:
+                continue
+            if int(number) <= most.get(whose, 0):
+                continue
+            # The same line twice in one pass - one comment found on the
+            # way to two days' cards - is one line.
+            same = (base, " ".join(str(one.summary or "").split()).casefold())
+            if same in taken:
+                continue
+            taken.add(same)
+        elif key in today or before in today:
             continue
         fresh.append(one)
     return fresh
@@ -6214,6 +6264,14 @@ async def _offer_tags_now(
             alreadysaid.remember, day, _said_keys(tasks) + list(problems),
         )
         log.info("Tags offered: %s", ", ".join(_said_keys(tasks)))
+        # Should a line ever come back, this is what says why: what was on file
+        # for the same comment when it was offered again.
+        for one in tasks:
+            if one.note.comment_id:
+                before = sorted(k for k in lately if one.note.comment_id in str(k))
+                if before:
+                    log.warning("Offered %s again; on file for that comment: %s",
+                                _said_key(one), ", ".join(before))
 
     # A description line and a comment are two different things and get asked
     # about separately. The description is the card's own standing list of who

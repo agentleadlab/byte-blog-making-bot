@@ -4220,17 +4220,36 @@ def test_a_line_read_again_and_placed_elsewhere_stays_left_alone(monkeypatch):
     assert again == []
 
 
-def test_a_second_job_found_on_a_new_reading_is_still_offered(monkeypatch):
-    """Only what was shown is held back. A reading that finds Jenn a second job
-    in the same comment has found something nobody has seen."""
+def test_a_comment_found_again_in_the_same_pass_stays_left_alone(monkeypatch):
+    """4:44 and again at 4:53, nothing restarted: that pass found the comment
+    one more time, which made Jenn's line the second of two - and the second
+    had never been shown."""
     _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()])
     _filed, again = _watching(
+        monkeypatch, press=False, remember=True, tasks=[_jenn(), _jenn()],
+    )
+    _filed, later = _watching(
         monkeypatch, press=False, remember=True,
         tasks=[_jenn(), _jenn(summary="Duplicate the winning ad set")],
     )
 
-    assert len(again) == 1
-    assert "Duplicate the winning ad set" in again[0]
+    assert again == [] and later == []
+
+
+def test_one_comment_found_twice_at_once_is_offered_once(monkeypatch):
+    _filed, first = _watching(monkeypatch, press=False, remember=True,
+                              tasks=[_jenn(), _jenn()])
+
+    assert len(first) == 1
+
+
+def test_several_jobs_in_one_comment_are_all_offered(monkeypatch):
+    """Tre's comment is three jobs for Kath, shown together."""
+    _filed, first = _watching(monkeypatch, press=False, remember=True, tasks=[
+        _jenn(), _jenn(summary="Duplicate the winning ad set"),
+    ])
+
+    assert len(first) == 2
 
 
 def test_a_comment_left_alone_yesterday_is_not_offered_today(monkeypatch):
@@ -4268,6 +4287,18 @@ def test_lines_shown_before_the_key_changed_are_not_shown_again(monkeypatch):
 
     alreadysaid.remember(date(2026, 9, 11), ["c7|ads|Jenn#1"])
     _filed, again = _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()])
+
+    assert again == []
+
+
+def test_lines_shown_this_afternoon_are_not_shown_again(monkeypatch):
+    """And under the key written between 4:26 and now, before a comment's
+    words were part of it."""
+    from wilbyte import alreadysaid
+
+    alreadysaid.remember(date(2026, 9, 11), ["comment|c7|@jenn#1"])
+    _filed, again = _watching(monkeypatch, press=False, remember=True,
+                              tasks=[_jenn(), _jenn(summary="Something else")])
 
     assert again == []
 
@@ -4407,24 +4438,29 @@ def test_three_jobs_from_one_comment_are_three_lines_to_remember(monkeypatch):
     assert again == []
 
 
-def test_a_fourth_job_on_the_same_comment_is_still_new(monkeypatch):
+def test_a_fourth_job_added_to_the_comment_is_still_new(monkeypatch):
+    """Tre edits his comment to give Kath one more thing. The edit is new; the
+    three already shown are not."""
     from wilbyte import tagged
 
-    def kaths(summary):
+    def kaths(summary, text="one, two, three"):
         return tagged.Task(
-            note=tagged.Note(comment_id="c1", text="…", card_short="IU4PM7wJ"),
+            note=tagged.Note(comment_id="c1", text=text, card_short="IU4PM7wJ"),
             kind="ads", checklist="Kath", card_id="a",
             card_title="📊 Ads 09/14/26", summary=summary,
         )
 
     three = [kaths("one"), kaths("two"), kaths("three")]
+    edited = "one, two, three - and four"
 
     _watching(monkeypatch, tasks=three, press=False, remember=True)
     _filed, again = _watching(
-        monkeypatch, tasks=three + [kaths("four")], press=False, remember=True,
+        monkeypatch, press=False, remember=True,
+        tasks=[kaths(one, edited) for one in ("one", "two", "three", "four")],
     )
 
     assert sum("not on a checklist yet" in one for one in again) == 1
+    assert "four" in again[0]
 
 
 # ------------------------- a message in the channel, put on the board
