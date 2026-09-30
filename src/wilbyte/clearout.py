@@ -251,6 +251,16 @@ def channels_for(name: str, channels) -> list:
     # type is on the end; then a close match - never a scrap of a name. A run
     # through the quiet list names the channel exactly, so it gets exactly
     # that one, not every other channel the same person has.
+    # Spelled exactly as Discord has it. Mujeeb Anwari has
+    # "mujeeb-anwari-standard-vet" and "mujeeb_anwari-standard-vet", which are
+    # the same once the punctuation is gone - so the quiet run, naming one,
+    # got both, and naming it again by hand got both again. Only the channel
+    # written character for character is that channel.
+    typed = (name or "").strip().lstrip("#").casefold()
+    if typed and not re.search(r"\s", typed):
+        literal = [one for one in open_ if str(one.name).casefold() == typed]
+        if len(literal) == 1:
+            return literal
     exact = [one for one in open_ if tidy(one.name) == wanted]
     # A channel's own name - no spaces, as the quiet list and the picker pass
     # it - is that channel and nothing else. A person's name typed out is

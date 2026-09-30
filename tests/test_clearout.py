@@ -48,6 +48,34 @@ def test_the_exact_one_comes_first():
     assert [one.name for one in found] == ["jay-rodriguez", "jay-rodriguez-vets"]
 
 
+MUJEEB = ["mujeeb-anwari-standard-vet", "mujeeb_anwari-standard-vet"]
+
+
+@pytest.mark.parametrize("which", MUJEEB)
+def test_a_channel_named_exactly_is_that_channel_only(which):
+    """Two channels the same but for a dash and an underscore. The quiet run
+    names one, and naming it has to get that one - not "more than one channel
+    could be his" every time, with no way to say which."""
+    found = clearout.channels_for(which, [channel(one) for one in MUJEEB])
+
+    assert [one.name for one in found] == [which]
+    assert [one.name for one in clearout.channels_for("#" + which, [
+        channel(one) for one in MUJEEB
+    ])] == [which]
+
+
+def test_his_name_typed_out_still_asks_which(tmp_path):
+    """A person's name is every channel of theirs, and which one goes is a
+    question for whoever typed it."""
+    found = clearout.channels_for("Mujeeb Anwari", [channel(one) for one in MUJEEB])
+
+    assert sorted(one.name for one in found) == sorted(MUJEEB)
+
+
+def test_an_exact_name_never_reaches_a_server_channel():
+    assert clearout.channels_for("general", [channel("general")]) == []
+
+
 @pytest.mark.parametrize(
     "called",
     ["general", "announcements", "rules", "welcome", "admin-team", "📋 General"],
