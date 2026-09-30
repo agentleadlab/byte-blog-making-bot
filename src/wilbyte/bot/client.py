@@ -408,10 +408,12 @@ class WilByteBot(discord.Client):
 
 async def answer_mention(bot: "WilByteBot", message) -> None:
     """Answer one @RYTE, and write down that it was answered."""
+    said = getattr(message, "id", None)
     try:
-        await asyncio.to_thread(mentionseen.add, message.id)
+        if said is not None:
+            await asyncio.to_thread(mentionseen.add, said)
     except Exception:  # remembering it is for the catch-up; answering comes first
-        log.warning("Couldn't note mention %s as answered", message.id, exc_info=True)
+        log.warning("Couldn't note mention %s as answered", said, exc_info=True)
     # Somebody is waiting on this one. discord.py logs an exception in an
     # event handler and says nothing, so a bug leaves them looking at "Reading
     # the board —" with no second message ever coming, and no way to tell that
