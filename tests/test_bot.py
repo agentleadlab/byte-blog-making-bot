@@ -3433,7 +3433,7 @@ class Button:
 
 
 def _watching(monkeypatch, *, tasks, press=True, answered=True, remember=False,
-              problems=(), presses=None):
+              problems=(), presses=None, day=date(2026, 9, 11)):
     """One tick of what the watcher shows, with the board and button stubbed."""
     import asyncio
     from types import SimpleNamespace
@@ -3472,7 +3472,7 @@ def _watching(monkeypatch, *, tasks, press=True, answered=True, remember=False,
 
     heard = Asked()
     config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
-    monkeypatch.setattr(bot_client.jobs, "board_day", lambda cfg: date(2026, 9, 11))
+    monkeypatch.setattr(bot_client.jobs, "board_day", lambda cfg: day)
     asyncio.run(bot_client._offer_tags_now(heard, config, remember=remember))
     return filed, heard.messages
 
@@ -4150,15 +4150,126 @@ def test_yesterdays_list_is_not_todays(monkeypatch):
     assert alreadysaid.said_on(date(2026, 9, 12)) == set()
 
 
-def test_only_the_last_two_days_are_kept(monkeypatch):
-    """Two, so a restart just after midnight still knows what last night's
-    shift was shown."""
+def test_only_the_last_few_days_are_kept(monkeypatch):
+    """Enough for a weekend, so a comment on Monday's card shown on Friday is
+    still known on Monday - and not a file that grows all month."""
     from wilbyte import alreadysaid
 
-    for day in range(8, 13):
+    for day in range(6, 13):
         alreadysaid.remember(date(2026, 9, day), [f"line {day}"])
 
-    assert sorted(alreadysaid.load()) == ["2026-09-11", "2026-09-12"]
+    assert sorted(alreadysaid.load()) == [
+        "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12",
+    ]
+
+
+def test_two_watchers_writing_at_once_keep_both(monkeypatch):
+    """The tag watcher and the day check write the same file from their own
+    threads. Neither may write back a copy without the other's lines."""
+    import threading
+
+    from wilbyte import alreadysaid
+
+    real = alreadysaid.load
+
+    def slow(path=None):
+        found = real(path)
+        import time
+        time.sleep(0.01)
+        return found
+
+    monkeypatch.setattr(alreadysaid, "load", slow)
+    writers = [
+        threading.Thread(
+            target=alreadysaid.remember, args=(date(2026, 9, 11), [f"line {n}"]),
+        )
+        for n in range(8)
+    ]
+    for one in writers:
+        one.start()
+    for one in writers:
+        one.join()
+
+    assert alreadysaid.said_on(date(2026, 9, 11)) == {f"line {n}" for n in range(8)}
+
+
+def _jenn(kind="ads", checklist="Jenn", comment_id="c7", summary="Same folder broken down ABO setup"):
+    from wilbyte import tagged
+
+    return tagged.Task(
+        note=tagged.Note(comment_id=comment_id, text="…", card_short="IU4PM7wJ"),
+        person=tagged.Person(username="jenn", full_name="Jenn",
+                             keeps={"ads": "Jenn", "general": "Jenn G"}),
+        kind=kind, checklist=checklist, card_id="a",
+        card_title="📊 Ads 09/11/26", summary=summary,
+    )
+
+
+def test_a_line_read_again_and_placed_elsewhere_stays_left_alone(monkeypatch):
+    """"ryte is sending the same checklist again and again even when leaving
+    it be". A comment is read again whenever the day's checklists change, and
+    the new reading can put the line on another card - which made it a line
+    nobody had seen."""
+    _filed, first = _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()])
+    _filed, again = _watching(
+        monkeypatch, press=False, remember=True,
+        tasks=[_jenn(kind="general", checklist="Jenn G")],
+    )
+
+    assert len(first) == 1
+    assert again == []
+
+
+def test_a_second_job_found_on_a_new_reading_is_still_offered(monkeypatch):
+    """Only what was shown is held back. A reading that finds Jenn a second job
+    in the same comment has found something nobody has seen."""
+    _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()])
+    _filed, again = _watching(
+        monkeypatch, press=False, remember=True,
+        tasks=[_jenn(), _jenn(summary="Duplicate the winning ad set")],
+    )
+
+    assert len(again) == 1
+    assert "Duplicate the winning ad set" in again[0]
+
+
+def test_a_comment_left_alone_yesterday_is_not_offered_today(monkeypatch):
+    """Tomorrow's card is open from lunchtime. A line left alone on it in the
+    afternoon is the same line the next morning, when that card is today's."""
+    _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()],
+              day=date(2026, 9, 10))
+    _filed, again = _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()],
+                              day=date(2026, 9, 11))
+
+    assert again == []
+
+
+def test_a_description_line_is_still_each_days_own(monkeypatch):
+    """The same words in each day's description are each day's job."""
+    from wilbyte import tagged
+
+    described = tagged.Task(
+        note=tagged.Note(comment_id="", text="Check the budget", described=True),
+        kind="ads", checklist="Nicole", card_id="a",
+        card_title="📊 Ads", summary="Check the budget",
+    )
+    _watching(monkeypatch, press=False, remember=True, tasks=[described],
+              day=date(2026, 9, 10))
+    _filed, again = _watching(monkeypatch, press=False, remember=True,
+                              tasks=[described], day=date(2026, 9, 11))
+
+    assert len(again) == 1
+
+
+def test_lines_shown_before_the_key_changed_are_not_shown_again(monkeypatch):
+    """What was left alone under the old key the day this changed stays left
+    alone - an update must not re-post the afternoon's list."""
+    from wilbyte import alreadysaid
+
+    alreadysaid.remember(date(2026, 9, 11), ["c7|ads|Jenn#1"])
+    _filed, again = _watching(monkeypatch, press=False, remember=True, tasks=[_jenn()])
+
+    assert again == []
 
 
 def test_a_reworded_summary_is_still_the_same_line(monkeypatch):

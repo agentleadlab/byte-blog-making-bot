@@ -5882,22 +5882,55 @@ async def tags_loop(bot: "WilByteBot") -> None:
 
 
 def _already_said(task) -> str:
+    """The key a line was remembered by before 30 September, still honoured so
+    lines shown under it the day this changed are not offered a second time.
+    """
+    if task.note.comment_id:
+        return f"{task.note.comment_id}|{task.kind}|{task.checklist}"
+    return f"description|{task.kind}|{task.checklist}|{task.summary}"
+
+
+def _whose(task) -> str:
+    """Who a comment's line is for: the person, not the card it was sent to.
+
+    The card and the checklist come out of reading the comment, and a comment
+    is read again whenever the day's checklists change - tomorrow's cards get
+    theirs one at a time through the afternoon. Jenn's "Same folder broken
+    down ABO setup" was left alone, read again, and came back as a line
+    nobody had seen, because the new reading had placed or numbered it
+    differently. Who it is for does not move.
+    """
+    if task.person is not None and getattr(task.person, "username", ""):
+        return "@" + str(task.person.username).casefold()
+    return "list:" + " ".join(str(task.checklist or "").split()).casefold()
+
+
+def _said_key(task) -> str:
     """What makes one offered line the same line as another.
 
-    The comment it came from and whose list it is going on - never the
-    summary. The summary is written fresh every run and comes back reworded:
-    the same comment gave "Let them know Everlife aged lead 20% off, code
-    everlife20" one minute and the same sentence without the comma the next,
-    and a comma was enough to make it a line nobody had seen before. Pressing
-    "leave it" then meant nothing.
+    The comment it came from and whose it is - never the summary. The summary
+    is written fresh every run and comes back reworded: the same comment gave
+    "Let them know Everlife aged lead 20% off, code everlife20" one minute and
+    the same sentence without the comma the next, and a comma was enough to
+    make it a line nobody had seen before. Pressing "leave it" then meant
+    nothing.
 
     A description line has no comment to be identified by, so there its own
     words do the job - which is safe, because those go on as they were written
     rather than being summarised.
     """
     if task.note.comment_id:
-        return f"{task.note.comment_id}|{task.kind}|{task.checklist}"
+        return f"comment|{task.note.comment_id}|{_whose(task)}"
     return f"description|{task.kind}|{task.checklist}|{task.summary}"
+
+
+def _numbered(bases) -> list:
+    counted: dict = {}
+    found = []
+    for base in bases:
+        counted[base] = counted.get(base, 0) + 1
+        found.append(f"{base}#{counted[base]}")
+    return found
 
 
 def _said_keys(tasks) -> list:
@@ -5907,13 +5940,25 @@ def _said_keys(tasks) -> list:
     same key, so showing the first would silence the other two for the rest of
     the day.
     """
-    counted: dict = {}
-    found = []
-    for one in tasks:
-        base = _already_said(one)
-        counted[base] = counted.get(base, 0) + 1
-        found.append(f"{base}#{counted[base]}")
-    return found
+    return _numbered(_said_key(one) for one in tasks)
+
+
+def _not_shown_yet(tasks, *, today: set, lately: set) -> list:
+    """The tasks nobody has been shown.
+
+    A comment is looked up over the last few days, not just today: its id
+    belongs to one card, and a line left alone on tomorrow's card yesterday
+    afternoon is the same line once that card is today's. A description line
+    only today - the same words on each day's card are each day's job.
+    """
+    old = _numbered(_already_said(one) for one in tasks)
+    fresh = []
+    for one, key, before in zip(tasks, _said_keys(tasks), old):
+        seen = lately if one.note.comment_id else today
+        if key in seen or before in seen:
+            continue
+        fresh.append(one)
+    return fresh
 
 
 async def _offer_tags_now(
@@ -5944,9 +5989,8 @@ async def _offer_tags_now(
     tasks, problems = await asyncio.to_thread(jobs.tags_to_file, config)
     if remember:
         said = await asyncio.to_thread(alreadysaid.said_on, day)
-        tasks = [
-            one for one, key in zip(tasks, _said_keys(tasks)) if key not in said
-        ]
+        lately = await asyncio.to_thread(alreadysaid.said_lately, day)
+        tasks = _not_shown_yet(tasks, today=said, lately=lately)
         problems = [one for one in problems if one not in said]
     if not tasks:
         # Said out loud even with nothing to file: somebody tagged with no
@@ -5964,6 +6008,7 @@ async def _offer_tags_now(
         await asyncio.to_thread(
             alreadysaid.remember, day, _said_keys(tasks) + list(problems),
         )
+        log.info("Tags offered: %s", ", ".join(_said_keys(tasks)))
 
     # A description line and a comment are two different things and get asked
     # about separately. The description is the card's own standing list of who
