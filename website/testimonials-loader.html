@@ -121,12 +121,68 @@
     if (more) more.addEventListener('click', function(){ render(size); });
   }
 
+  /* A third build: every card written into the page, and each video's
+     play bound when the page loads - so new cards get their own. */
+  function playIn(el){
+    var vid = el.getAttribute('data-vid');
+    if (!vid || el.getAttribute('data-loaded')) return;
+    el.setAttribute('data-loaded', '1');
+    el.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + esc(vid) + '?autoplay=1&rel=0" title="Testimonial video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>';
+  }
+  function staticGrid(){
+    var grids = document.querySelectorAll('.ll-video-testi-section .ll-video-grid');
+    for (var i = 0; i < grids.length; i++) if (!grids[i].id) return grids[i];
+    return null;
+  }
+  function applyStatic(data){
+    var grid = staticGrid();
+    if (!grid || !data || !data.videos) return;
+    var section = grid.closest ? grid.closest('.ll-video-testi-section') : null;
+    if (section && section.querySelector('iframe')) return;
+    var f = data.featured;
+    var box = section && section.querySelector('.ll-video-featured');
+    if (f && box){
+      var frame = box.querySelector('.ll-video-frame');
+      if (frame){
+        frame.setAttribute('data-vid', f.id);
+        frame.setAttribute('aria-label', 'Play ' + f.name + ' testimonial');
+        var img = frame.querySelector('img');
+        if (img){ img.src = 'https://img.youtube.com/vi/' + f.id + '/maxresdefault.jpg'; img.alt = f.name + ' testimonial'; }
+      }
+      var n = box.querySelector('.ll-speaker-name'); if (n) n.textContent = f.name;
+      var q = box.querySelector('.ll-speaker-quote'); if (q) q.textContent = f.quote;
+    }
+    var html = '';
+    for (var i = 0; i < data.videos.length; i++){
+      var v = data.videos[i];
+      html += '<div class="ll-video-card ll-reveal ll-visible">' +
+        '<div class="ll-video-frame" data-vid="' + esc(v.id) + '" role="button" tabindex="0" aria-label="Play ' + esc(v.name) + ' testimonial">' +
+          '<img src="https://img.youtube.com/vi/' + esc(v.id) + '/mqdefault.jpg" loading="lazy" decoding="async" width="320" height="180" alt="' + esc(v.name) + '">' +
+          '<span class="ll-play-btn" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>' +
+        '</div>' +
+        '<div class="ll-video-meta"><div class="ll-speaker-name">' + esc(v.name) + '</div>' +
+        '<p class="ll-speaker-quote">' + esc(v.quote) + '</p></div>' +
+      '</div>';
+    }
+    grid.innerHTML = html;
+    var frames = grid.querySelectorAll('.ll-video-frame');
+    for (var k = 0; k < frames.length; k++){
+      (function(el){
+        el.addEventListener('click', function(){ playIn(el); });
+        el.addEventListener('keydown', function(e){
+          if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); playIn(el); }
+        });
+      })(frames[k]);
+    }
+  }
+
   function applyAll(data){
     try { apply(data); } catch (e) {}
     try { applyLlt(data); } catch (e) {}
+    try { applyStatic(data); } catch (e) {}
   }
   function hasSection(){
-    return !!(document.getElementById('ll-video-grid') || document.getElementById('lltGrid'));
+    return !!(document.getElementById('ll-video-grid') || document.getElementById('lltGrid') || staticGrid());
   }
   /* Once the page's own script has drawn its cards: leadlabcrm.com draws
      them when the page is ready, the funnels as the section loads. */
