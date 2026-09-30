@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import discord
@@ -29,6 +30,7 @@ from discord import app_commands
 
 from .. import corpus
 from .. import waiting
+from .. import mentionseen
 from .. import watchedseen
 from .. import cover as cover_mod
 from .. import (
@@ -206,6 +208,13 @@ class WilByteBot(discord.Client):
         self.offered_the_run = False
         self.recordings_task: asyncio.Task | None = None
         self.catchup_task: asyncio.Task | None = None
+        # Mentions typed while RYTE was away: read back for on every connect.
+        self.mention_task: asyncio.Task | None = None
+        self.alive_task: asyncio.Task | None = None
+        #: When the connection to Discord last dropped, while this copy kept
+        #: running. A restart is known from the file; a dropped connection only
+        #: from here.
+        self.gone_since: datetime | None = None
 
     async def setup_hook(self) -> None:
         register_commands(self)
@@ -348,29 +357,22 @@ class WilByteBot(discord.Client):
             self.catchup_task is None or self.catchup_task.done()
         ):
             self.catchup_task = self.loop.create_task(catch_up_sops(self))
+        # Anything @RYTE said while he was restarting or offline. On every
+        # connect, not once a start: a dropped connection loses messages the
+        # same way a restart does.
+        if self.mention_task is None or self.mention_task.done():
+            self.mention_task = self.loop.create_task(mention_catch_up(self))
         await _warn_if_stale(self)
+
+    async def on_disconnect(self) -> None:
+        if self.gone_since is None:
+            self.gone_since = datetime.now(timezone.utc)
 
     async def on_message(self, message: discord.Message) -> None:
         if self.user is not None and message.author.id == self.user.id:
             return
         if is_direct_mention(message, self.user):
-            # Somebody is waiting on this one. discord.py logs an exception in
-            # an event handler and says nothing, so a bug leaves them looking
-            # at "Reading the board —" with no second message ever coming, and
-            # no way to tell that from RYTE being slow.
-            try:
-                await handle_mention(self, message)
-            except Exception:
-                log.exception("That mention broke something")
-                try:
-                    await message.reply(
-                        "Something broke while I was doing that — the details are "
-                        "in the terminal window. Have a look at the board before "
-                        "running it again, in case it stopped part way.",
-                        mention_author=False,
-                    )
-                except Exception:  # Discord unreachable as well; the log has it
-                    log.exception("...and I couldn't say so either")
+            await answer_mention(self, message)
             return
         # Franklin replying to a suggestion or a lesson: that is him saying
         # what RYTE got wrong, and the best teacher there is.
@@ -402,6 +404,207 @@ class WilByteBot(discord.Client):
             return
         if is_sop_channel(message, self.config):
             await handle_sop_post(self, message)
+
+
+async def answer_mention(bot: "WilByteBot", message) -> None:
+    """Answer one @RYTE, and write down that it was answered."""
+    try:
+        await asyncio.to_thread(mentionseen.add, message.id)
+    except Exception:  # remembering it is for the catch-up; answering comes first
+        log.warning("Couldn't note mention %s as answered", message.id, exc_info=True)
+    # Somebody is waiting on this one. discord.py logs an exception in an
+    # event handler and says nothing, so a bug leaves them looking at "Reading
+    # the board —" with no second message ever coming, and no way to tell that
+    # from RYTE being slow.
+    try:
+        await handle_mention(bot, message)
+    except Exception:
+        log.exception("That mention broke something")
+        try:
+            await message.reply(
+                "Something broke while I was doing that — the details are "
+                "in the terminal window. Have a look at the board before "
+                "running it again, in case it stopped part way.",
+                mention_author=False,
+            )
+        except Exception:  # Discord unreachable as well; the log has it
+            log.exception("...and I couldn't say so either")
+
+
+# ------------------------------------------------ mentions made while away
+
+#: The furthest back a start reads for mentions it missed. A restart is
+#: seconds; this is for the wifi going for an afternoon. Yesterday's command
+#: is not something to start doing today.
+MENTION_CATCH_UP_HOURS = 12
+
+#: Younger than this and it is simply done: somebody typed it just before an
+#: update and is still sitting there waiting for the answer. Older, and it is
+#: asked about first - an hour on, it may have been done by hand, or not be
+#: wanted any more.
+MENTION_ASK_AFTER_MINUTES = 10
+
+#: How often RYTE writes down that it is still listening.
+MENTION_ALIVE_SECONDS = 60
+
+#: A little before the last time it was known to be listening, so a mention
+#: typed in the same minute as the restart is not lost in the gap.
+MENTION_OVERLAP = timedelta(minutes=2)
+
+
+def _where_mentions_are_answered(bot: "WilByteBot", since: datetime) -> list:
+    """Every text channel RYTE answers in that has had a message since then.
+
+    The last message's id carries its time, so the channels nobody has
+    written in are passed over without a request - the clients server alone
+    is a hundred and eighty channels.
+    """
+    found = []
+    for channel in bot.get_all_channels():
+        if not isinstance(channel, discord.TextChannel):
+            continue
+        last = getattr(channel, "last_message_id", None)
+        if not last or discord.utils.snowflake_time(last) < since:
+            continue
+        if _never_speaks_in(bot, channel):
+            continue
+        found.append(channel)
+    return found
+
+
+def _never_speaks_in(bot: "WilByteBot", channel) -> bool:
+    """A channel RYTE only reads, or one it isn't enabled in."""
+    if is_watched(SimpleNamespace(channel=channel), bot.config):
+        return True
+    allowed, reason = is_allowed(
+        channel_id=channel.id, user=SimpleNamespace(roles=[]), config=bot.config,
+        channel_name=str(getattr(channel, "name", "") or ""),
+        guild_id=getattr(getattr(channel, "guild", None), "id", None),
+    )
+    return not allowed and "channel" in reason
+
+
+def _asked_the_same(one, other) -> bool:
+    return one.author.id == other.author.id and (
+        " ".join((one.content or "").split()).casefold()
+        == " ".join((other.content or "").split()).casefold()
+    )
+
+
+async def missed_mentions(bot: "WilByteBot", *, since: datetime, until: datetime,
+                          channels=None) -> list:
+    """The mentions nobody answered, oldest first.
+
+    Typed after `since` and before `until` - the moment RYTE was back, after
+    which they come in the ordinary way. Not ones already answered; not ones
+    RYTE has already replied to; and not ones the same person typed again
+    later, because they got tired of waiting and the second is the one that
+    counts.
+    """
+    done = await asyncio.to_thread(mentionseen.answered)
+    missed = []
+    for channel in channels if channels is not None else _where_mentions_are_answered(bot, since):
+        try:
+            said = [one async for one in channel.history(limit=200, after=since, oldest_first=True)]
+        except discord.HTTPException:
+            log.warning("Couldn't read back through %s for missed mentions", channel.id, exc_info=True)
+            continue
+        replied = {
+            getattr(one.reference, "message_id", None)
+            for one in said
+            if bot.user is not None and one.author.id == bot.user.id and one.reference
+        }
+        asks = [one for one in said if is_direct_mention(one, bot.user)]
+        for at, one in enumerate(asks):
+            if one.created_at >= until:
+                continue
+            if str(one.id) in done or one.id in replied:
+                continue
+            if any(_asked_the_same(one, later) for later in asks[at + 1:]):
+                continue
+            missed.append(one)
+    return sorted(missed, key=lambda one: one.created_at)
+
+
+async def _ask_about_missed(bot: "WilByteBot", message) -> None:
+    """A mention from a while ago: ask before doing it."""
+    view = views.ConfirmView(
+        requester_id=message.author.id,
+        timeout=bot.config.discord.approval_timeout_seconds,
+        label="Do it now",
+        emoji="↩️",
+    )
+    stamp = int(message.created_at.timestamp())
+    await message.reply(
+        f"↩️ I was offline when you sent this (<t:{stamp}:R>), so it never got "
+        "an answer. Still want it?",
+        view=view, mention_author=False,
+    )
+    await view.wait()
+    if view.confirmed:
+        await answer_mention(bot, message)
+
+
+async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) -> None:
+    """Answer what was said to RYTE while he wasn't there to hear it.
+
+    Only from the last time he is known to have been listening. The first
+    start ever has nothing to go back to, and reading back a day of the
+    team's messages then would answer things long since dealt with.
+    """
+    now = now or datetime.now(timezone.utc)
+    gone, bot.gone_since = bot.gone_since, None
+    try:
+        since = gone or await asyncio.to_thread(mentionseen.listening_at)
+    except Exception:
+        log.exception("Couldn't tell when I was last listening")
+        since = None
+    # Read before this starts writing, and started before any answering: a
+    # blog run answered here can take ten minutes, and those are minutes
+    # RYTE was listening.
+    if bot.alive_task is None or bot.alive_task.done():
+        bot.alive_task = asyncio.create_task(listening_loop(bot))
+    try:
+        if since is not None:
+            since = max(since - MENTION_OVERLAP, now - timedelta(hours=MENTION_CATCH_UP_HOURS))
+            for message in await missed_mentions(bot, since=since, until=now):
+                if not is_allowed(
+                    channel_id=message.channel.id, user=message.author, config=bot.config,
+                    channel_name=str(getattr(message.channel, "name", "") or ""),
+                    guild_id=getattr(getattr(message, "guild", None), "id", None),
+                )[0]:
+                    continue
+                # Taken in hand before anything is said, so a second connect
+                # in the middle of this does not answer it twice.
+                await asyncio.to_thread(mentionseen.add, message.id)
+                log.info("Answering a mention made while I was away: %s", message.id)
+                if now - message.created_at <= timedelta(minutes=MENTION_ASK_AFTER_MINUTES):
+                    await message.reply(
+                        "↩️ I was restarting when you sent this — on it now.",
+                        mention_author=False,
+                    )
+                    await answer_mention(bot, message)
+                else:
+                    _also_running(asyncio.create_task(_ask_about_missed(bot, message)))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("Catching up on missed mentions failed")
+
+
+async def listening_loop(bot: "WilByteBot") -> None:
+    """Write down, every minute, that RYTE is still here to hear a mention.
+
+    Not while the connection is down: those minutes were not listened to,
+    and the next connect has to read back over them.
+    """
+    while not bot.is_closed():
+        if bot.gone_since is None:
+            try:
+                await asyncio.to_thread(mentionseen.listening, datetime.now(timezone.utc))
+            except Exception:
+                log.warning("Couldn't note that I'm listening", exc_info=True)
+        await asyncio.sleep(MENTION_ALIVE_SECONDS)
 
 
 # ---------------------------------------------------------------- when to speak
