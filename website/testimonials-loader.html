@@ -121,22 +121,51 @@
     if (more) more.addEventListener('click', function(){ render(size); });
   }
 
-  function load(){
-    /* Nothing to do on a page without the video section - not even a request. */
-    if (!document.getElementById('ll-video-grid') && !document.getElementById('lltGrid')) return;
-    fetch(LL_DATA, { cache: 'no-store' })
+  function applyAll(data){
+    try { apply(data); } catch (e) {}
+    try { applyLlt(data); } catch (e) {}
+  }
+  function hasSection(){
+    return !!(document.getElementById('ll-video-grid') || document.getElementById('lltGrid'));
+  }
+  /* Once the page's own script has drawn its cards: leadlabcrm.com draws
+     them when the page is ready, the funnels as the section loads. */
+  function whenDrawn(fn){
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(fn, 0); });
+    else setTimeout(fn, 0);
+  }
+
+  var KEY = 'll-videos-v1', held = null, shownKey = '';
+  try { held = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+
+  /* Asked for straight away, while the rest of the page is still loading -
+     and only on a page with the video section. */
+  var fresh = null;
+  function asked(){
+    if (!fresh) fresh = fetch(LL_DATA, { cache: 'no-store' })
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(pages){
         var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
         var m = /LLVIDEOS-([0-9a-f]+)/.exec(html);
-        if (!m) return;
-        var data = fromHex(m[1]);
-        try { apply(data); } catch (e) {}
-        try { applyLlt(data); } catch (e) {}
+        return m ? fromHex(m[1]) : null;
       })
-      .catch(function(){ /* keep what the page already shows */ });
+      .catch(function(){ return null; });
+    return fresh;
   }
-  /* after the page's own script has drawn its cards */
-  if (document.readyState === 'complete') load(); else window.addEventListener('load', load);
+  if (hasSection()) asked();
+
+  whenDrawn(function(){
+    /* Nothing to do on a page without the video section. */
+    if (!hasSection()) return;
+    /* The list from this visitor's last visit, at once... */
+    if (held && held.videos){ applyAll(held); shownKey = JSON.stringify(held); }
+    /* ...and the current one as soon as it arrives, if it's any different. */
+    asked().then(function(data){
+      if (!data) return;
+      var key = JSON.stringify(data);
+      try { localStorage.setItem(KEY, key); } catch (e) {}
+      if (key !== shownKey) applyAll(data);
+    });
+  });
 })();
 </script>
