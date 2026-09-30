@@ -57,6 +57,8 @@ JOBS = {
     "summarise_page": "Page summaries",
     "summarise_text": "Text summaries",
     "check_anthropic": "Health check",
+    "testimonial_draft": "Website testimonials",
+    "_pick_testimonial": "Website testimonials",
 }
 
 #: ...and by the module, where one module is one job.
