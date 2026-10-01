@@ -3296,6 +3296,14 @@ async def _blacklist_them(responder: Responder, config: Config, asked: str) -> N
     something for a person to look at rather than for RYTE to pick between -
     and a name that matched nobody is said plainly rather than passed over.
     """
+    asks = jobs.blacklist_asks(asked)
+    if len(asks) > 1:
+        await _blacklist_several(responder, config, asks)
+        return
+    if len(asks) == 1:
+        # One email in the message: that is who, and the words around it -
+        # "Customer Name:", "these people" - are not part of a name.
+        asked = asks[0][1]
     try:
         found, tag, problems = await asyncio.to_thread(
             jobs.who_to_blacklist, config, asked
@@ -3344,6 +3352,71 @@ async def _blacklist_them(responder: Responder, config: Config, asked: str) -> N
     if not view.confirmed:
         return
 
+    try:
+        done, trouble = await asyncio.to_thread(jobs.blacklist_them, config, left, tag)
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't tag them\n{exc}"))
+        return
+    said = [f"🚫 Tagged **{one}**" for one in done]
+    said += [f"⚠ {one}" for one in trouble]
+    await responder.send("\n".join(said) or "Nothing was tagged.")
+
+
+async def _blacklist_several(responder: Responder, config: Config, asks) -> None:
+    """Several people at once - "blacklist these people" and a name and email
+    for each. One list, one button.
+
+    Each by their email. Somebody GHL doesn't have is said and left out; so
+    is a name that doesn't match the contact the email belongs to, flagged
+    rather than dropped, because a typo and a wrong address look the same
+    from here and only the person pressing can tell them apart.
+    """
+    try:
+        looked, tag, problems = await asyncio.to_thread(
+            jobs.who_to_blacklist_each, config, asks
+        )
+    except PIPELINE_ERRORS as exc:
+        await responder.send(embed=embeds.error(f"Couldn't read GHL\n{exc}"))
+        return
+    if problems:
+        await responder.send(embed=embeds.error("\n".join(problems)))
+        return
+
+    lines, left = [], []
+    for one in looked:
+        asked = one["name"] or one["email"]
+        found = one["found"]
+        if not found:
+            lines.append(f"• **{asked}** ({one['email']}) — ❌ not in GHL, skipped")
+            continue
+        for contact in found:
+            called = " ".join(
+                f"{contact.get('firstName') or ''} {contact.get('lastName') or ''}".split()
+            ) or str(contact.get("contactName") or "").strip() or "(no name in GHL)"
+            line = f"• **{called}** ({one['email']})"
+            if _carries(contact, tag):
+                lines.append(line + f" — *already {tag}*")
+                continue
+            given = " ".join(one["name"].split()).casefold()
+            if given and given != called.casefold():
+                line += f" — ⚠ you wrote **{one['name']}**, GHL has **{called}** for this email"
+            lines.append(line)
+            left.append(contact)
+
+    if not left:
+        await responder.send("Nobody to tag:\n" + "\n".join(lines))
+        return
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Tag {len(left)} as {tag}",
+        emoji="🚫",
+        danger=True,
+    )
+    await responder.send(f"🚫 Tagging **{tag}** in GHL:\n" + "\n".join(lines), view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
     try:
         done, trouble = await asyncio.to_thread(jobs.blacklist_them, config, left, tag)
     except PIPELINE_ERRORS as exc:

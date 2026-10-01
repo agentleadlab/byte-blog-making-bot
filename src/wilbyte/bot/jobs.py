@@ -4867,6 +4867,63 @@ def who_to_blacklist(config: Config, asked: str) -> tuple[list[dict], str, list[
     return found, tag, []
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_NAMED = re.compile(
+    r"\bname\s*:\s*([^\n@:]+?)\s*(?=(?:customer\s+)?e-?mail\b|phone\b|\n|$)",
+    re.IGNORECASE,
+)
+
+
+def blacklist_asks(asked: str) -> list[tuple[str, str]]:
+    """The people one message asks to blacklist: [(name as given, email)].
+
+    "blacklist these people" with a "Customer Name: / Customer Email:" pair
+    for each of them - the block a dispute arrives as. One person per email
+    address, named by the last "Name:" between it and the email before it.
+    Read the same whether the lines survived or the message came through as
+    one line. No email at all is one person, by name, the way it always
+    worked.
+    """
+    said = str(asked or "")
+    found, after = [], 0
+    for email in _EMAIL.finditer(said):
+        names = _NAMED.findall(said[after:email.start()])
+        found.append((names[-1].strip() if names else "", email.group(0).rstrip(".")))
+        after = email.end()
+    seen, unique = set(), []
+    for name, email in found:
+        if email.casefold() not in seen:
+            seen.add(email.casefold())
+            unique.append((name, email))
+    return unique
+
+
+def who_to_blacklist_each(config: Config, asks) -> tuple[list[dict], str, list[str]]:
+    """Each person looked up by their email. ([{name, email, found}], tag, problems).
+
+    By the email alone: it is the one thing that means that person, and a
+    name typed beside it is shown next to what GHL calls them, not matched on.
+    """
+    from .. import ghl
+
+    tag = (getattr(config.secrets, "ghl_blacklist_tag", "") or "blacklisted").strip()
+    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
+        return [], tag, ["GHL isn't set up: GHL_API_TOKEN or GHL_LOCATION_ID missing."]
+    looked = []
+    try:
+        with ghl.GHLClient(
+            config.secrets.ghl_api_token, config.secrets.ghl_location_id
+        ) as asking:
+            for name, email in asks:
+                looked.append({
+                    "name": name, "email": email,
+                    "found": asking.find_contacts(email=email),
+                })
+    except Exception as exc:
+        return [], tag, [f"Couldn't read GHL: {_short(exc, 200)}"]
+    return looked, tag, []
+
+
 def blacklist_them(config: Config, contacts, tag: str) -> tuple[list[str], list[str]]:
     """Tag these contacts. (who was tagged, problems).
 

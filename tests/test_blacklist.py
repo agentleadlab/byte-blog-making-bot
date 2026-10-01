@@ -386,3 +386,87 @@ def test_what_the_stray_word_cost_the_clear_out():
     assert rules.channels_for("Jay Rodriguez", channels)
     assert agents.named_that("clearout Jay Rodriguez", cards) == []
     assert agents.named_that("Jay Rodriguez", cards) == cards
+
+
+# ------------------------------------------- several people in one message
+
+SEVERAL = """these people
+
+Customer Name: Francisco Gonzalez
+Customer Email: francisco@example.com
+
+Customer Name: David Pereira
+Customer Email: david@example.com
+
+Customer Name: Art Daniyelyan
+Customer Email: art@example.com"""
+
+FRANCISCO = {"id": "f1", "firstName": "Francisco", "lastName": "Gonzalez",
+             "email": "francisco@example.com", "tags": []}
+DAVID = {"id": "d1", "firstName": "David", "lastName": "Pereira",
+         "email": "david@example.com", "tags": []}
+ART_ELSEWHERE = {"id": "a1", "firstName": "Arthur", "lastName": "D",
+                 "email": "art@example.com", "tags": []}
+
+
+def test_blacklist_these_people_is_not_an_email_to_write():
+    """"Customer Email:" has the word email in it, and the three people came
+    back as three options for an email about them."""
+    from wilbyte.bot import mentions
+
+    got = mentions.parse("<@1> blacklist " + SEVERAL, max_batch=5)
+    assert got.action == "blacklist"
+    assert "francisco@example.com" in got.brief
+
+
+def test_an_email_about_the_blacklist_is_still_an_email():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("write an email about the blacklist", max_batch=5).action == "write"
+
+
+def test_each_person_is_paired_with_their_own_name():
+    assert jobs.blacklist_asks(SEVERAL) == [
+        ("Francisco Gonzalez", "francisco@example.com"),
+        ("David Pereira", "david@example.com"),
+        ("Art Daniyelyan", "art@example.com"),
+    ]
+    # And the same once the message arrives as one line.
+    assert jobs.blacklist_asks(" ".join(SEVERAL.split())) == jobs.blacklist_asks(SEVERAL)
+
+
+def test_all_of_them_go_on_one_list_with_one_button(monkeypatch):
+    crm, said, buttons = _run(monkeypatch, SEVERAL, contacts=[FRANCISCO, DAVID, ART_ELSEWHERE])
+
+    assert len(buttons) == 1 and buttons[0].label == "Tag 3 as blacklisted"
+    assert sorted(one[0] for one in crm.tagged) == ["a1", "d1", "f1"]
+
+
+def test_a_name_that_doesnt_match_the_email_is_flagged(monkeypatch):
+    _crm, said, _ = _run(monkeypatch, SEVERAL, contacts=[FRANCISCO, DAVID, ART_ELSEWHERE],
+                         press=False)
+    listing = [one for one in said if "Tagging" in one][0]
+    assert "you wrote **Art Daniyelyan**, GHL has **Arthur D**" in listing
+    assert "⚠" not in listing.split("David Pereira")[1].split("\n")[0]
+
+
+def test_somebody_not_in_ghl_is_said_and_skipped(monkeypatch):
+    crm, said, buttons = _run(monkeypatch, SEVERAL, contacts=[FRANCISCO, DAVID])
+
+    listing = [one for one in said if "Tagging" in one][0]
+    assert "Art Daniyelyan** (art@example.com) — ❌ not in GHL" in listing
+    assert buttons[0].label == "Tag 2 as blacklisted"
+    assert sorted(one[0] for one in crm.tagged) == ["d1", "f1"]
+
+
+def test_nothing_is_tagged_until_pressed_for_several_either(monkeypatch):
+    crm, _said, _ = _run(monkeypatch, SEVERAL, contacts=[FRANCISCO, DAVID], press=False)
+    assert crm.tagged == []
+
+
+def test_one_email_in_the_message_looks_up_by_that_email(monkeypatch):
+    crm, _said, _ = _run(
+        monkeypatch, "Customer Name: David Pereira\nCustomer Email: david@example.com",
+        contacts=[FRANCISCO, DAVID],
+    )
+    assert crm.tagged == [("d1", ["blacklisted"])]

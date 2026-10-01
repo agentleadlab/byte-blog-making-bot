@@ -918,6 +918,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # email about a chargeback.
     if action == "rebuttal":
         return MentionRequest(action="rebuttal", brief=text)
+    # The same trap for "blacklist these people" with "Customer Email: ..."
+    # under it, which came back as three options for an email. When the
+    # command is the first thing typed, it is the command.
+    if action in NAMES_SOMEBODY and _opens_with(text, tuple(NAMES_SOMEBODY[action])):
+        return MentionRequest(
+            action=action, brief=_strip_word(text, tuple(NAMES_SOMEBODY[action])),
+        )
 
     # A format word means "write me one of these", and wins over a link so that
     # "email about the new playlist <link>" writes an email, not a blog post.
