@@ -3382,12 +3382,13 @@ async def _blacklist_several(responder: Responder, config: Config, asks) -> None
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
 
-    lines, left = [], []
+    lines, left, missing = [], [], []
     for one in looked:
         asked = one["name"] or one["email"]
         found = one["found"]
         if not found:
             lines.append(f"• **{asked}** ({one['email']}) — ❌ not in GHL, skipped")
+            missing.append(f"❌ **{asked}** ({one['email']}) — not in GHL, so not tagged")
             continue
         for contact in found:
             called = " ".join(
@@ -3422,8 +3423,11 @@ async def _blacklist_several(responder: Responder, config: Config, asks) -> None
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't tag them\n{exc}"))
         return
+    # Said again at the end: pressing the button replaces the list with
+    # "Working on it…", and whoever was skipped went with it.
     said = [f"🚫 Tagged **{one}**" for one in done]
     said += [f"⚠ {one}" for one in trouble]
+    said += missing
     await responder.send("\n".join(said) or "Nothing was tagged.")
 
 

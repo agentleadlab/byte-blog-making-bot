@@ -455,6 +455,8 @@ def test_somebody_not_in_ghl_is_said_and_skipped(monkeypatch):
 
     listing = [one for one in said if "Tagging" in one][0]
     assert "Art Daniyelyan** (art@example.com) — ❌ not in GHL" in listing
+    # And again after the press, which replaces the list.
+    assert "Art Daniyelyan** (art@example.com) — not in GHL" in said[-1]
     assert buttons[0].label == "Tag 2 as blacklisted"
     assert sorted(one[0] for one in crm.tagged) == ["d1", "f1"]
 
