@@ -1286,6 +1286,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await responder.send(payraapi.status(await asyncio.to_thread(payraapi.load)))
                 return
 
+            if request.action == "pandadoctest":
+                from .. import pandadoc
+
+                await responder.send(await asyncio.to_thread(
+                    pandadoc.test, getattr(config.secrets, "pandadoc_api_key", "") or "",
+                ))
+                return
+
             if request.action == "payratest":
                 await _payra_test(responder, config)
                 return

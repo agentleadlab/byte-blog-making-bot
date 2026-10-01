@@ -747,6 +747,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="payrastatus", brief=text)
     if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
         return MentionRequest(action="payratest", brief=text)
+    if re.match(r"\s*panda\s*doc\s+(?:test|check)\b", text, re.IGNORECASE):
+        return MentionRequest(action="pandadoctest", brief=text)
     if re.match(r"\s*check\s+clear[\s-]*outs?\b", text, re.IGNORECASE):
         return MentionRequest(action="checkclearouts", brief=text)
     redo = re.match(r"\s*redo\s+(?:the\s+)?(?:ring[\s-]*da[\s-]*)?bell\b(?:\s+(?:for|of))?\s*", text, re.IGNORECASE)
@@ -1241,6 +1243,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > section, with `quote: …` after the link (and `name: …` if the video doesn't say), then Add.
 > link to set them yourself. **testimonial remove Raymond** — take one off.
 > **website check** — whether I can reach the site
+> @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents
 > @RYTE **fix doc Crystal Clark** — put one old tab of the segments doc into the new
 > layout, after a button. Only if every word survives, YouTube links included
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
