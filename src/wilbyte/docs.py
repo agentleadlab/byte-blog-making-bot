@@ -309,6 +309,53 @@ class DocsClient:
             )},
         )
 
+    def contents(self) -> list[tuple[Tab, str, str]]:
+        """Every tab with its text: (tab, text, why it can't be rewritten or "").
+
+        Text only. A tab holding a table, a picture or anything else that is
+        not words is reported rather than read, because rewriting it from its
+        words would quietly drop the rest.
+        """
+        got = self._call("GET", params={"includeTabsContent": "true"})
+        found: list[tuple[Tab, str, str]] = []
+
+        def walk(tabs) -> None:
+            for one in tabs or []:
+                props = one.get("tabProperties") or {}
+                tab = Tab(tab_id=str(props.get("tabId") or ""), title=str(props.get("title") or ""))
+                content = ((one.get("documentTab") or {}).get("body") or {}).get("content") or []
+                words, odd = [], ""
+                for part in content:
+                    if "table" in part or "tableOfContents" in part:
+                        odd = odd or "it has a table in it"
+                        continue
+                    for element in (part.get("paragraph") or {}).get("elements") or []:
+                        if "textRun" in element:
+                            words.append(str(element["textRun"].get("content") or ""))
+                        elif "inlineObjectElement" in element:
+                            odd = odd or "it has a picture in it"
+                        elif "horizontalRule" not in element and "pageBreak" not in element:
+                            odd = odd or "it has something in it that isn't text"
+                if tab.tab_id:
+                    found.append((tab, "".join(words), odd))
+                walk(one.get("childTabs"))
+
+        walk(got.get("tabs"))
+        return found
+
+    def replace_rich(self, tab: Tab, paragraphs: list) -> None:
+        """Everything in that tab swapped for this, in one request - so it is
+        either all done or not done at all."""
+        end = self.end_of(tab)
+        clear = (
+            [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": end - 1, "tabId": tab.tab_id}}}]
+            if end > 2 else []
+        )
+        self._call(
+            "POST", ":batchUpdate",
+            json={"requests": clear + rich_requests(paragraphs, at=1, tab_id=tab.tab_id)},
+        )
+
     def link_to(self, tab: Tab) -> str:
         return f"https://docs.google.com/document/d/{self._document}/edit?tab={tab.tab_id}"
 

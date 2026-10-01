@@ -1,0 +1,230 @@
+"""One old tab of the posting doc, put into the new layout - and only when
+nothing in it is lost.
+
+"okay i want him to fix old ones" - "no i want him to correct specific only".
+"""
+
+from types import SimpleNamespace
+
+import pytest
+
+from wilbyte import docs, segments
+from wilbyte.bot import mentions
+
+RYTES_OWN = """Crystal Clark has been licensed a little over four years.
+
+"I'm your agent. You just don't know it yet."
+
+**2 segments** plus the full interview.
+
+LONG-FORM / FULL INTERVIEW (00:02:35–00:53:26) — 50:51
+Crystal Clark: Four Years In (YT Title)
+
+Agent Success Full Interviews (Website section) https://youtu.be/P6nIKDY2tdY
+
+(YT Description) Crystal Clark got licensed in the middle of the pandemic.
+
+• Starting part-time as a broker
+• Why her first month is still her lowest
+
+👍 Like • 💬 Comment • 🔔 Subscribe
+
+#lifeinsurance #agentleadlab
+
+(Website Description) Crystal Clark joins Tre for a full-length conversation.
+
+SEGMENT (00:03:53–00:11:02) — 7:09
+Licensed During the Pandemic (YT Title)
+
+Agent's Expectations (Website section)
+
+(YT Description) Crystal Clark got licensed a little over four years ago.
+
+#first30days #agentleadlab
+
+(Website Description) Crystal Clark describes how she came into life insurance.
+"""
+
+BY_HAND = """2) Segment 2 (00:05:17–00:10:27)
+His First 30 Days on Leads (YT Title)
+Agent's Expectations (Website section) https://youtu.be/eZvDMI3iuGo
+(YT Description)
+Most agents don't struggle because leads "don't work."
+They struggle because they don't know what to fix first.
+
+He shares:
+• What he closed from his first batch
+
+#insuranceagents #agentleadlab
+(Website Description)
+In this clip, Ashley breaks down his first 30 days.
+_______________________________________________
+"""
+
+
+def test_ryte_s_own_tab_reads_back():
+    payload, found = segments.read_back(RYTES_OWN)
+
+    assert payload["summary"].startswith("Crystal Clark has been licensed")
+    assert payload["pull_quote"] == "I'm your agent. You just don't know it yet."
+    assert [(one.long_form, one.range) for one in found] == [
+        (True, "00:02:35–00:53:26"), (False, "00:03:53–00:11:02"),
+    ]
+    assert found[0].youtube == "https://youtu.be/P6nIKDY2tdY"
+    assert found[0].website_section == "Agent Success Full Interviews"
+    assert "\n\n• Starting part-time" in found[0].yt_description
+
+
+def test_a_hand_pasted_tab_reads_back_with_its_youtube_link():
+    _payload, found = segments.read_back(BY_HAND)
+
+    assert found[0].yt_title == "His First 30 Days on Leads"
+    assert found[0].youtube == "https://youtu.be/eZvDMI3iuGo"
+    assert found[0].yt_description.startswith("Most agents don't struggle")
+    assert found[0].website_description == "In this clip, Ashley breaks down his first 30 days."
+
+
+def test_the_youtube_link_gets_a_field_of_its_own():
+    texts = [one.text for one in segments.relayout("Ashley", BY_HAND)]
+    at = texts.index("YOUTUBE LINK")
+    assert texts[at + 1] == "https://youtu.be/eZvDMI3iuGo"
+
+
+def test_a_word_that_would_be_lost_stops_the_whole_tab():
+    """Somebody's note between the title and the description has nowhere to
+    go - so the tab is left exactly as it is."""
+    noted = BY_HAND.replace(
+        "Agent's Expectations (Website section) https://youtu.be/eZvDMI3iuGo",
+        "Agent's Expectations (Website section) https://youtu.be/eZvDMI3iuGo\nposted Tuesday",
+    )
+    with pytest.raises(segments.SegmentError):
+        segments.relayout("Ashley", noted)
+
+
+def test_the_check_catches_anything_the_layout_dropped(monkeypatch):
+    real = segments.as_doc
+
+    def forgetful(payload, found, short, *, name):
+        return [one for one in real(payload, found, short, name=name)
+                if "eZvDMI3iuGo" not in one.text]
+
+    monkeypatch.setattr(segments, "as_doc", forgetful)
+    with pytest.raises(segments.SegmentError, match="wouldn't survive"):
+        segments.relayout("Ashley", BY_HAND)
+
+
+def test_a_tab_with_no_segments_in_it_is_not_touched():
+    with pytest.raises(segments.SegmentError):
+        segments.read_back("Just some notes about Crystal.")
+
+
+@pytest.mark.parametrize("said, who", [
+    ("fix doc Crystal Clark", "Crystal Clark"),
+    ("fix the segments doc for Ashley", "Ashley"),
+    ("redo old segments", ""),
+])
+def test_asking_for_it(said, who):
+    got = mentions.parse(said, max_batch=5)
+    assert (got.action, got.brief) == ("doclayout", who)
+
+
+class Doc:
+    def __init__(self, tabs):
+        self.tabs_held = tabs
+        self.replaced = []
+
+    def contents(self):
+        return [(docs.Tab(tab_id=f"t.{n}", title=title), text, "")
+                for n, (title, text) in enumerate(self.tabs_held)]
+
+    def replace_rich(self, tab, paras):
+        self.replaced.append(tab.title)
+
+    def link_to(self, tab):
+        return f"https://docs.google.com/document/d/D/edit?tab={tab.tab_id}"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _plan(monkeypatch, tabs, who):
+    from wilbyte.bot import jobs
+
+    paper = Doc(tabs)
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: paper)
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D"))
+    return jobs, config, paper, jobs.doc_relayout_plan(config, who)
+
+
+def test_only_the_named_tab(monkeypatch):
+    """"no i want him to correct specific only"."""
+    _jobs, _c, _p, (ready, left) = _plan(
+        monkeypatch, [("Crystal Clark", RYTES_OWN), ("Ashley", BY_HAND)], "crystal clark",
+    )
+    assert [one[0].title for one in ready] == ["Crystal Clark"] and left == []
+
+
+def test_no_name_redoes_nothing(monkeypatch):
+    _jobs, _c, _p, (ready, left) = _plan(monkeypatch, [("Crystal Clark", RYTES_OWN)], "")
+    assert ready == [] and "Which one" in left[0]
+
+
+def test_a_name_two_tabs_share_asks_which(monkeypatch):
+    _jobs, _c, _p, (ready, left) = _plan(
+        monkeypatch, [("William Hayes", RYTES_OWN), ("William Ortiz", RYTES_OWN)], "william",
+    )
+    assert ready == [] and "More than one" in left[0]
+
+
+def test_the_exact_name_beats_a_longer_one(monkeypatch):
+    _jobs, _c, _p, (ready, _left) = _plan(
+        monkeypatch, [("Crystal Clark 2", RYTES_OWN), ("Crystal Clark", RYTES_OWN)], "Crystal Clark",
+    )
+    assert [one[0].title for one in ready] == ["Crystal Clark"]
+
+
+def test_a_tab_already_laid_out_is_left(monkeypatch):
+    laid = "Crystal Clark — interview segments\nFull interview + 1 segment\nYOUTUBE TITLE\nx"
+    _jobs, _c, _p, (ready, left) = _plan(monkeypatch, [("Crystal Clark", laid)], "Crystal Clark")
+    assert ready == [] and "already" in left[0]
+
+
+def test_a_tab_changed_since_the_button_is_left(monkeypatch):
+    jobs, config, paper, (ready, _left) = _plan(
+        monkeypatch, [("Crystal Clark", RYTES_OWN)], "Crystal Clark",
+    )
+    paper.tabs_held = [("Crystal Clark", RYTES_OWN + "\nedited")]
+    done, problems = jobs.doc_relayout(config, ready)
+
+    assert done == [] and paper.replaced == [] and "changed" in problems[0]
+
+
+def test_the_named_tab_is_redone(monkeypatch):
+    jobs, config, paper, (ready, _left) = _plan(
+        monkeypatch, [("Crystal Clark", RYTES_OWN)], "Crystal Clark",
+    )
+    done, problems = jobs.doc_relayout(config, ready)
+
+    assert paper.replaced == ["Crystal Clark"] and problems == []
+
+
+def test_replacing_clears_the_tab_and_writes_in_one_request():
+    sent = []
+
+    class Client(docs.DocsClient):
+        def end_of(self, tab):
+            return 40
+
+        def _call(self, method, path="", **kw):
+            sent.append(kw["json"]["requests"])
+            return {}
+
+    client = Client(SimpleNamespace(client_id="", client_secret="", refresh_token=""), document="D")
+    client.replace_rich(docs.Tab(tab_id="t.1", title="x"), [docs.Para("hello")])
+
+    assert len(sent) == 1
+    assert sent[0][0] == {"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 39, "tabId": "t.1"}}}
+    assert sent[0][1]["insertText"]["location"]["index"] == 1

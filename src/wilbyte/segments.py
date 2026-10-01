@@ -692,6 +692,7 @@ def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: st
 
     paras: list = [Para(f"{name} — interview segments" if name else "Interview segments",
                         style="HEADING_1")]
+    before = [str(one) for one in payload.get("before") or [] if str(one).strip()]
     clips = sum(1 for one in keep if not one.long_form)
     count = f"Full interview + {clips} segment{'' if clips == 1 else 's'}"
     paras.append(Para(count, spans=[(0, len(count), {"foregroundColor": _GREY})]))
@@ -699,6 +700,10 @@ def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: st
     summary = str(payload.get("summary") or "").strip()
     if summary:
         paras.append(Para(summary, looks={"spaceAbove": _pt(8)}))
+    # Whatever an old tab had above its first segment that was neither the
+    # summary nor the quote - a note somebody typed - kept where it was.
+    for line in before:
+        paras.append(Para(line, looks={"spaceAbove": _pt(6)}))
     quote = str(payload.get("pull_quote") or "").strip().strip('"“”')
     if quote:
         said = f"“{quote}”"
@@ -747,6 +752,10 @@ def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: st
                           spans=[(0, len(segment.yt_title), {"bold": True, "fontSize": _pt(13)})]))
         paras.append(_label("Website section"))
         paras.append(Para(segment.website_section))
+        youtube = str(getattr(segment, "youtube", "") or "")
+        if youtube:
+            paras.append(_label("YouTube link"))
+            paras.append(Para(youtube))
 
         paras.append(_label("YouTube description"))
         # Line for line, blank lines included: copied out of the doc, the
@@ -764,4 +773,170 @@ def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: st
 
         paras.append(_label("Website description"))
         paras.append(Para(segment.website_description))
+    return paras
+
+
+# ------------------------------------------------ an old tab, laid out again
+
+#: A segment's heading in a tab written before the layout - RYTE's own
+#: "SEGMENT (00:03:53–00:11:02) — 7:09" or a hand-pasted "2) Segment 2
+#: (00:05:17–00:10:27)". A time range and the word, on a short line.
+_STAMP = r"\d{1,2}:\d{2}(?::\d{2})?"
+_HEADING = re.compile(
+    rf"^(?=.*\b(?:segment|long[\s-]*form|full\s+interview)\b).{{0,60}}?"
+    rf"\(?\s*({_STAMP})\s*[–—-]\s*({_STAMP})\s*\)?.{{0,20}}$",
+    re.IGNORECASE,
+)
+_MARKS = ("(YT Title)", "(Website section)", "(YT Description)", "(Website Description)")
+_URL = re.compile(r"https?://\S+")
+_RULE = re.compile(r"^[\s_\-—–=*·.]{3,}$")
+_COUNT_LINE = re.compile(r"^\**\d+\s+segments?\**\s+plus the full interview\.?$", re.IGNORECASE)
+
+
+@dataclass
+class Recovered:
+    """One segment read back out of an old tab: its words exactly as they were."""
+
+    start: float
+    end: float
+    yt_title: str
+    website_section: str
+    yt_description: str
+    website_description: str
+    long_form: bool = False
+    youtube: str = ""
+
+    @property
+    def seconds(self) -> float:
+        return max(0.0, self.end - self.start)
+
+    @property
+    def range(self) -> str:
+        return f"{timestamp(self.start)}–{timestamp(self.end)}"
+
+
+def _clock(said: str) -> float:
+    parts = [int(one) for one in said.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+def _marked(line: str, mark: str) -> int:
+    return line.casefold().find(mark.casefold())
+
+
+def _trimmed(lines: list[str]) -> str:
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    return "\n".join(line.rstrip() for line in lines)
+
+
+def read_back(text: str) -> tuple[dict, list]:
+    """An old tab's copy as (what was above the segments, the segments).
+
+    Raises SegmentError, saying why, for anything it cannot read with
+    certainty - a tab nobody can be sure of is left exactly as it is.
+    """
+    lines = str(text or "").replace("\x0b", "\n").replace("\r", "").split("\n")
+    starts = [at for at, line in enumerate(lines) if _HEADING.match(line.strip())]
+    if not starts:
+        raise SegmentError("no segment headings with timestamps in it")
+
+    top = [line.strip() for line in lines[:starts[0]]]
+    top = [line for line in top if line and not _COUNT_LINE.match(line) and not _RULE.match(line)]
+    payload: dict = {"before": []}
+    for line in top:
+        bare = line.strip('"“” ')
+        if not payload.get("pull_quote") and line[:1] in '"“' and line[-1:] in '"”':
+            payload["pull_quote"] = bare
+        elif not payload.get("summary"):
+            payload["summary"] = line
+        else:
+            payload["before"].append(line)
+
+    found = []
+    for number, at in enumerate(starts):
+        block = lines[at + 1:starts[number + 1] if number + 1 < len(starts) else len(lines)]
+        heading = _HEADING.match(lines[at].strip())
+        title_at = next((i for i, l in enumerate(block) if _marked(l, "(YT Title)") >= 0), None)
+        desc_at = next((i for i, l in enumerate(block) if _marked(l, "(YT Description)") >= 0), None)
+        web_at = next((i for i, l in enumerate(block) if _marked(l, "(Website Description)") >= 0), None)
+        where = f"the segment at {heading.group(1)}"
+        if title_at is None or desc_at is None or web_at is None or not title_at < desc_at < web_at:
+            raise SegmentError(f"{where} is missing a YT Title, YT Description or Website Description label")
+
+        title_line = block[title_at]
+        title = title_line[:_marked(title_line, "(YT Title)")].strip()
+        section, youtube = "", []
+        for line in block[title_at:desc_at]:
+            cut = _marked(line, "(Website section)")
+            if cut >= 0:
+                section = line[:cut].strip()
+                if section.casefold().endswith("(yt title)"):
+                    section = ""
+            youtube += _URL.findall(line)
+            rest = _URL.sub("", line)
+            for mark in _MARKS:
+                rest = re.sub(re.escape(mark), "", rest, flags=re.IGNORECASE)
+            if line is title_line:
+                rest = rest.replace(title, "", 1)
+            if cut >= 0 and section:
+                rest = rest.replace(section, "", 1)
+            if rest.strip(" -—–|:"):
+                raise SegmentError(f"{where} has words between its title and its description I can't place: “{rest.strip()[:40]}”")
+        if not title or not section:
+            raise SegmentError(f"{where} has no YT Title or no Website section")
+
+        desc_line = block[desc_at]
+        first = desc_line[_marked(desc_line, "(YT Description)") + len("(YT Description)"):]
+        description = _trimmed([first.strip()] + block[desc_at + 1:web_at])
+        web_line = block[web_at]
+        after = web_line[_marked(web_line, "(Website Description)") + len("(Website Description)"):]
+        website = _trimmed([
+            line for line in [after.strip()] + block[web_at + 1:] if not _RULE.match(line)
+        ])
+        if not description or not website:
+            raise SegmentError(f"{where} has an empty description")
+        found.append(Recovered(
+            start=_clock(heading.group(1)), end=_clock(heading.group(2)),
+            yt_title=title, website_section=section,
+            yt_description=description, website_description=website,
+            long_form=bool(re.search(r"long[\s-]*form|full\s+interview", lines[at], re.IGNORECASE)),
+            youtube=" ".join(dict.fromkeys(youtube)),
+        ))
+    return payload, found
+
+
+def _words(text: str) -> "Counter":
+    from collections import Counter
+
+    said = str(text or "")
+    for mark in _MARKS:
+        said = re.sub(re.escape(mark), " ", said, flags=re.IGNORECASE)
+    return Counter(re.findall(r"[\w#@%$'’/:.\-]+", said.casefold().replace("**", "")))
+
+
+def relayout(name: str, text: str) -> list:
+    """An old tab's copy in the new layout - or SegmentError if a single word of
+    it would not survive the move.
+
+    The check is the point. Somebody added YouTube links to these by hand, and
+    a tab rebuilt without one is a tab that lost work nobody would notice was
+    gone until it was needed.
+    """
+    payload, found = read_back(text)
+    paras = as_doc(payload, found, [], name=name)
+    lines = str(text or "").replace("\x0b", "\n").split("\n")
+    kept = "\n".join(
+        line for line in lines
+        if not _HEADING.match(line.strip()) and not _COUNT_LINE.match(line.strip())
+        and not _RULE.match(line)
+    )
+    missing = _words(kept) - _words("\n".join(one.text for one in paras))
+    if missing:
+        sample = ", ".join(f"“{word}”" for word in list(missing)[:5])
+        raise SegmentError(f"some of it wouldn't survive the move ({sample})")
     return paras

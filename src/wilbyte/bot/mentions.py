@@ -555,6 +555,14 @@ TESTIMONIAL = re.compile(
 )
 # "testimonial remove Raymond", "remove testimonial <link>", "delete ... from
 # the website" - one interview off the site, after the button.
+#: "fix the doc", "redo old segments", "fix doc Crystal Clark" - the posting
+#: doc's old tabs, put into the layout new interviews get.
+DOC_RELAYOUT = re.compile(
+    r"^\s*(?:fix|redo|re-do|tidy|clean\s*up|update|format)\s+(?:the\s+)?(?:old\s+)?"
+    r"(?:segments?\s+doc|posting\s+doc|segments?|docs?|doc\s+tabs?)\b(?:\s+(?:for|of))?\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 TESTIMONIAL_REMOVE = re.compile(
     r"^\s*(?:(?:testimonials?|website\s+videos?)\s+(?:remove|delete|take\s+down)"
     r"|(?:remove|delete|take\s+down)\s+(?:the\s+)?(?:testimonials?|website\s+videos?))\b[:\s]*(.+?)"
@@ -717,6 +725,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # action words: "clearout" in "check clearouts" is not a clear-out.
     # "testimonial https://youtu.be/..." - an interview for the website, not a
     # blog post, so before a bare YouTube link is taken as one.
+    tidy = DOC_RELAYOUT.match(text)
+    if tidy:
+        return MentionRequest(action="doclayout", brief=(tidy.group(1) or "").strip(" .!?:"))
     down = TESTIMONIAL_REMOVE.match(text)
     if down:
         return MentionRequest(action="testimonialremove", brief=down.group(1).strip(" .!?"))
@@ -1223,6 +1234,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > section, with `quote: …` after the link (and `name: …` if the video doesn't say), then Add.
 > link to set them yourself. **testimonial remove Raymond** — take one off.
 > **website check** — whether I can reach the site
+> @RYTE **fix doc Crystal Clark** — put one old tab of the segments doc into the new
+> layout, after a button. Only if every word survives, YouTube links included
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
 > payment on each (date, amount, card ending, transaction)
 > @RYTE **contract of David Pereira** — the signed PDF, when one reaches an

@@ -1231,6 +1231,90 @@ def copy_into_doc(
         return "", [f"Couldn't write it into the doc: {_short(exc, 200)}"]
 
 
+def doc_relayout_plan(config: Config, who: str) -> tuple[list, list[str]]:
+    """Whether one named tab of the posting doc can go into the new layout.
+
+    ([(tab, paragraphs, text, what it kept)], [why it is left, or which ones
+    the name could mean]). Reads only.
+
+    One tab, named - "no i want him to correct specific only". The tab called
+    exactly that if there is one; otherwise the one whose name has it in it,
+    and only if there is just the one.
+    """
+    from .. import docs as doc
+    from .. import segments as segmenting
+
+    if not (getattr(config.secrets, "segments_doc_id", "") or "").strip():
+        return [], ["SEGMENTS_DOC_ID isn't set, so there's no posting doc to tidy."]
+    wanted = " ".join(str(who or "").split()).casefold()
+    if not wanted:
+        return [], ["Which one? `@RYTE fix doc Crystal Clark` - the tab's name."]
+    ready, left = [], []
+    with doc.open_docs(config.secrets) as reading:
+        every = reading.contents()
+
+        def called(tab) -> str:
+            return " ".join(tab.title.split()).casefold()
+
+        picked = [one for one in every if called(one[0]) == wanted]
+        if not picked:
+            picked = [one for one in every if wanted in called(one[0])]
+        if not picked:
+            return [], [f"No tab called “{who}” in the posting doc."]
+        if len(picked) > 1:
+            return [], [
+                f"More than one tab could be “{who}” - say which: "
+                + ", ".join(f"**{one[0].title}**" for one in picked)
+            ]
+        for tab, text, odd in picked:
+            if not text.strip():
+                left.append(f"**{tab.title}** — it's empty")
+                continue
+            if "\nYOUTUBE TITLE\n" in text or text.lstrip().startswith(f"{tab.title} — interview segments"):
+                left.append(f"**{tab.title}** — already in the new layout")
+                continue
+            if odd:
+                left.append(f"**{tab.title}** — left alone: {odd}")
+                continue
+            try:
+                paras = segmenting.relayout(tab.title, text)
+            except segmenting.SegmentError as exc:
+                left.append(f"**{tab.title}** — left alone: {exc}")
+                continue
+            _payload, found = segmenting.read_back(text)
+            links = sum(1 for one in found if one.youtube)
+            ready.append((tab, paras, text, (
+                f"{sum(1 for one in found if not one.long_form)} segments"
+                + (" + full interview" if any(one.long_form for one in found) else "")
+                + (f", {links} YouTube link{'' if links == 1 else 's'} kept" if links else "")
+            )))
+    return ready, left
+
+
+def doc_relayout(config: Config, planned: list) -> tuple[list[str], list[str]]:
+    """Rewrite the planned tabs. (what was redone, problems).
+
+    Each tab is read again first and left alone if anybody changed it since
+    the list was shown - the plan was made from what it said then.
+    """
+    from .. import docs as doc
+
+    done, problems = [], []
+    with doc.open_docs(config.secrets) as writing:
+        now = {tab.tab_id: text for tab, text, _odd in writing.contents()}
+        for tab, paras, text, _kept in planned:
+            if now.get(tab.tab_id) != text:
+                problems.append(f"**{tab.title}** changed since I looked, so I left it - ask again.")
+                continue
+            try:
+                writing.replace_rich(tab, paras)
+            except doc.DocsError as exc:
+                problems.append(f"**{tab.title}** — {_short(exc, 160)}")
+                continue
+            done.append(f"[{tab.title}](<{writing.link_to(tab)}>)")
+    return done, problems
+
+
 #: Who cuts the interviews. Tagged on the YT VID checklist so the job reaches
 #: them rather than sitting on a card they would have to think to open.
 EDITORS = ("@mgproductions7", "@mgvideoeditors")

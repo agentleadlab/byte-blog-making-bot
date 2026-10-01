@@ -1351,6 +1351,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _website_testimonial(responder, config, request.brief or "")
                 return
 
+            if request.action == "doclayout":
+                await _relayout_doc(responder, config, request.brief or "")
+                return
+
             if request.action == "testimonialremove":
                 await _website_take_down(responder, config, request.brief or "")
                 return
@@ -1704,6 +1708,55 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
         await responder.send(f"⚠ Couldn't put it on the website: {_readable(exc)}")
         return
     await responder.send(done)
+
+
+async def _relayout_doc(responder: Responder, config: Config, who: str) -> None:
+    """One old tab of the posting doc, in the layout new interviews get - after
+    the button.
+
+    "okay i want him to fix old ones" - "no i want him to correct specific
+    only". One tab, by name. It is only redone when every word of it survives
+    the move, the YouTube links pasted in by hand included.
+    """
+    if not who.strip():
+        await responder.send(
+            "Which tab? `@RYTE fix doc Crystal Clark` — one at a time, by its name in the doc."
+        )
+        return
+    try:
+        ready, left = await asyncio.to_thread(jobs.doc_relayout_plan, config, who)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read the posting doc: {_readable(exc)}")
+        return
+    if not ready:
+        await responder.send("\n".join(left) or f"Nothing to redo in “{who}”.")
+        return
+    tab, _paras, _text, kept = ready[0]
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Redo this tab",
+        emoji="📄",
+    )
+    await responder.send(
+        f"📄 Put **{tab.title}** into the new layout? {kept}.\n"
+        "-# Every word stays - I checked. Google keeps the old version too: "
+        "File → Version history.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        done, problems = await asyncio.to_thread(jobs.doc_relayout, config, ready)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't redo them: {_readable(exc)}")
+        return
+    said = []
+    if done:
+        said.append("📄 Redone: " + ", ".join(done))
+    said += [f"⚠ {one}" for one in problems]
+    await responder.send("\n".join(said) or "Nothing was redone.")
 
 
 async def _website_take_down(responder: Responder, config: Config, said: str) -> None:
