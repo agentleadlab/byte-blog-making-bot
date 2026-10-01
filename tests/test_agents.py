@@ -4751,3 +4751,12 @@ def test_a_trucker_line_written_basic_spreads_onto_the_trucker_checklist():
     assert agents.match_checklist(
         "20 OTP TRUCKERS", ["Just Trucker", "own setup"], tier="plus",
     ) == "Just Trucker"
+
+
+def test_a_trucker_card_written_basic_is_still_plus():
+    assert agents.tier_of("Lead Type: 20 Basic Truckers") == "plus"
+
+
+def test_a_trucker_card_naming_no_tier_is_plus():
+    assert agents.tier_hint("Lead Type: Truckers\n20 truckers") == "plus"
+    assert agents.tier_hint("Lead Type: Vets\n20 vets") is None
