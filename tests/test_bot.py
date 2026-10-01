@@ -6043,7 +6043,8 @@ def test_the_doc_gets_the_whole_copy_not_the_index(config, monkeypatch):
     )
     caught, _ = _filed(monkeypatch, config, copy=whole)
 
-    assert caught.doc_text == whole
+    # The interview's card on top - "always put it on top" - then the copy.
+    assert caught.doc_text == "Evan Scott Interview — https://trello.com/c/x\n\n" + whole
     assert "(YT Description)" in caught.doc_text
     assert "(Website Description)" in caught.doc_text
     assert "#veteranleads" in caught.doc_text

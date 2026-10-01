@@ -228,3 +228,57 @@ def test_replacing_clears_the_tab_and_writes_in_one_request():
     assert len(sent) == 1
     assert sent[0][0] == {"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 39, "tabId": "t.1"}}}
     assert sent[0][1]["insertText"]["location"]["index"] == 1
+
+
+def test_the_filed_as_line_at_the_bottom_moves_to_the_top():
+    """"we put the trello card for the interview? always put it on top"."""
+    filed = BY_HAND + (
+        "Filed as Evan Scott Interview in Marketing Department — "
+        "https://trello.com/c/zU6Es5Kc/16231-evan-scott-interview\n"
+    )
+    texts = [one.text for one in segments.relayout("Evan Scott", filed)]
+
+    assert texts[1:3] == ["TRELLO CARD", "https://trello.com/c/zU6Es5Kc/16231-evan-scott-interview"]
+    assert not any(one.startswith("Filed as") for one in texts)
+    _payload, found = segments.read_back(filed)
+    assert "trello" not in found[-1].website_description
+
+
+def test_a_new_tab_has_its_card_on_top():
+    keep, _ = segments.parse_segments({"segments": [{
+        "kind": "segment", "start": "00:00:00", "end": "00:08:00", "yt_title": "T",
+        "website_section": segments.SECTIONS[0], "hook": "h", "bullets": ["a", "b", "c"],
+        "website_description": "w",
+    }]})
+    texts = [one.text for one in segments.as_doc({}, keep, [], name="Evan Scott",
+                                                  card="https://trello.com/c/abc")]
+    assert texts[:3] == ["Evan Scott — interview segments", "TRELLO CARD", "https://trello.com/c/abc"]
+
+
+def test_new_interviews_are_laid_out_with_the_card_that_was_just_made(config, monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    seen = {}
+
+    def copy_into_doc(cfg, *, title, text, paragraphs=None):
+        seen["paras"] = paragraphs
+        return "", []
+
+    monkeypatch.setattr(client.jobs, "file_interview",
+                        lambda cfg, **kw: ("https://trello.com/c/new", "cx", []))
+    monkeypatch.setattr(client.jobs, "copy_into_doc", copy_into_doc)
+    monkeypatch.setattr(client.jobs, "hand_off_interview", lambda cfg, **kw: ([], []))
+
+    class Said:
+        requester_id = None
+
+        async def send(self, *a, **k):
+            pass
+
+    asyncio.run(client._file_interview(
+        Said(), config, [], topic="Evan Scott", link="", passcode="", copy="x",
+        lay_out=lambda card: [docs.Para(card)],
+    ))
+    assert [one.text for one in seen["paras"]] == ["https://trello.com/c/new"]

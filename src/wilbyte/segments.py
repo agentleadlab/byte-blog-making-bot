@@ -675,7 +675,8 @@ def _name_of(segment: Segment, number: int) -> str:
     return "Full interview" if segment.long_form else f"Segment {number}"
 
 
-def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: str) -> list:
+def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: str,
+           card: str = "") -> list:
     """The interview's tab in the posting doc, laid out to be read and copied.
 
     "this isnt pretty the way it gets pasted and its very confusing ... i want
@@ -693,6 +694,12 @@ def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: st
     paras: list = [Para(f"{name} — interview segments" if name else "Interview segments",
                         style="HEADING_1")]
     before = [str(one) for one in payload.get("before") or [] if str(one).strip()]
+    # The interview's Trello card, first thing under the name - "always put
+    # it on top". It used to be pasted in at the very bottom by hand.
+    card = card or str(payload.get("card") or "")
+    if card:
+        paras.append(_label("Trello card"))
+        paras.append(Para(card, looks={"spaceBelow": _pt(6)}))
     clips = sum(1 for one in keep if not one.long_form)
     count = f"Full interview + {clips} segment{'' if clips == 1 else 's'}"
     paras.append(Para(count, spans=[(0, len(count), {"foregroundColor": _GREY})]))
@@ -790,6 +797,12 @@ _HEADING = re.compile(
 _MARKS = ("(YT Title)", "(Website section)", "(YT Description)", "(Website Description)")
 _URL = re.compile(r"https?://\S+")
 _RULE = re.compile(r"^[\s_\-—–=*·.]{3,}$")
+#: "Filed as Evan Scott Interview in Marketing Department — <link>", which is
+#: what Discord says once the card is made, pasted in under the copy by hand.
+_FILED = re.compile(
+    r"^\s*(?:filed\s+as\b.*?[—–-]\s*)?<?(https?://trello\.com/c/[^\s>]+)>?\s*$",
+    re.IGNORECASE,
+)
 _COUNT_LINE = re.compile(r"^\**\d+\s+segments?\**\s+plus the full interview\.?$", re.IGNORECASE)
 
 
@@ -841,13 +854,15 @@ def read_back(text: str) -> tuple[dict, list]:
     certainty - a tab nobody can be sure of is left exactly as it is.
     """
     lines = str(text or "").replace("\x0b", "\n").replace("\r", "").split("\n")
+    cards = [_FILED.match(line).group(1) for line in lines if _FILED.match(line)]
+    lines = [line for line in lines if not _FILED.match(line)]
     starts = [at for at, line in enumerate(lines) if _HEADING.match(line.strip())]
     if not starts:
         raise SegmentError("no segment headings with timestamps in it")
 
     top = [line.strip() for line in lines[:starts[0]]]
     top = [line for line in top if line and not _COUNT_LINE.match(line) and not _RULE.match(line)]
-    payload: dict = {"before": []}
+    payload: dict = {"before": [], "card": " ".join(dict.fromkeys(cards))}
     for line in top:
         bare = line.strip('"“” ')
         if not payload.get("pull_quote") and line[:1] in '"“' and line[-1:] in '"”':
@@ -931,7 +946,8 @@ def relayout(name: str, text: str) -> list:
     paras = as_doc(payload, found, [], name=name)
     lines = str(text or "").replace("\x0b", "\n").split("\n")
     kept = "\n".join(
-        line for line in lines
+        _FILED.match(line).group(1) if _FILED.match(line) else line
+        for line in lines
         if not _HEADING.match(line.strip()) and not _COUNT_LINE.match(line.strip())
         and not _RULE.match(line)
     )
