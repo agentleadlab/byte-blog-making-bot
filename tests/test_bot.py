@@ -5990,8 +5990,8 @@ class Filing:
         self.card_text = description
         return "https://trello.com/c/x", "cx", []
 
-    def copy_into_doc(self, config, *, title, text):
-        self.doc_title, self.doc_text = title, text
+    def copy_into_doc(self, config, *, title, text, paragraphs=None):
+        self.doc_title, self.doc_text, self.laid_out = title, text, paragraphs
         return "https://docs.google.com/document/d/D/edit?tab=t.9", []
 
 

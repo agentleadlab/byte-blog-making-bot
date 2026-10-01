@@ -18,7 +18,7 @@ be written into it and the id of a new tab only comes back once it is made.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -47,6 +47,79 @@ class Tab:
 
     tab_id: str
     title: str
+
+
+@dataclass
+class Para:
+    """One paragraph of formatted copy.
+
+    `spans` are (start, end, text style) in Python characters within `text`;
+    the conversion to the UTF-16 offsets Google counts in happens on writing,
+    because 👍 is one character here and two there.
+    """
+
+    text: str
+    style: str = "NORMAL_TEXT"
+    spans: list = field(default_factory=list)
+    #: Extra paragraph style - indent, shading, a border - as the API spells it.
+    looks: dict = field(default_factory=dict)
+
+
+_LINK = re.compile(r"https?://[^\s<>()]+[^\s<>().,;:!?]")
+_LINK_LOOK = {"foregroundColor": {"color": {"rgbColor": {"red": 0.07, "green": 0.36, "blue": 0.8}}},
+              "underline": True}
+
+
+def _u16(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def rich_requests(paragraphs: list, *, at: int, tab_id: str, lead: str = "") -> list[dict]:
+    """The batch that writes these paragraphs at `at`, styled.
+
+    One insert, then the styles over what was inserted. Everything is reset
+    first, because inserted text takes on the style of whatever it was typed
+    beside - the end of a heading would make every line after it a heading.
+    """
+    text = lead + "\n".join(one.text for one in paragraphs) + "\n"
+    requests: list[dict] = [{"insertText": {"location": {"index": at, "tabId": tab_id}, "text": text}}]
+    start = at + _u16(lead)
+    end_all = at + _u16(text)
+    requests.append({"updateTextStyle": {
+        "range": {"startIndex": start, "endIndex": end_all, "tabId": tab_id},
+        "textStyle": {},
+        "fields": "bold,italic,underline,foregroundColor,fontSize,link,smallCaps",
+    }})
+    styles: list[dict] = []
+    for one in paragraphs:
+        size = _u16(one.text)
+        whole = {"startIndex": start, "endIndex": start + size + 1, "tabId": tab_id}
+        looks = dict(one.looks)
+        requests.append({"updateParagraphStyle": {
+            "range": whole,
+            "paragraphStyle": {"namedStyleType": one.style, **looks},
+            "fields": ",".join(["namedStyleType", *looks]),
+        }})
+
+        def span(begin: int, finish: int, look: dict) -> None:
+            if finish <= begin or not look:
+                return
+            styles.append({"updateTextStyle": {
+                "range": {
+                    "startIndex": start + _u16(one.text[:begin]),
+                    "endIndex": start + _u16(one.text[:finish]),
+                    "tabId": tab_id,
+                },
+                "textStyle": look,
+                "fields": ",".join(look),
+            }})
+
+        for begin, finish, look in one.spans:
+            span(begin, finish, look)
+        for found in _LINK.finditer(one.text):
+            span(found.start(), found.end(), {**_LINK_LOOK, "link": {"url": found.group(0)}})
+        start += size + 1
+    return requests + styles
 
 
 def doc_id_in(link: str) -> str:
@@ -192,6 +265,48 @@ class DocsClient:
                     "text": text,
                 }
             }]},
+        )
+
+    def end_of(self, tab: Tab) -> int:
+        """Where the end of that tab is, in Google's own counting."""
+        got = self._call(
+            "GET",
+            params={
+                "includeTabsContent": "true",
+                "fields": (
+                    "tabs.tabProperties.tabId,tabs.documentTab.body.content.endIndex,"
+                    "tabs.childTabs.tabProperties.tabId,"
+                    "tabs.childTabs.documentTab.body.content.endIndex"
+                ),
+            },
+        )
+
+        def find(tabs) -> int | None:
+            for one in tabs or []:
+                if str((one.get("tabProperties") or {}).get("tabId") or "") == tab.tab_id:
+                    content = ((one.get("documentTab") or {}).get("body") or {}).get("content") or []
+                    return max((int(part.get("endIndex") or 0) for part in content), default=1)
+                inside = find(one.get("childTabs"))
+                if inside is not None:
+                    return inside
+            return None
+
+        found = find(got.get("tabs"))
+        if found is None:
+            raise DocsError("Couldn't find the tab I was about to write into.")
+        return found
+
+    def write_rich(self, tab: Tab, paragraphs: list) -> None:
+        """Put formatted copy into that tab, under whatever is already in it."""
+        end = self.end_of(tab)
+        at = max(1, end - 1)
+        # Into a tab with something in it already, a fresh paragraph first, so
+        # the copy does not join the last line that is there.
+        self._call(
+            "POST", ":batchUpdate",
+            json={"requests": rich_requests(
+                paragraphs, at=at, tab_id=tab.tab_id, lead="\n" if end > 2 else "",
+            )},
         )
 
     def link_to(self, tab: Tab) -> str:

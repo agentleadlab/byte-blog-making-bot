@@ -1175,7 +1175,9 @@ def file_interview(
         client.close()
 
 
-def copy_into_doc(config: Config, *, title: str, text: str) -> tuple[str, list[str]]:
+def copy_into_doc(
+    config: Config, *, title: str, text: str, paragraphs: list | None = None,
+) -> tuple[str, list[str]]:
     """Put an interview's copy into the segments doc, as its own tab.
 
     (link to the tab, problems).
@@ -1205,12 +1207,24 @@ def copy_into_doc(config: Config, *, title: str, text: str) -> tuple[str, list[s
                 None,
             )
             tab = already or writing.add_tab(title)
-            writing.write(tab, text if text.endswith("\n") else text + "\n")
-            return writing.link_to(tab), (
+            problems = (
                 [] if already is None else
                 [f"There was already a tab called {title!r}, so it went "
                  "underneath what was in it rather than into a second one."]
             )
+            # Laid out when it can be, plain when it can't: the formatting is
+            # one request that either all lands or none of it does, and the
+            # copy reaching the doc matters more than how it looks.
+            if paragraphs:
+                try:
+                    writing.write_rich(tab, paragraphs)
+                    return writing.link_to(tab), problems
+                except doc.DocsError as exc:
+                    problems.append(
+                        f"Couldn't lay it out, so it went in plain: {_short(exc, 160)}"
+                    )
+            writing.write(tab, text if text.endswith("\n") else text + "\n")
+            return writing.link_to(tab), problems
     except doc.DocsError as exc:
         return "", [f"Couldn't write it into the doc: {_short(exc, 200)}"]
     except Exception as exc:

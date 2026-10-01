@@ -4902,12 +4902,16 @@ async def _send_segments(
         # the board is for — and the doc gets the copy, because the copy is
         # what the website and YouTube are posted from.
         copy="\n\n".join([summary] + [one.as_text() for one in keep]),
+        laid_out=segmenting.as_doc(
+            payload, keep, short,
+            name=segmenting.client_name(searched or title) or "",
+        ),
     )
 
 
 async def _file_interview(
     responder: Responder, config: Config, keep, *, topic: str, link: str,
-    passcode: str, copy: str = "",
+    passcode: str, copy: str = "", laid_out: list | None = None,
 ) -> None:
     """Put the cut-up interview on the board, and its copy in the posting doc.
 
@@ -4951,6 +4955,7 @@ async def _file_interview(
             # "Leonardo Lopez Interview", which is the card's title.
             title=segmenting.client_name(topic) or name,
             text=copy or description,
+            paragraphs=laid_out,
         )
     except PIPELINE_ERRORS as exc:
         where, trouble = "", [f"Couldn't write it into the doc: {jobs._short(exc, 160)}"]

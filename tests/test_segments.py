@@ -732,3 +732,41 @@ def test_the_title_may_still_carry_the_figure():
 
     assert "except the YT Title" in said
     assert "hook that earns the click" in said
+
+
+def test_the_doc_shows_every_cut_at_a_glance_and_labels_each_field():
+    """"i want clear visual of segmentation"."""
+    from wilbyte.segments import as_doc
+
+    keep, _ = parse_segments({"segments": [
+        _raw("00:02:35", "00:53:26", kind="long-form"),
+        _raw("00:03:53", "00:11:02"),
+        _raw("00:11:02", "00:15:48"),
+    ]})
+    paras = as_doc({"summary": "Crystal.", "pull_quote": "I'm your agent."}, keep, [],
+                   name="Crystal Clark")
+    texts = [one.text for one in paras]
+
+    assert texts[0] == "Crystal Clark — interview segments"
+    assert "Full interview + 2 segments" in texts
+    glance = texts.index("At a glance")
+    assert texts[glance + 1].startswith("Full interview   00:02:35–00:53:26")
+    assert texts[glance + 3].startswith("Segment 1   00:03:53–00:11:02")
+    headings = [one.text for one in paras if one.style == "HEADING_2" and "shading" in one.looks]
+    assert headings == [
+        "Full interview  ·  00:02:35–00:53:26  ·  50:51",
+        "Segment 1  ·  00:03:53–00:11:02  ·  7:09",
+        "Segment 2  ·  00:11:02–00:15:48  ·  4:46",
+    ]
+    assert texts.count("YOUTUBE TITLE") == 3 and texts.count("WEBSITE DESCRIPTION") == 3
+
+
+def test_the_youtube_description_in_the_doc_is_word_for_word():
+    """Copied out of the doc, YouTube must get exactly what it got before."""
+    from wilbyte.segments import as_doc
+
+    keep, _ = parse_segments({"segments": [_raw("00:00:36", "00:08:16")]})
+    paras = [one.text for one in as_doc({}, keep, [], name="Jonny")]
+    start = paras.index("YOUTUBE DESCRIPTION") + 1
+    end = paras.index("WEBSITE DESCRIPTION")
+    assert "\n".join(paras[start:end]) == keep[0].yt_description

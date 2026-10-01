@@ -281,3 +281,78 @@ def test_the_whole_document_is_not_downloaded_to_read_its_tab_names():
     assert "tabProperties" in asked["fields"]
     assert "body" not in asked["fields"]
     client.close()
+
+
+# ------------------------------------------------ laid out, not pasted
+
+
+def test_styles_land_on_the_right_letters_past_an_emoji():
+    """Google counts 👍 as two. Counted as one, every style after the like
+    line would land a letter early."""
+    paras = [
+        docs.Para("👍 Like"),
+        docs.Para("Title here", spans=[(0, 5, {"bold": True})]),
+    ]
+    got = docs.rich_requests(paras, at=1, tab_id="t.1")
+
+    assert got[0]["insertText"]["text"] == "👍 Like\nTitle here\n"
+    bold = [one for one in got if "updateTextStyle" in one
+            and one["updateTextStyle"]["textStyle"].get("bold")][0]
+    # "👍 Like\n" is 8 in UTF-16, from index 1: "Title" is 9 to 14.
+    assert bold["updateTextStyle"]["range"] == {"startIndex": 9, "endIndex": 14, "tabId": "t.1"}
+
+
+def test_every_paragraph_gets_its_own_style_and_links_are_links():
+    paras = [docs.Para("Heading", style="HEADING_2"), docs.Para("VISIT US https://agentleadlab.com/")]
+    got = docs.rich_requests(paras, at=1, tab_id="t.1")
+
+    named = [one["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"]
+             for one in got if "updateParagraphStyle" in one]
+    assert named == ["HEADING_2", "NORMAL_TEXT"]
+    links = [one["updateTextStyle"]["textStyle"]["link"]["url"]
+             for one in got if "link" in one.get("updateTextStyle", {}).get("textStyle", {})]
+    assert links == ["https://agentleadlab.com/"]
+
+
+def test_into_a_tab_with_writing_in_it_starts_a_fresh_line():
+    got = docs.rich_requests([docs.Para("New")], at=40, tab_id="t.1", lead="\n")
+    assert got[0]["insertText"]["text"] == "\nNew\n"
+    para = [one for one in got if "updateParagraphStyle" in one][0]
+    assert para["updateParagraphStyle"]["range"]["startIndex"] == 41
+
+
+class Laying(Paper):
+    def __init__(self, *, refuse=False, **kw):
+        super().__init__(**kw)
+        self.laid, self.refuse = [], refuse
+
+    def write_rich(self, tab, paragraphs):
+        if self.refuse:
+            raise docs.DocsError("bad request")
+        self.laid.append((tab.tab_id, [one.text for one in paragraphs]))
+
+
+def _laying(monkeypatch, paper):
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: paper)
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D"))
+    return jobs.copy_into_doc(config, title="Crystal Clark", text="plain copy",
+                              paragraphs=[docs.Para("laid out")])
+
+
+def test_the_copy_goes_in_laid_out(monkeypatch):
+    paper = Laying()
+    _link, problems = _laying(monkeypatch, paper)
+
+    assert paper.laid == [("t.new", ["laid out"])] and paper.written == []
+    assert problems == []
+
+
+def test_layout_refused_still_gets_the_copy_in(monkeypatch):
+    """The copy reaching the doc matters more than how it looks."""
+    paper = Laying(refuse=True)
+    _link, problems = _laying(monkeypatch, paper)
+
+    assert paper.written == [("t.new", "plain copy\n")]
+    assert "plain" in problems[0]

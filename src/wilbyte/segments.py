@@ -633,3 +633,135 @@ def opening(payload: dict, *, kept: int, short: list[Segment]) -> str:
             f"-# Left out for running under {MIN_SECONDS // 60} minutes: {dropped}"
         )
     return "\n\n".join(lines)
+
+
+# ------------------------------------------------ the posting doc, laid out
+
+#: Colours for the doc. Grey for labels and the fixed links, a soft tint behind
+#: each segment's heading so the eye finds where one ends and the next begins.
+_GREY = {"color": {"rgbColor": {"red": 0.42, "green": 0.45, "blue": 0.5}}}
+_TAG_BLUE = {"color": {"rgbColor": {"red": 0.1, "green": 0.45, "blue": 0.91}}}
+_FULL_TINT = {"red": 0.93, "green": 0.91, "blue": 0.99}
+_CLIP_TINT = {"red": 0.91, "green": 0.95, "blue": 0.99}
+
+
+def _pt(size: float) -> dict:
+    return {"magnitude": size, "unit": "PT"}
+
+
+def _label(text: str):
+    from .docs import Para
+
+    return Para(
+        text.upper(),
+        spans=[(0, len(text), {"bold": True, "fontSize": _pt(8.5), "foregroundColor": _GREY})],
+        looks={"spaceAbove": _pt(10), "spaceBelow": _pt(2)},
+    )
+
+
+def _shaded(text: str, tint: dict):
+    from .docs import Para
+
+    return Para(
+        text, style="HEADING_2",
+        looks={
+            "shading": {"backgroundColor": {"color": {"rgbColor": tint}}},
+            "spaceAbove": _pt(24), "spaceBelow": _pt(6),
+        },
+    )
+
+
+def _name_of(segment: Segment, number: int) -> str:
+    return "Full interview" if segment.long_form else f"Segment {number}"
+
+
+def as_doc(payload: dict, keep: list[Segment], short: list[Segment], *, name: str) -> list:
+    """The interview's tab in the posting doc, laid out to be read and copied.
+
+    "this isnt pretty the way it gets pasted and its very confusing ... i want
+    clear visual of segmentation". The words are the same ones Discord gets.
+    What changes is the shape: an overview of every cut at the top, each
+    segment under a tinted heading of its own, and every field labelled on a
+    line above it rather than tagged on the end in brackets.
+
+    The YouTube description is kept exactly as it is posted - its own "•"
+    bullets, the links, the hashtags - so copying it out of the doc still
+    gives YouTube the same text.
+    """
+    from .docs import Para
+
+    paras: list = [Para(f"{name} — interview segments" if name else "Interview segments",
+                        style="HEADING_1")]
+    clips = sum(1 for one in keep if not one.long_form)
+    count = f"Full interview + {clips} segment{'' if clips == 1 else 's'}"
+    paras.append(Para(count, spans=[(0, len(count), {"foregroundColor": _GREY})]))
+
+    summary = str(payload.get("summary") or "").strip()
+    if summary:
+        paras.append(Para(summary, looks={"spaceAbove": _pt(8)}))
+    quote = str(payload.get("pull_quote") or "").strip().strip('"“”')
+    if quote:
+        said = f"“{quote}”"
+        paras.append(Para(
+            said, spans=[(0, len(said), {"italic": True, "fontSize": _pt(13)})],
+            looks={
+                "indentStart": _pt(18), "spaceAbove": _pt(8), "spaceBelow": _pt(8),
+                "borderLeft": {
+                    "color": {"color": {"rgbColor": {"red": 0.55, "green": 0.45, "blue": 0.95}}},
+                    "width": _pt(3), "padding": _pt(10), "dashStyle": "SOLID",
+                },
+            },
+        ))
+
+    # At a glance: every cut on two lines, so the whole interview can be
+    # seen before scrolling into any of it.
+    paras.append(Para("At a glance", style="HEADING_2", looks={"spaceAbove": _pt(18)}))
+    number = 0
+    for segment in keep:
+        if not segment.long_form:
+            number += 1
+        what = _name_of(segment, number)
+        line = f"{what}   {segment.range} · {length_of(segment.seconds)} · {segment.website_section}"
+        paras.append(Para(
+            line,
+            spans=[(0, len(what), {"bold": True}),
+                   (len(what), len(line), {"foregroundColor": _GREY})],
+            looks={"spaceAbove": _pt(6)},
+        ))
+        paras.append(Para(segment.yt_title, looks={"indentStart": _pt(18)}))
+    if short:
+        dropped = ", ".join(f"{s.range} ({length_of(s.seconds)})" for s in short)
+        note = f"Left out for running under {MIN_SECONDS // 60} minutes: {dropped}"
+        paras.append(Para(note, spans=[(0, len(note), {"italic": True, "foregroundColor": _GREY})],
+                          looks={"spaceAbove": _pt(6)}))
+
+    number = 0
+    for segment in keep:
+        if not segment.long_form:
+            number += 1
+        heading = f"{_name_of(segment, number)}  ·  {segment.range}  ·  {length_of(segment.seconds)}"
+        paras.append(_shaded(heading, _FULL_TINT if segment.long_form else _CLIP_TINT))
+
+        paras.append(_label("YouTube title"))
+        paras.append(Para(segment.yt_title,
+                          spans=[(0, len(segment.yt_title), {"bold": True, "fontSize": _pt(13)})]))
+        paras.append(_label("Website section"))
+        paras.append(Para(segment.website_section))
+
+        paras.append(_label("YouTube description"))
+        # Line for line, blank lines included: copied out of the doc, the
+        # description has to come out with the same gaps YouTube shows.
+        for part in segment.yt_description.split("\n"):
+            if part.startswith("• "):
+                paras.append(Para(part, looks={"indentStart": _pt(14)}))
+            elif part.startswith("#"):
+                paras.append(Para(part, spans=[(0, len(part), {"foregroundColor": _TAG_BLUE})]))
+            elif part.strip() and part in BOILERPLATE:
+                paras.append(Para(part, spans=[(0, len(part), {"fontSize": _pt(9.5),
+                                                               "foregroundColor": _GREY})]))
+            else:
+                paras.append(Para(part))
+
+        paras.append(_label("Website description"))
+        paras.append(Para(segment.website_description))
+    return paras
