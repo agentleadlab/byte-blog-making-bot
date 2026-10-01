@@ -806,6 +806,92 @@ _FILED = re.compile(
 _COUNT_LINE = re.compile(r"^\**\d+\s+segments?\**\s+plus the full interview\.?$", re.IGNORECASE)
 
 
+_PIC = "\ufffc"  # docs.PICTURE
+#: "👍 Like • 💬 Comment • 🔔 Subscribe", whether its emoji came through as
+#: emoji, as the little pictures Google Docs makes of them, or not at all.
+_LIKE_LINE = re.compile(
+    rf"(?:[{_PIC}👍][ \t]*)?Like[ \t]*•[ \t]*(?:[{_PIC}💬][ \t]*)?Comment[ \t]*•[ \t]*"
+    rf"(?:[{_PIC}🔔][ \t]*)?Subscribe"
+)
+_LIKE_TOKEN = "\x00LIKE\x00"
+_HEAD_WORDS = r"(?:LONG-FORM\s*/\s*FULL INTERVIEW|SEGMENT)"
+
+
+def pictures_in(text: str) -> tuple[int, int]:
+    """(pictures that are the pasted 👍💬🔔, every other picture)."""
+    said = str(text or "")
+    emoji = sum(found.group(0).count(_PIC) for found in _LIKE_LINE.finditer(said))
+    return emoji, said.count(_PIC) - emoji
+
+
+def _flattened(text: str) -> bool:
+    """Whether a tab's line breaks were lost - every segment one paragraph,
+    the way Emanuel Nazco's came out of a paste."""
+    return bool(
+        re.search(r"\(YT Title\)[ \t]*\S", text)
+        or re.search(rf"\S[ \t]*{_HEAD_WORDS}\s*\(\s*\d", text)
+    )
+
+
+_BOUNDARY = re.compile(r"(?<=[a-z0-9)])\s+(?=[A-Z][a-z'’]*\s+[a-z])")
+
+
+def _closing_off(bullet: str) -> tuple[str, str]:
+    """The last bullet with the closing line that got stuck to it taken off.
+
+    Bullets end bare and the closing line ends in a full stop, so a last
+    bullet ending in one has swallowed it: "...into a referral source Say
+    you'll be their agent for life, then actually behave like one." Split
+    where a sentence starts - a capital after a lower-case word, with a
+    lower-case word after it, so "Agent Lead Lab" is never the place.
+    """
+    if not bullet.rstrip().endswith((".", "!", "?")):
+        return bullet, ""
+    found = list(_BOUNDARY.finditer(bullet))
+    for one in reversed(found):
+        rest = bullet[one.end():].strip()
+        if len(rest.split()) >= 3:
+            return bullet[:one.start()].rstrip(), rest
+    return bullet, ""
+
+
+def _prepared(text: str) -> str:
+    """An old tab's text, pictures dealt with and its lines put back."""
+    said = str(text or "").replace("\x0b", "\n").replace("\r", "")
+    said = _LIKE_LINE.sub(_LIKE_TOKEN, said).replace(_PIC, "")
+    if _flattened(said):
+        said = re.sub(rf"(?<=\S)[ \t]*(?={_HEAD_WORDS}\s*\(\s*\d)", "\n", said)
+        said = re.sub(
+            rf"({_HEAD_WORDS}\s*\([^)]*\)(?:[ \t]*[—–-][ \t]*\d+:\d{{2}}(?::\d{{2}})?)?)[ \t]+(?=\S)",
+            r"\1\n", said,
+        )
+        said = re.sub(r"\(YT Title\)[ \t]+(?=\S)", "(YT Title)\n\n", said)
+        said = re.sub(r"(\(Website section\)(?:[ \t]+https?://\S+)?)[ \t]+(?=\S)", "\\1\n\n", said)
+        said = re.sub(r"(?<=\S)[ \t]*\((YT Description|Website Description)\)", "\n\n(\\1)", said)
+        said = re.sub(r"(?<=\S)[ \t]+•[ \t]+", "\n• ", said)
+        said = re.sub(r"(?<=\S)[ \t]+(If you're an agency owner|VISIT US|Follow Us on Instagram)",
+                      "\n\\1", said)
+        said = re.sub(rf"(?<=\S)[ \t]*{re.escape(_LIKE_TOKEN)}", "\n" + _LIKE_TOKEN, said)
+        said = re.sub(rf"{re.escape(_LIKE_TOKEN)}[ \t]*(?=#)", _LIKE_TOKEN + "\n\n", said)
+        lines, out = said.split("\n"), []
+        for at, line in enumerate(lines):
+            following = lines[at + 1] if at + 1 < len(lines) else ""
+            if line.startswith("• ") and not following.startswith("• "):
+                bullet, closing = _closing_off(line)
+                if closing:
+                    out += [bullet, "", closing]
+                    continue
+            starts_group = (
+                (line.startswith("• ") and out and out[-1].strip() and not out[-1].startswith("• "))
+                or line.startswith("If you're an agency owner")
+            )
+            if starts_group and out and out[-1].strip():
+                out.append("")
+            out.append(line.rstrip())
+        said = "\n".join(out)
+    return said.replace(_LIKE_TOKEN, "👍 Like • 💬 Comment • 🔔 Subscribe")
+
+
 @dataclass
 class Recovered:
     """One segment read back out of an old tab: its words exactly as they were."""
@@ -853,7 +939,7 @@ def read_back(text: str) -> tuple[dict, list]:
     Raises SegmentError, saying why, for anything it cannot read with
     certainty - a tab nobody can be sure of is left exactly as it is.
     """
-    lines = str(text or "").replace("\x0b", "\n").replace("\r", "").split("\n")
+    lines = _prepared(text).split("\n")
     cards = [_FILED.match(line).group(1) for line in lines if _FILED.match(line)]
     lines = [line for line in lines if not _FILED.match(line)]
     starts = [at for at, line in enumerate(lines) if _HEADING.match(line.strip())]
@@ -944,7 +1030,7 @@ def relayout(name: str, text: str) -> list:
     """
     payload, found = read_back(text)
     paras = as_doc(payload, found, [], name=name)
-    lines = str(text or "").replace("\x0b", "\n").split("\n")
+    lines = _prepared(text).split("\n")
     kept = "\n".join(
         _FILED.match(line).group(1) if _FILED.match(line) else line
         for line in lines

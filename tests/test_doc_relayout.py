@@ -282,3 +282,97 @@ def test_new_interviews_are_laid_out_with_the_card_that_was_just_made(config, mo
         lay_out=lambda card: [docs.Para(card)],
     ))
     assert [one.text for one in seen["paras"]] == ["https://trello.com/c/new"]
+
+
+P = docs.PICTURE
+
+RUN_TOGETHER = (
+    "SEGMENT (00:11:31–00:16:10) — 4:39 Emanuel's Full Veteran Call Process (YT Title) "
+    "Veteran Training (Website section) (YT Description) Emanuel dials the same lead three "
+    "times a day. • Dialing the same lead three times • Why acting like an agent for life turns "
+    "veterans into a referral source Say you'll be their agent for life, then behave like one. "
+    "If you're an agency owner looking to make a million dollars a month, apply here: "
+    "https://agentleadlab.com/strategysession VISIT US https://agentleadlab.com/\n"
+    f"Follow Us on Instagram https://www.instagram.com/agentleadlab_/ {P} Like • {P} Comment • "
+    f"{P} Subscribe #veteranleads #agentleadlab (Website Description) Emanuel Nazco walks his "
+    "veteran call from the first dial to the close.\n"
+)
+
+
+def test_a_tab_whose_line_breaks_were_lost_reads_back():
+    """Emanuel Nazco's: every segment one long paragraph."""
+    _payload, found = segments.read_back(RUN_TOGETHER)
+
+    assert found[0].yt_title == "Emanuel's Full Veteran Call Process"
+    assert found[0].website_section == "Veteran Training"
+    assert found[0].yt_description.split("\n") == [
+        "Emanuel dials the same lead three times a day.",
+        "",
+        "• Dialing the same lead three times",
+        "• Why acting like an agent for life turns veterans into a referral source",
+        "",
+        "Say you'll be their agent for life, then behave like one.",
+        "",
+        "If you're an agency owner looking to make a million dollars a month, apply here: "
+        "https://agentleadlab.com/strategysession",
+        "VISIT US https://agentleadlab.com/",
+        "Follow Us on Instagram https://www.instagram.com/agentleadlab_/",
+        "👍 Like • 💬 Comment • 🔔 Subscribe",
+        "",
+        "#veteranleads #agentleadlab",
+    ]
+    assert found[0].website_description.startswith("Emanuel Nazco walks")
+    assert segments.relayout("Emanuel Nazco", RUN_TOGETHER)
+
+
+def test_the_pasted_emoji_pictures_are_told_from_other_pictures():
+    assert segments.pictures_in(RUN_TOGETHER) == (3, 0)
+    assert segments.pictures_in(RUN_TOGETHER + f"\n{P} a photo") == (3, 1)
+
+
+def test_a_tab_that_wasnt_run_together_keeps_its_own_lines():
+    """Only a tab that lost its line breaks gets them put back."""
+    _payload, found = segments.read_back(BY_HAND)
+    assert found[0].yt_description.startswith(
+        "Most agents don't struggle because leads \"don't work.\"\nThey struggle"
+    )
+    assert "He shares:\n• What he closed" in found[0].yt_description
+
+
+@pytest.mark.parametrize("bullet, expected", [
+    ("• into a referral source Say you'll be their agent for life.",
+     ("• into a referral source", "Say you'll be their agent for life.")),
+    ("• Working with Agent Lead Lab every week", ("• Working with Agent Lead Lab every week", "")),
+    ("• It works, says Tre.", ("• It works, says Tre.", "")),
+    ("• Keep dialing like Tre says.", ("• Keep dialing like Tre says.", "")),
+])
+def test_the_closing_line_comes_off_the_last_bullet(bullet, expected):
+    assert segments._closing_off(bullet) == expected
+
+
+def test_pictures_are_asked_about_not_refused(monkeypatch):
+    """"i want him to ask me a button push or not"."""
+    _jobs, _c, _p, (ready, left) = _plan(
+        monkeypatch, [("Emanuel Nazco", RUN_TOGETHER + f"\n{P}")], "Emanuel Nazco",
+    )
+    assert left == []
+    kept = ready[0][3]
+    assert "come back as real emoji" in kept
+    assert "1 other picture" in kept and "removed" in kept
+
+
+def test_the_doc_marks_where_pictures_are():
+    class Client(docs.DocsClient):
+        def _call(self, method, path="", **kw):
+            return {"tabs": [{
+                "tabProperties": {"tabId": "t.1", "title": "Emanuel Nazco"},
+                "documentTab": {"body": {"content": [{"paragraph": {"elements": [
+                    {"textRun": {"content": "Follow "}},
+                    {"inlineObjectElement": {"inlineObjectId": "x"}},
+                    {"textRun": {"content": " Like\n"}},
+                ]}}]}},
+            }]}
+
+    client = Client(SimpleNamespace(client_id="", client_secret="", refresh_token=""), document="D")
+    [(tab, text, odd)] = client.contents()
+    assert text == f"Follow {P} Like\n" and odd == ""

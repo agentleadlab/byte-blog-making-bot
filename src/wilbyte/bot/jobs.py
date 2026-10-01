@@ -1283,10 +1283,15 @@ def doc_relayout_plan(config: Config, who: str) -> tuple[list, list[str]]:
                 continue
             _payload, found = segmenting.read_back(text)
             links = sum(1 for one in found if one.youtube)
+            emoji, photos = segmenting.pictures_in(text)
             ready.append((tab, paras, text, (
                 f"{sum(1 for one in found if not one.long_form)} segments"
                 + (" + full interview" if any(one.long_form for one in found) else "")
                 + (f", {links} YouTube link{'' if links == 1 else 's'} kept" if links else "")
+                + (".\nIt has the 👍 💬 🔔 pasted in as little pictures - "
+                   "those come back as real emoji" if emoji else "")
+                + (f".\n⚠ It also has {photos} other picture{'' if photos == 1 else 's'} "
+                   "that would be **removed**" if photos else "")
             )))
     return ready, left
 

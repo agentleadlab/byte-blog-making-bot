@@ -65,6 +65,10 @@ class Para:
     looks: dict = field(default_factory=dict)
 
 
+#: Where a picture sits in a tab's text. Google Docs turns 👍 💬 🔔 into
+#: little images when copy is pasted in, and those are most of them.
+PICTURE = "\ufffc"
+
 _LINK = re.compile(r"https?://[^\s<>()]+[^\s<>().,;:!?]")
 _LINK_LOOK = {"foregroundColor": {"color": {"rgbColor": {"red": 0.07, "green": 0.36, "blue": 0.8}}},
               "underline": True}
@@ -312,9 +316,9 @@ class DocsClient:
     def contents(self) -> list[tuple[Tab, str, str]]:
         """Every tab with its text: (tab, text, why it can't be rewritten or "").
 
-        Text only. A tab holding a table, a picture or anything else that is
-        not words is reported rather than read, because rewriting it from its
-        words would quietly drop the rest.
+        Text, with PICTURE where a picture is. A tab holding a table or
+        anything else that is not words or pictures is reported rather than
+        read, because rewriting it from its words would quietly drop the rest.
         """
         got = self._call("GET", params={"includeTabsContent": "true"})
         found: list[tuple[Tab, str, str]] = []
@@ -333,7 +337,9 @@ class DocsClient:
                         if "textRun" in element:
                             words.append(str(element["textRun"].get("content") or ""))
                         elif "inlineObjectElement" in element:
-                            odd = odd or "it has a picture in it"
+                            # Kept as a mark rather than dropped, so what
+                            # reads it can tell a pasted emoji from a photo.
+                            words.append(PICTURE)
                         elif "horizontalRule" not in element and "pageBreak" not in element:
                             odd = odd or "it has something in it that isn't text"
                 if tab.tab_id:
