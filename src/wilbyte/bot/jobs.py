@@ -4945,6 +4945,18 @@ def blacklist_them(config: Config, contacts, tag: str) -> tuple[list[str], list[
                 try:
                     writing.add_tags(str(one.get("id") or ""), [tag])
                 except Exception as exc:
+                    # The token can read contacts and not change them. Said
+                    # once, in words, and the rest not tried - every one after
+                    # it would be refused the same way.
+                    if "not authorized for this scope" in str(exc):
+                        problems.append(
+                            "GHL's token isn't allowed to edit contacts, so nobody was "
+                            "tagged. In GHL: Settings → Private Integrations → RYTE's "
+                            "integration → add the **Edit Contacts** scope "
+                            "(contacts.write). If GHL gives you a new token, put it in "
+                            ".env as GHL_API_TOKEN and restart me."
+                        )
+                        break
                     problems.append(f"Couldn't tag {who}: {_short(exc, 140)}")
                     continue
                 done.append(who)

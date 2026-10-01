@@ -470,3 +470,18 @@ def test_one_email_in_the_message_looks_up_by_that_email(monkeypatch):
         contacts=[FRANCISCO, DAVID],
     )
     assert crm.tagged == [("d1", ["blacklisted"])]
+
+
+def test_a_token_that_cant_edit_contacts_is_said_once_in_words(monkeypatch):
+    class Refusing(Crm):
+        def add_tags(self, contact_id, tags):
+            self.tried = getattr(self, "tried", 0) + 1
+            raise ghl.GHLError('HTTP 401: {"message":"The token is not authorized for this scope."}')
+
+    crm = Refusing([FRANCISCO, DAVID])
+    monkeypatch.setattr(ghl, "GHLClient", lambda token, location, **kw: crm)
+    config = SimpleNamespace(secrets=SimpleNamespace(ghl_api_token="t", ghl_location_id="l"))
+    done, problems = jobs.blacklist_them(config, [FRANCISCO, DAVID], "blacklisted")
+
+    assert done == [] and len(problems) == 1 and crm.tried == 1
+    assert "Edit Contacts" in problems[0]
