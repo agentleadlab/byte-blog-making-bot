@@ -489,9 +489,33 @@ def families_in(text: str) -> set[str]:
     } | _learned_as("family", text)
 
 
+# The customer's package, which the form names "Basic Client" or "Apex
+# Client". Elijah Lucas's card said "Package Selected: Basic Client (Text
+# Verified)" over "Lead Type: TRUCKERS", and the "Basic" in the package name was
+# read as the tier of his leads: "20 Basic TRUCKERS", on own setup. The tier is
+# the part in brackets.
+PACKAGE_NAME = re.compile(r"\b[A-Za-z]+\s+clients?\b", re.IGNORECASE)
+
+
+def without_package_name(text: str) -> str:
+    return PACKAGE_NAME.sub(" ", text or "")
+
+
+def trucker_only(text: str) -> bool:
+    """Whether these are trucker leads and nothing else.
+
+    Trucker only comes as OTP - "this is just otp trucker we dont have basic
+    trucker" - so whatever tier word sits beside one, it is Plus.
+    """
+    return "trucker" in qualifiers_of(text) and families_in(text) <= {"iul"}
+
+
 def tier_of(text: str) -> str | None:
     """Standard beats Plus when both are said - "basic" is the stronger word."""
     said = _learned_as("tier", text)
+    text = without_package_name(text)
+    if trucker_only(text) and STANDARD.search(text):
+        return "plus"
     if STANDARD.search(text or "") or "standard" in said:
         return "standard"
     if PLUS.search(text or "") or "plus" in said:
@@ -1101,6 +1125,7 @@ def tier_word(text: str) -> str:
     # The lines nobody labelled first. "30 otp vtes" is somebody writing down
     # the order; "Package Selected: Text Verified" is the form's own field, and
     # it says the same tier in the words the form uses rather than theirs.
+    text = without_package_name(text)
     lines = (text or "").splitlines()
     loose = "\n".join(line for line in lines if not _LABEL_PREFIX.match(line.strip()))
     for where in (loose, text or ""):
@@ -1123,6 +1148,24 @@ def stated_lead_type(text: str) -> str:
     below is OTP vets, and filing that as plain vets throws away the half that
     says which vets. The same goes for the customer level - see `with_line`.
     """
+    return _otp_if_trucker(_stated(text))
+
+
+def _otp_if_trucker(phrase: str, *, name_it: bool = True) -> str:
+    """A trucker order named Basic or Standard is an OTP one; there is no
+    other kind. `name_it` also puts OTP on one that names no tier at all."""
+    if not phrase or not trucker_only(phrase):
+        return phrase
+    if not STANDARD.search(phrase):
+        if not name_it or PLUS.search(phrase):
+            return phrase
+        return _tiered(phrase, "OTP")
+    if PLUS.search(phrase):
+        return " ".join(STANDARD.sub(" ", phrase).split())
+    return " ".join(STANDARD.sub("OTP", phrase, count=1).split())
+
+
+def _stated(text: str) -> str:
     said = named_lead_types(text)
     if not said:
         return with_line(find_lead_type(text), text)
@@ -1336,7 +1379,7 @@ def best_lead_type(text: str, existing: list[str]) -> tuple[str, str | None, lis
     `find_lead_type` reads the lowest one. Otherwise both come back and a
     person is asked.
     """
-    hint = tier_of(text)
+    hint = tier_hint(text)
     found = []
     for phrase in named_lead_types(text):
         landed = match_checklist(phrase, existing, tier=hint)
@@ -1376,8 +1419,10 @@ def tier_hint(text: str) -> str | None:
     "Lead Type: Phoenix Campaign" with "Phoenix Standard / $350" three lines
     below it is one card saying one thing twice, and the second half is the
     half with the answer in it.
+
+    Trucker leads say nothing and still mean Plus: there is no other kind.
     """
-    return tier_of(text)
+    return tier_of(text) or ("plus" if trucker_only(without_package_name(text)) else None)
 
 
 def checklist_item(url: str, lead_type: str, *, day: str = "") -> str:
@@ -2471,6 +2516,9 @@ def plan_spread(
             # Basic, Instant and FB still win outright. Those are self-setup by
             # name rather than by tier, so "40 Basic FB Spanish IUL" belongs on
             # own setup however the card is laid out.
+            # Written before trucker was known to be OTP only - Elijah
+            # Lucas's setup line still says "20 Basic TRUCKERS".
+            part = _otp_if_trucker(part, name_it=False)
             if own_setup_outright(part):
                 landed = OWN_SETUP
             else:

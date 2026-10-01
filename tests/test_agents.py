@@ -4693,3 +4693,61 @@ def test_two_different_qualifiers_are_two_orders_even_across_copies():
 def test_what_the_leads_are_beats_a_tier():
     got, _ = _spread(("Therese", ["20 OTP IUL"]), ("Nicole", ["Trucker IUL"]))
     assert got == [("Trucker IUL", "OTP IUL TRUCKER")]
+
+
+ELIJAH = """-- New Client Onboarded --
+
+First Name: Elijah Lucas
+Last Name:
+Phone: +15555550123
+Email: someone@example.com
+Package Selected: Basic Client (Text Verified)
+Lead Type: TRUCKERS
+Target Areas for Marketing: AL,AZ,AR,CO
+
+20 TRUCKERS
+Denver O In-House Leads - server
+
+LIVE FRI, OCT 2"""
+
+
+def test_basic_client_is_the_package_not_the_tier():
+    """"Package Selected: Basic Client (Text Verified)" - the Basic is the
+    customer's package. The tier is the part in brackets."""
+    assert agents.tier_of(ELIJAH) == "plus"
+    assert agents.stated_lead_type(ELIJAH) == "20 Text Verified TRUCKERS"
+    assert not agents.own_setup_outright(agents.stated_lead_type(ELIJAH))
+
+
+def test_a_basic_client_still_has_basic_leads_when_the_leads_say_so():
+    assert agents.tier_of("Package Selected: Basic Client\nLead Type: Basic Spanish IUL") == "standard"
+
+
+def test_elijah_lands_on_the_trucker_checklist():
+    """"this should be on justtrucker" - not own setup."""
+    _said, landed, _else = agents.best_lead_type(
+        ELIJAH, ["OTP IUL Plus", "Just Trucker", "OTP MTG Standard", "own setup"],
+    )
+    assert landed == "Just Trucker"
+
+
+@pytest.mark.parametrize("said, expected", [
+    ("20 Basic TRUCKERS", "20 OTP TRUCKERS"),
+    ("Standard Trucker IUL", "OTP Trucker IUL"),
+    ("Standard OTP Truckers", "OTP Truckers"),
+    ("30 Truckers", "30 OTP Truckers"),
+    ("12 Text Verified Trucker IUL leads", "12 Text Verified Trucker IUL leads"),
+])
+def test_trucker_only_comes_as_otp(said, expected):
+    """"this is just otp trucker we dont have basic trucker"."""
+    assert agents._otp_if_trucker(said) == expected
+
+
+def test_a_trucker_line_written_basic_spreads_onto_the_trucker_checklist():
+    from wilbyte.agents import split_item  # noqa: F401 - the spread reads it
+
+    assert agents._otp_if_trucker("20 Basic TRUCKERS") == "20 OTP TRUCKERS"
+    assert not agents.own_setup_outright("20 OTP TRUCKERS")
+    assert agents.match_checklist(
+        "20 OTP TRUCKERS", ["Just Trucker", "own setup"], tier="plus",
+    ) == "Just Trucker"
