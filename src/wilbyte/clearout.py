@@ -187,6 +187,34 @@ def words_of(name: str) -> list[str]:
     return words
 
 
+#: Lead-type words that say how the leads were verified or priced, not what
+#: they are. "otp" is on nearly every sheet, so it tells two apart from nothing.
+_NOT_A_KIND = frozenset("otp standard std plus fresh aged basic leads lead fb ta".split())
+_SAME_KIND = {"vets": "vet", "veteran": "vet", "veterans": "vet", "widows": "widow",
+              "mortgage": "mtg", "mp": "mtg", "phoenix": "phnx", "phx": "phnx"}
+
+
+def kinds_in(name: str) -> set[str]:
+    """What the leads are, as a channel or sheet name says it: "fex", "vet"..."""
+    words = [re.sub(r"[^a-z0-9]", "", one) for one in tidy_words(name).split()]
+    found = {_SAME_KIND.get(one, one) for one in words if one}
+    return {one for one in found if one in {_SAME_KIND.get(w, w) for w in LEAD_ENDINGS}} - _NOT_A_KIND
+
+
+def sheet_for_channel(channel: str, titled: dict) -> str:
+    """Of these sheets {link: title}, the one for this channel's leads - or "".
+
+    Jeremy Fox's channel is #jeremy-fox-fex and posted "Jeremy_Fox - OTP FEX";
+    his card's latest sheet was "Jeremy_Fox - OTP V..." from another order.
+    Only an answer when exactly one sheet's title names the channel's kind.
+    """
+    wanted = {one for one in kinds_in(channel) if one}
+    if not wanted:
+        return ""
+    fits = [link for link, title in titled.items() if wanted & kinds_in(title)]
+    return fits[0] if len(fits) == 1 else ""
+
+
 def person_in(name: str) -> str:
     """The person's name in a client channel's name, tidied - the lead-type
     words off the end. "dylan_rankin-vet" -> "dylanrankin"."""

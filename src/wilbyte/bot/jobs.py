@@ -5387,6 +5387,27 @@ def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
     return links[-1][1], []
 
 
+def sheet_titles(config: Config, links) -> dict:
+    """{link: the spreadsheet's name} for these links. Read only; a sheet that
+    can't be opened is left out rather than guessed at."""
+    from .. import gsheets
+
+    found = {}
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            for link in links:
+                sheet_id = gsheets.sheet_id_in(link)
+                if not sheet_id:
+                    continue
+                try:
+                    found[link] = client.title(sheet_id)
+                except Exception:
+                    continue
+    except Exception:
+        return {}
+    return found
+
+
 def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
     """Put one line in the Ryte Collection tab. (what tab it went on, problems).
 

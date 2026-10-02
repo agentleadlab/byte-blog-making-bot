@@ -2994,10 +2994,23 @@ async def _clear_out(
     if from_card:
         plan.sheet = from_card
         if own and not clearout.same_sheet(from_card, own):
-            plan.notes.append(
-                f"Their channel has a different sheet: {own} — keeping the one "
-                "on their Trello card."
-            )
+            # Two sheets, and a client with two orders has one per order: the
+            # one whose name is this channel's leads is this channel's. Jeremy
+            # Fox's FEX channel was collected with his vets sheet off the card.
+            titled = await asyncio.to_thread(jobs.sheet_titles, config, [from_card, own])
+            fits = clearout.sheet_for_channel(plan.channel.name, titled)
+            if fits == own:
+                plan.sheet, plan.from_channel = own, True
+                plan.notes.append(
+                    f"Their Trello card has a different sheet ({titled.get(from_card) or from_card}) "
+                    f"— keeping the channel's, “{titled.get(own)}”, because that's this "
+                    "channel's leads."
+                )
+            else:
+                plan.notes.append(
+                    f"Their channel has a different sheet: {own} — keeping the one "
+                    "on their Trello card."
+                )
     elif own:
         plan.sheet, plan.from_channel, trouble = own, True, []
     plan.problems += trouble

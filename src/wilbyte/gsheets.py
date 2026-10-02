@@ -205,6 +205,11 @@ class SheetsClient:
         )
         return [one.get("properties", {}) for one in got.get("sheets", [])]
 
+    def title(self, sheet_id: str) -> str:
+        """The spreadsheet's own name."""
+        got = self._request("GET", f"/{sheet_id}?fields=properties.title")
+        return str((got.get("properties") or {}).get("title") or "")
+
     def rows(self, sheet_id: str, span: str) -> list[list[str]]:
         """The values in a range, as they are displayed."""
         got = self._request("GET", f"/{sheet_id}/values/{quoted(span)}")

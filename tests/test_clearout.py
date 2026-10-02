@@ -3697,3 +3697,50 @@ def test_nobody_is_seen_in_a_channel_by_having_no_id():
     """A message with no author id and a member with no id are not a match."""
     assert not clearout.seen_in([clearout.Said(who="bot", when="", text="lead")], "")
     assert not clearout.seen_in([clearout.Said(who="bot", when="", text="lead")], None)
+
+
+# ------------------------------------------- whose sheet, when there are two
+
+
+def test_a_channels_kind_is_read_off_its_name():
+    assert clearout.kinds_in("jeremy-fox-fex") == {"fex"}
+    assert clearout.kinds_in("roy_stephens-vet") == {"vet"}
+    assert clearout.kinds_in("Jeremy_Fox - OTP VETS") == {"vet"}
+    assert clearout.kinds_in("dylan_rankin") == set()
+
+
+def test_the_sheet_for_this_channels_leads_wins():
+    """Jeremy Fox: #jeremy-fox-fex posted his OTP FEX sheet, and the card's
+    latest was his vets order's."""
+    titled = {"card": "Jeremy_Fox - OTP VET", "channel": "Jeremy_Fox - OTP FEX 6/10/26"}
+    assert clearout.sheet_for_channel("jeremy-fox-fex", titled) == "channel"
+
+
+@pytest.mark.parametrize("channel, titled", [
+    ("jeremy-fox", {"card": "Jeremy_Fox - OTP VET", "channel": "Jeremy_Fox - OTP FEX"}),
+    ("jeremy-fox-fex", {"card": "Jeremy_Fox - OTP FEX", "channel": "Jeremy_Fox - OTP FEX (2)"}),
+    ("jeremy-fox-fex", {"card": "Jeremy_Fox - OTP VET"}),
+])
+def test_no_clear_answer_keeps_the_card(channel, titled):
+    """No kind in the channel's name, both fit, or a sheet that couldn't be
+    opened - no guess, and the card's stays as it always has."""
+    assert clearout.sheet_for_channel(channel, titled) == ""
+
+
+def test_a_fex_channel_keeps_its_fex_sheet_over_the_cards_other_order(monkeypatch):
+    """Jeremy Fox's row in Ryte Collection got his vets sheet."""
+    from wilbyte.bot import client as bot_client
+
+    channel_sheet = "https://docs.google.com/spreadsheets/d/" + "f" * 30 + "/edit"
+    card_sheet = "https://docs.google.com/spreadsheets/d/" + "v" * 30 + "/edit"
+    monkeypatch.setattr(bot_client.jobs, "sheet_titles", lambda config, links: {
+        card_sheet: "Jeremy_Fox - OTP VET", channel_sheet: "Jeremy_Fox - OTP FEX 6/10/26",
+    })
+    rows = []
+    _guild, _channel, said, _buttons = _closing(
+        monkeypatch, says=[True, False], name="Jeremy Fox", called="jeremy-fox-fex",
+        on_card=card_sheet, in_channel=f"Here is your google sheet: {channel_sheet}", rows=rows,
+    )
+
+    assert rows[0][1] == channel_sheet
+    assert any("keeping the channel's" in one for one in said)
