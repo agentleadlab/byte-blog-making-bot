@@ -376,3 +376,49 @@ def test_the_doc_marks_where_pictures_are():
     client = Client(SimpleNamespace(client_id="", client_secret="", refresh_token=""), document="D")
     [(tab, text, odd)] = client.contents()
     assert text == f"Follow {P} Like\n" and odd == ""
+
+
+KARYN = """Karyn Giles has been selling insurance for 13 years.
+
+https://youtu.be/-aIcdjzwFsY
+
+LONG-FORM / FULL INTERVIEW (00:03:43–00:55:02) — 51:19
+13 Years, $181K in Six Months Off Aged Leads (YT Title)
+
+Agent Success Full Interviews (Website section)
+
+(YT Description) Karyn Giles overdrafted her account for $20 in gas.
+
+#agedleads #agentleadlab
+
+(Website Description) Karyn Giles has sold insurance for 13 years.
+
+SEGMENT (00:03:43–00:10:39) — 6:56
+Five Bartending Jobs to $181,000 in Six Months  https://youtu.be/OBFITZL2uSc (YT Title)
+
+Agent Success Full Interviews (Website section)
+
+(YT Description) Karyn was working two to three bartending jobs.
+
+#agedleads #agentleadlab
+
+(Website Description) Karyn Giles walks through how she got into life insurance.
+"""
+
+
+def test_a_link_pasted_before_the_yt_title_label_is_not_part_of_the_title():
+    """Karyn Giles: every title came out with its YouTube link on the end."""
+    _payload, found = segments.read_back(KARYN)
+
+    assert found[1].yt_title == "Five Bartending Jobs to $181,000 in Six Months"
+    assert found[1].youtube == "https://youtu.be/OBFITZL2uSc"
+
+
+def test_a_youtube_link_on_its_own_up_top_is_the_full_interviews():
+    payload, found = segments.read_back(KARYN)
+
+    assert found[0].long_form and found[0].youtube == "https://youtu.be/-aIcdjzwFsY"
+    assert payload["summary"].startswith("Karyn Giles has been selling")
+    texts = [one.text for one in segments.relayout("Karyn Giles", KARYN)]
+    assert texts[0] == "Karyn Giles — interview segments"
+    assert texts.count("YOUTUBE LINK") == 2

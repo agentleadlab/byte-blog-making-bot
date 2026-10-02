@@ -949,8 +949,14 @@ def read_back(text: str) -> tuple[dict, list]:
     top = [line.strip() for line in lines[:starts[0]]]
     top = [line for line in top if line and not _COUNT_LINE.match(line) and not _RULE.match(line)]
     payload: dict = {"before": [], "card": " ".join(dict.fromkeys(cards))}
+    top_links: list[str] = []
     for line in top:
         bare = line.strip('"“” ')
+        # A YouTube link on a line of its own up top is the full interview's,
+        # pasted there once it was uploaded.
+        if _URL.sub("", line).strip(" -—–|:") == "" and "youtu" in line.casefold():
+            top_links += _URL.findall(line)
+            continue
         if not payload.get("pull_quote") and line[:1] in '"“' and line[-1:] in '"”':
             payload["pull_quote"] = bare
         elif not payload.get("summary"):
@@ -971,7 +977,10 @@ def read_back(text: str) -> tuple[dict, list]:
 
         title_line = block[title_at]
         title = title_line[:_marked(title_line, "(YT Title)")].strip()
-        section, youtube = "", []
+        # Karyn Giles's had the YouTube link pasted between the title and
+        # "(YT Title)", and it went into the title. A link is never a title.
+        section, youtube = "", _URL.findall(title)
+        title = " ".join(_URL.sub(" ", title).split())
         for line in block[title_at:desc_at]:
             cut = _marked(line, "(Website section)")
             if cut >= 0:
@@ -983,7 +992,7 @@ def read_back(text: str) -> tuple[dict, list]:
             for mark in _MARKS:
                 rest = re.sub(re.escape(mark), "", rest, flags=re.IGNORECASE)
             if line is title_line:
-                rest = rest.replace(title, "", 1)
+                rest = " ".join(rest.split()).replace(title, "", 1)
             if cut >= 0 and section:
                 rest = rest.replace(section, "", 1)
             if rest.strip(" -—–|:"):
@@ -1008,6 +1017,12 @@ def read_back(text: str) -> tuple[dict, list]:
             long_form=bool(re.search(r"long[\s-]*form|full\s+interview", lines[at], re.IGNORECASE)),
             youtube=" ".join(dict.fromkeys(youtube)),
         ))
+    if top_links:
+        whole = next((one for one in found if one.long_form and not one.youtube), None)
+        if whole is not None:
+            whole.youtube = " ".join(dict.fromkeys(top_links))
+        else:
+            payload["before"] += top_links
     return payload, found
 
 
