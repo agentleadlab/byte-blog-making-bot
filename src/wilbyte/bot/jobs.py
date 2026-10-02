@@ -3292,11 +3292,19 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             "them: " + ", ".join(f"@{name}" for name in sorted(unknown))
         )
 
-    if nothing_said:
+    # Said so it can be read: "1 said nothing but the name of what was
+    # attached to them, so I left them: OTP MTG PLUS relaunch setup sc" was a
+    # "huh?". Which file, for whom, and where - one line each.
+    for one in nothing_said:
+        file = " ".join(tagged.plain(tagged.strip_mentions(one.text)).split())
+        if len(file) > 80:
+            file = file[:77] + "…"
+        who = ", ".join(f"@{name}" for name in tagged.mentioned(one.text))
+        where = f" · [said here](<{one.link()}>)" if one.card_short else ""
         problems.append(
-            f"{len(nothing_said)} said nothing but the name of what was "
-            "attached to them, so I left them: "
-            + "; ".join(tagged.trim(one.text)[:30] for one in nothing_said)
+            f"📎 A comment with just an attachment{f' for {who}' if who else ''} and no "
+            f"words — “{file}” — so I didn't put it on a checklist. If it's a job, "
+            f"add it yourself{where}"
         )
 
     tasks = _read_the_tags(

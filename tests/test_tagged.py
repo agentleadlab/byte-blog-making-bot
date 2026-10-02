@@ -1472,7 +1472,10 @@ def test_a_comment_that_is_only_a_screenshot_is_left(config, monkeypatch):
     tasks, problems = planning(board, monkeypatch, config)
 
     assert tasks == []
-    assert any("attached to them" in one for one in problems)
+    [said] = [one for one in problems if "just an attachment" in one]
+    # Which file, for whom, and where - "huh?" was the answer to the old one.
+    assert "for @nic0l3" in said and "“image.png”" in said
+    assert "said here" in said
 
 
 # ---------------------------------- a line with words as well as a tag
