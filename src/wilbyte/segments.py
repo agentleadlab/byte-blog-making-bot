@@ -1038,6 +1038,10 @@ def read_back(text: str) -> tuple[dict, list]:
                 rest = " ".join(rest.split()).replace(title, "", 1)
             if cut >= 0 and section:
                 rest = rest.replace(section, "", 1)
+            # Blank to a reader is blank here too: a non-breaking space or a
+            # zero-width character left by a paste stopped Karyn Giles's tab
+            # with "words I can't place: “”".
+            rest = " ".join(re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", rest).split())
             if rest.strip(" -—–|:"):
                 raise SegmentError(f"{where} has words between its title and its description I can't place: “{rest.strip()[:40]}”")
         if not title or not section:

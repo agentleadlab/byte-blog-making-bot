@@ -460,3 +460,15 @@ def test_changed_since_the_look_is_looked_at_again_once(monkeypatch):
     assert len(plans) == 2 and len(runs) == 2
     assert any("checking it again" in one for one in sent)
     assert "changed since" in sent[-1]
+
+
+@pytest.mark.parametrize("blank", [" ", "​", "﻿", "\t"])
+def test_invisible_characters_are_not_words(blank):
+    """Karyn Giles's: "words between its title and its description I can't
+    place: “”" - nothing a reader could see."""
+    pasted = BY_HAND.replace(
+        "Agent's Expectations (Website section) https://youtu.be/eZvDMI3iuGo",
+        f"Agent's Expectations (Website section) https://youtu.be/eZvDMI3iuGo{blank}",
+    ).replace("(YT Title)\n", f"(YT Title){blank}\n{blank}\n")
+    _payload, found = segments.read_back(pasted)
+    assert found[0].website_section == "Agent's Expectations"
