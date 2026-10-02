@@ -4976,6 +4976,59 @@ def _contact_name(one: dict) -> str:
     return whole or email or str(one.get("id") or "somebody")
 
 
+#: How far back orders are read, so an earlier order keeps the contract it
+#: was signed for and a reorder doesn't borrow it.
+CONTRACT_ORDERS_DAYS = 60
+
+
+def contract_check(config: Config, *, today=None, sync: bool = True) -> tuple[list, list[str]]:
+    """Every order going live today or tomorrow, with its contract or none.
+
+    ([Paired], problems). Reads only - the board in one request, and PandaDoc
+    for what was signed since last time.
+    """
+    from .. import agents as rules
+    from .. import contracts as matching
+    from .. import pandadoc
+
+    key = (getattr(config.secrets, "pandadoc_api_key", "") or "").strip()
+    if not key:
+        return [], ["PANDADOC_API_KEY isn't in .env."]
+    today = today or board_day(config)
+    try:
+        data = pandadoc.sync(key) if sync else pandadoc.load()
+    except pandadoc.PandaDocError as exc:
+        return [], [str(exc)]
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+    except Exception as exc:
+        return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+    since = datetime.now(timezone.utc) - timedelta(days=CONTRACT_ORDERS_DAYS)
+    orders = []
+    for card in every:
+        title = str(card.get("name") or "")
+        made = rules.made_at(str(card.get("id") or ""))
+        if not rules.is_client_card(title) or made is None or made < since:
+            continue
+        desc = str(card.get("desc") or "")
+        orders.append(matching.Order(
+            card_id=str(card.get("id") or ""), name=rules.agent_name(title),
+            email=matching.card_email(desc), made=made,
+            url=str(card.get("shortUrl") or card.get("url") or ""),
+            launch=rules.find_launch(desc, today=today), closed=bool(card.get("closed")),
+        ))
+    paired = matching.pair(orders, pandadoc.contracts(data))
+    soon = {today, today + timedelta(days=1)}
+    return [
+        one for one in paired.values()
+        if not one.order.closed and one.order.launch in soon
+    ], []
+
+
 def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
     """Every agent whose card says they go live on this day.
 

@@ -203,6 +203,7 @@ class WilByteBot(discord.Client):
         self.float_task: asyncio.Task | None = None
         self.setup_task: asyncio.Task | None = None
         self.day_task: asyncio.Task | None = None
+        self.contract_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
         self.offered_the_run = False
@@ -319,6 +320,14 @@ class WilByteBot(discord.Client):
             self.day_task is None or self.day_task.done()
         ):
             self.day_task = self.loop.create_task(day_check_loop(self))
+        # Every order going live needs a signed contract of its own. Only once
+        # PandaDoc is set up, and on the agents switch - it is about them.
+        if (
+            self.config.secrets.trello_agents_auto
+            and getattr(self.config.secrets, "pandadoc_api_key", None)
+            and (self.contract_task is None or self.contract_task.done())
+        ):
+            self.contract_task = self.loop.create_task(contract_check_loop(self))
         # A comment is somebody handing over a job, which happens all day and
         # on nobody's schedule. Its own switch, because it writes onto four
         # people's live checklists rather than reporting.
@@ -1284,6 +1293,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 from .. import payraapi
 
                 await responder.send(payraapi.status(await asyncio.to_thread(payraapi.load)))
+                return
+
+            if request.action == "contracts":
+                paired, problems = await asyncio.to_thread(jobs.contract_check, config)
+                said = describe_contracts(paired, everything=True)
+                if not said and not problems:
+                    said = "Nobody going live today or tomorrow."
+                await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
                 return
 
             if request.action == "pandadoctest":
@@ -6566,6 +6583,87 @@ async def setup_check_loop(bot: "WilByteBot") -> None:
 # spread or writes one by hand, and neither happens on a schedule - but neither
 # happens every minute either, and this reads every list on the board.
 DAY_CHECK_SECONDS = 900
+
+#: How often orders going live are checked for their signed contract.
+CONTRACT_CHECK_SECONDS = 1800
+#: Not before this hour on the board's clock - a missing contract is a
+#: morning job, not a 2am ping.
+CONTRACT_CHECK_FROM_HOUR = 7
+
+
+def _contract_line(one) -> str:
+    order = one.order
+    when = f"{order.launch:%a %b} {order.launch.day}" if order.launch else "no launch date"
+    who = f"[{order.name}](<{order.url}>)" if order.url else f"**{order.name}**"
+    return f"• {who} — live {when}"
+
+
+def describe_contracts(paired, *, everything: bool = False) -> str:
+    """What the contract check found, as one message."""
+    missing = [one for one in paired if one.contract is None]
+    unsure = [one for one in paired if one.how == "name"]
+    found = [one for one in paired if one.how == "email"]
+    parts = []
+    if missing:
+        parts.append("📝 **No signed contract in PandaDoc for this order:**\n"
+                     + "\n".join(_contract_line(one) for one in missing))
+    if unsure:
+        parts.append("📝 **A contract by name only - check it's them:**\n" + "\n".join(
+            _contract_line(one) + f" — {'; '.join(one.notes)}" for one in unsure
+        ))
+    if everything and found:
+        parts.append("✅ **Signed:**\n" + "\n".join(_contract_line(one) for one in found))
+    return "\n\n".join(parts)
+
+
+async def contract_check_loop(bot: "WilByteBot") -> None:
+    """Flag an order about to go live with no signed contract of its own.
+
+    "every order" - a reorder needs its own contract, so the one from last
+    month does not cover it. Today's and tomorrow's go-lives, from seven in
+    the morning on the board's clock. Each one said once, and said again only
+    to say it has been signed since. "tag me only".
+
+    Reads only: the board, and PandaDoc.
+    """
+    from .. import alreadysaid
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            hour = datetime.now(ZoneInfo(bot.config.schedule.timezone)).hour
+            if responder is not None and hour >= CONTRACT_CHECK_FROM_HOUR:
+                day = await asyncio.to_thread(jobs.board_day, bot.config)
+                paired, problems = await asyncio.to_thread(jobs.contract_check, bot.config, today=day)
+                said = await asyncio.to_thread(alreadysaid.said_lately, day)
+                fresh, signed, keys = [], [], []
+                for one in paired:
+                    card = one.order.card_id
+                    if one.how == "email":
+                        if f"contract|missing|{card}" in said and f"contract|found|{card}" not in said:
+                            signed.append(one)
+                            keys.append(f"contract|found|{card}")
+                        continue
+                    key = f"contract|{'unsure' if one.how else 'missing'}|{card}"
+                    if key not in said:
+                        fresh.append(one)
+                        keys.append(key)
+                lines = []
+                if fresh:
+                    lines.append(describe_contracts(fresh))
+                if signed:
+                    lines.append("✅ **Signed since:**\n" + "\n".join(_contract_line(one) for one in signed))
+                if lines:
+                    ping = _unmarked_ping(bot.config)
+                    await responder.send(((ping + "\n") if ping else "") + "\n\n".join(lines))
+                    await asyncio.to_thread(alreadysaid.remember, day, keys)
+                if problems:
+                    log.warning("Contract check: %s", "; ".join(problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Contract check failed; will try again shortly")
+        await asyncio.sleep(CONTRACT_CHECK_SECONDS)
 
 
 def _wrong_day_key(one: dict) -> str:

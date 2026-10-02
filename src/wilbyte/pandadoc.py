@@ -10,6 +10,12 @@ create, change or delete a document.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from .state import _state_dir
+
 BASE = "https://api.pandadoc.com/public/v1"
 
 #: PandaDoc's number for a document everybody has signed.
@@ -67,6 +73,111 @@ class PandaDoc:
             order_by="-date_modified",
         )
         return list(found.get("results") or [])
+
+
+    def completed_since(self, since: str, *, page: int = 1, count: int = 100) -> list[dict]:
+        """Signed documents changed since then, oldest first, a page at a time."""
+        found = self.get(
+            "/documents", status=COMPLETED, modified_from=since,
+            order_by="date_modified", count=count, page=page,
+        )
+        return list(found.get("results") or [])
+
+    def details(self, doc_id: str) -> dict:
+        return self.get(f"/documents/{doc_id}/details")
+
+
+# ------------------------------------------------ kept in step, like Payra
+
+CONTRACTS_PATH = _state_dir() / "pandadoc-contracts.json"
+
+#: How far back the first read goes.
+FIRST_DAYS = 90
+
+#: Documents whose recipients are read in one pass. The first read is a few
+#: hundred; the rest are read on the passes after it rather than all at once.
+DETAILS_PER_PASS = 60
+
+
+def load(path: Path | None = None) -> dict:
+    try:
+        data = json.loads((path or CONTRACTS_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict) or not isinstance(data.get("docs"), dict):
+        data = {"docs": {}}
+    return data
+
+
+def save(data: dict, path: Path | None = None) -> None:
+    where = path or CONTRACTS_PATH
+    where.parent.mkdir(parents=True, exist_ok=True)
+    spare = where.with_suffix(".tmp")
+    spare.write_text(json.dumps(data), encoding="utf-8")
+    spare.replace(where)
+
+
+def sync(key: str, *, now: datetime | None = None, path: Path | None = None,
+         client=None) -> dict:
+    """Read what was signed since last time, and who it was sent to."""
+    now = now or datetime.now(timezone.utc)
+    data = load(path)
+    since = data.get("since") or (now - timedelta(days=FIRST_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reading = client or PandaDoc(key)
+    try:
+        latest = since
+        for page in range(1, 50):
+            got = reading.completed_since(since, page=page)
+            for one in got:
+                doc_id = str(one.get("id") or "")
+                if not doc_id:
+                    continue
+                held = data["docs"].setdefault(doc_id, {})
+                held["title"] = str(one.get("name") or "")
+                held["modified"] = str(one.get("date_modified") or "")
+                latest = max(latest, held["modified"] or latest)
+            if len(got) < 100:
+                break
+        waiting = [doc_id for doc_id, one in data["docs"].items() if "emails" not in one]
+        for doc_id in waiting[:DETAILS_PER_PASS]:
+            told = reading.details(doc_id)
+            held = data["docs"][doc_id]
+            held["emails"] = sorted({
+                str(one.get("email") or "").casefold()
+                for one in told.get("recipients") or [] if one.get("email")
+            })
+            held["signed"] = str(told.get("date_completed") or held.get("modified") or "")
+    finally:
+        if client is None:
+            reading.__exit__(None, None, None)
+    # A day back over the last one seen, so nothing finishing at the same
+    # moment as the read is missed.
+    try:
+        back = datetime.fromisoformat(latest.replace("Z", "+00:00")) - timedelta(days=1)
+        data["since"] = back.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        data["since"] = since
+    data["synced_at"] = now.isoformat()
+    save(data, path)
+    return data
+
+
+def contracts(data: dict) -> list:
+    """What is held, as the matching wants it. Only documents whose
+    recipients have been read - one still waiting is not yet a contract
+    anybody can be matched to by email."""
+    from .contracts import Contract
+
+    found = []
+    for doc_id, one in (data.get("docs") or {}).items():
+        if "emails" not in one:
+            continue
+        try:
+            signed = datetime.fromisoformat(str(one.get("signed") or one.get("modified")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        found.append(Contract(doc_id, str(one.get("title") or ""), signed, tuple(one["emails"])))
+    return found
 
 
 def test(key: str) -> str:
