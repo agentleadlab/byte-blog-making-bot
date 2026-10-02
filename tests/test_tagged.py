@@ -1578,7 +1578,9 @@ def test_the_confirmation_is_skipped_where_the_ongoing_order_is():
      "Sent the contract", "Finished the gameplan", "done",
      "Connor Kachlic CRM connected", "@faith Connor Kachlic CRM connected",
      "Jo's sheet is set up", "Zapier for Jo done ✅", "Ringy integration is live",
-     "Agent portal all set"],
+     "Agent portal all set", "Exported all september leads for ascend vault",
+     "Synced Jo's sheet to the CRM", "Launched the widow campaign",
+     "Pulled the August numbers for Tre", "Built Jo's funnel"],
 )
 def test_a_line_reporting_work_done_is_not_a_task(said):
     """"not an update on a current tasks". A checklist is what is left to do,
@@ -1595,7 +1597,10 @@ def test_a_line_reporting_work_done_is_not_a_task(said):
      "Is Connor's CRM connected", "Connor's CRM needs to be connected",
      "Connor CRM not connected yet", "Connect Connor Kachlic CRM",
      "Check Connor's CRM is connected", "Blue collar agents go live",
-     "Get Jo's leads ready", "Set up Jo's sheet"],
+     "Get Jo's leads ready", "Set up Jo's sheet",
+     "Need the september leads exported", "Exported leads need checking please",
+     "Feed the new leads into Jo's sheet", "Proceed with the ascend export",
+     "Speed up Jo's drip"],
 )
 def test_work_still_to_do_is_a_task(said):
     """The first word and only the first word: a rule about a word anywhere
@@ -1619,3 +1624,15 @@ def test_a_long_comment_ending_done_is_still_its_jobs():
     said = ("Kath move the budget to the new campaign, Jenn duplicate the winning "
             "ad set and pause the old one, Nicole the schedule is done")
     assert tagged.an_update(said) is False
+
+
+
+def test_a_comment_that_reports_and_then_hands_out_a_job_keeps_the_job():
+    """The comment is checked whole only when it is nothing but a report."""
+    assert tagged.only_a_report("Exported all september leads for ascend vault") is True
+    assert tagged.only_a_report(
+        "Updated the budget. @kathleenmarie15 please set up a discord call for the gameplan"
+    ) is False
+    assert tagged.only_a_report(
+        "Updated the budget on the widow campaign and the trucker one, Kath set up the call"
+    ) is False

@@ -255,7 +255,23 @@ _ALREADY_DID = frozenset("""
     uploaded posted removed moved scheduled done made replied emailed texted
     called checked confirmed submitted processed paid refunded cancelled
     canceled attached filed reviewed replaced renamed deleted closed resolved
+    sent made built wrote written got ran did gave took told sold brought
+    bought spoke met found kept shared
     """.split())
+
+# Any other past tense in "-ed" counts the same way - "Exported all september
+# leads for ascend vault" was offered as KC's job ("Like i said, an update not
+# a tasks"). These end in "ed" and are asking, not reporting.
+_NOT_PAST = frozenset("""
+    need feed seed embed shred speed proceed succeed exceed breed bleed heed
+    weed bed red shed sled fred ted ned
+    """.split())
+
+
+def _past_tense(word: str) -> bool:
+    return word in _ALREADY_DID or (
+        len(word) > 4 and word.endswith("ed") and word not in _NOT_PAST
+    )
 
 
 # ...and the same said the other way round: the thing, then that it is done.
@@ -301,12 +317,29 @@ def an_update(text: str) -> bool:
     first = (said.split() or [""])[0].casefold().strip(".,:;!?")
     if first in _ALREADY_DID:
         return True
+    if _past_tense(first) and not _STILL_ASKING.search(said):
+        return True
     return bool(
         said
         and len(said.split()) <= _REPORT_WORDS
         and _NOW_DONE.search(said)
         and not _STILL_ASKING.search(said)
         and not _ASKS_FIRST.match(said)
+    )
+
+
+def only_a_report(text: str) -> bool:
+    """Whether a whole comment is nothing but a report.
+
+    Stricter than `an_update`, which reads one line: a comment opening
+    "Updated the budget" can go on to hand Kath a job, and dropping it for its
+    first word would drop her job with it. Short, asking nobody anything.
+    """
+    said = strip_mentions(text or "")
+    return (
+        len(said.split()) <= _REPORT_WORDS
+        and not _STILL_ASKING.search(said)
+        and an_update(said)
     )
 
 
