@@ -422,3 +422,41 @@ def test_a_youtube_link_on_its_own_up_top_is_the_full_interviews():
     texts = [one.text for one in segments.relayout("Karyn Giles", KARYN)]
     assert texts[0] == "Karyn Giles — interview segments"
     assert texts.count("YOUTUBE LINK") == 2
+
+
+def test_changed_since_the_look_is_looked_at_again_once(monkeypatch):
+    """"Karyn Giles changed since I looked" - the restore landed between the
+    look and the press. Asked again rather than leaving it to be retyped."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    plans, runs, sent = [], [], []
+    monkeypatch.setattr(client.jobs, "doc_relayout_plan", lambda config, who: (
+        plans.append(who) or ([(docs.Tab("t.1", "Karyn Giles"), [], "text", "7 segments")], [])
+    ))
+    monkeypatch.setattr(client.jobs, "doc_relayout", lambda config, ready: (
+        runs.append(1) or ([], ["**Karyn Giles** changed since I looked, so I left it - ask again."])
+    ))
+
+    class Button:
+        def __init__(self, **kw):
+            self.confirmed, self.answered = True, True
+
+        async def wait(self):
+            pass
+
+    monkeypatch.setattr(client.views, "ConfirmView", Button)
+
+    class Said:
+        requester_id = 1
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(client._relayout_doc(Said(), config, "Karyn Giles"))
+
+    assert len(plans) == 2 and len(runs) == 2
+    assert any("checking it again" in one for one in sent)
+    assert "changed since" in sent[-1]

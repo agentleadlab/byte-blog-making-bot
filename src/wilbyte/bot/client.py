@@ -1735,7 +1735,7 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
     await responder.send(done)
 
 
-async def _relayout_doc(responder: Responder, config: Config, who: str) -> None:
+async def _relayout_doc(responder: Responder, config: Config, who: str, *, again: bool = False) -> None:
     """One old tab of the posting doc, in the layout new interviews get - after
     the button.
 
@@ -1776,6 +1776,13 @@ async def _relayout_doc(responder: Responder, config: Config, who: str) -> None:
         done, problems = await asyncio.to_thread(jobs.doc_relayout, config, ready)
     except Exception as exc:
         await responder.send(f"⚠ Couldn't redo them: {_readable(exc)}")
+        return
+    # Changed between the look and the press - a version restored, a line
+    # typed. Looked at afresh and asked again, once, rather than leaving
+    # somebody to retype the command.
+    if not done and not again and any("changed since" in one for one in problems):
+        await responder.send(f"🔄 **{who}** changed since I looked — checking it again.")
+        await _relayout_doc(responder, config, who, again=True)
         return
     said = []
     if done:
