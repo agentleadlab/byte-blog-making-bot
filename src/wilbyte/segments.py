@@ -39,6 +39,34 @@ SECTIONS = (
     "Aged Leads",
 )
 
+#: The full interview's section, and only the full interview's - "WE CAN ONLY
+#: PUT AGENT SUCCESS FULL INTERVIEW FOR FULL INTERVIEW".
+FULL_INTERVIEWS = "Agent Success Full Interviews"
+
+#: Where a clip goes when it came back filed as a full interview, by what it is
+#: about. First match wins; an origin story - most of what gets mis-filed - is
+#: Agent's Expectations.
+_SECTION_BY_WORDS = (
+    (r"\bveterans?\b|\bva\b|\bdd-?214\b|\bmilitary\b", "Veteran Training"),
+    (r"\bmortgage\b", "Mortgage Protection Training"),
+    (r"\bfinal expense\b|\bfex\b", "Final Expense Training"),
+    (r"\biuls?\b|\bindexed universal\b", "IUL Training"),
+    (r"\baged leads?\b|\bold leads?\b", "Aged Leads"),
+    (r"\bagent lead lab\b", "Why Agent Lead Lab"),
+    (r"\bagency\b|\bown system\b|\bblueprint\b|\bdownline\b", "The Blueprint To Building Your Own Insurance System"),
+)
+_FALLBACK_SECTION = "Agent's Expectations"
+
+
+def section_for_clip(segment) -> str:
+    """A clip's section when it came back as a full interview's."""
+    said = " ".join([segment.yt_title, segment.hook, *segment.bullets]).casefold()
+    return next(
+        (section for pattern, section in _SECTION_BY_WORDS if re.search(pattern, said)),
+        _FALLBACK_SECTION,
+    )
+
+
 # Under this a clip does not get published, so it does not get emitted either.
 MIN_SECONDS = 4 * 60
 
@@ -130,8 +158,9 @@ SEGMENT_TOOL = {
             "summary": {
                 "type": "string",
                 "description": (
-                    "One paragraph on the interview as a whole - who the guest is "
-                    "and what ground the conversation covers. Sits above everything else."
+                    "The interview's description, three sentences: '<Name> shares how "
+                    "...', then 'He/She breaks down ...', then 'This interview focuses "
+                    "on ...'. Sits above everything else, with the pull quote under it."
                 ),
             },
             "pull_quote": {
@@ -161,7 +190,13 @@ SEGMENT_TOOL = {
                             "description": "HH:MM:SS, copied from a line in the transcript.",
                         },
                         "yt_title": {"type": "string"},
-                        "website_section": {"type": "string", "enum": list(SECTIONS)},
+                        "website_section": {
+                            "type": "string", "enum": list(SECTIONS),
+                            "description": (
+                                f"'{FULL_INTERVIEWS}' for the long-form entry and never "
+                                "for a segment."
+                            ),
+                        },
                         "hook": {
                             "type": "string",
                             "description": "The opening 1-3 sentences of the YouTube description.",
@@ -348,7 +383,8 @@ def _one_segment(raw: dict) -> Segment:
         tags.remove(ALWAYS_TAGGED)
     tags.append(ALWAYS_TAGGED)
 
-    return Segment(
+    long_form = str(raw.get("kind") or "").strip().lower() == "long-form"
+    made = Segment(
         start=start,
         end=end,
         yt_title=str(raw.get("yt_title") or "").strip(),
@@ -358,8 +394,15 @@ def _one_segment(raw: dict) -> Segment:
         closing=str(raw.get("closing") or "").strip(),
         hashtags=tags,
         website_description=str(raw.get("website_description") or "").strip(),
-        long_form=str(raw.get("kind") or "").strip().lower() == "long-form",
+        long_form=long_form,
     )
+    # The full interview always, and only the full interview, under Agent
+    # Success Full Interviews. Karyn Giles's first clip came back filed there.
+    if made.long_form:
+        made.website_section = FULL_INTERVIEWS
+    elif made.website_section == FULL_INTERVIEWS:
+        made.website_section = section_for_clip(made)
+    return made
 
 
 def too_short_note(short: list[Segment]) -> str:

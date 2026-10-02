@@ -52,7 +52,26 @@ Every entry is filed under exactly one of these, spelled exactly like this:
 * Effective Strategies For Prospect Engagement
 * Aged Leads
 
-The long-form entry is almost always *Agent Success Full Interviews*.
+**Agent Success Full Interviews is for the long-form entry only — always the
+long-form entry, and never a segment.** A segment goes under one of the other
+nine. An origin story — how the guest got into the business, their first
+months — is *Agent's Expectations*.
+
+## The summary and the quote
+
+The summary is the interview's description, three sentences in this shape:
+
+> Yordi shares how he went from college football and working at Walmart to
+> becoming a high-producing life insurance agent in under a year. He breaks
+> down the emotional challenges of his first 30 days, the mindset shifts that
+> helped him improve quickly, and the exact strategies he uses to close
+> high-intent final expense and IUL leads consistently. This interview focuses
+> on discipline, lead handling, emotional control, and becoming the type of
+> person capable of producing at a high level.
+
+"<Name> shares how …", then "He/She breaks down …", then "This interview
+focuses on …". The pull quote is the single best line the guest says, word for
+word — it goes on its own line under the summary.
 
 ## What each entry needs
 

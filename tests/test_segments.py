@@ -126,7 +126,7 @@ def _raw(start, end, **extra):
         "start": start,
         "end": end,
         "yt_title": "How Jonny Went All-In at 20",
-        "website_section": "Agent Success Full Interviews",
+        "website_section": "Agent's Expectations",
         "hook": "Jonny sold $64,000 in pest control his first month.",
         "bullets": ["Why he skipped aged leads", "His full schedule", "The close"],
         "hashtags": ["insuranceagents", "veteranleads"],
@@ -213,7 +213,7 @@ def test_an_entry_reads_the_way_the_doc_wants_it():
     text = keep[0].as_text()
     assert text.startswith("SEGMENT (00:00:36–00:08:16) — 7:40")
     assert "(YT Title)" in text
-    assert "Agent Success Full Interviews (Website section)" in text
+    assert "Agent's Expectations (Website section)" in text
     assert "(YT Description)" in text
     assert "(Website Description)" in text
     assert "• Why he skipped aged leads" in text
@@ -770,3 +770,45 @@ def test_the_youtube_description_in_the_doc_is_word_for_word():
     start = paras.index("YOUTUBE DESCRIPTION") + 1
     end = paras.index("WEBSITE DESCRIPTION")
     assert "\n".join(paras[start:end]) == keep[0].yt_description
+
+
+
+# --- "WE CAN ONLY PUT AGENT SUCCESS FULL INTERVIEW FOR FULL INTERVIEW" -------
+
+
+def test_a_clip_is_never_filed_as_a_full_interview():
+    """Karyn Giles's first clip - her origin story - came back filed under
+    Agent Success Full Interviews."""
+    keep, _ = parse_segments({"segments": [_raw(
+        "00:03:43", "00:10:39", website_section="Agent Success Full Interviews",
+        yt_title="Five Bartending Jobs to $181,000 in Six Months",
+        hook="Karyn was working bartending jobs seven days a week.",
+        bullets=["Six years with no leads", "Panera Bread as an office", "Not coachable"],
+    )]})
+    assert keep[0].website_section == "Agent's Expectations"
+
+
+@pytest.mark.parametrize("title, section", [
+    ("The Full Veteran Telesales Script", "Veteran Training"),
+    ("How She Sells Mortgage Protection", "Mortgage Protection Training"),
+    ("Closing Final Expense on the First Call", "Final Expense Training"),
+    ("Why She Came Back to Agent Lead Lab", "Why Agent Lead Lab"),
+])
+def test_a_misfiled_clip_goes_where_its_subject_says(title, section):
+    keep, _ = parse_segments({"segments": [_raw(
+        "00:00:00", "00:08:00", website_section="Agent Success Full Interviews",
+        yt_title=title, hook="x.", bullets=["a", "b", "c"],
+    )]})
+    assert keep[0].website_section == section
+
+
+def test_a_clip_the_model_filed_properly_is_left_alone():
+    keep, _ = parse_segments({"segments": [_raw("00:00:00", "00:08:00", website_section="Aged Leads")]})
+    assert keep[0].website_section == "Aged Leads"
+
+
+def test_the_full_interview_is_always_a_full_interview():
+    keep, _ = parse_segments({"segments": [
+        _raw("00:00:00", "00:40:00", kind="long-form", website_section="Veteran Training"),
+    ]})
+    assert keep[0].website_section == "Agent Success Full Interviews"
