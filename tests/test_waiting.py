@@ -185,3 +185,24 @@ def test_a_video_removed_and_re_added_starts_its_wait_again(tmp_path):
 
     assert store.items[LINK].first_seen == (NOON + timedelta(hours=8)).isoformat()
     assert store.expired(now=NOON + timedelta(hours=9)) == []
+
+
+def test_the_data_apis_403_doesnt_end_the_wait():
+    """Crystal Clark's interview: the Data API says 403 on every one of these
+    videos, and the routes that matter were saying "not yet"."""
+    from wilbyte import waiting
+
+    said = (
+        "Could not get a transcript for P6nIKDY2tdY. Tried — Data API: YouTube refused "
+        "captions/AUie (403). Captions can only be downloaded by the account that owns the "
+        "video | cookies: No caption track published for P6nIKDY2tdY. | transcript API "
+        "(signed in): Could not retrieve a transcript for the video"
+    )
+    assert waiting.not_ready_yet(said) is True
+
+
+def test_a_real_refusal_elsewhere_still_ends_it():
+    from wilbyte import waiting
+
+    said = "Tried — Data API: refused (403) | cookies: this video is private"
+    assert waiting.not_ready_yet(said) is False

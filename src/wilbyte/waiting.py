@@ -153,6 +153,15 @@ def not_ready_yet(problem: str) -> bool:
     hours, and retrying it twenty-four times is just noise.
     """
     said = (problem or "").casefold()
+    # The Data API's 403 is not a door shut. It refuses captions made in
+    # YouTube Studio even to the owner, so it says 403 on every one of
+    # Franklin's videos - and read as a refusal, it ended the wait on Crystal
+    # Clark's interview an hour in, while every other route was saying "not
+    # yet". Its part of the message is left out of the question; it still
+    # counts when it is the only thing that was tried.
+    parts = [part for part in said.split("|") if "data api" not in part]
+    if parts:
+        said = "|".join(parts)
     if any(word in said for word in REFUSALS):
         return False
     return any(word in said for word in NOT_YET)
