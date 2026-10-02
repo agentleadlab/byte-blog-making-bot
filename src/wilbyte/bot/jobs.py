@@ -5837,7 +5837,16 @@ def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     )
 
 
-def _pandadoc_contract(config: Config, name: str, *, email: str = "", paid=None):
+#: Said instead of attaching a stamped copy.
+DEMO_COPY = (
+    "PandaDoc's API gave a copy stamped “for demo purposes only and is not intended "
+    "for legal use” on every page, so it was left out - a bank reviewer would read "
+    "that line. Download the signed PDF from PandaDoc yourself and attach it."
+)
+
+
+def _pandadoc_contract(config: Config, name: str, *, email: str = "", paid=None,
+                       for_dispute: bool = False):
     """(says, PDF, filename, problem) from PandaDoc itself, or None when PandaDoc
     isn't set up - so the inbox can be tried instead."""
     from .. import pandadoc
@@ -5864,6 +5873,13 @@ def _pandadoc_contract(config: Config, name: str, *, email: str = "", paid=None)
         f"not {email} - check it's theirs before it goes in."
     )
     called = re.sub(r"[^\w .()-]+", "", found.title).strip() or "contract"
+    if pandadoc.stamped_demo(pdf):
+        if for_dispute:
+            return said, b"", "", DEMO_COPY
+        problem = (problem + " " if problem else "") + (
+            "⚠ This copy is stamped “for demo purposes only” by PandaDoc's API - "
+            "don't use it in a dispute; download it from PandaDoc instead."
+        )
     return said, pdf, f"{called}.pdf", problem
 
 
@@ -5889,6 +5905,7 @@ def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
     # PandaDoc first: it is where the signed PDF actually is.
     from_pandadoc = _pandadoc_contract(
         config, dispute.customer_name, email=dispute.customer_email, paid=dispute.paid(),
+        for_dispute=True,
     )
     if from_pandadoc is not None:
         said, pdf, called, problem = from_pandadoc

@@ -1878,8 +1878,14 @@ async def _send_contract(responder: Responder, config: Config, said: str) -> Non
         return
 
     if pdf:
+        # When it was signed and to whom, and anything wrong with the copy -
+        # a PandaDoc API copy stamped "for demo purposes only" looks like the
+        # real contract until somebody reads the footer.
+        signed = next((line for line in says.splitlines() if line.startswith("Signed ")), "")
         await responder.send(
-            f"📄 **{who}** — signed contract.",
+            f"📄 **{who}** — signed contract."
+            + (f"\n-# {signed}" if signed else "")
+            + (f"\n⚠ {problem}" if problem else ""),
             file=discord.File(io.BytesIO(pdf), filename=called or f"{who}.pdf"),
         )
         return

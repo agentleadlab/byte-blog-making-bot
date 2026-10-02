@@ -204,3 +204,87 @@ def test_the_one_sent_to_their_email_beats_a_later_one_by_name_only():
         client=Searcher(docs),
     )
     assert (found.doc_id, how) == ("second", "email")
+
+
+def test_a_contract_signed_after_the_disputed_payment_is_never_used():
+    """David Pereira's only contract was signed 09/30 - against an earlier
+    charge it reads as signed after the fact."""
+    found, _how, problem = pandadoc.find_signed(
+        "k", name="David Pereira", email="david@example.com", paid=date(2026, 5, 1),
+        client=Searcher(DAVID),
+    )
+    assert found is None
+    assert "after the disputed payment on 05/01/2026" in problem
+
+
+def _rebuttal_with(monkeypatch, *, stamped):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    class Reading:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def pdf(self, doc_id):
+            return b"%PDF-signed"
+
+    monkeypatch.setattr(pandadoc, "find_signed", lambda key, **kw: (pandadoc_contract("second"), "email", ""))
+    monkeypatch.setattr(pandadoc, "PandaDoc", lambda key: Reading())
+    monkeypatch.setattr(pandadoc, "stamped_demo", lambda pdf: stamped)
+    config = SimpleNamespace(secrets=SimpleNamespace(pandadoc_api_key="k", gmail_contract_sender=""))
+    dispute = SimpleNamespace(customer_name="David Pereira", customer_email="david@example.com",
+                              paid=lambda: date(2026, 8, 11))
+    return jobs._signed_contract(config, dispute), jobs.signed_contract_for(config, "David Pereira")
+
+
+def test_a_demo_stamped_copy_never_goes_into_a_rebuttal(monkeypatch):
+    """"This document is for demo purposes only and is not intended for legal
+    use" on every page - a bank reviewer would read it."""
+    (said, pdf, _called, problem), (_s, asked_pdf, _c, asked_problem) = _rebuttal_with(
+        monkeypatch, stamped=True,
+    )
+    assert pdf == b"" and "demo purposes only" in problem and "Signed" in said
+    # Asked for by name it still comes back - with the warning on it.
+    assert asked_pdf == b"%PDF-signed" and "don't use it in a dispute" in asked_problem
+
+
+def test_a_clean_copy_goes_in(monkeypatch):
+    (_said, pdf, _called, problem), _ = _rebuttal_with(monkeypatch, stamped=False)
+    assert pdf == b"%PDF-signed" and problem == ""
+
+
+def test_a_pdf_that_cant_be_read_is_not_called_stamped():
+    assert pandadoc.stamped_demo(b"not a pdf") is False
+
+
+def _pdf_saying(text: str) -> bytes:
+    """The smallest PDF with one line of text on it."""
+    stream = f"BT /F1 12 Tf 20 100 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 200] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    table = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{at:010d} 00000 n \n".encode() for at in offsets)
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{table}\n%%EOF".encode()
+    return out
+
+
+def test_the_demo_stamp_is_found_in_the_pdf_itself():
+    assert pandadoc.stamped_demo(_pdf_saying(
+        "This document is for demo purposes only and is not intended for legal use."
+    )) is True
+    assert pandadoc.stamped_demo(_pdf_saying("Lead Generation Services Agreement")) is False

@@ -244,8 +244,37 @@ def find_signed(key: str, *, name: str, email: str = "", paid=None, client=None)
     if isinstance(paid, _date):
         latest = paid + timedelta(days=3)
         before = [one for one in pool if one.signed.date() <= latest]
-        pool = before or pool
+        # Never one signed after the charge. David Pereira's only contract was
+        # signed on 09/30 - offered against an earlier payment, it reads as a
+        # contract signed after the fact, which is worse than none.
+        if not before:
+            dates = ", ".join(sorted({f"{one.signed:%m/%d/%Y}" for one in pool}))
+            return None, how, (
+                f"The only signed contract for “{name}” in PandaDoc is from {dates}, "
+                f"after the disputed payment on {paid:%m/%d/%Y} - so it was left out."
+            )
+        pool = before
     return max(pool, key=lambda one: one.signed), how, ""
+
+
+#: What PandaDoc stamps on every page of a copy it won't call the real thing.
+DEMO_STAMP = "for demo purposes only"
+
+
+def stamped_demo(pdf: bytes) -> bool:
+    """Whether this PDF carries PandaDoc's "for demo purposes only and is not
+    intended for legal use" footer - in a dispute, a line that undoes the
+    document it is printed on."""
+    import io
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf))
+        said = " ".join((page.extract_text() or "") for page in reader.pages[:3])
+    except Exception:
+        return False
+    return DEMO_STAMP in " ".join(said.split()).casefold()
 
 
 def test(key: str) -> str:
