@@ -66,6 +66,23 @@ class PandaDoc:
             raise PandaDocError(f"PandaDoc said HTTP {got.status_code}: {got.text[:200]}")
         return got.json()
 
+    def pdf(self, doc_id: str) -> bytes:
+        """The signed document as a PDF - PandaDoc's own download, a GET."""
+        import httpx
+
+        try:
+            got = self._http.get(f"{BASE}/documents/{doc_id}/download")
+        except httpx.HTTPError as exc:
+            raise PandaDocError(f"Couldn't reach PandaDoc: {exc}") from exc
+        if got.status_code >= 400:
+            raise PandaDocError(f"PandaDoc wouldn't hand over the PDF (HTTP {got.status_code}).")
+        return got.content
+
+    def search(self, words: str, *, count: int = 50) -> list[dict]:
+        """Signed documents whose name has these words in it, any age."""
+        found = self.get("/documents", status=COMPLETED, q=words, count=count)
+        return list(found.get("results") or [])
+
     def completed(self, *, count: int = 5) -> list[dict]:
         """The most recently changed signed documents."""
         found = self.get(
@@ -178,6 +195,57 @@ def contracts(data: dict) -> list:
             continue
         found.append(Contract(doc_id, str(one.get("title") or ""), signed, tuple(one["emails"])))
     return found
+
+
+def find_signed(key: str, *, name: str, email: str = "", paid=None, client=None):
+    """The signed contract for one customer's order. (Contract or None, how, problem).
+
+    For a dispute: searched by name across every signed document, whatever
+    its age, then each one's recipients read. The email on the dispute is what
+    makes it theirs; a name alone is said to be a name alone. Of theirs, the
+    last one signed on or before the payment (a few days' grace, for a
+    contract signed just after paying) - "every order" has its own, and the
+    disputed charge is the one this is for.
+    """
+    from datetime import date as _date
+
+    from .contracts import Contract, same_name
+
+    if not (name or "").strip():
+        return None, "", "No name to look the contract up by."
+    reading = client or PandaDoc(key)
+    try:
+        hits = reading.search(name)
+        mine = []
+        for one in hits:
+            contract = Contract(str(one.get("id") or ""), str(one.get("name") or ""),
+                                datetime.now(timezone.utc))
+            if not same_name(contract.person, name):
+                continue
+            told = reading.details(contract.doc_id)
+            emails = tuple(sorted({
+                str(r.get("email") or "").casefold()
+                for r in told.get("recipients") or [] if r.get("email")
+            }))
+            signed = str(told.get("date_completed") or one.get("date_modified") or "")
+            try:
+                when = datetime.fromisoformat(signed.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            mine.append(Contract(contract.doc_id, contract.title, when, emails))
+    finally:
+        if client is None:
+            reading.__exit__(None, None, None)
+    if not mine:
+        return None, "", f"No signed contract for “{name}” in PandaDoc."
+    wanted = (email or "").strip().casefold()
+    by_email = [one for one in mine if wanted and wanted in one.emails]
+    pool, how = (by_email, "email") if by_email else (mine, "name")
+    if isinstance(paid, _date):
+        latest = paid + timedelta(days=3)
+        before = [one for one in pool if one.signed.date() <= latest]
+        pool = before or pool
+    return max(pool, key=lambda one: one.signed), how, ""
 
 
 def test(key: str) -> str:

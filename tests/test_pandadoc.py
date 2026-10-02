@@ -44,7 +44,7 @@ def test_no_key_is_said():
 def test_it_only_ever_reads():
     """Nothing in the client can send, change or delete a document."""
     methods = [name for name in dir(pandadoc.PandaDoc) if not name.startswith("_")]
-    assert sorted(methods) == ["completed", "completed_since", "details", "get"]
+    assert sorted(methods) == ["completed", "completed_since", "details", "get", "pdf", "search"]
     import inspect
 
     source = inspect.getsource(pandadoc.PandaDoc)
@@ -90,3 +90,117 @@ def test_sync_keeps_who_each_contract_went_to():
 def test_a_document_whose_recipients_arent_read_yet_is_not_a_contract_yet():
     data = {"docs": {"d1": {"title": "x", "modified": "2026-10-01T00:00:00Z"}}}
     assert pandadoc.contracts(data) == []
+
+
+
+# ------------------------------------------------ the contract for a dispute
+
+from datetime import date, datetime, timezone
+
+
+class Searcher:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def search(self, words, *, count=50):
+        return [{"id": d, "name": title, "date_modified": signed}
+                for d, (title, _emails, signed) in self.docs.items()]
+
+    def details(self, doc_id):
+        title, emails, signed = self.docs[doc_id]
+        return {"recipients": [{"email": e} for e in emails], "date_completed": signed}
+
+
+DAVID = {
+    "first": ("Basic Contract (1x lead order) x David Pereira", ["david@example.com"], "2026-06-01T10:00:00Z"),
+    "second": ("Basic Contract (1x lead order) x David Pereira", ["david@example.com"], "2026-08-10T10:00:00Z"),
+    "later": ("Basic Contract (1x lead order) x David Pereira", ["david@example.com"], "2026-09-20T10:00:00Z"),
+    "someone": ("Basic Contract (1x lead order) x David Perez", ["perez@example.com"], "2026-08-10T10:00:00Z"),
+}
+
+
+def test_the_disputed_orders_contract_is_the_one_signed_before_it_was_paid():
+    found, how, problem = pandadoc.find_signed(
+        "k", name="David Pereira", email="david@example.com", paid=date(2026, 8, 11),
+        client=Searcher(DAVID),
+    )
+    assert (found.doc_id, how, problem) == ("second", "email", "")
+
+
+def test_a_contract_signed_just_after_paying_still_counts():
+    found, _how, _ = pandadoc.find_signed(
+        "k", name="David Pereira", email="david@example.com", paid=date(2026, 8, 8),
+        client=Searcher(DAVID),
+    )
+    assert found.doc_id == "second"
+
+
+def test_somebody_with_a_similar_name_is_not_them():
+    found, _how, problem = pandadoc.find_signed(
+        "k", name="David Perez Smith", client=Searcher(DAVID),
+    )
+    assert found is None and "No signed contract" in problem
+
+
+def test_by_name_only_says_so():
+    found, how, _ = pandadoc.find_signed(
+        "k", name="David Pereira", email="other@example.com", paid=date(2026, 8, 11),
+        client=Searcher(DAVID),
+    )
+    assert how == "name"
+
+
+def test_the_rebuttal_gets_the_pdf_from_pandadoc(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    class Reading:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def pdf(self, doc_id):
+            return b"%PDF-" + doc_id.encode()
+
+    monkeypatch.setattr(pandadoc, "find_signed", lambda key, **kw: (
+        pandadoc_contract("second"), "email", ""))
+    monkeypatch.setattr(pandadoc, "PandaDoc", lambda key: Reading())
+    config = SimpleNamespace(secrets=SimpleNamespace(pandadoc_api_key="k", gmail_contract_sender=""))
+    dispute = SimpleNamespace(customer_name="David Pereira", customer_email="david@example.com",
+                              paid=lambda: date(2026, 8, 11))
+    said, pdf, called, problem = jobs._signed_contract(config, dispute)
+
+    assert pdf == b"%PDF-second" and problem == ""
+    assert called == "Basic Contract (1x lead order) x David Pereira.pdf"
+    assert "Signed August 10, 2026 in PandaDoc by david@example.com" in said
+
+
+def test_contract_of_somebody_uses_pandadoc_too(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(jobs, "_pandadoc_contract", lambda config, who, **kw: ("says", b"%PDF", "c.pdf", ""))
+    config = SimpleNamespace(secrets=SimpleNamespace(pandadoc_api_key="k"))
+    assert jobs.signed_contract_for(config, "David Pereira") == ("says", b"%PDF", "c.pdf", "")
+
+
+def pandadoc_contract(doc_id):
+    from wilbyte.contracts import Contract
+
+    title, emails, signed = DAVID[doc_id]
+    return Contract(doc_id, title, datetime.fromisoformat(signed.replace("Z", "+00:00")), tuple(emails))
+
+
+def test_the_one_sent_to_their_email_beats_a_later_one_by_name_only():
+    docs = dict(DAVID)
+    docs["namesake"] = ("Basic Contract (1x lead order) x David Pereira",
+                        ["another.david@example.com"], "2026-08-11T09:00:00Z")
+    found, how, _ = pandadoc.find_signed(
+        "k", name="David Pereira", email="david@example.com", paid=date(2026, 8, 11),
+        client=Searcher(docs),
+    )
+    assert (found.doc_id, how) == ("second", "email")

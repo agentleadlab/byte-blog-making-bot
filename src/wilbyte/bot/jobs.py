@@ -5285,9 +5285,9 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     elif trouble:
         found.holes.append(trouble)
 
-    # And the signed contract, out of the same inbox. PandaDoc emails the
-    # completed document with the PDF on it, which is the way to a contract
-    # that their API is not without a paid plan.
+    # And the signed contract: PandaDoc's own PDF for this order, found by the
+    # customer's name and made theirs by the email on the dispute. The inbox
+    # only when PandaDoc isn't set up.
     said, pdf, called, trouble = (
         ("", b"", "", "") if found.aged else _signed_contract(config, dispute)
     )
@@ -5837,6 +5837,36 @@ def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     )
 
 
+def _pandadoc_contract(config: Config, name: str, *, email: str = "", paid=None):
+    """(says, PDF, filename, problem) from PandaDoc itself, or None when PandaDoc
+    isn't set up - so the inbox can be tried instead."""
+    from .. import pandadoc
+
+    key = (getattr(config.secrets, "pandadoc_api_key", "") or "").strip()
+    if not key:
+        return None
+    try:
+        found, how, problem = pandadoc.find_signed(key, name=name, email=email, paid=paid)
+        if found is None:
+            return "", b"", "", problem
+        with pandadoc.PandaDoc(key) as reading:
+            pdf = reading.pdf(found.doc_id)
+    except pandadoc.PandaDocError as exc:
+        return "", b"", "", f"Couldn't get the contract from PandaDoc: {_short(exc, 140)}"
+    except Exception as exc:
+        return "", b"", "", f"Couldn't get the contract from PandaDoc: {_short(exc, 140)}"
+    said = (
+        f"{found.title}\nSigned {found.signed:%B %-d, %Y} in PandaDoc by "
+        f"{', '.join(found.emails) or 'the client'}"
+    )
+    problem = "" if how == "email" or not email else (
+        f"The PandaDoc contract for {name} was sent to {', '.join(found.emails) or 'no email'}, "
+        f"not {email} - check it's theirs before it goes in."
+    )
+    called = re.sub(r"[^\w .()-]+", "", found.title).strip() or "contract"
+    return said, pdf, f"{called}.pdf", problem
+
+
 def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
     """The signed contract for this customer, out of the inbox it was sent to.
 
@@ -5856,6 +5886,15 @@ def _signed_contract(config: Config, dispute) -> tuple[str, bytes, str, str]:
     # before there was an inbox to read, and a hole saying "nobody configured
     # Gmail" is a hole about RYTE rather than about the dispute. Asked for by
     # name, the same silence would be a wrong answer - see `signed_contract_for`.
+    # PandaDoc first: it is where the signed PDF actually is.
+    from_pandadoc = _pandadoc_contract(
+        config, dispute.customer_name, email=dispute.customer_email, paid=dispute.paid(),
+    )
+    if from_pandadoc is not None:
+        said, pdf, called, problem = from_pandadoc
+        if problem.startswith("No signed contract"):
+            problem = problem.rstrip(".") + ", so it had to be left out."
+        return said, pdf, called, problem
     if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
         return "", b"", "", ""
     said, pdf, called, problem = signed_contract_for(config, dispute.customer_name)
@@ -5879,6 +5918,9 @@ def signed_contract_for(config: Config, name: str) -> tuple[str, bytes, str, str
     who = " ".join(str(name or "").split())
     if not who:
         return "", b"", "", "Whose contract? Try `@RYTE contract of David Pereira`."
+    from_pandadoc = _pandadoc_contract(config, who)
+    if from_pandadoc is not None:
+        return from_pandadoc
     if not (getattr(config.secrets, "gmail_contract_sender", "") or "").strip():
         # Not "set GMAIL_CONTRACT_SENDER". That was the advice until Franklin
         # said what PandaDoc actually does: "pandadoc doesnt send contract on
