@@ -258,6 +258,37 @@ _ALREADY_DID = frozenset("""
     """.split())
 
 
+# ...and the same said the other way round: the thing, then that it is done.
+# "Connor Kachlic CRM connected" is a report, offered as Faith's job on
+# General - "This are just update not new task to be added on checklist!"
+_NOW_DONE = re.compile(
+    r"(?:\b(?:connected|done|completed?|finished|fixed|sent|added|updated|uploaded|"
+    r"(?:is|are|now|went|already)\s+live|set\s*up|setup|ready|paid|resolved|approved|submitted|activated|"
+    r"installed|integrated|linked|verified|ticked|good\s+to\s+go|all\s+set)"
+    r"|✅|✔️?)[\s.!✅✔️]*$",
+    re.IGNORECASE,
+)
+# What turns a line ending "connected" back into a job: asking for it, saying
+# it isn't so yet, or asking whether it is.
+_STILL_ASKING = re.compile(
+    r"\?|\b(?:please|pls|plz|can\s+you|could\s+you|make\s+sure|ensure|needs?|"
+    r"should|must|has\s+to|have\s+to|not|isn'?t|aren'?t|yet|asap|once|when|after|"
+    r"before|if|check|confirm\s+if|confirm\s+that)\b",
+    re.IGNORECASE,
+)
+_ASKS_FIRST = re.compile(
+    r"^(?:is|are|was|were|did|does|has|have|can|could|will|would"
+    # ...or telling somebody to do it: "Get Jo's leads ready".
+    r"|get|make|set|connect|link|add|send|fix|call|text|email|finish|complete|"
+    r"upload|install|verify|activate|approve|submit|pay|integrate|setup|let|put|"
+    r"turn|have|go|start|create|do)\b",
+    re.IGNORECASE,
+)
+#: Longer than this and a line ending "done" is a list of jobs with one of
+#: them finished, not a report.
+_REPORT_WORDS = 12
+
+
 def an_update(text: str) -> bool:
     """Whether the line reports work already done rather than asking for it.
 
@@ -266,9 +297,17 @@ def an_update(text: str) -> bool:
     saying something is finished arrives on it already true.
     """
     said = strip_mentions(text or "")
-    said = re.sub(r"^[\W_]+", "", said)
+    said = re.sub(r"^[\W_]+", "", said).strip()
     first = (said.split() or [""])[0].casefold().strip(".,:;!?")
-    return first in _ALREADY_DID
+    if first in _ALREADY_DID:
+        return True
+    return bool(
+        said
+        and len(said.split()) <= _REPORT_WORDS
+        and _NOW_DONE.search(said)
+        and not _STILL_ASKING.search(said)
+        and not _ASKS_FIRST.match(said)
+    )
 
 
 def a_setup_confirmation(text: str) -> bool:

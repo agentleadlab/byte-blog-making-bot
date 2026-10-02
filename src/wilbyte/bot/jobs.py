@@ -3105,7 +3105,11 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
         # arrive on somebody's list already true - "not an update on a current
         # tasks".
         return [
-            one for one in tasks if not rules_tags.an_update(one.summary)
+            one for one in tasks
+            if not rules_tags.an_update(one.summary)
+            # The comment itself too: a reading can turn "Connor Kachlic CRM
+            # connected" into words that no longer sound finished.
+            and not rules_tags.an_update(getattr(one.note, "text", "") or "")
         ], problems
     finally:
         client.close()

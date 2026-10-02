@@ -1575,7 +1575,10 @@ def test_the_confirmation_is_skipped_where_the_ongoing_order_is():
     "said",
     ["Updated email for Killian Cooper", "@faith Updated email for Killian Cooper",
      "✅ Added EMAIL & SMS notifications", "Fired a test in the Discord channel",
-     "Sent the contract", "Finished the gameplan", "done"],
+     "Sent the contract", "Finished the gameplan", "done",
+     "Connor Kachlic CRM connected", "@faith Connor Kachlic CRM connected",
+     "Jo's sheet is set up", "Zapier for Jo done ✅", "Ringy integration is live",
+     "Agent portal all set"],
 )
 def test_a_line_reporting_work_done_is_not_a_task(said):
     """"not an update on a current tasks". A checklist is what is left to do,
@@ -1587,7 +1590,12 @@ def test_a_line_reporting_work_done_is_not_a_task(said):
     "said",
     ["Review MP gameplan card", "Send the updated email to Killian",
      "review the updated email", "Please review the gameplan",
-     "Call Killian about the renewal", "add states for Drago"],
+     "Call Killian about the renewal", "add states for Drago",
+     "Make sure Connor Kachlic CRM connected", "Connor Kachlic CRM connected?",
+     "Is Connor's CRM connected", "Connor's CRM needs to be connected",
+     "Connor CRM not connected yet", "Connect Connor Kachlic CRM",
+     "Check Connor's CRM is connected", "Blue collar agents go live",
+     "Get Jo's leads ready", "Set up Jo's sheet"],
 )
 def test_work_still_to_do_is_a_task(said):
     """The first word and only the first word: a rule about a word anywhere
@@ -1604,3 +1612,10 @@ def test_the_reports_are_dropped_where_the_tasks_are_read():
     source = inspect.getsource(jobs.tags_to_file)
 
     assert "an_update(one.summary)" in source
+
+
+def test_a_long_comment_ending_done_is_still_its_jobs():
+    """A list of things to do with the last one finished is not a report."""
+    said = ("Kath move the budget to the new campaign, Jenn duplicate the winning "
+            "ad set and pause the old one, Nicole the schedule is done")
+    assert tagged.an_update(said) is False
