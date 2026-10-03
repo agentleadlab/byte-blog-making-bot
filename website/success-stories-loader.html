@@ -1,0 +1,85 @@
+<!-- ============================================================
+     SUCCESS STORIES VIDEOS — kept up to date by RYTE.
+     agentleadlab.com/success_stories: paste ONCE in the page's
+     Settings -> Tracking Code -> Body (or Footer) code. It reads the
+     list RYTE keeps on leadlabcrm.com and redraws "Video Training"
+     with the page's own cards - three per section, newest first.
+     Nothing else on the page is touched. If the list can't be read,
+     the videos already in the page stay exactly as they are.
+     ============================================================ -->
+<script>
+(function(){
+  var LL_DATA = 'https://leadlabcrm.com/wp-json/wp/v2/pages?slug=ll-training-data&_fields=content';
+  var SHOWN = 3, KEY = 'll-training-v1';
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fromHex(h){
+    var bytes = new Uint8Array(h.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(h.substr(i * 2, 2), 16);
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  }
+  /* The page's own card, as its own code draws it. */
+  function card(v){
+    return '<article class="alp-vcard">' +
+      '<button type="button" class="alp-frame" data-vid="' + esc(v.id) + '" aria-label="Play: ' + esc(v.t) + '">' +
+        '<img src="https://img.youtube.com/vi/' + esc(v.id) + '/mqdefault.jpg" loading="lazy" decoding="async" width="320" height="180" alt="">' +
+        '<span class="alp-play"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>' +
+      '</button>' +
+      '<div class="alp-vmeta">' +
+        '<h3 class="alp-vtitle">' + esc(v.t) + '</h3>' +
+        (v.w ? '<p class="alp-vwho">' + esc(v.w) + '</p>' : '') +
+      '</div>' +
+    '</article>';
+  }
+  function apply(data){
+    var stack = document.getElementById('alp-stack');
+    if (!stack || !data || !data.sections || !data.sections.length) return;
+    /* somebody is already watching one - leave it alone */
+    if (stack.querySelector('iframe')) return;
+    /* The page's own click handler sits on #alp-stack, so it plays these too. */
+    stack.innerHTML = data.sections.map(function(row){
+      return '<section class="alp-cat">' +
+        '<div class="alp-cathead">' +
+          '<h2 class="alp-catname">' + esc(row.c) + '</h2>' +
+          (row.more ? '<a class="alp-catlink" href="' + esc(row.more) + '">See all →</a>' : '') +
+        '</div>' +
+        '<div class="alp-vgrid">' + (row.v || []).slice(0, SHOWN).map(card).join('') + '</div>' +
+      '</section>';
+    }).join('');
+  }
+  function safely(data){ try { apply(data); } catch (e) {} }
+
+  var fresh = fetch(LL_DATA, { cache: 'no-store' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(pages){
+      var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
+      var m = /LLTRAINING-([0-9a-f]+)/.exec(html);
+      return m ? fromHex(m[1]) : null;
+    })
+    .catch(function(){ return null; });
+
+  var held = null, shownKey = '';
+  try { held = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+
+  /* After the page has drawn its own list, or it would draw over ours. */
+  function whenDrawn(fn, tries){
+    var stack = document.getElementById('alp-stack');
+    if (stack && stack.children.length) return fn();
+    if ((tries || 0) > 100) return;
+    setTimeout(function(){ whenDrawn(fn, (tries || 0) + 1); }, 50);
+  }
+  whenDrawn(function(){
+    if (held && held.sections){ safely(held); shownKey = JSON.stringify(held); }
+    fresh.then(function(data){
+      if (!data || !data.sections) return;
+      var key = JSON.stringify(data);
+      try { localStorage.setItem(KEY, key); } catch (e) {}
+      if (key !== shownKey) safely(data);
+    });
+  });
+})();
+</script>

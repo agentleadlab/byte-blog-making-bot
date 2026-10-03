@@ -35,26 +35,32 @@ class WebsiteError(RuntimeError):
     pass
 
 
-def encode(data: dict) -> str:
-    return MARK + json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8").hex()
+def encode(data: dict, *, mark: str = MARK) -> str:
+    return mark + json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8").hex()
 
 
-def decode(text: str) -> dict | None:
-    found = re.search(re.escape(MARK) + r"([0-9a-f]+)", str(text or ""))
+def decoded(text: str, *, mark: str) -> dict | None:
+    """What a data page holds, whatever its shape."""
+    found = re.search(re.escape(mark) + r"([0-9a-f]+)", str(text or ""))
     if not found or len(found.group(1)) % 2:
         return None
     try:
         data = json.loads(bytes.fromhex(found.group(1)).decode("utf-8"))
     except ValueError:
         return None
-    return data if isinstance(data, dict) and isinstance(data.get("videos"), list) else None
+    return data if isinstance(data, dict) else None
 
 
-def page_content(data: dict) -> str:
+def decode(text: str) -> dict | None:
+    data = decoded(text, mark=MARK)
+    return data if data and isinstance(data.get("videos"), list) else None
+
+
+def page_content(data: dict, *, mark: str = MARK, what: str = "video testimonials") -> str:
     return (
-        "<p>This page holds the list of video testimonials shown on the site. RYTE keeps "
+        f"<p>This page holds the list of {what} shown on the site. RYTE keeps "
         "it up to date - please don't edit it.</p>\n"
-        f"<p>{encode(data)}</p>"
+        f"<p>{encode(data, mark=mark)}</p>"
     )
 
 
@@ -188,30 +194,33 @@ class WordPress:
         return self._check(self._http.get(f"{self.url}/wp-json/wp/v2/users/me",
                                           params={"context": "edit"}), "sign in")
 
-    def live_page(self) -> str:
-        got = self._http.get(self.url + "/", auth=None)
+    def live_page(self, url: str = "") -> str:
+        got = self._http.get(url or self.url + "/", auth=None)
         if got.status_code >= 400:
-            raise WebsiteError(f"The home page answered HTTP {got.status_code}.")
+            raise WebsiteError(f"{url or 'The home page'} answered HTTP {got.status_code}.")
         return got.text
 
-    def _data_page(self) -> dict | None:
+    def _data_page(self, slug: str = DATA_SLUG) -> dict | None:
         found = self._check(self._http.get(
             f"{self.url}/wp-json/wp/v2/pages",
-            params={"slug": DATA_SLUG, "status": "publish,draft,private", "context": "edit"},
+            params={"slug": slug, "status": "publish,draft,private", "context": "edit"},
         ), "read the video list")
         return found[0] if found else None
 
-    def load(self) -> dict | None:
-        page = self._data_page()
+    def load(self, *, slug: str = DATA_SLUG, mark: str = MARK) -> dict | None:
+        page = self._data_page(slug)
         if not page:
             return None
         content = page.get("content") or {}
-        return decode(content.get("raw") or content.get("rendered") or "")
+        said = content.get("raw") or content.get("rendered") or ""
+        return decode(said) if mark == MARK else decoded(said, mark=mark)
 
-    def save(self, data: dict) -> str:
-        page = self._data_page()
-        body = {"title": DATA_TITLE, "content": page_content(data), "status": "publish",
-                "slug": DATA_SLUG, "comment_status": "closed", "ping_status": "closed"}
+    def save(self, data: dict, *, slug: str = DATA_SLUG, title: str = DATA_TITLE,
+             mark: str = MARK, what: str = "video testimonials") -> str:
+        page = self._data_page(slug)
+        body = {"title": title, "content": page_content(data, mark=mark, what=what),
+                "status": "publish", "slug": slug, "comment_status": "closed",
+                "ping_status": "closed"}
         where = f"{self.url}/wp-json/wp/v2/pages" + (f"/{page['id']}" if page else "")
         saved = self._check(self._http.post(where, json=body), "save the video list")
         return str(saved.get("link") or "")

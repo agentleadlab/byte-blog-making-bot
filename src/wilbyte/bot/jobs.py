@@ -10265,6 +10265,96 @@ def testimonial_take_down(config: Config, video_id: str) -> str:
             + (f" **{featured}** is the featured interview again." if was_featured and featured else ""))
 
 
+def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
+    """The segments in one posting-doc tab that can go on the Success Stories
+    page. (the tab's name, [items], [skipped]) - or a SuccessError."""
+    from .. import docs as doc
+    from .. import successpage
+
+    if not (getattr(config.secrets, "segments_doc_id", "") or "").strip():
+        raise successpage.SuccessError("SEGMENTS_DOC_ID isn't set, so there's no posting doc to read.")
+    wanted = " ".join(str(who or "").split()).casefold()
+    if not wanted:
+        raise successpage.SuccessError("Whose? `@RYTE post segments Karyn Giles` - their tab's name.")
+    with doc.open_docs(config.secrets) as reading:
+        every = reading.contents()
+    called = lambda tab: " ".join(tab.title.split()).casefold()  # noqa: E731
+    picked = [one for one in every if called(one[0]) == wanted] or [
+        one for one in every if wanted in called(one[0])
+    ]
+    if not picked:
+        raise successpage.SuccessError(f"No tab called “{who}” in the posting doc.")
+    if len(picked) > 1:
+        raise successpage.SuccessError(
+            f"More than one tab could be “{who}” - say which: "
+            + ", ".join(f"**{one[0].title}**" for one in picked)
+        )
+    tab, text, _odd = picked[0]
+    items, skipped = successpage.from_tab(tab.title, text)
+    return tab.title, items, skipped
+
+
+def _success_list(site):
+    """(the list RYTE keeps, whether it was just started from the live page)."""
+    from .. import successpage
+
+    held = site.load(slug=successpage.DATA_SLUG, mark=successpage.MARK)
+    if held and isinstance(held.get("sections"), list):
+        return held, False
+    return successpage.parse_live(site.live_page(successpage.PAGE_URL)), True
+
+
+def _success_save(site, data) -> None:
+    from .. import successpage
+
+    site.save(data, slug=successpage.DATA_SLUG, title=successpage.DATA_TITLE,
+              mark=successpage.MARK, what=successpage.WHAT)
+
+
+def success_post(config: Config, items: list[dict]) -> str:
+    """Put these on the Success Stories page, each first in its section."""
+    from .. import successpage
+
+    with _wordpress(config) as site:
+        held, started = _success_list(site)
+        updated, went, already = successpage.add(held, items)
+        if went:
+            _success_save(site, updated)
+    lines = [f"✅ **{one['title']}** → {one['section']}" for one in went]
+    lines += [f"• Already up: {one['title']} ({one['section']})" for one in already]
+    if started and went:
+        lines.append("-# First one: I started from the videos already on the page.")
+    return "\n".join(lines) or "Nothing to add."
+
+
+def success_lookup(config: Config, said: str) -> list[dict]:
+    """Where a YouTube link is on the Success Stories page - [] when nowhere."""
+    from .. import successpage
+
+    vid = successpage.video_id(said)
+    if not vid:
+        raise successpage.SuccessError("Send the video's YouTube link: `@RYTE success remove https://youtu.be/…`")
+    with _wordpress(config) as site:
+        held, _started = _success_list(site)
+    _left, gone = successpage.remove(held, vid)
+    return gone
+
+
+def success_take_down(config: Config, said: str) -> str:
+    from .. import successpage
+
+    vid = successpage.video_id(said)
+    with _wordpress(config) as site:
+        held, _started = _success_list(site)
+        updated, gone = successpage.remove(held, vid)
+        if not gone:
+            return "It's already off the Success Stories page."
+        _success_save(site, updated)
+    return "🗑 Off the Success Stories page: " + "; ".join(
+        f"**{one['t']}** ({one['section']})" for one in gone
+    )
+
+
 def testimonial_publish(config: Config, video: dict) -> str:
     """Put the interview on the site as the featured one. What happened, said."""
     from .. import website

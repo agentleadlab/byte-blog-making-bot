@@ -1376,6 +1376,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _website_testimonial(responder, config, request.brief or "")
                 return
 
+            if request.action == "postsegments":
+                await _post_segments(responder, config, request.brief or "")
+                return
+
+            if request.action == "successremove":
+                await _success_remove(responder, config, request.brief or "")
+                return
+
             if request.action == "doclayout":
                 await _relayout_doc(responder, config, request.brief or "")
                 return
@@ -1731,6 +1739,75 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
         done = await asyncio.to_thread(jobs.testimonial_publish, config, video)
     except Exception as exc:
         await responder.send(f"⚠ Couldn't put it on the website: {_readable(exc)}")
+        return
+    await responder.send(done)
+
+
+async def _post_segments(responder: Responder, config: Config, who: str) -> None:
+    """One interview's segments onto the Success Stories page - after the button.
+
+    "i want to tell ryte to post it". Read from the posting doc: each segment
+    with a YouTube link goes first in its website section; the ones without
+    are named, not guessed at.
+    """
+    try:
+        tab, items, skipped = await asyncio.to_thread(jobs.success_plan, config, who)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    lines = [f"🎬 **{tab}** — add to the Success Stories page?"]
+    lines += [f"• {one['what']}: **{one['title']}** → {one['section']}" for one in items]
+    lines += [f"-# Skipped: {one}" for one in skipped]
+    if not items:
+        await responder.send("\n".join(lines + ["Nothing in there with a YouTube link yet."]))
+        return
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Add {len(items)}",
+        emoji="🎬",
+    )
+    await responder.send("\n".join(lines), view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        said = await asyncio.to_thread(jobs.success_post, config, items)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't update the page: {_readable(exc)}")
+        return
+    await responder.send(said)
+
+
+async def _success_remove(responder: Responder, config: Config, said: str) -> None:
+    """One video off the Success Stories page, after the button."""
+    try:
+        found = await asyncio.to_thread(jobs.success_lookup, config, said)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    if not found:
+        await responder.send("That video isn't on the Success Stories page.")
+        return
+    view = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label="Take it off",
+        emoji="🗑",
+    )
+    await responder.send(
+        "Take this off the Success Stories page?\n" + "\n".join(
+            f"• **{one['t']}** — {one['w']} ({one['section']})" for one in found
+        ),
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        done = await asyncio.to_thread(jobs.success_take_down, config, said)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't update the page: {_readable(exc)}")
         return
     await responder.send(done)
 

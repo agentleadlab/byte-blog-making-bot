@@ -555,6 +555,17 @@ TESTIMONIAL = re.compile(
 )
 # "testimonial remove Raymond", "remove testimonial <link>", "delete ... from
 # the website" - one interview off the site, after the button.
+#: "post segments Karyn Giles" - her tab's segments onto the Success Stories page.
+POST_SEGMENTS = re.compile(
+    r"^\s*post\s+(?:the\s+)?(?:segments?|videos?|interviews?|clips?)(?:\s+(?:for|of))?\s+(.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+#: "success remove https://youtu.be/..." - one off the Success Stories page.
+SUCCESS_REMOVE = re.compile(
+    r"^\s*(?:success(?:\s+stor(?:y|ies))?|training\s+videos?)\s+(?:remove|delete|take\s+down)\s+(.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 #: "fix the doc", "redo old segments", "fix doc Crystal Clark" - the posting
 #: doc's old tabs, put into the layout new interviews get.
 DOC_RELAYOUT = re.compile(
@@ -725,6 +736,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # action words: "clearout" in "check clearouts" is not a clear-out.
     # "testimonial https://youtu.be/..." - an interview for the website, not a
     # blog post, so before a bare YouTube link is taken as one.
+    post = POST_SEGMENTS.match(text)
+    if post:
+        return MentionRequest(action="postsegments", brief=post.group(1).strip(" .!?:"))
+    gone = SUCCESS_REMOVE.match(text)
+    if gone:
+        return MentionRequest(action="successremove", brief=gone.group(1).strip())
     tidy = DOC_RELAYOUT.match(text)
     if tidy:
         return MentionRequest(action="doclayout", brief=(tidy.group(1) or "").strip(" .!?:"))
@@ -1247,6 +1264,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **website check** — whether I can reach the site
 > @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents
 > @RYTE **contracts** — today's and tomorrow's go-lives, and whether each order has its own signed contract
+> @RYTE **post segments Karyn Giles** — her segments that have a YouTube link, onto the
+> Success Stories page, each first in its section, after a button. **success remove <link>** — take one off
 > @RYTE **fix doc Crystal Clark** — put one old tab of the segments doc into the new
 > layout, after a button. Only if every word survives, YouTube links included
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every
