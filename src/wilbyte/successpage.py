@@ -121,9 +121,10 @@ _HEAD = re.compile(
 _LABELS = {"YOUTUBE TITLE": "title", "WEBSITE SECTION": "section", "YOUTUBE LINK": "link"}
 
 
-def from_tab(name: str, text: str) -> tuple[list[dict], list[str]]:
+def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
     """The segments in one tab of the posting doc, ready to post.
-    ([{section, id, title, who, what}], [what was skipped and why]).
+    ([{section, id, title, who, what}], [what was skipped and why],
+    [the ones with no YouTube link in the doc - to be looked for]).
 
     The laid-out tab - "YOUTUBE TITLE", "WEBSITE SECTION", "YOUTUBE LINK" -
     or an old one, read the way `fix doc` reads it. A segment with no
@@ -178,7 +179,7 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str]]:
                 "link": one.youtube.split()[0] if one.youtube else "",
             })
 
-    items, skipped = [], []
+    items, skipped, waiting = [], [], []
     for one in entries:
         # The rule, applied here too: whatever an old tab says, the full
         # interview goes under Agent Success Full Interviews and a clip never.
@@ -193,9 +194,42 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str]]:
             skipped.append(f"{one['what']} — “{section or 'no section'}” isn't one of the website sections")
             continue
         vid = video_id(one["link"])
+        entry = {"section": next(k for k in SECTIONS if k.casefold() == section.casefold()),
+                 "id": vid, "title": one["title"], "who": name, "what": one["what"]}
         if not vid:
-            skipped.append(f"{one['what']} — no YouTube link yet")
+            waiting.append(entry)
             continue
-        items.append({"section": next(k for k in SECTIONS if k.casefold() == section.casefold()),
-                      "id": vid, "title": one["title"], "who": name, "what": one["what"]})
-    return items, skipped
+        items.append(entry)
+    return items, skipped, waiting
+
+
+def same_title(one: str, other: str) -> bool:
+    """The same title, capitals and punctuation aside - and nothing else aside.
+    "Not Playing Small" is "not playing small!"; a shortened title is not."""
+    def bare(said: str) -> str:
+        return " ".join(re.sub(r"[^\w$%]+", " ", str(said or "").casefold()).split())
+
+    return bool(bare(one)) and bare(one) == bare(other)
+
+
+def match_uploads(waiting: list[dict], uploads: list[dict]) -> tuple[list[dict], list[str]]:
+    """The segments with no link in the doc, looked for on the channel by title.
+    ([found, each with its id], [what wasn't, and why]).
+
+    "i dont want him uploading incorrect videos" - so only an exact title, and
+    only one video with it. Two with the same title is a question for a
+    person, not a coin to toss.
+    """
+    found, missing = [], []
+    for one in waiting:
+        hits = list(dict.fromkeys(
+            up["id"] for up in uploads if up.get("id") and same_title(up.get("title"), one["title"])
+        ))
+        if len(hits) == 1:
+            found.append({**one, "id": hits[0], "found": True})
+        elif hits:
+            missing.append(f"{one['what']} — {len(hits)} videos on the channel have that title; "
+                           "paste the right link into the doc")
+        else:
+            missing.append(f"{one['what']} — no video on the channel with that exact title yet")
+    return found, missing

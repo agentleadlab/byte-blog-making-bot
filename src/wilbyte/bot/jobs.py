@@ -10296,8 +10296,43 @@ def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
             + ", ".join(f"**{one[0].title}**" for one in picked)
         )
     tab, text, _odd = picked[0]
-    items, skipped = successpage.from_tab(tab.title, text)
+    items, skipped, waiting = successpage.from_tab(tab.title, text)
+    if waiting:
+        found, missing = _find_on_channel(config, items, waiting)
+        items += found
+        skipped += missing
+    # In the doc's order, whichever way each link was found.
+    order = {one["what"]: at for at, one in enumerate(items + waiting)}
+    items.sort(key=lambda one: order.get(one["what"], 0))
     return tab.title, items, skipped
+
+
+#: Uploads read when looking for a segment by its title - months of clips.
+CHANNEL_UPLOADS_READ = 300
+
+
+def _find_on_channel(config: Config, items: list[dict], waiting: list[dict]):
+    """Segments with no link in the doc, looked for on the channel the
+    interview's own video is on. ([found], [why each other one wasn't])."""
+    from .. import successpage, youtube_api
+
+    sure = next((one["id"] for one in items if one.get("id")), "")
+    channel = (getattr(config.secrets, "youtube_channel_id", "") or "").strip()
+    try:
+        if sure:
+            channel = str(((youtube_api.get_video(sure) or {}).get("snippet") or {}).get("channelId") or channel)
+        if not channel.startswith("UC"):
+            return [], [f"{one['what']} — no YouTube link yet" for one in waiting]
+        uploads = [
+            {"id": (it.get("contentDetails") or {}).get("videoId")
+                   or ((it.get("snippet") or {}).get("resourceId") or {}).get("videoId"),
+             "title": (it.get("snippet") or {}).get("title") or ""}
+            for it in youtube_api.list_playlist_items("UU" + channel[2:], limit=CHANNEL_UPLOADS_READ)
+        ]
+    except Exception as exc:
+        return [], [f"{one['what']} — no YouTube link yet (couldn't read the channel: {_short(exc, 80)})"
+                    for one in waiting]
+    return successpage.match_uploads(waiting, uploads)
 
 
 def _success_list(site):

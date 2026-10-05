@@ -247,6 +247,9 @@ class Secrets:
     payra_site_id: str | None = None
     # PandaDoc's API key, for finding signed contracts. Read-only use.
     pandadoc_api_key: str | None = None
+    # The YouTube channel the interviews go up on (its UC... id), for finding a
+    # segment's video by its title when the doc has no link to start from.
+    youtube_channel_id: str | None = None
     # leadlabcrm.com's WordPress, for the video testimonials list. An
     # Application Password (Users -> Profile), not the login password.
     wordpress_url: str | None = None
@@ -421,6 +424,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 payra_api_token=_env("PAYRA_API_TOKEN"),
                 payra_site_id=_env("PAYRA_SITE_ID"),
                 pandadoc_api_key=_env("PANDADOC_API_KEY"),
+                youtube_channel_id=_env("YOUTUBE_CHANNEL_ID"),
                 wordpress_url=_env("WORDPRESS_URL"),
                 wordpress_user=_env("WORDPRESS_USER"),
                 wordpress_app_password=_env("WORDPRESS_APP_PASSWORD"),

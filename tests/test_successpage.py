@@ -125,8 +125,9 @@ The whole call.
 
 
 def test_a_laid_out_tab_gives_its_segments_with_links():
-    items, skipped = sp.from_tab("Karyn Giles", LAID_OUT)
+    items, skipped, waiting = sp.from_tab("Karyn Giles", LAID_OUT)
 
+    assert [one["what"] for one in waiting] == ["Segment 3"]
     assert [(one["what"], one["section"], one["id"]) for one in items] == [
         ("Full interview", "Agent Success Full Interviews", "-aIcdjzwFsY"),
         ("Segment 2", "Aged Leads", "4JSaDVPFbTc"),
@@ -135,7 +136,6 @@ def test_a_laid_out_tab_gives_its_segments_with_links():
     assert items[0]["who"] == "Karyn Giles"
     # Segment 1 sits under the full interviews' section - not posted there.
     assert any("Segment 1" in one and "full interviews only" in one for one in skipped)
-    assert any("Segment 3" in one and "no YouTube link" in one for one in skipped)
 
 
 def test_an_old_tab_is_read_too():
@@ -151,7 +151,7 @@ def test_an_old_tab_is_read_too():
         "(YT Description)\nMost agents.\n#agentleadlab\n"
         "(Website Description)\nIn this clip.\n"
     )
-    items, skipped = sp.from_tab("Ashley Aronson", old)
+    items, skipped, _waiting = sp.from_tab("Ashley Aronson", old)
     assert [(one["section"], one["id"]) for one in items] == [
         ("Agent Success Full Interviews", "EEEEEEEEEEE"),
         ("Agent's Expectations", "eZvDMI3iuGo"),
@@ -295,3 +295,73 @@ def test_the_page_shows_ryte_s_list_three_to_a_section_and_still_plays():
 def test_if_the_list_cant_be_read_the_page_is_left_as_it_was():
     titles, _playing = _show({}, status=500)
     assert titles == ["Old full one", "Old aged one"]
+
+
+
+# ------------------------------------------------ found on the channel by title
+
+UPLOADS = [
+    {"id": "VET0000000A", "title": "The Full Veteran Telesales Script!"},
+    {"id": "TWIN000000A", "title": "Spending the Money"},
+    {"id": "TWIN000000B", "title": "Spending the money"},
+    {"id": "SHORT00000A", "title": "The Full Veteran Telesales"},
+]
+
+
+def _waiting(title, what="Segment 3"):
+    return {"section": "Veteran Training", "id": "", "title": title, "who": "Karyn Giles", "what": what}
+
+
+def test_a_segment_is_found_by_its_exact_title():
+    found, missing = sp.match_uploads([_waiting("The Full Veteran Telesales Script")], UPLOADS)
+    assert [(one["id"], one["found"]) for one in found] == [("VET0000000A", True)] and missing == []
+
+
+def test_a_shortened_title_is_not_a_match():
+    """"i dont want him uploading incorrect videos"."""
+    found, missing = sp.match_uploads([_waiting("The Full Veteran Telesales Script Part 2")], UPLOADS)
+    assert found == [] and "no video on the channel with that exact title" in missing[0]
+
+
+def test_two_videos_with_the_title_is_a_question_not_a_guess():
+    found, missing = sp.match_uploads([_waiting("Spending the Money", "Segment 4")], UPLOADS)
+    assert found == [] and "2 videos on the channel have that title" in missing[0]
+
+
+def test_titles_match_past_capitals_and_punctuation_only():
+    assert sp.same_title("Stop Trying to Marry the Client", "stop trying to marry the client!")
+    assert not sp.same_title("Stop Trying to Marry the Client", "Stop Trying to Marry the Client 2")
+    assert not sp.same_title("$5,600 Order", "5600 Order")
+
+
+def test_the_plan_looks_on_the_interviews_own_channel(monkeypatch):
+    from wilbyte import docs, youtube_api
+    from wilbyte.bot import jobs
+
+    asked = {}
+
+    class Doc:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def contents(self):
+            return [(docs.Tab("t.1", "Karyn Giles"), LAID_OUT, "")]
+
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: Doc())
+    monkeypatch.setattr(youtube_api, "get_video", lambda vid: {"snippet": {"channelId": "UCabcdefghij"}})
+
+    def uploads(playlist, *, limit=None):
+        asked["playlist"] = playlist
+        return [{"contentDetails": {"videoId": "VET0000000A"},
+                 "snippet": {"title": "The Full Veteran Telesales Script"}}]
+
+    monkeypatch.setattr(youtube_api, "list_playlist_items", uploads)
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D"))
+    _tab, items, skipped = jobs.success_plan(config, "Karyn Giles")
+
+    assert asked["playlist"] == "UUabcdefghij"
+    assert [one["what"] for one in items] == ["Full interview", "Segment 2", "Segment 3"]
+    assert items[2]["id"] == "VET0000000A" and items[2]["found"] is True

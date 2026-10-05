@@ -1756,7 +1756,13 @@ async def _post_segments(responder: Responder, config: Config, who: str) -> None
         await responder.send(f"⚠ {_readable(exc)}")
         return
     lines = [f"🎬 **{tab}** — add to the Success Stories page?"]
-    lines += [f"• {one['what']}: **{one['title']}** → {one['section']}" for one in items]
+    # The ones found on the channel carry their link, to be clicked and
+    # checked before the button - "it still should ask me".
+    lines += [
+        f"• {one['what']}: **{one['title']}** → {one['section']}"
+        + (f" · found on YouTube: <https://youtu.be/{one['id']}>" if one.get("found") else "")
+        for one in items
+    ]
     lines += [f"-# Skipped: {one}" for one in skipped]
     if not items:
         await responder.send("\n".join(lines + ["Nothing in there with a YouTube link yet."]))
