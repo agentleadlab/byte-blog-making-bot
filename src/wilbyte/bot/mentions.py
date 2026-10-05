@@ -1224,20 +1224,18 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **blacklist Juliana Hernandez** — tag a client blacklisted in GHL
 > after a chargeback. Shows every contact that matches before anything is
 > written, and never tags on a name it only half-matched
-> @RYTE **quiet auto** — the next 10 quiet channels now, RYTE pressing the buttons: each
-> kept, checked, and deleted only if every check passes; anything else is left and listed.
-> It also runs by itself every hour, 8am to 8pm, in Channel Deletion —
-> **quiet auto off** / **quiet auto on** to stop or start that. On its own it never deletes
-> someone with two channels, or with an order card in the last 60 days
+> @RYTE **quiet auto** — just the next 10 quiet channels, the same way as **quiet**
 > @RYTE **delivered Jay Rodriguez** — proof of delivery: what their card says they
 > ordered against the leads on their sheet, with the line a dispute needs. **delivered**
 > on its own lists every order a week or more live that's short. I also say so on my own
 > each morning, once per order
 > @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.
 > **quiet unkeep <name>** takes them off; **quiet kept** shows the list
-> @RYTE **quiet** — every channel in the clients server nobody has used in
-> two months, quietest first. Add **3 months** for a tighter list. Reads only;
-> nothing is deleted, and `clearout` is still how anything goes
+> @RYTE **quiet** — goes through every channel nobody has used in two months, RYTE
+> pressing the buttons: each kept, checked, and deleted only if every check passes.
+> Never someone on the keep list, with two channels, or with an order in the last 60
+> days - those are left and listed. **Stop the run** on any card stops it. Add
+> **3 months** for a tighter list; **quiet list** shows the list to pick one by hand
 > @RYTE **access** — every server I'm in, what I'm allowed to do in each, and
 > which privileged intents are switched on
 > @RYTE **trello daycheck** — every line on a Lead Order card for a day its

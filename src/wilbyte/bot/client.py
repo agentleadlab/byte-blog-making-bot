@@ -204,7 +204,6 @@ class WilByteBot(discord.Client):
         self.setup_task: asyncio.Task | None = None
         self.day_task: asyncio.Task | None = None
         self.contract_task: asyncio.Task | None = None
-        self.quiet_task: asyncio.Task | None = None
         self.delivery_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
@@ -336,14 +335,6 @@ class WilByteBot(discord.Client):
             self.delivery_task is None or self.delivery_task.done()
         ):
             self.delivery_task = self.loop.create_task(delivery_check_loop(self))
-        # The quiet run on its own clock, once there is a Channel Deletion to
-        # run it in and a clients server to run it on.
-        if (
-            getattr(self.config.secrets, "discord_clearout_copy_channel_id", None)
-            and self.config.secrets.discord_clients_guild_id
-            and (self.quiet_task is None or self.quiet_task.done())
-        ):
-            self.quiet_task = self.loop.create_task(quiet_auto_loop(self))
         # A comment is somebody handing over a job, which happens all day and
         # on nobody's schedule. Its own switch, because it writes onto four
         # people's live checklists rather than reporting.
@@ -1366,12 +1357,6 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                     await _quiet_keep(bot, responder, config, keeping.group(1).casefold(), keeping.group(2))
                     return
                 is_auto = re.search(r"\bauto(?:matic(?:ally)?)?\b", brief, re.IGNORECASE)
-                if is_auto and re.search(r"\b(?:off|stop|pause|disable)\b", brief, re.IGNORECASE):
-                    await _quiet_auto_switch(responder, config, False)
-                    return
-                if is_auto and re.search(r"\b(?:on|resume|enable)\b", brief, re.IGNORECASE):
-                    await _quiet_auto_switch(responder, config, True)
-                    return
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
                     if is_auto:
                         await _quiet_auto(bot, responder, config, brief)
@@ -3831,6 +3816,29 @@ async def _quiet_channels(
             "🔒 On the keep list, so not in the list: "
             + ", ".join(f"#{one.name}" for one in held_back)
         )
+    if not re.search(r"\b(?:list|pick|show)\b", asked or "", re.IGNORECASE):
+        # "prompt ryte quiet then it will automatically go there" - asked,
+        # and straight down the list with RYTE pressing the buttons. The
+        # list with its dropdown is `@RYTE quiet list`, for doing one by hand.
+        from .. import quietauto
+
+        waiting = quietauto.leave_alone(datetime.now(timezone.utc))
+        targets = clearout.one_by_one([one for one in quiet if one.channel_id not in waiting])
+        if not targets:
+            await responder.send(
+                f"Nothing has been quiet since **{since:%d %b %Y}** that I haven't already "
+                "left for you." if quiet else pages[-1]
+            )
+            return
+        await responder.send(
+            f"🧹 **{len(targets)} channels** with nothing said since **{since:%d %b %Y}** — "
+            "going through them now. For each: keep the sheet and the screenshots, check my "
+            "own work, and press delete only if every check passes. Press **Stop the run** "
+            "on any card to stop.\n-# `@RYTE quiet list` shows the list to pick one by hand. "
+            "Nobody is banned by this."
+        )
+        await _all_of_them(bot, responder, config, targets, auto=True)
+        return
     # The picker goes on the last message, under the names it offers.
     for page in pages[:-1]:
         await responder.send(page)
@@ -4030,7 +4038,6 @@ _QUIET_RUNNING = False
 
 async def _quiet_auto(
     bot: "WilByteBot", responder: Responder, config: Config, asked: str,
-    *, on_its_own: bool = False,
 ) -> None:
     """The quiet run on its own: the ten quietest channels, each kept, checked
     and - only when every check passes - deleted.
@@ -4039,10 +4046,6 @@ async def _quiet_auto(
     a person (a note, a problem, no sheet) or fails a check is left as it is,
     listed at the end, and not taken again for a week - otherwise every run
     would start on the same ones and never get further down the list.
-
-    `on_its_own` is the hourly run nobody asked for: it says nothing when
-    there is nothing to do, and tags Franklin only when something was left
-    for him.
     """
     global _QUIET_RUNNING
     from .. import clearout, keeplist, quietauto
@@ -4055,12 +4058,10 @@ async def _quiet_auto(
     where = (config.secrets.discord_clients_guild_id or "").strip()
     guild = bot.get_guild(int(where)) if where.isdigit() else None
     if guild is None:
-        if not on_its_own:
-            await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in .env isn't it.")
+        await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in .env isn't it.")
         return
     if _QUIET_RUNNING:
-        if not on_its_own:
-            await responder.send("A quiet run is already going — I'll leave this until it's done.")
+        await responder.send("A quiet run is already going — I'll leave this until it's done.")
         return
     now = datetime.now(ZoneInfo(config.schedule.timezone))
     since = now - timedelta(days=clearout.how_far_back(re.sub(r"\bauto\w*\b", "", asked or "")))
@@ -4083,12 +4084,11 @@ async def _quiet_auto(
     called = {clearout.target(one): one.name for one in picked}
     ids = {clearout.target(one): one.channel_id for one in picked}
     if not batch:
-        if not on_its_own:
-            await responder.send(
-                f"No channel has been quiet since {since:%b %-d, %Y} — nothing to do."
-                if not quiet else
-                "Every quiet channel left is one I already left for you — nothing new to do."
-            )
+        await responder.send(
+            f"No channel has been quiet since {since:%b %-d, %Y} — nothing to do."
+            if not quiet else
+            "Every quiet channel left is one I already left for you — nothing new to do."
+        )
         return
 
     _QUIET_RUNNING = True
@@ -4162,44 +4162,9 @@ async def _quiet_auto(
         lines.append("-# I won't take those again for a week. `@RYTE clearout <name>` to do one by hand.")
     more = len(ready) - len(batch)
     if more > 0:
-        lines.append(
-            f"-# {more} more quiet — the next {AUTO_PER_RUN} in about an hour."
-            if on_its_own and quietauto.is_on() else
-            f"-# {more} more quiet - `@RYTE quiet auto` for the next {AUTO_PER_RUN}."
-        )
-    ping = _unmarked_ping(config) if on_its_own and (held or trouble) else ""
+        lines.append(f"-# {more} more quiet - `@RYTE quiet auto` for the next {AUTO_PER_RUN}.")
+    ping = _unmarked_ping(config) if (held or trouble) else ""
     await responder.send(((ping + "\n") if ping else "") + "\n".join(lines))
-
-
-#: How often the automatic quiet run looks whether one is due.
-QUIET_AUTO_LOOK_SECONDS = 300
-
-
-async def quiet_auto_loop(bot: "WilByteBot") -> None:
-    """The quiet run on its own clock - "it should be an alter ego of ryte".
-
-    Every hour in the day, into Channel Deletion: the next ten quiet
-    channels, each kept, checked, and deleted by RYTE pressing the same
-    buttons a person would. Not while another quiet run is going, and not
-    once switched off with `@RYTE quiet auto off`.
-    """
-    from .. import quietauto
-
-    while not bot.is_closed():
-        try:
-            where = str(getattr(bot.config.secrets, "discord_clearout_copy_channel_id", None) or "").strip()
-            channel = bot.get_channel(int(where)) if where.isdigit() else None
-            now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
-            if channel is not None and not _QUIET_RUNNING and await asyncio.to_thread(quietauto.due, now):
-                # Written down first: a run that breaks halfway is still a run,
-                # and trying again every five minutes would be a loop of them.
-                await asyncio.to_thread(quietauto.ran, now)
-                await _quiet_auto(bot, ChannelResponder(channel), bot.config, "", on_its_own=True)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # a bad tick must not take the loop down for good
-            log.exception("The automatic quiet run failed; will try again later")
-        await asyncio.sleep(QUIET_AUTO_LOOK_SECONDS)
 
 
 async def _quiet_keep(bot, responder: Responder, config: Config, how: str, who: str) -> None:
@@ -4253,23 +4218,6 @@ async def _quiet_keep(bot, responder: Responder, config: Config, how: str, who: 
         await responder.send(f"🔓 Off the keep list: **{', '.join(gone)}** ({named}).")
 
 
-async def _quiet_auto_switch(responder: Responder, config: Config, on: bool) -> None:
-    from .. import quietauto
-
-    await asyncio.to_thread(quietauto.switch, on)
-    if not on:
-        await responder.send("⏸ The automatic quiet run is **off**. `@RYTE quiet auto on` starts it again.")
-        return
-    where = str(getattr(config.secrets, "discord_clearout_copy_channel_id", None) or "").strip()
-    await responder.send(
-        f"▶ The automatic quiet run is **on** — {AUTO_PER_RUN} channels an hour, "
-        f"{quietauto.FROM_HOUR}am to {quietauto.UNTIL_HOUR - 12}pm, "
-        + (f"in <#{where}>. " if where.isdigit() else
-           "but DISCORD_CLEAROUT_COPY_CHANNEL_ID isn't set in .env, so it has nowhere to run. ")
-        + "Each one checked before I press delete. `@RYTE quiet auto off` stops it."
-    )
-
-
 def _keep_the_run(quietrun, run: dict) -> None:
     """Remember where the run is. Worth doing, not worth stopping it over."""
     try:
@@ -4310,16 +4258,16 @@ async def _carry_on_the_run(bot: "WilByteBot") -> None:
         return
     requester = run.get("requester_id")
     responder = ChannelResponder(channel, requester_id=int(requester) if requester else None)
-    from .. import quietauto
-
-    if quietauto.is_on() and getattr(bot.config.secrets, "discord_clearout_copy_channel_id", None):
-        # No button to press - the hourly run goes down the same list.
-        quietrun.clear()
+    if run.get("auto"):
+        # Asked for, and cut short only by RYTE restarting for an update - so
+        # it carries on rather than waiting on a button. Stop the run is how
+        # it ends; a stopped run is cleared and never comes back.
         await responder.send(
-            f"🧹 I was restarted in the middle of the quiet run, at "
-            f"**#{_channel_label(bot, names[at])}**. The automatic run will "
-            f"take it from here — {AUTO_PER_RUN} an hour, each checked before it goes."
+            f"🧹 I was restarted in the middle of the quiet run — carrying on from "
+            f"**#{_channel_label(bot, names[at])}**, {len(rest)} left. "
+            "Press **Stop the run** on any card to stop."
         )
+        await _all_of_them(bot, responder, bot.config, rest, earlier=run, auto=True)
         return
     view = views.ConfirmView(
         requester_id=responder.requester_id,
