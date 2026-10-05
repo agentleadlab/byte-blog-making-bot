@@ -976,17 +976,20 @@ def one_by_one(quiet) -> list:
 ENOUGH_WRONG = 3
 
 
-def how_the_run_went(went: list, left: list, trouble: list, *, over: str) -> str:
+def how_the_run_went(went: list, left: list, trouble: list, *, over: str, held: list = ()) -> str:
     """What a run through the list did, once it has stopped."""
     lines = [f"🧹 **{over}**"]
     if went:
         lines.append(f"• 🗑 Deleted {len(went)} — " + ", ".join(f"#{one}" for one in went))
     if left:
         lines.append(f"• ✖ Left {len(left)} — " + ", ".join(f"#{one}" for one in left))
+    if held:
+        lines.append(f"• ✋ Left for you {len(held)} (needed a look) — "
+                     + ", ".join(f"#{one}" for one in held))
     if trouble:
         lines.append(f"• ⚠ Couldn't finish {len(trouble)} — "
                      + ", ".join(f"#{one}" for one in trouble))
-    if not (went or left or trouble):
+    if not (went or left or trouble or held):
         lines.append("• Nothing was touched.")
     return "\n".join(lines)
 

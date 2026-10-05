@@ -315,7 +315,8 @@ class ChannelPicker(discord.ui.View):
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(
-            content="🧹 Going down the list — the same two questions each time.",
+            content="🧹 Going down the list — I press both buttons myself once my checks "
+                    "pass. Press **Leave it** or **Stop the run** first to say no.",
             view=self,
         )
         self.stop()

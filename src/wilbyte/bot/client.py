@@ -3847,7 +3847,17 @@ async def _quiet_channels(
     await responder.send(pages[-1], view=picker)
     await picker.wait()
     if picker.run:
-        await _all_of_them(bot, responder, config, clearout.one_by_one(quiet))
+        # RYTE presses the buttons - "its not automatic". What was left for a
+        # person in the last week isn't taken again; pick it from the list
+        # to do it by hand.
+        from .. import quietauto
+
+        waiting = quietauto.leave_alone(datetime.now(timezone.utc))
+        await _all_of_them(
+            bot, responder, config,
+            clearout.one_by_one([one for one in quiet if one.channel_id not in waiting]),
+            auto=True,
+        )
         return
     if not picker.chosen:
         return
@@ -3861,7 +3871,7 @@ async def _quiet_channels(
 
 async def _all_of_them(
     bot: "WilByteBot", responder: Responder, config: Config, names: list,
-    *, earlier: dict | None = None,
+    *, earlier: dict | None = None, auto: bool = False,
 ) -> None:
     """Down the whole list, one at a time, asking the same two each time.
 
@@ -3873,25 +3883,31 @@ async def _all_of_them(
     Down the same path as a typed name and a picked one. There is one piece of
     code that deletes a channel and it is watched; a run that had its own
     would be a second one that wasn't.
+
+    `auto` is RYTE pressing both buttons itself once its checks pass - "its
+    not automatic". Anything that needs a person is left, listed, and not
+    taken again for a week; a press of Leave it or Stop the run first wins.
     """
     global _QUIET_RUNNING
     _QUIET_RUNNING = True
     try:
-        await _down_the_list(bot, responder, config, names, earlier=earlier)
+        await _down_the_list(bot, responder, config, names, earlier=earlier, auto=auto)
     finally:
         _QUIET_RUNNING = False
 
 
 async def _down_the_list(
     bot: "WilByteBot", responder: Responder, config: Config, names: list,
-    *, earlier: dict | None = None,
+    *, earlier: dict | None = None, auto: bool = False,
 ) -> None:
-    from .. import clearout, quietrun
+    from .. import clearout, quietauto, quietrun
 
     earlier = earlier or {}
     went = list(earlier.get("went") or [])
     left = list(earlier.get("left") or [])
     trouble = list(earlier.get("trouble") or [])
+    held = list(earlier.get("held") or [])
+    held_ids = []
     wrong_in_a_row = 0
     stopped = ""
     # Written down at every step, so a restart halfway through is a run that
@@ -3900,7 +3916,8 @@ async def _down_the_list(
         "channel_id": getattr(responder, "channel_id", None),
         "requester_id": getattr(responder, "requester_id", None),
         "names": list(names), "at": 0,
-        "went": went, "left": left, "trouble": trouble,
+        "went": went, "left": left, "trouble": trouble, "held": held,
+        "auto": auto,
     }
     for number, target in enumerate(names, start=1):
         run["at"] = number - 1
@@ -3909,7 +3926,7 @@ async def _down_the_list(
         name = _channel_label(bot, target)
         try:
             how = await _clear_out(
-                bot, responder, config, target, run=(number, len(names)),
+                bot, responder, config, target, run=(number, len(names)), auto=auto,
             )
         except Exception as exc:
             # One client's channel breaking something is that client's
@@ -3928,8 +3945,14 @@ async def _down_the_list(
             went.append(name)
         elif how in ("left", "kept"):
             left.append(name)
+        elif how == "held":
+            held.append(name)
         else:
             trouble.append(name)
+        if auto and how in ("held", "trouble"):
+            by_id = re.fullmatch(r"<#(\d+)>", str(target))
+            if by_id:
+                held_ids.append(by_id.group(1))
 
         # Three in a row wrong is not three unlucky clients. Something they
         # all depend on is down - the board, the sheet, Drive - and the rest
@@ -3944,10 +3967,18 @@ async def _down_the_list(
             break
 
     quietrun.clear()
-    await responder.send(clearout.how_the_run_went(
-        went, left, trouble,
+    if held_ids:
+        try:
+            # Not offered to the hourly run again for a week, the same as its own.
+            quietauto.left_for_a_person(held_ids, datetime.now(timezone.utc))
+        except Exception:
+            log.warning("Couldn't write down which channels were left", exc_info=True)
+    summary = clearout.how_the_run_went(
+        went, left, trouble, held=held,
         over=stopped or f"Went through all {len(names)}.",
-    ))
+    )
+    ping = _unmarked_ping(config) if auto and (held or trouble) else ""
+    await responder.send(((ping + "\n") if ping else "") + summary)
 
 
 def _channel_label(bot, target: str) -> str:
@@ -4309,7 +4340,7 @@ async def _carry_on_the_run(bot: "WilByteBot") -> None:
         quietrun.clear()
         await responder.send("Left it. `@RYTE quiet` starts a fresh list whenever you want.")
         return
-    await _all_of_them(bot, responder, bot.config, rest, earlier=run)
+    await _all_of_them(bot, responder, bot.config, rest, earlier=run, auto=bool(run.get("auto")))
 
 
 def _can_read(guild, channel) -> bool:

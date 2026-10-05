@@ -2633,7 +2633,7 @@ def test_a_run_offers_every_readable_one_with_no_cap_of_twenty_five():
     assert names[0] == "<#0>", "the order of the list was not kept"
 
 
-def _ran(monkeypatch, answers, *, names=("a", "b", "c")):
+def _ran(monkeypatch, answers, *, names=("a", "b", "c"), auto=False):
     """One run down a list, with each clear-out answering as told."""
     import asyncio
     from types import SimpleNamespace as NS
@@ -2642,18 +2642,41 @@ def _ran(monkeypatch, answers, *, names=("a", "b", "c")):
 
     asked, said = [], []
 
-    async def clearing(bot, responder, config, name, *, run=None):
+    async def clearing(bot, responder, config, name, *, run=None, auto=False):
         asked.append((name, run))
+        assert auto is _ran.auto
         return answers.pop(0) if answers else "deleted"
 
     async def send(content=None, **kw):
         said.append(str(content or ""))
 
+    _ran.auto = auto
     monkeypatch.setattr(bot_client, "_clear_out", clearing)
+    config = NS(secrets=NS(discord_notify_user_id="42"))
     asyncio.run(bot_client._all_of_them(
-        None, NS(send=send, requester_id=1), None, list(names),
+        None, NS(send=send, requester_id=1), config, list(names), auto=auto,
     ))
     return asked, "\n".join(said)
+
+
+def test_one_by_one_ryte_presses_and_leaves_what_needs_you(monkeypatch):
+    """"its not automatic" - the one-by-one run is RYTE pressing, and what it
+    left for a person is said, tagged, and not taken again for a week."""
+    from datetime import timezone as _tz
+
+    from wilbyte import quietauto
+
+    asked, said = _ran(monkeypatch, ["deleted", "held", "deleted"],
+                       names=("<#1>", "<#2>", "<#3>"), auto=True)
+
+    assert len(asked) == 3
+    assert "Left for you 1" in said and said.startswith("<@42>")
+    assert quietauto.leave_alone(datetime.now(_tz.utc)) == {"2"}
+
+
+def test_by_hand_one_by_one_nobody_is_tagged(monkeypatch):
+    _asked, said = _ran(monkeypatch, ["left", "deleted", "deleted"])
+    assert "<@42>" not in said
 
 
 def test_the_run_goes_to_the_next_one_by_itself(monkeypatch):
@@ -2870,8 +2893,11 @@ def test_the_run_button_starts_it_rather_than_the_dropdown(monkeypatch):
 
     started = []
 
-    async def running(bot, responder, config, names):
+    async def running(bot, responder, config, names, auto=False):
         started.append(list(names))
+        autos.append(auto)
+
+    autos = []
 
     monkeypatch.setattr(bot_client.views, "ChannelPicker", Pressed)
     monkeypatch.setattr(bot_client, "_all_of_them", running)
@@ -2889,6 +2915,7 @@ def test_the_run_button_starts_it_rather_than_the_dropdown(monkeypatch):
     ))
 
     assert started == [[f"<#{abs(hash(n)) % 10**6}>" for n in ("jay-rodriguez", "connor-knudsen")]]
+    assert autos == [True], "its not automatic - RYTE should press the buttons"
 
 
 def test_nobody_at_the_keyboard_for_the_delete_stops_the_run_too(monkeypatch):
@@ -3071,7 +3098,7 @@ def test_the_run_writes_down_where_it_is_at_every_step(monkeypatch):
 
     seen = []
 
-    async def clearing(bot, responder, config, name, *, run=None):
+    async def clearing(bot, responder, config, name, *, run=None, auto=False):
         seen.append(dict(quietrun.load()))
         return "deleted"
 
@@ -3107,7 +3134,7 @@ def test_one_channel_breaking_does_not_end_the_run(monkeypatch):
 
     asked, said = [], []
 
-    async def clearing(bot, responder, config, name, *, run=None):
+    async def clearing(bot, responder, config, name, *, run=None, auto=False):
         asked.append(name)
         if name == "b":
             raise RuntimeError("Discord had a moment")
@@ -3132,7 +3159,7 @@ def test_a_run_carried_on_counts_what_it_did_before(monkeypatch):
 
     out = []
 
-    async def clearing(bot, responder, config, name, *, run=None):
+    async def clearing(bot, responder, config, name, *, run=None, auto=False):
         return "deleted"
 
     async def send(content=None, **kw):
@@ -3197,7 +3224,7 @@ def _restarted(monkeypatch, run, *, press=True, names=("b", "c"), auto_into=None
         async def wait(self):
             pass
 
-    async def all_of_them(bot, responder, config, names, *, earlier=None):
+    async def all_of_them(bot, responder, config, names, *, earlier=None, auto=False):
         carried.append((list(names), earlier, responder.requester_id))
 
     monkeypatch.setattr(bot_client.views, "ConfirmView", Press)
