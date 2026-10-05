@@ -4519,6 +4519,20 @@ def spread_to_lead_order(
                     f"{order.get('name')} doesn't reach it, so I left it off"
                 ), spread.label))
                 continue
+            shown_as = spread.checklist
+            if key not in by_name:
+                # "mortgage" on the setup card could be Standard or Plus. Their
+                # own card says which when it says volume (Standard) or high
+                # intent (Plus) - "When there's a word volume, put on standard,
+                # if high intent plus". Only those two words: "OTP" is on the
+                # Standard checklists too, and isn't an answer.
+                said_tier = rules.volume_or_intent(spread.label) or rules.volume_or_intent(
+                    _card_said(client, cards.get(spread.url), said_on))
+                narrowed = (rules.candidates(spread.label, list(by_name_shown), tier=said_tier)
+                            if said_tier else [])
+                if len(narrowed) == 1 and " ".join(narrowed[0].split()).casefold() in by_name:
+                    shown_as = narrowed[0]
+                    key = " ".join(shown_as.split()).casefold()
             if key not in by_name:
                 # Never invent one. The checklists on a Lead Order card are the
                 # lead types that exist, put there by hand, and a spread that
@@ -4556,7 +4570,7 @@ def spread_to_lead_order(
             except Exception as exc:
                 problems.append(f"{spread.label} — {_short(exc, 160)}")
                 continue
-            added.append(f"{named.get(spread.url, spread.label)} — {spread.checklist}")
+            added.append(f"{named.get(spread.url, spread.label)} — {shown_as}")
             placed.add(spread.url)
 
             # Filed by the setup card's wording, which is sometimes thinner
@@ -4575,7 +4589,7 @@ def spread_to_lead_order(
                 conflicts.append({
                     "agent": who,
                     "url": spread.url,
-                    "checklist": spread.checklist,
+                    "checklist": shown_as,
                     "ordered": ordered,
                     "setup": on_setup,
                 })

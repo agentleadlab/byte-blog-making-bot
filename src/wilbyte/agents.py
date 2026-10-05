@@ -215,13 +215,26 @@ QUALIFIERS = (
 # vowels is not a typo `despell` can put right - it only reorders letters that
 # are already there - and a lead type with no tier in it matches Standard and
 # Plus equally, so all five were refused rather than filed.
-STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b|\bstndr?ds?\b", re.IGNORECASE)
+# "When there's a word volume, put on standard, if high intent plus."
+VOLUME = re.compile(r"\bvolume\b", re.IGNORECASE)
+HIGH_INTENT = re.compile(r"\bhigh[\s-]*intent\b", re.IGNORECASE)
+STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b|\bstndr?ds?\b|\bvolume\b", re.IGNORECASE)
 # "phnx plus = phnx 2.0" - 2.0 is what the Plus tier is called on the cards
 # that use a version number instead of a word. Not preceded by a dollar sign,
 # so a price never reads as a tier.
 PLUS = re.compile(
-    r"\bplus\b|\btext[\s-]*verified\b|\botp\b|(?<!\$)\b2\.0\b", re.IGNORECASE
+    r"\bplus\b|\btext[\s-]*verified\b|\botp\b|(?<!\$)\b2\.0\b|\bhigh[\s-]*intent\b",
+    re.IGNORECASE,
 )
+
+
+def volume_or_intent(text: str) -> str | None:
+    """"standard" for a card saying volume, "plus" for one saying high intent,
+    else None - and None when it says both, since then it hasn't said."""
+    volume, intent = bool(VOLUME.search(text or "")), bool(HIGH_INTENT.search(text or ""))
+    if volume == intent:
+        return None
+    return "standard" if volume else "plus"
 
 # The customer level, which is part of what the leads are rather than a
 # description of them - "when its uprise/phnx/phoenix always include this".

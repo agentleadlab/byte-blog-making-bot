@@ -7110,3 +7110,42 @@ def test_the_kept_day_is_never_handed_to_another_post_in_the_same_run(tmp_path, 
 
     assert held[REDO] == soonest
     assert soonest.date() not in {slot.date() for slot in pool}
+
+
+# ------------------- "When there's a word volume, put on standard, if high intent plus"
+
+MTG = ("OTP MTG Standard", "OTP MTG Plus", "OTP VET Plus")
+
+
+@pytest.mark.parametrize("their_card, lands", [
+    ("Lead Type: Mortgage\nMortgage Volume", "c0"),
+    ("Lead Type: Mortgage\nhigh intent mortgage", "c1"),
+    ("Lead Type: Mortgage\nHigh-Intent", "c1"),
+])
+def test_mortgage_goes_on_standard_for_volume_and_plus_for_high_intent(config, monkeypatch, their_card, lands):
+    """Chase and Abraham (TFG): "mortgage" on the setup card could be either."""
+    board = SpreadBoard(on_setup="mortgage", their_card=their_card, checklists=MTG)
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert problems == [] and board.written == [(lands, f"{AGENT_URL} mortgage")]
+    assert MTG[int(lands[1])] in added[-1]
+
+
+@pytest.mark.parametrize("their_card", [
+    "Lead Type: Mortgage", "Lead Type: OTP Mortgage", "Mortgage volume, high intent",
+])
+def test_without_volume_or_high_intent_it_still_asks(config, monkeypatch, their_card):
+    """"OTP" is on the Standard checklist too, so it says nothing; and a card
+    saying both hasn't said."""
+    board = SpreadBoard(on_setup="mortgage", their_card=their_card, checklists=MTG)
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert board.written == [] and "doesn't say which" in problems[0]
+
+
+def test_the_words_on_the_setup_line_itself_are_read_too(config, monkeypatch):
+    board = SpreadBoard(on_setup="mortgage volume", their_card="Lead Type: Mortgage", checklists=MTG)
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert problems == [] and board.written[0][0] == "c0"
