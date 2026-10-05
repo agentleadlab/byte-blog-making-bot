@@ -205,6 +205,7 @@ class WilByteBot(discord.Client):
         self.day_task: asyncio.Task | None = None
         self.contract_task: asyncio.Task | None = None
         self.quiet_task: asyncio.Task | None = None
+        self.delivery_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
         self.offered_the_run = False
@@ -329,6 +330,12 @@ class WilByteBot(discord.Client):
             and (self.contract_task is None or self.contract_task.done())
         ):
             self.contract_task = self.loop.create_task(contract_check_loop(self))
+        # Proof of delivery, each morning: short orders said once. On the
+        # agents switch - it is about them - and reads only.
+        if self.config.secrets.trello_agents_auto and (
+            self.delivery_task is None or self.delivery_task.done()
+        ):
+            self.delivery_task = self.loop.create_task(delivery_check_loop(self))
         # The quiet run on its own clock, once there is a Channel Deletion to
         # run it in and a clients server to run it on.
         if (
@@ -1310,6 +1317,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if not said and not problems:
                     said = "Nobody going live today or tomorrow."
                 await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
+                return
+
+            if request.action == "delivered":
+                await _delivered(responder, config, request.brief or "")
                 return
 
             if request.action == "pandadoctest":
@@ -7173,6 +7184,86 @@ def describe_contracts(paired, *, everything: bool = False) -> str:
     if everything and found:
         parts.append("✅ **Signed:**\n" + "\n".join(_contract_line(one) for one in found))
     return "\n\n".join(parts)
+
+
+async def _delivered(responder: Responder, config: Config, who: str) -> None:
+    """`@RYTE delivered <name>` - each of their orders against its sheet - or,
+    with no name, every order that should be all in by now and isn't."""
+    from .. import delivery
+
+    today = await asyncio.to_thread(jobs.board_day, config)
+    if not who.strip():
+        short, problems = await asyncio.to_thread(jobs.delivery_check, config, today=today)
+        lines = [delivery.describe(one, today=today) for one in short]
+        await responder.send(
+            ("📦 **Short, a week or more after going live:**\n" + "\n".join(lines) if lines else
+             f"📦 Every order live {delivery.DONE_WITHIN_DAYS}–{delivery.LOOK_BACK_DAYS} days ago "
+             "with a count on its card has at least that many leads on its sheet.")
+            + "".join(f"\n⚠ {one}" for one in problems),
+            quiet=True,
+        )
+        return
+    orders, problems = await asyncio.to_thread(jobs.delivered_for, config, who)
+    lines = []
+    for one in orders:
+        lines.append(delivery.describe(one, today=today))
+        lines += [f"  ⚠ {problem}" for problem in one.problems]
+        proof = delivery.for_a_dispute(one)
+        if proof:
+            lines.append(f"  -# For a dispute: {proof}")
+    if orders:
+        lines.append("-# Every row under the heading counts, replacements included. Where the sheet "
+                     "dates its leads, only those since this order went live.")
+    await responder.send(
+        ("📦 **Proof of delivery**\n" + "\n".join(lines) if lines else "")
+        + "".join(f"\n⚠ {one}" for one in problems),
+        quiet=True,
+    )
+
+
+#: When the delivery check says its piece, on the board's clock.
+DELIVERY_CHECK_HOUR = 9
+
+
+async def delivery_check_loop(bot: "WilByteBot") -> None:
+    """Each morning: every order a week or more live that's short on its
+    sheet - "you hear about it before they complain". Each one said once,
+    and Franklin tagged. Reads only: the board and the sheets."""
+    from .. import delivery
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
+            if responder is not None and now.hour >= DELIVERY_CHECK_HOUR:
+                today = now.date()
+                said = await asyncio.to_thread(delivery.flagged)
+                if said.get("_day") != today.isoformat():
+                    short, problems = await asyncio.to_thread(jobs.delivery_check, bot.config, today=today)
+                    fresh = [one for one in short if one.card_id not in said]
+                    if fresh:
+                        ping = _unmarked_ping(bot.config)
+                        await responder.send(
+                            ((ping + "\n") if ping else "")
+                            + "📦 **Short on their sheet, a week or more after going live:**\n"
+                            + "\n".join(delivery.describe(one, today=today) for one in fresh)
+                            + "\n-# `@RYTE delivered <name>` for the whole picture.",
+                            quiet=True,
+                        )
+                    # What was said is kept whatever else happened; the day
+                    # only once it all worked, so a board that wouldn't read
+                    # is tried again in half an hour.
+                    if problems:
+                        log.warning("Delivery check: %s", "; ".join(problems))
+                    await asyncio.to_thread(delivery.remember, {
+                        **({} if problems else {"_day": today.isoformat()}),
+                        **{one.card_id: one.short_by() for one in fresh},
+                    })
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Delivery check failed; will try again shortly")
+        await asyncio.sleep(CONTRACT_CHECK_SECONDS)
 
 
 async def contract_check_loop(bot: "WilByteBot") -> None:

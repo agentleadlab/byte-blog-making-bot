@@ -2872,10 +2872,12 @@ def test_a_setup_redone_gives_the_newest_sheet(config, monkeypatch):
     said, _ = _sheet_asked(
         monkeypatch, config, "sheet for Faith",
         [agent_card("Faith Ortega", "", "1")],
-        {"1": [f"Sheet link: {older}", f"Updated previous setup.\nSheet link: {SHEET_URL}"]},
+        # Newest first, the way Trello hands comments over.
+        {"1": [f"Updated previous setup.\nSheet link: {SHEET_URL}", f"Sheet link: {older}"]},
     )
 
     assert SHEET_URL in said[0]
+    assert older not in said[0].split("newest of")[0]
     assert "the newest of 2" in said[0]
 
 

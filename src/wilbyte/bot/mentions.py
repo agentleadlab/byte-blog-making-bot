@@ -766,6 +766,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*(?:contracts|contract\s+check|check\s+contracts)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="contracts", brief=text)
+    # "delivered Jay Rodriguez" - ordered against what's on their sheet. At the
+    # front only: "delivered" is a word a copy brief can easily contain.
+    delivered = re.match(
+        r"\s*(?:delivered|delivery|deliveries|proof\s+of\s+delivery)\b\s*(?:for|of|to)?\s*(.*?)\s*[.?!]*\s*$",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if delivered:
+        return MentionRequest(action="delivered", brief=delivered.group(1))
     if re.match(r"\s*panda\s*doc\s+(?:test|check)\b", text, re.IGNORECASE):
         return MentionRequest(action="pandadoctest", brief=text)
     if re.match(r"\s*check\s+clear[\s-]*outs?\b", text, re.IGNORECASE):
@@ -1221,6 +1229,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > It also runs by itself every hour, 8am to 8pm, in Channel Deletion —
 > **quiet auto off** / **quiet auto on** to stop or start that. On its own it never deletes
 > someone with two channels, or with an order card in the last 60 days
+> @RYTE **delivered Jay Rodriguez** — proof of delivery: what their card says they
+> ordered against the leads on their sheet, with the line a dispute needs. **delivered**
+> on its own lists every order a week or more live that's short. I also say so on my own
+> each morning, once per order
 > @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.
 > **quiet unkeep <name>** takes them off; **quiet kept** shows the list
 > @RYTE **quiet** — every channel in the clients server nobody has used in

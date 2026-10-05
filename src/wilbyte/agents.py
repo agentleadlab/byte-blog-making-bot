@@ -684,6 +684,13 @@ _SHEET_LINKED = re.compile(
 )
 
 
+def in_order_written(comments) -> list:
+    """A card's comments oldest first. Trello hands them over newest first,
+    and "the last sheet link" has to mean the newest one - read the other way
+    round, a setup that was redone gave back the sheet it replaced."""
+    return list(reversed(list(comments or [])))
+
+
 def sheet_links(comments) -> list[tuple[str, str]]:
     """(name, url) for every Google Sheet named in the comments, newest last.
 

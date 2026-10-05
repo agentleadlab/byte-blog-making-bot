@@ -5174,7 +5174,7 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
 
         found = []
         for card in cards:
-            links = rules.sheet_links(client.card_comments(str(card.get("id") or "")))
+            links = rules.sheet_links(rules.in_order_written(client.card_comments(str(card.get("id") or ""))))
             found.append({
                 **card,
                 "agent": rules.agent_name(str(card.get("name") or "")),
@@ -5281,6 +5281,12 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
         found.sheet, trouble = _read_lead_sheet(config, links[0], gsheets)
         if trouble:
             found.holes.append(trouble)
+        else:
+            # The one line that answers "did they get what they paid for":
+            # ordered against delivered, counted rather than argued.
+            proof = _proof_line(config, links[0][1], agent)
+            if proof:
+                found.sheet = f"Proof of delivery: {proof}\n" + found.sheet
 
     # Payra's own record of the charge, from the copy RYTE keeps through its
     # API: the payment, the invoice it paid and when that was sent to them.
@@ -5393,7 +5399,7 @@ def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
             rules.is_agent_card(str(one.get("name") or "")),
             rules.made_at(str(one.get("id") or "")) or _NEVER,
         ))
-        said = client.card_comments(str(newest.get("id") or ""))
+        said = rules.in_order_written(client.card_comments(str(newest.get("id") or "")))
     except Exception as exc:
         return "", [f"Couldn't read their card: {_short(exc, 140)}"]
     finally:
@@ -5403,6 +5409,155 @@ def sheet_for_agent(config: Config, name: str) -> tuple[str, list[str]]:
     if not links:
         return "", [f"No sheet link in the comments on “{name}”'s card."]
     return links[-1][1], []
+
+
+def _proof_line(config: Config, link: str, agent) -> str:
+    """"Ordered 25, delivered 27 by 10/02/2026." for a rebuttal, or ""."""
+    from .. import delivery
+
+    counted, trouble = _count_sheet(config, link)
+    if counted is None:
+        return ""
+    ordered = (agent.stated or agent.lead_type) if agent is not None else ""
+    return delivery.for_a_dispute(delivery.Delivery(
+        agent="", ordered=ordered, many=delivery.how_many(ordered),
+        launch=agent.launch if agent is not None else None, counted=counted,
+    ))
+
+
+def _count_sheet(config: Config, link: str):
+    """(what the lead sheet holds, a problem or ""). The first tab - where
+    the leads land - read to two thousand rows."""
+    from .. import delivery, gsheets
+
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return None, f"Couldn't read a sheet id out of {link}"
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            tabs = client.tabs(sheet_id)
+            if not tabs:
+                return None, "That sheet has no tabs I can read."
+            title = str((tabs[0] or {}).get("title") or "Sheet1")
+            rows = client.rows(sheet_id, f"'{title}'!A1:Z2000")
+    except Exception as exc:
+        return None, f"Couldn't read the lead sheet: {_short(exc, 120)}"
+    return delivery.count_rows(rows, tab=title), ""
+
+
+def _delivery_of(config: Config, card: dict, client, every: list):
+    """One order card against its sheet. `client` is an open Trello client;
+    `every` is the board, for a sheet only an earlier card of theirs has."""
+    from .. import agents as rules
+    from .. import delivery
+
+    title = str(card.get("name") or "")
+    desc = str(card.get("desc") or "")
+    made = rules.made_at(str(card.get("id") or ""))
+    one = delivery.Delivery(
+        agent=rules.agent_name(title), card_id=str(card.get("id") or ""),
+        card_url=str(card.get("shortUrl") or card.get("url") or ""),
+    )
+    try:
+        said = client.card_comments(one.card_id)
+    except Exception as exc:
+        one.problems.append(f"Couldn't read their card: {_short(exc, 120)}")
+        said = []
+    day = made.date() if made else board_day(config)
+    agent = rules.read_agent(card, text=desc, comments=tuple(said), today=day)
+    if agent is not None:
+        one.ordered, one.launch = agent.stated or agent.lead_type, agent.launch
+    else:
+        named = rules.named_lead_types(desc)
+        one.ordered = named[-1] if named else ""
+        one.launch = rules.find_launch(desc, today=day)
+    one.many = delivery.how_many(one.ordered)
+
+    links = rules.sheet_links(rules.in_order_written(said))
+    if not links:
+        # A re-order often fills the sheet from the first order, and the link
+        # is only on that card.
+        for older in sorted(client_cards(one.agent, every),
+                            key=lambda c: rules.made_at(str(c.get("id") or "")) or _NEVER, reverse=True):
+            if str(older.get("id") or "") == one.card_id:
+                continue
+            try:
+                links = rules.sheet_links(rules.in_order_written(
+                    client.card_comments(str(older.get("id") or ""))))
+            except Exception:
+                links = []
+            if links:
+                break
+    if not links:
+        one.problems.append("No sheet link on their card.")
+        return one
+    one.sheet = links[-1][1]
+    one.counted, trouble = _count_sheet(config, one.sheet)
+    if trouble:
+        one.problems.append(trouble)
+    return one
+
+
+def delivered_for(config: Config, name: str) -> tuple[list, list[str]]:
+    """Proof of delivery for one agent: each of their orders, newest first,
+    against its sheet. ([Delivery], problems). Reads only."""
+    from .. import agents as rules
+
+    if not (name or "").strip():
+        return [], ["Whose? `@RYTE delivered Jay Rodriguez`."]
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        cards = client_cards(name, every)
+        if not cards:
+            return [], [f"No card for “{name}” anywhere on the board."]
+        if different_people(cards):
+            return [], [f"More than one client on the board is called “{name}” (their cards "
+                        "have different phone numbers) - not guessing which."]
+        cards.sort(key=lambda c: rules.made_at(str(c.get("id") or "")) or _NEVER, reverse=True)
+        return [_delivery_of(config, card, client, every) for card in cards[:3]], []
+    except Exception as exc:
+        return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+
+def delivery_check(config: Config, *, today=None) -> tuple[list, list[str]]:
+    """Every order that should be all in by now and isn't. ([Delivery], problems).
+
+    Orders live between a week and three weeks ago with a count on the card.
+    The launch date off the description, as `going_live_on` reads it, so only
+    the cards in that window are opened.
+    """
+    from .. import agents as rules
+    from .. import delivery
+
+    today = today or board_day(config)
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        short = []
+        for card in every:
+            title = str(card.get("name") or "")
+            made = rules.made_at(str(card.get("id") or ""))
+            if not rules.is_client_card(title) or made is None:
+                continue
+            if (today - made.date()).days > delivery.LOOK_BACK_DAYS + 30:
+                continue
+            launch = rules.find_launch(str(card.get("desc") or ""), today=made.date())
+            if launch is None:
+                continue
+            age = (today - launch).days
+            if not (delivery.DONE_WITHIN_DAYS <= age <= delivery.LOOK_BACK_DAYS):
+                continue
+            one = _delivery_of(config, card, client, every)
+            if one.many is not None and one.short_by() and one.due(today):
+                short.append(one)
+        return short, []
+    except Exception as exc:
+        return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
 
 
 def sheet_titles(config: Config, links) -> dict:
@@ -8929,7 +9084,7 @@ def agent_on_the_board(config: Config, number: str, name: str = "") -> dict | No
         client.close()
 
     setup = next((one for one in said if tagged.a_setup_confirmation(one)), "")
-    sheets = agents.sheet_links(said)
+    sheets = agents.sheet_links(agents.in_order_written(said))
     return {
         "agent": agents.agent_name(str(card.get("name") or "")),
         "list": "archived" if card.get("closed") else lists.get(str(card.get("idList") or ""), ""),
