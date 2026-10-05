@@ -44,6 +44,12 @@ ANNOUNCE_INTO: int | None = None
 CLEAROUT_INTO: int | None = None
 #: Set around one send to copy it somewhere other than its channel's twin.
 _INTO: ContextVar = ContextVar("copy_into", default=None)
+#: Set while RYTE is answering somebody who spoke to it - an @RYTE, or a
+#: reply to one of its messages. "unless spoken to, he wont send messages on
+#: the agent lead lab growth anymore": anything sent outside that, in a
+#: server that isn't Ryte The Goat, goes to Ryte The Goat only.
+_SPOKEN_TO: ContextVar = ContextVar("spoken_to", default=False)
+ONLY_WHEN_SPOKEN_TO = True
 
 #: Original message id -> its copy, for edits. The newest few hundred.
 _COPIES: "OrderedDict[int, discord.Message]" = OrderedDict()
@@ -147,6 +153,37 @@ def copying_into(channel_id):
         _INTO.reset(token)
 
 
+@contextmanager
+def answering():
+    """Everything sent inside this is RYTE answering somebody, and goes where
+    they spoke to it."""
+    token = _SPOKEN_TO.set(True)
+    try:
+        yield
+    finally:
+        _SPOKEN_TO.reset(token)
+
+
+def spoken_to() -> None:
+    """The rest of this task is RYTE answering somebody - for a slash command,
+    which runs in a task of its own."""
+    _SPOKEN_TO.set(True)
+
+
+def _not_spoken_to_here(channel) -> int | None:
+    """Where a message RYTE sends on its own goes instead of `channel`, or
+    None to send it where it was meant. Its twin in Ryte The Goat; else Ryte
+    The Goat's announcements. Only for a channel outside Ryte The Goat."""
+    if not ONLY_WHEN_SPOKEN_TO or _SPOKEN_TO.get() or _CLIENT is None:
+        return None
+    guild_id = getattr(getattr(channel, "guild", None), "id", None)
+    here = getattr(channel, "id", None)
+    if guild_id is None or here is None or in_copies_server(guild_id):
+        return None
+    instead = _INTO.get() or copy_of(here) or ANNOUNCE_INTO
+    return instead if instead and instead != here else None
+
+
 def in_copies_server(guild_id) -> bool:
     """Whether a server is one the copies are in - Ryte The Goat - where
     every channel answers @Ryte, twin or not: "channel deletion" has no
@@ -219,6 +256,16 @@ async def _send(self, content=None, **kw):
     except Exception:
         channel = None
     here = getattr(channel, "id", None)
+    instead = _not_spoken_to_here(channel)
+    if instead is not None:
+        where = _CLIENT.get_channel(instead)
+        if where is not None:
+            # Nobody in this server asked, so it is said in Ryte The Goat
+            # only - where it pings, since nobody else is told.
+            return await _SEND(where, content, **{
+                key: value for key, value in kw.items() if key not in _NOT_COPIED
+            })
+        log.warning("Can't find channel %s to send into instead of %s", instead, here)
     copy_id = _INTO.get() or (copy_of(here) if PAIRS else None)
     if copy_id is None or copy_id == here:
         return await _SEND(self, content, **kw)

@@ -394,7 +394,8 @@ class WilByteBot(discord.Client):
         # what RYTE got wrong, and the best teacher there is.
         if _is_ring_reply(message):
             try:
-                await _ring_told(message)
+                with mirror.answering():
+                    await _ring_told(message)
             except Exception:
                 log.exception("Couldn't take that correction")
             return
@@ -452,7 +453,9 @@ async def answer_mention(bot: "WilByteBot", message) -> None:
     # the board —" with no second message ever coming, and no way to tell that
     # from RYTE being slow.
     try:
-        await handle_mention(bot, message)
+        # Spoken to: the answer goes where it was asked, Growth server or not.
+        with mirror.answering():
+            await handle_mention(bot, message)
     except Exception:
         log.exception("That mention broke something")
         try:
@@ -1034,6 +1037,10 @@ async def guard(interaction: discord.Interaction, config: Config) -> bool:
     )
     if not allowed:
         await interaction.response.send_message(reason, ephemeral=True)
+    else:
+        # A slash command is somebody speaking to RYTE. Each one runs in its
+        # own task, so this lasts as long as the command and no longer.
+        mirror.spoken_to()
     return allowed
 
 
@@ -1627,7 +1634,8 @@ async def updater_loop(bot: "WilByteBot") -> None:
         channel = _tagged_lately(datetime.now(timezone.utc))
         if channel is not None:
             try:
-                await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
+                with mirror.answering():
+                    await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
             except Exception:
                 log.warning("Couldn't say I was updating", exc_info=True)
         log.info("Restarting onto %s", waiting)

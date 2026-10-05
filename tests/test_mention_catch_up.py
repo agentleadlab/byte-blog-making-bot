@@ -235,6 +235,8 @@ def _updating(monkeypatch, tagged_ago):
 
     class Place:
         async def send(self, text=None, **kw):
+            # Said as an answer, so it stays where they tagged RYTE.
+            assert client.mirror._SPOKEN_TO.get() is True
             said.append(text)
 
     monkeypatch.setattr(client, "_LAST_TAGGED", [])
@@ -275,3 +277,21 @@ def test_an_update_nobody_is_waiting_on_is_said_nowhere(monkeypatch):
     for ago in (None, 30):
         said, announced = _updating(monkeypatch, tagged_ago=ago)
         assert said == [] and announced == []
+
+
+def test_an_at_ryte_is_answered_as_spoken_to(monkeypatch):
+    """So the answer goes where it was asked, Growth server or not."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client, mirror
+
+    seen = []
+
+    async def handle(bot, message):
+        seen.append(mirror._SPOKEN_TO.get())
+
+    monkeypatch.setattr(client, "handle_mention", handle)
+    monkeypatch.setattr(client.mentionseen, "add", lambda said: None)
+    asyncio.run(client.answer_mention(None, SimpleNamespace(id=1, channel=None)))
+    assert seen == [True] and mirror._SPOKEN_TO.get() is False

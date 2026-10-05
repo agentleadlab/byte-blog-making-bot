@@ -383,3 +383,70 @@ def test_channel_deletion_is_read_from_env(monkeypatch):
     assert mirror.ANNOUNCE_INTO == 1552802072330772611
     mirror.configure(None, {}, clearout_into="", announce_into=None)
     assert mirror.CLEAROUT_INTO is None and mirror.ANNOUNCE_INTO is None
+
+
+# ------------- "unless spoken to, he wont send messages on the agent lead lab growth anymore"
+
+GROWTH, GOAT = 50, 60
+
+
+@pytest.fixture
+def servers(sent, monkeypatch):
+    """Channels 1 and 7 in the Growth server, 2 and 5 in Ryte The Goat."""
+    def place(cid, guild):
+        one = Place(cid)
+        one.guild = NS(id=guild)
+        return one
+
+    places = {1: place(1, GROWTH), 7: place(7, GROWTH), 2: place(2, GOAT), 5: place(5, GOAT)}
+    monkeypatch.setattr(mirror, "_CLIENT", NS(get_channel=places.get))
+    monkeypatch.setattr(mirror, "PAIRS", {1: 2})
+    monkeypatch.setattr(mirror, "ANNOUNCE_INTO", 5)
+    return places
+
+
+def test_on_its_own_it_says_it_in_ryte_the_goat_only(sent, servers):
+    got = asyncio.run(mirror._send(servers[1], "<@42> 📦 Short on their sheet", reference=NS()))
+
+    assert [(where, said) for where, said, _ in sent.got] == [(2, "<@42> 📦 Short on their sheet")]
+    assert "allowed_mentions" not in sent.got[0][2], "Ryte The Goat is where it pings"
+    assert "reference" not in sent.got[0][2]
+    assert got.channel.id == 2
+
+
+def test_spoken_to_it_answers_where_it_was_asked(sent, servers):
+    async def asked():
+        with mirror.answering():
+            await mirror._send(servers[1], "Reading the board —")
+
+    asyncio.run(asked())
+    assert [where for where, _said, _kw in sent.got] == [1, 2], "the answer and its copy"
+
+
+def test_a_slash_command_is_spoken_to_for_its_own_task_only(sent, servers):
+    async def command():
+        mirror.spoken_to()
+        await mirror._send(servers[1], "Here's the plan")
+
+    async def both():
+        await asyncio.create_task(command())
+        await mirror._send(servers[1], "On its own")
+
+    asyncio.run(both())
+    assert [where for where, _said, _kw in sent.got] == [1, 2, 2]
+
+
+def test_a_growth_channel_with_no_twin_goes_to_ryte_the_goats_announcements(sent, servers):
+    asyncio.run(mirror._send(servers[7], "🔄 Updating myself"))
+    assert [where for where, _said, _kw in sent.got] == [5]
+
+
+def test_with_nowhere_in_ryte_the_goat_to_put_it_it_stays_where_it_was(sent, servers, monkeypatch):
+    monkeypatch.setattr(mirror, "ANNOUNCE_INTO", None)
+    asyncio.run(mirror._send(servers[7], "hi"))
+    assert [where for where, _said, _kw in sent.got] == [7]
+
+
+def test_ryte_the_goat_itself_is_never_redirected(sent, servers):
+    asyncio.run(mirror._send(servers[2], "in Ryte The Goat already"))
+    assert [where for where, _said, _kw in sent.got] == [2]
