@@ -412,7 +412,7 @@ class Guild:
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
              on_card="https://sheet", in_channel="", rows=None, unread=False,
-             welcomed=True, checks=None):
+             welcomed=True, checks=None, auto=False):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed.
     `checks` is what RYTE's look at its own work finds - all fine unless said."""
     import asyncio
@@ -483,7 +483,7 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
         schedule=SimpleNamespace(timezone="America/Chicago"),
     )
 
-    asyncio.run(bot_client._clear_out(bot, heard, config, name))
+    heard.how = asyncio.run(bot_client._clear_out(bot, heard, config, name, auto=auto))
     return guild, channel, heard.messages, buttons
 
 
@@ -3924,3 +3924,119 @@ def test_small_print_is_not_marked_twice(monkeypatch):
 
     source = inspect.getsource(client._clear_out)
     assert 'one if one.startswith("-#") else f"-# {one}"' in source
+
+
+
+# ------------------------------------------------ "do 10 per run, check it then delete"
+
+
+def test_on_its_own_a_channel_that_passes_every_check_is_deleted_without_a_button(monkeypatch):
+    _guild, channel, said, buttons = _closing(
+        monkeypatch, says=[], auto=True, checks=[(True, "Quiet: 60 days"), (True, "Row is there")],
+    )
+    assert channel.deleted is True and buttons == []
+    assert any("Every check passed" in one for one in said)
+
+
+def test_on_its_own_a_failed_check_is_never_deleted(monkeypatch):
+    _guild, channel, said, buttons = _closing(
+        monkeypatch, says=[], auto=True, checks=[(True, "Quiet"), (False, "picture not in their folder")],
+    )
+    assert channel.deleted is False and buttons == []
+    assert "Nothing deleted" in said[-1]
+
+
+def test_on_its_own_one_with_no_sheet_is_left_for_you_untouched(monkeypatch):
+    rows = []
+    _guild, channel, said, buttons = _closing(monkeypatch, says=[], auto=True, on_card="", rows=rows)
+    assert channel.deleted is False and rows == [] and buttons == []
+    assert "Left for you" in said[-1]
+
+
+def test_the_automatic_run_takes_ten_after_one_start(monkeypatch):
+    import asyncio
+    from datetime import timedelta as _td, timezone as _tz
+
+    from wilbyte.bot import client
+
+    names = [f"agent{n:02d}-vet" for n in range(14)]
+    old = datetime(2026, 6, 1, tzinfo=_tz.utc)
+    monkeypatch.setattr(client, "_last_used", lambda one: (old + _td(days=int(one.name[5:7])), True))
+    monkeypatch.setattr(client, "_can_read", lambda guild, one: True)
+    done = []
+
+    async def clear(bot, responder, config, name, *, run=None, auto=False):
+        assert auto is True
+        done.append(name)
+        return {"agent01-vet": "held", "agent02-vet": "trouble"}.get(name, "deleted")
+
+    monkeypatch.setattr(client, "_clear_out", clear)
+    starts = []
+
+    class Start:
+        def __init__(self, **kw):
+            starts.append(kw)
+            self.confirmed = True
+
+        async def wait(self):
+            pass
+
+    monkeypatch.setattr(client.views, "ConfirmView", Start)
+    said = []
+
+    class Heard:
+        requester_id = 1
+
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    guild = SimpleNamespace(text_channels=[SimpleNamespace(id=n, name=name, category=None)
+                                           for n, name in enumerate(names)])
+    bot = SimpleNamespace(get_guild=lambda where: guild)
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                             schedule=SimpleNamespace(timezone="America/New_York"),
+                             discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(client._quiet_auto(bot, Heard(), config, "quiet auto"))
+
+    assert len(starts) == 1 and done == names[:10]
+    assert "10 deleted" not in said[-1] and "8 deleted" in said[-1]
+    assert "#agent01-vet" in said[-1] and "Left for you" in said[-1]
+    assert "Not deleted" in said[-1] and "4 more quiet" in said[-1]
+
+
+def test_nothing_happens_without_the_start(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_last_used", lambda one: (datetime(2026, 1, 1), True))
+    monkeypatch.setattr(client, "_can_read", lambda guild, one: True)
+    cleared = []
+
+    async def clear(*a, **kw):
+        cleared.append(1)
+        return "deleted"
+
+    monkeypatch.setattr(client, "_clear_out", clear)
+
+    class Start:
+        def __init__(self, **kw):
+            self.confirmed = False
+
+        async def wait(self):
+            pass
+
+    monkeypatch.setattr(client.views, "ConfirmView", Start)
+
+    class Heard:
+        requester_id = 1
+
+        async def send(self, text=None, **kw):
+            pass
+
+    guild = SimpleNamespace(text_channels=[SimpleNamespace(id=1, name="agent-vet", category=None)])
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+                             schedule=SimpleNamespace(timezone="America/New_York"),
+                             discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(client._quiet_auto(SimpleNamespace(get_guild=lambda w: guild), Heard(), config, "quiet auto"))
+    assert cleared == []

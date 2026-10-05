@@ -1341,7 +1341,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 # Wherever it was asked, a copy in Channel Deletion - the whole
                 # run, buttons and all.
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
-                    await _quiet_channels(bot, responder, config, request.brief or "")
+                    if re.search(r"\bauto(?:matic(?:ally)?)?\b", request.brief or "", re.IGNORECASE):
+                        await _quiet_auto(bot, responder, config, request.brief or "")
+                    else:
+                        await _quiet_channels(bot, responder, config, request.brief or "")
                 return
 
             if request.action == "access":
@@ -2989,7 +2992,7 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
 
 async def _clear_out(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
-    *, run: tuple[int, int] | None = None,
+    *, run: tuple[int, int] | None = None, auto: bool = False,
 ) -> str:
     """Close an agent down: keep the sheet, keep the conversation, then go.
 
@@ -3111,28 +3114,39 @@ async def _clear_out(
         plan.sheet, plan.from_channel, trouble = own, True, []
     plan.problems += trouble
 
-    view = views.ConfirmView(
-        requester_id=responder.requester_id,
-        timeout=config.discord.approval_timeout_seconds,
-        stoppable=run is not None,
-        label="Keep the sheet and show me the messages",
-        emoji="🧹",
-    )
-    await responder.send(
-        (f"-# {run[0]} of {run[1]}\n" if run else "")
-        + clearout.describe(plan)
-        + "\n-# Nothing is deleted by this. I'll put the conversation here for "
-        "you to screenshot, and ask again before anything goes.",
-        view=view,
-    )
-    await view.wait()
-    # A timeout is not an answer. "Leave it" is this client left alone and on
-    # to the next; nobody pressing anything is nobody there, and a run walks
-    # the rest of the list past an empty chair.
-    if getattr(view, "stopped", False) or not view.answered:
-        return "stopped"
-    if not view.confirmed:
-        return "left"
+    if auto:
+        # On its own, anything that needed a person's eye is left for one: a
+        # note (two sheets, a name that doesn't fit), a problem, no sheet.
+        held = list(plan.problems) + list(plan.notes) + ([] if plan.sheet else ["no sheet link found"])
+        await responder.send(
+            (f"-# {run[0]} of {run[1]}\n" if run else "") + clearout.describe(plan)
+            + ("\n\n**Left for you** — " + "; ".join(held) if held else "")
+        )
+        if held:
+            return "held"
+    else:
+        view = views.ConfirmView(
+            requester_id=responder.requester_id,
+            timeout=config.discord.approval_timeout_seconds,
+            stoppable=run is not None,
+            label="Keep the sheet and show me the messages",
+            emoji="🧹",
+        )
+        await responder.send(
+            (f"-# {run[0]} of {run[1]}\n" if run else "")
+            + clearout.describe(plan)
+            + "\n-# Nothing is deleted by this. I'll put the conversation here for "
+            "you to screenshot, and ask again before anything goes.",
+            view=view,
+        )
+        await view.wait()
+        # A timeout is not an answer. "Leave it" is this client left alone and on
+        # to the next; nobody pressing anything is nobody there, and a run walks
+        # the rest of the list past an empty chair.
+        if getattr(view, "stopped", False) or not view.answered:
+            return "stopped"
+        if not view.confirmed:
+            return "left"
 
     today = datetime.now(ZoneInfo(config.schedule.timezone))
     kept = []
@@ -3233,6 +3247,11 @@ async def _clear_out(
         )
         return "trouble"
 
+    if auto:
+        # Every check passed - "do 10 per run, check it then delete".
+        await responder.send("\n".join(kept) + "\n\n-# Every check passed — deleting it.")
+        return await _delete_the_channel(responder, guild, plan, name)
+
     going = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,
@@ -3267,6 +3286,13 @@ async def _clear_out(
             "Left alone. The sheet row and the messages above stay either way."
         )
         return "left"
+    return await _delete_the_channel(responder, guild, plan, name)
+
+
+async def _delete_the_channel(responder: Responder, guild, plan, name: str) -> str:
+    """The one place a channel is deleted - asked or automatic, the same
+    last look first."""
+    from .. import clearout
 
     done, trouble = [], []
     channel = guild.get_channel(int(plan.channel.channel_id))
@@ -3837,6 +3863,97 @@ async def _offer_the_run(bot: "WilByteBot") -> None:
             await _carry_on_the_run(bot)
     except Exception:
         log.exception("Couldn't offer to carry on the quiet run")
+
+
+#: Channels one automatic run takes on - "do 10 per run, check it then delete".
+AUTO_PER_RUN = 10
+
+
+async def _quiet_auto(bot: "WilByteBot", responder: Responder, config: Config, asked: str) -> None:
+    """The quiet run on its own: the ten quietest channels, each kept, checked
+    and - only when every check passes - deleted.
+
+    One press to start, because ten channels are about to go and none of them
+    come back. After that nothing waits on a button: a channel that needs a
+    person (a note, a problem, no sheet) or fails a check is left as it is and
+    listed at the end.
+    """
+    from .. import clearout
+
+    where = (config.secrets.discord_clients_guild_id or "").strip()
+    guild = bot.get_guild(int(where)) if where.isdigit() else None
+    if guild is None:
+        await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in .env isn't it.")
+        return
+    now = datetime.now(ZoneInfo(config.schedule.timezone))
+    since = now - timedelta(days=clearout.how_far_back(re.sub(r"\bauto\w*\b", "", asked or "")))
+    channels = []
+    for one in guild.text_channels:
+        when, used = _last_used(one)
+        channels.append(clearout.Channel(
+            channel_id=str(one.id), name=str(one.name),
+            category=str(getattr(one.category, "name", "") or ""),
+            last_active=when.astimezone(ZoneInfo(config.schedule.timezone)) if when else None,
+            ever_used=used, readable=_can_read(guild, one),
+        ))
+    quiet, _ours, _unknown = clearout.quiet_ones(channels, since=since)
+    batch = [one.name for one in quiet[:AUTO_PER_RUN]]
+    if not batch:
+        await responder.send(f"No channel has been quiet since {since:%b %-d, %Y} — nothing to do.")
+        return
+
+    start = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Start — {len(batch)} channels",
+        emoji="🧹",
+        danger=True,
+    )
+    await responder.send(
+        f"🧹 **Automatic quiet run** — the {len(batch)} quietest of {len(quiet)}:\n"
+        + "\n".join(f"• #{name}" for name in batch)
+        + "\n\nFor each: keep the sheet and the screenshots, check my own work, and "
+        "**delete it only if every check passes**. Anything that needs you, or fails a "
+        "check, stays and is listed at the end.\n-# Nobody is banned by this.",
+        view=start,
+    )
+    await start.wait()
+    if not start.confirmed:
+        return
+
+    went, held, trouble = [], [], []
+    wrong_in_a_row = 0
+    for number, name in enumerate(batch, start=1):
+        try:
+            how = await _clear_out(bot, responder, config, name, run=(number, len(batch)), auto=True)
+        except Exception as exc:
+            log.exception("The automatic quiet run broke on #%s", name)
+            await responder.send(f"⚠ Something broke on **#{name}**: {_readable(exc)}. Left as it is.")
+            how = "trouble"
+        if how == "deleted":
+            went.append(name)
+            wrong_in_a_row = 0
+        elif how == "held":
+            held.append(name)
+            wrong_in_a_row = 0
+        else:
+            trouble.append(name)
+            wrong_in_a_row += 1
+        # Three in a row wrong is something they all depend on being down.
+        if wrong_in_a_row >= 3:
+            await responder.send("⚠ Three in a row went wrong, so I've stopped - something they all need is down.")
+            break
+
+    lines = [f"🧹 **Automatic quiet run done** — {len(went)} deleted."]
+    if went:
+        lines.append("🗑 " + ", ".join(f"#{one}" for one in went))
+    if held:
+        lines.append("✋ Left for you (needed a look): " + ", ".join(f"#{one}" for one in held))
+    if trouble:
+        lines.append("❌ Not deleted (a check failed or something broke): " + ", ".join(f"#{one}" for one in trouble))
+    if len(quiet) > len(batch):
+        lines.append(f"-# {len(quiet) - len(batch)} more quiet - `@RYTE quiet auto` for the next {AUTO_PER_RUN}.")
+    await responder.send("\n".join(lines))
 
 
 def _keep_the_run(quietrun, run: dict) -> None:
