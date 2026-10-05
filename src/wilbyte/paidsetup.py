@@ -83,7 +83,9 @@ def recent_payments(data: dict, *, now: datetime) -> list[Paid]:
         if not (now - LOOK_BACK <= last <= now - GRACE):
             continue
         total = sum(payraapi._cents(one.get("amount")) or 0 for one in went)
-        lines = [payraapi.line_text(one) for one in invoice.get("lines") or []]
+        # What was bought, short: the line's name as far as the first sentence
+        # - Payra's lines carry a paragraph of boilerplate after it.
+        lines = [_short_line(payraapi.line_text(one)) for one in invoice.get("lines") or []]
         found.append(Paid(
             invoice_id=str(invoice.get("id") or ""), number=str(invoice.get("number") or ""),
             name=str(invoice.get("name") or "").strip(), email=str(invoice.get("email") or "").casefold(),
@@ -92,6 +94,11 @@ def recent_payments(data: dict, *, now: datetime) -> list[Paid]:
         ))
     found.sort(key=lambda one: one.paid_at)
     return found
+
+
+def _short_line(said: str, most: int = 60) -> str:
+    said = " ".join(str(said or "").split())
+    return said if len(said) <= most else said[:most - 1].rstrip() + "…"
 
 
 def their_cards(paid: Paid, cards: list[dict]) -> list[dict]:

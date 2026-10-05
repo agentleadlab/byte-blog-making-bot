@@ -150,3 +150,16 @@ def test_the_command_is_heard_and_answers(monkeypatch):
 
     asyncio.run(client._not_set_up(Heard(), None))
     assert "Paid, but not set up" in said[0] and "Jay Rodriguez" in said[0]
+
+
+def test_an_aged_lead_order_is_never_asked_for_a_launch_date(monkeypatch):
+    """They go out as they are - "WTH IS THIS SPAMMMINGG" was fourteen of these."""
+    data = _paid_data(**{"Emery Vera": "emery@example.com"})
+    order = _card("Emery Vera", "50 Indexed aged leads", title="AGED LEAD - ")
+    found, _problems = _check(monkeypatch, data, [order])
+    assert found == []
+
+
+def test_what_was_bought_is_kept_short():
+    long = "This payment is for a list of aged leads provided by Agent Lead Lab. The leads may include people"
+    assert len(paidsetup._short_line(long)) <= 60 and paidsetup._short_line(long).endswith("…")

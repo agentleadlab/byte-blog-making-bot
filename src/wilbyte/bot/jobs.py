@@ -5587,6 +5587,10 @@ def paid_not_set_up(config: Config, *, now=None) -> tuple[list, list[str]]:
             if card is None:
                 # Only an earlier order's card - a plan renewing, most likely.
                 continue
+            if not rules.is_agent_card(str(card.get("name") or "")):
+                # An aged-lead order goes out as it is - no launch date to
+                # set. Only a new agent's setup waits on one.
+                continue
             made = rules.made_at(str(card.get("id") or ""))
             day = made.date() if made else paid.paid_at.date()
             if rules.find_launch(str(card.get("desc") or ""), today=day) is not None:
