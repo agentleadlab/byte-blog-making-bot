@@ -5561,7 +5561,7 @@ def delivery_check(config: Config, *, today=None) -> tuple[list, list[str]]:
 
 
 def paid_not_set_up(config: Config, *, now=None) -> tuple[list, list[str]]:
-    """Payments from the last two weeks with no card on the board for them,
+    """Payments from the last three days with no card on the board for them,
     or a card that still says nothing about when they go live.
     ([paidsetup.Unset], problems). Reads only."""
     from .. import agents as rules

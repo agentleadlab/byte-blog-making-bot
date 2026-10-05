@@ -22,10 +22,9 @@ from .state import _state_dir
 #: is not missing, just not made yet.
 GRACE = timedelta(hours=4)
 
-#: How far back payments are looked at. Older ones are either sorted or are
-#: somebody else's problem by now, and said every morning forever they'd be
-#: noise.
-LOOK_BACK = timedelta(days=14)
+#: How far back payments are looked at - "just those who paid 2-3 days
+#: ago". Older ones are either sorted by now or already known about.
+LOOK_BACK = timedelta(days=3)
 
 #: A card this much older than the payment is an earlier order's, not this
 #: one's - a weekly plan renewing, or a reorder. Neither is "no card".
@@ -67,7 +66,7 @@ def _when(stamp) -> datetime | None:
 
 
 def recent_payments(data: dict, *, now: datetime) -> list[Paid]:
-    """Invoices paid between two weeks and four hours ago, newest payment on
+    """Invoices paid between three days and four hours ago, newest payment on
     each - refunds and failed charges left out."""
     from . import payraapi
 

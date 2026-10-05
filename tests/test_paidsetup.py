@@ -31,11 +31,11 @@ def _paid(name="Jay Rodriguez", email="jay@example.com", phone="5550100001", ago
                           amount="$1,360.00", paid_at=NOW - ago, what="25 OTP Vets × 1 @ $1,360.00")
 
 
-def test_only_payments_that_went_through_between_two_weeks_and_four_hours_ago():
+def test_only_payments_that_went_through_between_three_days_and_four_hours_ago():
     data = _data(
         ("i1", "Jay Rodriguez", "jay@example.com", "5550100001", NOW - timedelta(days=1), "succeeded", False),
         ("i2", "Too Soon", "", "", NOW - timedelta(hours=2), "succeeded", False),
-        ("i3", "Long Ago", "", "", NOW - timedelta(days=20), "succeeded", False),
+        ("i3", "Long Ago", "", "", NOW - timedelta(days=4), "succeeded", False),
         ("i4", "Declined Card", "", "", NOW - timedelta(days=1), "declined", False),
         ("i5", "Got A Refund", "", "", NOW - timedelta(days=1), "succeeded", True),
     )

@@ -1232,8 +1232,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ordered against the leads on their sheet, with the line a dispute needs. **delivered**
 > on its own lists every order a week or more live that's short. I also say so on my own
 > each morning, once per order
-> @RYTE **not set up** — everybody who paid in Payra in the last two weeks with no card on
-> the board, or a card with no launch date. I also say so on my own, once per payment
+> @RYTE **not set up** — everybody who paid in Payra in the last three days with no card
+> on the board, or a New Agent card with no launch date
 > @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.
 > **quiet unkeep <name>** takes them off; **quiet kept** shows the list
 > @RYTE **quiet** — goes through every channel nobody has used in two months, RYTE
