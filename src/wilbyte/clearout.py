@@ -919,9 +919,16 @@ def pick_from(quiet, *, now: datetime, most: int = PICKABLE) -> list:
     offering a press that cannot go anywhere.
     """
     return [
-        (one.name, how_long(one, now=now))
+        (one.name, how_long(one, now=now), target(one))
         for one in quiet[:most] if one.readable
     ]
+
+
+def target(one) -> str:
+    """One channel, by its id - the way a run names it. Keith Harper has two
+    channels both called #keith-harper-iul, and by name a run could only say
+    "more than one channel could be his" and leave both."""
+    return f"<#{one.channel_id}>"
 
 
 def one_by_one(quiet) -> list:
@@ -933,7 +940,7 @@ def one_by_one(quiet) -> list:
     within it: "for every list he gives me, he send them to me one by one, so
     i dont have to pick anymore".
     """
-    return [one.name for one in quiet if one.readable]
+    return [target(one) for one in quiet if one.readable]
 
 
 #: How many in a row can go wrong before a run gives up. One that fails

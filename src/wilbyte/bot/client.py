@@ -3040,7 +3040,17 @@ async def _clear_out(
         )
         for one in guild.text_channels
     ]
-    found = clearout.channels_for(name, channels)
+    # A run names its channel by id - two can share a name.
+    by_id = re.fullmatch(r"<#(\d+)>", name.strip())
+    if by_id:
+        found = [one for one in channels
+                 if one.channel_id == by_id.group(1) and not clearout.off_limits(one)]
+        if not found:
+            await responder.send("That channel isn't in the clients server any more.")
+            return "trouble"
+        name = found[0].name
+    else:
+        found = clearout.channels_for(name, channels)
     if not found:
         await responder.send(
             f"No channel in **{guild.name}** looks like **{name}**'s."
@@ -3809,12 +3819,14 @@ async def _all_of_them(
         "names": list(names), "at": 0,
         "went": went, "left": left, "trouble": trouble,
     }
-    for number, name in enumerate(names, start=1):
+    for number, target in enumerate(names, start=1):
         run["at"] = number - 1
         _keep_the_run(quietrun, run)
+        # Its name now, while the channel is still there to be asked.
+        name = _channel_label(bot, target)
         try:
             how = await _clear_out(
-                bot, responder, config, name, run=(number, len(names)),
+                bot, responder, config, target, run=(number, len(names)),
             )
         except Exception as exc:
             # One client's channel breaking something is that client's
@@ -3853,6 +3865,15 @@ async def _all_of_them(
         went, left, trouble,
         over=stopped or f"Went through all {len(names)}.",
     ))
+
+
+def _channel_label(bot, target: str) -> str:
+    """A run's channel, by name for saying - its id is for finding it."""
+    found = re.fullmatch(r"<#(\d+)>", str(target or "").strip())
+    if not found:
+        return str(target)
+    channel = bot.get_channel(int(found.group(1))) if hasattr(bot, "get_channel") else None
+    return str(getattr(channel, "name", "") or target)
 
 
 async def _offer_the_run(bot: "WilByteBot") -> None:
@@ -3897,7 +3918,9 @@ async def _quiet_auto(bot: "WilByteBot", responder: Responder, config: Config, a
             ever_used=used, readable=_can_read(guild, one),
         ))
     quiet, _ours, _unknown = clearout.quiet_ones(channels, since=since)
-    batch = [one.name for one in quiet[:AUTO_PER_RUN]]
+    picked = [one for one in quiet if one.readable][:AUTO_PER_RUN]
+    batch = [clearout.target(one) for one in picked]
+    called = {clearout.target(one): one.name for one in picked}
     if not batch:
         await responder.send(f"No channel has been quiet since {since:%b %-d, %Y} — nothing to do.")
         return
@@ -3911,7 +3934,7 @@ async def _quiet_auto(bot: "WilByteBot", responder: Responder, config: Config, a
     )
     await responder.send(
         f"🧹 **Automatic quiet run** — the {len(batch)} quietest of {len(quiet)}:\n"
-        + "\n".join(f"• #{name}" for name in batch)
+        + "\n".join(f"• #{called[one]}" for one in batch)
         + "\n\nFor each: keep the sheet and the screenshots, check my own work, and "
         "**delete it only if every check passes**. Anything that needs you, or fails a "
         "check, stays and is listed at the end.\n-# Nobody is banned by this.",
@@ -3923,9 +3946,10 @@ async def _quiet_auto(bot: "WilByteBot", responder: Responder, config: Config, a
 
     went, held, trouble = [], [], []
     wrong_in_a_row = 0
-    for number, name in enumerate(batch, start=1):
+    for number, target in enumerate(batch, start=1):
+        name = called[target]
         try:
-            how = await _clear_out(bot, responder, config, name, run=(number, len(batch)), auto=True)
+            how = await _clear_out(bot, responder, config, target, run=(number, len(batch)), auto=True)
         except Exception as exc:
             log.exception("The automatic quiet run broke on #%s", name)
             await responder.send(f"⚠ Something broke on **#{name}**: {_readable(exc)}. Left as it is.")
@@ -3986,7 +4010,11 @@ async def _carry_on_the_run(bot: "WilByteBot") -> None:
         return
     names = list(run["names"])
     at = int(run.get("at") or 0)
-    rest = quietrun.still_there(names[at:], [one.name for one in guild.text_channels])
+    rest = quietrun.still_there(
+        names[at:],
+        [one.name for one in guild.text_channels]
+        + [f"<#{getattr(one, 'id', '')}>" for one in guild.text_channels],
+    )
     if not rest:
         quietrun.clear()
         return
@@ -4001,7 +4029,7 @@ async def _carry_on_the_run(bot: "WilByteBot") -> None:
     done = len(run.get("went") or [])
     await responder.send(
         f"🧹 I was restarted in the middle of the quiet run — I'd got to "
-        f"**#{names[at]}**, {at + 1} of {len(names)}"
+        f"**#{_channel_label(bot, names[at])}**, {at + 1} of {len(names)}"
         + (f", with {done} deleted so far" if done else "")
         + f". {len(rest)} left to go. Carry on from there?",
         view=view,

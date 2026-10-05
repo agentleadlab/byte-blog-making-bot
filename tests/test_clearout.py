@@ -412,9 +412,11 @@ class Guild:
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
              on_card="https://sheet", in_channel="", rows=None, unread=False,
-             welcomed=True, checks=None, auto=False):
+             welcomed=True, checks=None, auto=False, twin=False, target=None):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed.
-    `checks` is what RYTE's look at its own work finds - all fine unless said."""
+    `checks` is what RYTE's look at its own work finds - all fine unless said.
+    `twin` adds a second channel of the same name (id 12, kept as
+    `guild.twin`); `target` is what the clear-out is asked for, if not `name`."""
     import asyncio
     from types import SimpleNamespace
 
@@ -430,6 +432,10 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
 
     channel = Channel(called)
     guild = Guild(channel, Member(name) if member else None)
+    if twin:
+        guild.twin = Channel(called)
+        guild.twin.id = 12
+        guild.text_channels.append(guild.twin)
 
     monkeypatch.setattr(bot_client.views, "ConfirmView", Watched)
     monkeypatch.setattr(
@@ -483,7 +489,7 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
         schedule=SimpleNamespace(timezone="America/Chicago"),
     )
 
-    heard.how = asyncio.run(bot_client._clear_out(bot, heard, config, name, auto=auto))
+    heard.how = asyncio.run(bot_client._clear_out(bot, heard, config, target or name, auto=auto))
     return guild, channel, heard.messages, buttons
 
 
@@ -756,7 +762,8 @@ def test_what_is_offered_is_exactly_what_was_listed():
     offered = clearout.pick_from(quiet, now=NOW)
 
     assert len(offered) == clearout.PICKABLE
-    for name, note in offered:
+    for name, note, target in offered:
+        assert target.startswith("<#")
         assert f"#{name}" in whole
         assert note, name
 
@@ -848,9 +855,11 @@ def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
     assert "Nothing here is deleted" in whole
     assert cleared == [], "the list itself cleared somebody out"
     # Quietest first, the same order the lines above it are in.
-    assert [name for name, _note in offered] == ["never-used", "jay-rodriguez"]
-    assert "general" not in [name for name, _note in offered]
-    assert all(note for _name, note in offered), "no sense of how long"
+    assert [one[0] for one in offered] == ["never-used", "jay-rodriguez"]
+    assert "general" not in [one[0] for one in offered]
+    assert all(one[1] for one in offered), "no sense of how long"
+    # Picked by the channel itself, which a name can't always say.
+    assert [one[2] for one in offered] == [f"<#{abs(hash(n)) % 10**6}>" for n in ("never-used", "jay-rodriguez")]
 
 
 def test_the_command_will_not_list_a_server_that_is_not_the_clients_one(monkeypatch):
@@ -1168,7 +1177,7 @@ def test_one_that_cannot_be_opened_is_not_offered():
     channels[0].readable = False
     quiet, _, _ = clearout.quiet_ones(channels, since=NOW - timedelta(days=60))
 
-    assert [name for name, _note in clearout.pick_from(quiet, now=NOW)] == [
+    assert [one[0] for one in clearout.pick_from(quiet, now=NOW)] == [
         "jay-rodriguez",
     ]
 
@@ -2611,8 +2620,9 @@ def test_a_run_offers_every_readable_one_with_no_cap_of_twenty_five():
     names = clearout.one_by_one(quiet)
 
     assert len(names) == 40
-    assert "shut" not in names, "offered one whose history cannot be read"
-    assert names[0] == "agent-0", "the order of the list was not kept"
+    assert "<#x>" not in names, "offered one whose history cannot be read"
+    # By id: two channels can share a name - Keith Harper's two #keith-harper-iul.
+    assert names[0] == "<#0>", "the order of the list was not kept"
 
 
 def _ran(monkeypatch, answers, *, names=("a", "b", "c")):
@@ -2870,7 +2880,7 @@ def test_the_run_button_starts_it_rather_than_the_dropdown(monkeypatch):
         "",
     ))
 
-    assert started == [["jay-rodriguez", "connor-knudsen"]]
+    assert started == [[f"<#{abs(hash(n)) % 10**6}>" for n in ("jay-rodriguez", "connor-knudsen")]]
 
 
 def test_nobody_at_the_keyboard_for_the_delete_stops_the_run_too(monkeypatch):
@@ -3968,7 +3978,7 @@ def test_the_automatic_run_takes_ten_after_one_start(monkeypatch):
     async def clear(bot, responder, config, name, *, run=None, auto=False):
         assert auto is True
         done.append(name)
-        return {"agent01-vet": "held", "agent02-vet": "trouble"}.get(name, "deleted")
+        return {"<#1>": "held", "<#2>": "trouble"}.get(name, "deleted")
 
     monkeypatch.setattr(client, "_clear_out", clear)
     starts = []
@@ -3998,7 +4008,7 @@ def test_the_automatic_run_takes_ten_after_one_start(monkeypatch):
                              discord=SimpleNamespace(approval_timeout_seconds=1))
     asyncio.run(client._quiet_auto(bot, Heard(), config, "quiet auto"))
 
-    assert len(starts) == 1 and done == names[:10]
+    assert len(starts) == 1 and done == [f"<#{n}>" for n in range(10)]
     assert "10 deleted" not in said[-1] and "8 deleted" in said[-1]
     assert "#agent01-vet" in said[-1] and "Left for you" in said[-1]
     assert "Not deleted" in said[-1] and "4 more quiet" in said[-1]
@@ -4040,3 +4050,50 @@ def test_nothing_happens_without_the_start(monkeypatch):
                              discord=SimpleNamespace(approval_timeout_seconds=1))
     asyncio.run(client._quiet_auto(SimpleNamespace(get_guild=lambda w: guild), Heard(), config, "quiet auto"))
     assert cleared == []
+
+
+
+def test_two_channels_with_one_name_are_each_cleared_as_themselves(monkeypatch):
+    """Keith Harper: "More than one channel could be keith-harper-iul's, so
+    I've left them all alone" - a run names its channel by id now, and clears
+    that one and only that one."""
+    guild, first, said, _ = _closing(
+        monkeypatch, says=[True, True], called="keith-harper-iul",
+        name="Keith Harper", twin=True, target="<#12>",
+    )
+
+    assert guild.twin.deleted is True
+    assert first.deleted is False, "it cleared the other keith-harper-iul"
+    assert not any("More than one channel" in one for one in said)
+
+
+def test_two_channels_with_one_name_typed_by_name_are_still_both_left(monkeypatch):
+    """By hand, a bare name still can't say which of the two is meant."""
+    guild, first, said, _ = _closing(
+        monkeypatch, says=[True, True], called="keith-harper-iul",
+        name="keith-harper-iul", twin=True,
+    )
+
+    assert first.deleted is False and guild.twin.deleted is False
+    assert any("More than one channel" in one for one in said)
+
+
+def test_a_channel_named_by_an_id_that_is_gone_is_left(monkeypatch):
+    guild, first, said, _ = _closing(
+        monkeypatch, says=[True, True], called="keith-harper-iul", target="<#99>",
+    )
+
+    assert first.deleted is False
+    assert "isn't in the clients server" in said[-1]
+
+
+def test_a_run_is_told_the_channel_by_name_not_by_number():
+    from wilbyte.bot import client
+
+    twin_a = clearout.Channel(channel_id="111", name="keith-harper-iul")
+    twin_b = clearout.Channel(channel_id="222", name="keith-harper-iul")
+    assert clearout.target(twin_a) != clearout.target(twin_b)
+    bot = SimpleNamespace(get_channel=lambda cid: SimpleNamespace(name="keith-harper-iul") if cid == 222 else None)
+    assert client._channel_label(bot, "<#222>") == "keith-harper-iul"
+    assert client._channel_label(bot, "<#333>") == "<#333>"
+    assert client._channel_label(bot, "jay-rodriguez") == "jay-rodriguez"

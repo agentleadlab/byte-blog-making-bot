@@ -248,8 +248,12 @@ class ChannelPicker(discord.ui.View):
         self._select = discord.ui.Select(
             placeholder="Clear one of these out…",
             options=[
-                discord.SelectOption(label=name[:100], description=note[:100], value=name[:100])
-                for name, note in choices[:25]
+                # The value is the channel itself where one is given: two
+                # channels can share a name, and a dropdown can't have two
+                # options with one value.
+                discord.SelectOption(label=one[0][:100], description=one[1][:100],
+                                     value=(one[2] if len(one) > 2 else one[0])[:100])
+                for one in choices[:25]
             ],
             min_values=1,
             max_values=1,
@@ -271,8 +275,10 @@ class ChannelPicker(discord.ui.View):
         self.answered = True
         for child in self.children:
             child.disabled = True
+        # A channel given as <#id> shows as its own link; a bare name needs the #.
+        shown = self.chosen if self.chosen.startswith("<#") else f"#{self.chosen}"
         await interaction.response.edit_message(
-            content=f"🧹 **#{self.chosen}** — looking at what to keep…", view=self
+            content=f"🧹 **{shown}** — looking at what to keep…", view=self
         )
         self.stop()
 
