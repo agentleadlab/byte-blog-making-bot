@@ -330,14 +330,9 @@ class WilByteBot(discord.Client):
             and (self.contract_task is None or self.contract_task.done())
         ):
             self.contract_task = self.loop.create_task(contract_check_loop(self))
-        # Paid in Payra with nothing on the board for it. On the agents
-        # switch, and only once Payra is being read.
-        if (
-            self.config.secrets.trello_agents_auto
-            and getattr(self.config.secrets, "payra_api_token", None)
-            and (self.paid_task is None or self.paid_task.done())
-        ):
-            self.paid_task = self.loop.create_task(paid_check_loop(self))
+        # Paid in Payra with nothing on the board for it: only when asked,
+        # `@RYTE not set up`. Its first run on its own posted every aged-lead
+        # order of the last two weeks at once - "WTH IS THIS SPAMMMINGG".
         # Proof of delivery, each morning: short orders said once. On the
         # agents switch - it is about them - and reads only.
         if self.config.secrets.trello_agents_auto and (
