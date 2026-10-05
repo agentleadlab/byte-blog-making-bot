@@ -10311,28 +10311,44 @@ def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
 CHANNEL_UPLOADS_READ = 300
 
 
+def _channel_id(said: str) -> str:
+    """A UC... id, from itself or from an @handle."""
+    from .. import youtube_api
+
+    if said.startswith("UC"):
+        return said
+    got = youtube_api._get("channels", {"part": "id", "forHandle": said})
+    return str(((got.get("items") or [{}])[0]).get("id") or "")
+
+
 def _find_on_channel(config: Config, items: list[dict], waiting: list[dict]):
-    """Segments with no link in the doc, looked for on the channel the
-    interview's own video is on. ([found], [why each other one wasn't])."""
+    """Segments with no link in the doc, looked for by their exact title on
+    the channels: the one the interview's own video is on first, then the ones
+    in YOUTUBE_CHANNEL_ID in the order given. ([found], [why each other
+    one wasn't])."""
     from .. import successpage, youtube_api
 
     sure = next((one["id"] for one in items if one.get("id")), "")
-    channel = (getattr(config.secrets, "youtube_channel_id", "") or "").strip()
+    channels: list[str] = []
     try:
         if sure:
-            channel = str(((youtube_api.get_video(sure) or {}).get("snippet") or {}).get("channelId") or channel)
-        if not channel.startswith("UC"):
+            channels.append(str(((youtube_api.get_video(sure) or {}).get("snippet") or {}).get("channelId") or ""))
+        for said in successpage.channels_in(getattr(config.secrets, "youtube_channel_id", "") or ""):
+            channels.append(_channel_id(said))
+        channels = [one for one in dict.fromkeys(channels) if one.startswith("UC")]
+        if not channels:
             return [], [f"{one['what']} — no YouTube link yet" for one in waiting]
-        uploads = [
-            {"id": (it.get("contentDetails") or {}).get("videoId")
-                   or ((it.get("snippet") or {}).get("resourceId") or {}).get("videoId"),
-             "title": (it.get("snippet") or {}).get("title") or ""}
-            for it in youtube_api.list_playlist_items("UU" + channel[2:], limit=CHANNEL_UPLOADS_READ)
+        by_channel = [
+            [{"id": (it.get("contentDetails") or {}).get("videoId")
+                    or ((it.get("snippet") or {}).get("resourceId") or {}).get("videoId"),
+              "title": (it.get("snippet") or {}).get("title") or ""}
+             for it in youtube_api.list_playlist_items("UU" + one[2:], limit=CHANNEL_UPLOADS_READ)]
+            for one in channels
         ]
     except Exception as exc:
         return [], [f"{one['what']} — no YouTube link yet (couldn't read the channel: {_short(exc, 80)})"
                     for one in waiting]
-    return successpage.match_uploads(waiting, uploads)
+    return successpage.match_channels(waiting, by_channel)
 
 
 def _success_list(site):

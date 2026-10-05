@@ -365,3 +365,65 @@ def test_the_plan_looks_on_the_interviews_own_channel(monkeypatch):
     assert asked["playlist"] == "UUabcdefghij"
     assert [one["what"] for one in items] == ["Full interview", "Segment 2", "Segment 3"]
     assert items[2]["id"] == "VET0000000A" and items[2]["found"] is True
+
+
+def test_both_channels_are_read_from_links_or_handles():
+    """"yt has two accounts"."""
+    assert sp.channels_in(
+        "https://www.youtube.com/@agentleadlab, https://youtube.com/channel/UCabcdefghijklmnopqrstuv"
+    ) == ["@agentleadlab", "UCabcdefghijklmnopqrstuv"]
+    assert sp.channels_in("@one @two @one") == ["@one", "@two"]
+
+
+def test_the_main_channel_decides_first():
+    main = [{"id": "MAIN0000000", "title": "The Full Veteran Telesales Script"}]
+    second = [{"id": "SECOND00000", "title": "The Full Veteran Telesales Script"},
+              {"id": "ONLYTWO0000", "title": "Stop Trying to Marry the Client"}]
+    found, missing = sp.match_channels(
+        [_waiting("The Full Veteran Telesales Script"), _waiting("Stop Trying to Marry the Client", "Segment 7"),
+         _waiting("Nowhere At All", "Segment 8")],
+        [main, second],
+    )
+    assert [one["id"] for one in found] == ["MAIN0000000", "ONLYTWO0000"]
+    assert "no video on either channel" in missing[0]
+
+
+def test_two_with_the_title_on_the_main_channel_is_still_a_question():
+    main = [{"id": "TWIN000000A", "title": "Spending the Money"}, {"id": "TWIN000000B", "title": "Spending the money"}]
+    found, missing = sp.match_channels([_waiting("Spending the Money", "Segment 4")],
+                                       [main, [{"id": "OTHER000000", "title": "Spending the Money"}]])
+    assert found == [] and "2 videos on the channel" in missing[0]
+
+
+def test_with_no_link_in_the_tab_the_set_channels_are_searched(monkeypatch):
+    from wilbyte import docs, youtube_api
+    from wilbyte.bot import jobs
+
+    unlinked = LAID_OUT.replace("YOUTUBE LINK\nhttps://youtu.be/-aIcdjzwFsY\n", "").replace(
+        "YOUTUBE LINK\nhttps://youtu.be/4JSaDVPFbTc\n", "").replace("  https://youtu.be/OBFITZL2uSc", "")
+
+    class Doc:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def contents(self):
+            return [(docs.Tab("t.1", "Evan Scott"), unlinked, "")]
+
+    read = []
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: Doc())
+    monkeypatch.setattr(youtube_api, "_get", lambda path, params, **kw: {"items": [{"id": "UC" + params["forHandle"][1:].ljust(22, "x")}]})
+
+    def uploads(playlist, *, limit=None):
+        read.append(playlist)
+        return [{"contentDetails": {"videoId": "FULL0000000"},
+                 "snippet": {"title": "13 Years, $181K in Six Months Off Aged Leads"}}] if playlist.startswith("UUsecond") else []
+
+    monkeypatch.setattr(youtube_api, "list_playlist_items", uploads)
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D", youtube_channel_id="@main, @second"))
+    _tab, items, _skipped = jobs.success_plan(config, "Evan Scott")
+
+    assert [one[:6] for one in read] == ["UUmain", "UUseco"]
+    assert [(one["what"], one["id"]) for one in items] == [("Full interview", "FULL0000000")]

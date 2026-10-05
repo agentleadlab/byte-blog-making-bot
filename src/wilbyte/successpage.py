@@ -212,6 +212,47 @@ def same_title(one: str, other: str) -> bool:
     return bool(bare(one)) and bare(one) == bare(other)
 
 
+def channels_in(said: str) -> list[str]:
+    """The channels a setting names, in order: UC... ids, @handles, or links
+    to either - "yt has two accounts"."""
+    found = []
+    for one in re.split(r"[\s,]+", str(said or "")):
+        one = one.strip().rstrip("/")
+        if not one:
+            continue
+        uc = re.search(r"(UC[A-Za-z0-9_-]{20,})", one)
+        handle = re.search(r"(?:^|/)(@[A-Za-z0-9._-]+)", one)
+        if uc:
+            found.append(uc.group(1))
+        elif handle:
+            found.append(handle.group(1))
+    return list(dict.fromkeys(found))
+
+
+def match_channels(waiting: list[dict], by_channel: list[list[dict]]) -> tuple[list[dict], list[str]]:
+    """`match_uploads` across several channels, main one first: the first
+    channel with that title decides, and two videos with it there is still a
+    question rather than a pick."""
+    found, missing = [], []
+    for one in waiting:
+        answer = None
+        for uploads in by_channel:
+            hit, miss = match_uploads([one], uploads)
+            if hit:
+                answer = (hit, [])
+                break
+            if miss and "videos on the channel have that title" in miss[0]:
+                answer = ([], miss)
+                break
+        if answer is None:
+            answer = ([], [f"{one['what']} — no video on "
+                           f"{'either channel' if len(by_channel) > 1 else 'the channel'} "
+                           "with that exact title yet"])
+        found += answer[0]
+        missing += answer[1]
+    return found, missing
+
+
 def match_uploads(waiting: list[dict], uploads: list[dict]) -> tuple[list[dict], list[str]]:
     """The segments with no link in the doc, looked for on the channel by title.
     ([found, each with its id], [what wasn't, and why]).

@@ -247,8 +247,9 @@ class Secrets:
     payra_site_id: str | None = None
     # PandaDoc's API key, for finding signed contracts. Read-only use.
     pandadoc_api_key: str | None = None
-    # The YouTube channel the interviews go up on (its UC... id), for finding a
-    # segment's video by its title when the doc has no link to start from.
+    # The YouTube channels the interviews go up on, main one first - links,
+    # @handles or UC... ids, comma-separated - for finding a segment's video by
+    # its exact title.
     youtube_channel_id: str | None = None
     # leadlabcrm.com's WordPress, for the video testimonials list. An
     # Application Password (Users -> Profile), not the login password.
