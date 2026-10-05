@@ -197,6 +197,29 @@ class ConfirmView(discord.ui.View):
         self.stopped = True
         await self._close(interaction, "🛑 Stopped — this one is untouched too.")
 
+    async def pressed_by_ryte(self, message=None) -> None:
+        """RYTE pressing its own button - "ryte needs to be the confirming it".
+
+        The same button a person would have pressed, left on the message
+        greyed out and saying who pressed it, so the channel reads the same
+        whether Franklin went through it or RYTE did. Nothing, if somebody
+        already pressed something: a person's answer always wins.
+        """
+        if self.answered:
+            return
+        self.confirmed = True
+        self.answered = True
+        self._go.label = f"{self._go.label} — pressed by RYTE"[:80]
+        for child in self.children:
+            child.disabled = True
+        try:
+            if message is not None:
+                await message.edit(view=self)
+        except Exception:
+            pass  # the press counts whether or not the buttons could be redrawn
+        finally:
+            self.stop()
+
     async def _close(self, interaction: discord.Interaction, note: str) -> None:
         self.answered = True
         for child in self.children:

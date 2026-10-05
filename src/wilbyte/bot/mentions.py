@@ -1216,8 +1216,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **blacklist Juliana Hernandez** — tag a client blacklisted in GHL
 > after a chargeback. Shows every contact that matches before anything is
 > written, and never tags on a name it only half-matched
-> @RYTE **quiet auto** — the 10 quietest channels on their own, after one Start: each kept,
-> checked, and deleted only if every check passes; anything else is left and listed
+> @RYTE **quiet auto** — the next 10 quiet channels now, RYTE pressing the buttons: each
+> kept, checked, and deleted only if every check passes; anything else is left and listed.
+> It also runs by itself every hour, 8am to 8pm, in Channel Deletion —
+> **quiet auto off** / **quiet auto on** to stop or start that
 > @RYTE **quiet** — every channel in the clients server nobody has used in
 > two months, quietest first. Add **3 months** for a tighter list. Reads only;
 > nothing is deleted, and `clearout` is still how anything goes

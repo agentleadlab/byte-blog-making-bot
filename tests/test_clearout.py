@@ -373,6 +373,12 @@ class Pressed:
     async def wait(self):
         return None
 
+    async def pressed_by_ryte(self, message=None):
+        """Nobody pressed (`None` in `says`), so RYTE does."""
+        if self.answered:
+            return
+        self.confirmed = self.answered = self.by_ryte = True
+
 
 class Member:
     def __init__(self, name):
@@ -3166,7 +3172,7 @@ def NS_(**kw):
     return SimpleNamespace(**kw)
 
 
-def _restarted(monkeypatch, run, *, press=True, names=("b", "c")):
+def _restarted(monkeypatch, run, *, press=True, names=("b", "c"), auto_into=None):
     import asyncio
 
     from wilbyte import quietrun
@@ -3198,7 +3204,7 @@ def _restarted(monkeypatch, run, *, press=True, names=("b", "c")):
     bot = NS_(
         get_channel=lambda cid: place.channel if cid == 99 else None,
         get_guild=lambda gid: place if gid == 5 else None,
-        config=NS_(secrets=NS_(discord_clients_guild_id="5"),
+        config=NS_(secrets=NS_(discord_clients_guild_id="5", discord_clearout_copy_channel_id=auto_into),
                    discord=NS_(approval_timeout_seconds=60)),
     )
     asyncio.run(bot_client._carry_on_the_run(bot))
@@ -3207,6 +3213,24 @@ def _restarted(monkeypatch, run, *, press=True, names=("b", "c")):
 
 RUN = {"channel_id": 99, "requester_id": 7, "names": ["a", "b", "gone", "c"], "at": 1,
        "went": ["a"], "left": [], "trouble": []}
+
+
+def test_after_a_restart_the_automatic_run_takes_over_with_no_button(monkeypatch):
+    """"i have to not click the button no more"."""
+    from wilbyte import quietrun
+
+    said, carried = _restarted(monkeypatch, RUN, auto_into="55")
+
+    assert carried == [] and quietrun.load() is None
+    assert "automatic run will take it from here" in said[0]
+
+
+def test_after_a_restart_with_the_automatic_run_off_it_still_offers(monkeypatch):
+    from wilbyte import quietauto
+
+    quietauto.switch(False)
+    said, carried = _restarted(monkeypatch, RUN, auto_into="55")
+    assert "Carry on from there?" in said[0]
 
 
 def test_after_a_restart_it_offers_to_carry_on_from_where_it_was(monkeypatch):
@@ -3940,20 +3964,39 @@ def test_small_print_is_not_marked_twice(monkeypatch):
 # ------------------------------------------------ "do 10 per run, check it then delete"
 
 
-def test_on_its_own_a_channel_that_passes_every_check_is_deleted_without_a_button(monkeypatch):
+def test_on_its_own_ryte_presses_both_buttons_itself_when_every_check_passes(monkeypatch):
+    """"RYTE NEEDS TO BE THE CONFIRMING IT ... DONT REMOVE IT IF POSSIBLE BUT
+    RYTE WILL PUSH IT" - the same two buttons, pressed by RYTE."""
     _guild, channel, said, buttons = _closing(
-        monkeypatch, says=[], auto=True, checks=[(True, "Quiet: 60 days"), (True, "Row is there")],
+        monkeypatch, says=[None, None], auto=True,
+        checks=[(True, "Quiet: 60 days"), (True, "Row is there")],
     )
-    assert channel.deleted is True and buttons == []
-    assert any("Every check passed" in one for one in said)
+    assert channel.deleted is True
+    assert [one.label for one in buttons] == ["Keep the sheet and show me the messages", "Delete #jay-rodriguez"]
+    assert all(getattr(one, "by_ryte", False) for one in buttons)
+    assert sum("RYTE presses this itself" in one for one in said) == 2
 
 
 def test_on_its_own_a_failed_check_is_never_deleted(monkeypatch):
     _guild, channel, said, buttons = _closing(
-        monkeypatch, says=[], auto=True, checks=[(True, "Quiet"), (False, "picture not in their folder")],
+        monkeypatch, says=[None, None], auto=True, checks=[(True, "Quiet"), (False, "picture not in their folder")],
     )
-    assert channel.deleted is False and buttons == []
+    assert channel.deleted is False
+    assert len(buttons) == 1, "the delete button was offered after a failed check"
     assert "Nothing deleted" in said[-1]
+
+
+def test_on_its_own_a_person_saying_leave_it_first_wins(monkeypatch):
+    guild, channel, said, buttons = _closing(monkeypatch, says=[None, False], auto=True)
+    assert channel.deleted is False
+    assert not getattr(buttons[1], "by_ryte", False)
+
+
+def test_on_its_own_a_person_can_stop_it_before_ryte_presses(monkeypatch):
+    import asyncio
+
+    _guild, channel, said, buttons = _closing(monkeypatch, says=["stop"], auto=True)
+    assert channel.deleted is False and len(buttons) == 1
 
 
 def test_on_its_own_one_with_no_sheet_is_left_for_you_untouched(monkeypatch):
@@ -3963,63 +4006,151 @@ def test_on_its_own_one_with_no_sheet_is_left_for_you_untouched(monkeypatch):
     assert "Left for you" in said[-1]
 
 
-def test_the_automatic_run_takes_ten_after_one_start(monkeypatch):
+def test_the_real_button_says_ryte_pressed_it():
+    import asyncio
+
+    from wilbyte.bot import views
+
+    async def go():
+        view = views.ConfirmView(requester_id=None, timeout=60, label="Delete #x", emoji="🗑",
+                                 danger=True, stoppable=True)
+        edited = []
+
+        class Message:
+            async def edit(self, **kw):
+                edited.append(kw)
+
+        await view.pressed_by_ryte(Message())
+        return view, edited
+
+    view, edited = asyncio.run(go())
+    assert view.confirmed is True and view.answered is True
+    assert view._go.label == "Delete #x — pressed by RYTE"
+    assert all(child.disabled for child in view.children)
+    assert edited and edited[0]["view"] is view
+
+
+def test_ryte_never_presses_over_a_person():
+    import asyncio
+
+    from wilbyte.bot import views
+
+    async def go():
+        view = views.ConfirmView(requester_id=None, timeout=60, label="Delete #x", emoji="🗑")
+        view.answered, view.confirmed = True, False  # somebody pressed Leave it
+        await view.pressed_by_ryte(None)
+        return view
+
+    view = asyncio.run(go())
+    assert view.confirmed is False and "RYTE" not in view._go.label
+
+
+def test_ryte_waits_for_a_person_then_presses(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, views
+
+    monkeypatch.setattr(client, "RYTE_PRESSES_AFTER", 0.01)
+
+    async def go():
+        view = views.ConfirmView(requester_id=None, timeout=60, label="Keep", emoji="🧹")
+        await client._ryte_presses(view, None)
+        return view
+
+    assert asyncio.run(go()).confirmed is True
+
+
+def _auto_run(monkeypatch, *, answers=None, on_its_own=False, count=14):
     import asyncio
     from datetime import timedelta as _td, timezone as _tz
 
     from wilbyte.bot import client
 
-    names = [f"agent{n:02d}-vet" for n in range(14)]
+    names = [f"agent{n:02d}-vet" for n in range(count)]
     old = datetime(2026, 6, 1, tzinfo=_tz.utc)
     monkeypatch.setattr(client, "_last_used", lambda one: (old + _td(days=int(one.name[5:7])), True))
     monkeypatch.setattr(client, "_can_read", lambda guild, one: True)
+    monkeypatch.setattr(client, "_QUIET_RUNNING", False)
     done = []
 
     async def clear(bot, responder, config, name, *, run=None, auto=False):
         assert auto is True
         done.append(name)
-        return {"<#1>": "held", "<#2>": "trouble"}.get(name, "deleted")
+        return (answers or {}).get(name, "deleted")
 
     monkeypatch.setattr(client, "_clear_out", clear)
-    starts = []
-
-    class Start:
-        def __init__(self, **kw):
-            starts.append(kw)
-            self.confirmed = True
-
-        async def wait(self):
-            pass
-
-    monkeypatch.setattr(client.views, "ConfirmView", Start)
     said = []
 
     class Heard:
-        requester_id = 1
+        requester_id = None
 
         async def send(self, text=None, **kw):
+            assert "view" not in kw, "the run itself asked for a press"
             said.append(text)
 
     guild = SimpleNamespace(text_channels=[SimpleNamespace(id=n, name=name, category=None)
                                            for n, name in enumerate(names)])
     bot = SimpleNamespace(get_guild=lambda where: guild)
-    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3", discord_notify_user_id="42"),
                              schedule=SimpleNamespace(timezone="America/New_York"),
                              discord=SimpleNamespace(approval_timeout_seconds=1))
-    asyncio.run(client._quiet_auto(bot, Heard(), config, "quiet auto"))
+    asyncio.run(client._quiet_auto(bot, Heard(), config, "quiet auto", on_its_own=on_its_own))
+    return done, said
 
-    assert len(starts) == 1 and done == [f"<#{n}>" for n in range(10)]
-    assert "10 deleted" not in said[-1] and "8 deleted" in said[-1]
+
+def test_the_automatic_run_takes_ten_with_no_start_button(monkeypatch):
+    """"i have to not click the button no more"."""
+    done, said = _auto_run(monkeypatch, answers={"<#1>": "held", "<#2>": "trouble"})
+
+    assert done == [f"<#{n}>" for n in range(10)]
+    assert "8 deleted" in said[-1]
     assert "#agent01-vet" in said[-1] and "Left for you" in said[-1]
     assert "Not deleted" in said[-1] and "4 more quiet" in said[-1]
 
 
-def test_nothing_happens_without_the_start(monkeypatch):
+def test_what_was_left_for_a_person_is_not_taken_again_next_run(monkeypatch):
+    """Otherwise every run would start on the same ones and never get past them."""
+    _auto_run(monkeypatch, answers={"<#0>": "held", "<#1>": "trouble", "<#2>": "left"})
+    done, _said = _auto_run(monkeypatch)
+
+    assert done[:3] == ["<#3>", "<#4>", "<#5>"]
+    assert not {"<#0>", "<#1>", "<#2>"} & set(done)
+
+
+def test_three_wrong_in_a_row_are_tried_again_next_run(monkeypatch):
+    """That was something being down, not those three channels."""
+    _auto_run(monkeypatch, answers={f"<#{n}>": "trouble" for n in range(3)})
+    done, _said = _auto_run(monkeypatch)
+    assert done[:3] == ["<#0>", "<#1>", "<#2>"]
+
+
+def test_a_stop_ends_the_automatic_run(monkeypatch):
+    done, said = _auto_run(monkeypatch, answers={"<#3>": "stopped"})
+    assert done == ["<#0>", "<#1>", "<#2>", "<#3>"]
+    assert any("Stopped" in str(one) for one in said)
+
+
+def test_on_its_own_it_tags_franklin_only_when_something_needs_him(monkeypatch):
+    _done, said = _auto_run(monkeypatch, on_its_own=True)
+    assert "<@42>" not in said[-1]
+    assert "about an hour" in said[-1]
+
+    _done, said = _auto_run(monkeypatch, on_its_own=True, answers={"<#3>": "held"})
+    assert said[-1].startswith("<@42>")
+
+
+def test_on_its_own_it_says_nothing_when_there_is_nothing_to_do(monkeypatch):
+    done, said = _auto_run(monkeypatch, on_its_own=True, count=0)
+    assert done == [] and said == []
+
+
+def test_two_runs_never_go_at_once(monkeypatch):
     import asyncio
 
     from wilbyte.bot import client
 
-    monkeypatch.setattr(client, "_last_used", lambda one: (datetime(2026, 1, 1), True))
+    monkeypatch.setattr(client, "_QUIET_RUNNING", True)
+    monkeypatch.setattr(client, "_last_used", lambda one: (datetime(2026, 1, 1, tzinfo=timezone.utc), True))
     monkeypatch.setattr(client, "_can_read", lambda guild, one: True)
     cleared = []
 
@@ -4029,17 +4160,8 @@ def test_nothing_happens_without_the_start(monkeypatch):
 
     monkeypatch.setattr(client, "_clear_out", clear)
 
-    class Start:
-        def __init__(self, **kw):
-            self.confirmed = False
-
-        async def wait(self):
-            pass
-
-    monkeypatch.setattr(client.views, "ConfirmView", Start)
-
     class Heard:
-        requester_id = 1
+        requester_id = None
 
         async def send(self, text=None, **kw):
             pass
@@ -4048,9 +4170,41 @@ def test_nothing_happens_without_the_start(monkeypatch):
     config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"),
                              schedule=SimpleNamespace(timezone="America/New_York"),
                              discord=SimpleNamespace(approval_timeout_seconds=1))
-    asyncio.run(client._quiet_auto(SimpleNamespace(get_guild=lambda w: guild), Heard(), config, "quiet auto"))
+    asyncio.run(client._quiet_auto(SimpleNamespace(get_guild=lambda w: guild), Heard(), config,
+                                   "quiet auto", on_its_own=True))
     assert cleared == []
 
+
+def test_the_hourly_run_is_due_once_an_hour_in_the_day_and_not_when_off():
+    from datetime import timezone as _tz
+
+    from wilbyte import quietauto
+
+    noon = datetime(2026, 10, 5, 12, 0, tzinfo=_tz.utc)
+    assert quietauto.due(noon, {})
+    assert not quietauto.due(noon.replace(hour=3), {}), "it ran in the night"
+    assert not quietauto.due(noon, {"last": noon.replace(minute=0, hour=11, second=1).isoformat()})
+    assert quietauto.due(noon, {"last": noon.replace(hour=11).isoformat()})
+    assert not quietauto.due(noon, {"on": False})
+
+
+def test_quiet_auto_off_and_on(monkeypatch):
+    import asyncio
+
+    from wilbyte import quietauto
+    from wilbyte.bot import client
+
+    said = []
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clearout_copy_channel_id="55"))
+    asyncio.run(client._quiet_auto_switch(Heard(), config, False))
+    assert quietauto.is_on() is False and "off" in said[-1]
+    asyncio.run(client._quiet_auto_switch(Heard(), config, True))
+    assert quietauto.is_on() is True and "<#55>" in said[-1]
 
 
 def test_two_channels_with_one_name_are_each_cleared_as_themselves(monkeypatch):
