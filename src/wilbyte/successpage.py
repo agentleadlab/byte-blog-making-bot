@@ -236,17 +236,28 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
             skipped.append(f"{one['what']} — filed under {section}, which is for full interviews only; "
                            "fix its section in the doc first")
             continue
-        if not any(section.casefold() == known.casefold() for known in SECTIONS):
+        known = section_named(section)
+        if not known:
             skipped.append(f"{one['what']} — “{section or 'no section'}” isn't one of the website sections")
             continue
         vid = video_id(one["link"])
-        entry = {"section": next(k for k in SECTIONS if k.casefold() == section.casefold()),
+        entry = {"section": known,
                  "id": vid, "title": one["title"], "who": name, "what": one["what"]}
         if not vid:
             waiting.append(entry)
             continue
         items.append(entry)
     return items, skipped, waiting
+
+
+def section_named(said: str) -> str:
+    """The website section a doc means, spelled the site's way - past a curly
+    apostrophe or a dropped "s": Karyn Giles's tab says "Agent’s Expectation"."""
+    def key(text: str) -> str:
+        return re.sub(r"[^a-z]", "", str(text or "").casefold()).rstrip("s")
+
+    wanted = key(said)
+    return next((one for one in SECTIONS if wanted and key(one) == wanted), "")
 
 
 def same_title(one: str, other: str) -> bool:

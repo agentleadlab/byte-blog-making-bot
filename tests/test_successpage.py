@@ -506,3 +506,17 @@ def test_duplicates_are_said_before_the_button(monkeypatch):
 
     assert [one["what"] for one in items] == ["Full interview"]
     assert any(one.startswith("Segment 2 — already on the page under Aged Leads") for one in skipped)
+
+
+
+@pytest.mark.parametrize("said, section", [
+    ("Agent’s Expectation", "Agent's Expectations"),
+    ("agents expectations", "Agent's Expectations"),
+    ("Veteran Trainings", "Veteran Training"),
+    ("IUL training", "IUL Training"),
+    ("Veteran", ""),
+    ("", ""),
+])
+def test_a_section_is_known_past_its_spelling(said, section):
+    """Karyn Giles's Segment 1: "“Agent’s Expectation” isn't one of the website sections"."""
+    assert sp.section_named(said) == section
