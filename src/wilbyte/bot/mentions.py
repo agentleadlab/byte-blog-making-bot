@@ -766,6 +766,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*(?:contracts|contract\s+check|check\s+contracts)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="contracts", brief=text)
+    if re.match(r"\s*(?:paid\s+(?:but\s+)?not\s+set\s*up|not\s+set\s*up|unset|payra\s+(?:setup|set\s*up|cards?))\s*[.?!]*\s*$",
+                text, re.IGNORECASE):
+        return MentionRequest(action="notsetup", brief=text)
     # "delivered Jay Rodriguez" - ordered against what's on their sheet. At the
     # front only: "delivered" is a word a copy brief can easily contain.
     delivered = re.match(
@@ -1229,6 +1232,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ordered against the leads on their sheet, with the line a dispute needs. **delivered**
 > on its own lists every order a week or more live that's short. I also say so on my own
 > each morning, once per order
+> @RYTE **not set up** — everybody who paid in Payra in the last two weeks with no card on
+> the board, or a card with no launch date. I also say so on my own, once per payment
 > @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.
 > **quiet unkeep <name>** takes them off; **quiet kept** shows the list
 > @RYTE **quiet** — goes through every channel nobody has used in two months, RYTE

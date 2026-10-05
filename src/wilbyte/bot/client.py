@@ -205,6 +205,7 @@ class WilByteBot(discord.Client):
         self.day_task: asyncio.Task | None = None
         self.contract_task: asyncio.Task | None = None
         self.delivery_task: asyncio.Task | None = None
+        self.paid_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
         self.offered_the_run = False
@@ -329,6 +330,14 @@ class WilByteBot(discord.Client):
             and (self.contract_task is None or self.contract_task.done())
         ):
             self.contract_task = self.loop.create_task(contract_check_loop(self))
+        # Paid in Payra with nothing on the board for it. On the agents
+        # switch, and only once Payra is being read.
+        if (
+            self.config.secrets.trello_agents_auto
+            and getattr(self.config.secrets, "payra_api_token", None)
+            and (self.paid_task is None or self.paid_task.done())
+        ):
+            self.paid_task = self.loop.create_task(paid_check_loop(self))
         # Proof of delivery, each morning: short orders said once. On the
         # agents switch - it is about them - and reads only.
         if self.config.secrets.trello_agents_auto and (
@@ -353,6 +362,9 @@ class WilByteBot(discord.Client):
             self.offered_the_run = True
             _also_running(self.loop.create_task(_offer_the_run(self)))
             _also_running(self.loop.create_task(_catch_up_payra(self)))
+            # The down alarm: say how long RYTE was gone, then check in
+            # every five minutes for as long as it's up.
+            _also_running(self.loop.create_task(alive_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -1332,6 +1344,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if not said and not problems:
                     said = "Nobody going live today or tomorrow."
                 await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
+                return
+
+            if request.action == "notsetup":
+                await _not_set_up(responder, config)
                 return
 
             if request.action == "delivered":
@@ -7228,6 +7244,83 @@ async def _delivered(responder: Responder, config: Config, who: str) -> None:
         + "".join(f"\n⚠ {one}" for one in problems),
         quiet=True,
     )
+
+
+async def _not_set_up(responder: Responder, config: Config) -> None:
+    """`@RYTE not set up` - paid in Payra, nothing (or no launch date) on the board."""
+    from .. import paidsetup
+
+    found, problems = await asyncio.to_thread(jobs.paid_not_set_up, config)
+    if found:
+        said = "💳 **Paid, but not set up:**\n" + "\n".join(paidsetup.describe(one) for one in found)
+    else:
+        said = (f"💳 Everybody who paid in the last {paidsetup.LOOK_BACK.days} days has a card "
+                "with a launch date." if not problems else "")
+    await responder.send(said + "".join(f"\n⚠ {one}" for one in problems), quiet=True)
+
+
+async def alive_loop(bot: "WilByteBot") -> None:
+    """"if Ryte goes down, nobody finds out". Back up after more than a
+    quarter of an hour gone, say so - and from then on, check in with the
+    outside service at HEALTHCHECK_URL every five minutes, so that it is the
+    one to tell Franklin when the check-ins stop."""
+    from .. import alive
+
+    now = datetime.now(timezone.utc)
+    last = await asyncio.to_thread(alive.last_seen)
+    if alive.was_down(now, last) is not None:
+        channel = _announce_channel(bot)
+        if channel is not None:
+            try:
+                ping = _unmarked_ping(bot.config)
+                await channel.send(((ping + "\n") if ping else "")
+                                   + alive.back_up(last, now, ZoneInfo(bot.config.schedule.timezone)))
+            except Exception:
+                log.warning("Couldn't say I'd been down", exc_info=True)
+    url = str(getattr(bot.config.secrets, "healthcheck_url", None) or "")
+    while not bot.is_closed():
+        try:
+            await asyncio.to_thread(alive.beat, datetime.now(timezone.utc))
+            if url:
+                await asyncio.to_thread(alive.check_in, url)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Down alarm check-in failed", exc_info=True)
+        await asyncio.sleep(alive.BEAT_SECONDS)
+
+
+async def paid_check_loop(bot: "WilByteBot") -> None:
+    """Every half hour from seven: a payment with no card, or a card with no
+    launch date, said once - "money taken with nothing delivered is how a
+    chargeback starts". Reads only."""
+    from .. import paidsetup
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            hour = datetime.now(ZoneInfo(bot.config.schedule.timezone)).hour
+            if responder is not None and hour >= CONTRACT_CHECK_FROM_HOUR:
+                found, problems = await asyncio.to_thread(jobs.paid_not_set_up, bot.config)
+                seen = await asyncio.to_thread(paidsetup.said)
+                fresh = [one for one in found if paidsetup.key(one) not in seen]
+                if fresh:
+                    ping = _unmarked_ping(bot.config)
+                    await responder.send(
+                        ((ping + "\n") if ping else "")
+                        + "💳 **Paid, but not set up:**\n"
+                        + "\n".join(paidsetup.describe(one) for one in fresh)
+                        + "\n-# `@RYTE not set up` for the whole list.",
+                        quiet=True,
+                    )
+                    await asyncio.to_thread(paidsetup.remember, [paidsetup.key(one) for one in fresh])
+                if problems:
+                    log.warning("Paid check: %s", "; ".join(problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Paid check failed; will try again shortly")
+        await asyncio.sleep(CONTRACT_CHECK_SECONDS)
 
 
 #: When the delivery check says its piece, on the board's clock.

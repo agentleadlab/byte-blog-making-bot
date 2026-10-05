@@ -247,6 +247,9 @@ class Secrets:
     payra_site_id: str | None = None
     # PandaDoc's API key, for finding signed contracts. Read-only use.
     pandadoc_api_key: str | None = None
+    # The down alarm's check-in link (healthchecks.io, free): RYTE visits it
+    # every five minutes, and when the visits stop that service tells Franklin.
+    healthcheck_url: str | None = None
     # The YouTube channels the interviews go up on, main one first - links,
     # @handles or UC... ids, comma-separated - for finding a segment's video by
     # its exact title.
@@ -425,6 +428,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 payra_api_token=_env("PAYRA_API_TOKEN"),
                 payra_site_id=_env("PAYRA_SITE_ID"),
                 pandadoc_api_key=_env("PANDADOC_API_KEY"),
+                healthcheck_url=_env("HEALTHCHECK_URL"),
                 youtube_channel_id=_env("YOUTUBE_CHANNEL_ID"),
                 wordpress_url=_env("WORDPRESS_URL"),
                 wordpress_user=_env("WORDPRESS_USER"),

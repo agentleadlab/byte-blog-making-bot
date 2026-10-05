@@ -5560,6 +5560,53 @@ def delivery_check(config: Config, *, today=None) -> tuple[list, list[str]]:
         client.close()
 
 
+def paid_not_set_up(config: Config, *, now=None) -> tuple[list, list[str]]:
+    """Payments from the last two weeks with no card on the board for them,
+    or a card that still says nothing about when they go live.
+    ([paidsetup.Unset], problems). Reads only."""
+    from .. import agents as rules
+    from .. import paidsetup, payraapi
+
+    now = now or datetime.now(timezone.utc)
+    data = payraapi.load()
+    if not data.get("invoices"):
+        return [], ["I haven't read any Payra invoices yet - is PAYRA_API_TOKEN in .env?"]
+    payments = paidsetup.recent_payments(data, now=now)
+    if not payments:
+        return [], []
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        found = []
+        for paid in payments:
+            cards = paidsetup.their_cards(paid, every)
+            if not cards:
+                found.append(paidsetup.Unset(paid=paid, why="no card"))
+                continue
+            card = paidsetup.own_card(paid, cards)
+            if card is None:
+                # Only an earlier order's card - a plan renewing, most likely.
+                continue
+            made = rules.made_at(str(card.get("id") or ""))
+            day = made.date() if made else paid.paid_at.date()
+            if rules.find_launch(str(card.get("desc") or ""), today=day) is not None:
+                continue
+            # The launch date gets added in a comment about as often as not.
+            said = client.card_comments(str(card.get("id") or ""))
+            if rules.find_launch("\n".join(said), today=day) is not None:
+                continue
+            found.append(paidsetup.Unset(
+                paid=paid, why="no launch date",
+                card_url=str(card.get("shortUrl") or card.get("url") or ""),
+                card_title=str(card.get("name") or ""),
+            ))
+        return found, []
+    except Exception as exc:
+        return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+
 def sheet_titles(config: Config, links) -> dict:
     """{link: the spreadsheet's name} for these links. Read only; a sheet that
     can't be opened is left out rather than guessed at."""
