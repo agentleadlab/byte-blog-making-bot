@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -391,6 +391,11 @@ class FathomClient:
     # for two hundred calls to identify one is what earned the 429.
     DEFAULT_LIMIT = 25
     MAX_PAGES = 4
+    #: How far back a posted link is looked for, a page at a time, stopping at
+    #: the first match. Don Alimi's strategy session was further back than
+    #: the 25 most recent calls - three days of them - and "I couldn't find
+    #: that call" was the answer for a call that was there.
+    FIND_PAGES = 40
 
     def meetings(self, *, include_transcript: bool = False, limit: int = DEFAULT_LIMIT) -> list[dict]:
         """Recent calls, newest first, following the cursor a few pages at most.
@@ -418,18 +423,61 @@ class FathomClient:
                 break
         return found[:limit]
 
-    def meeting_with_transcript(self, wanted_id: str) -> dict | None:
+    def _pages(self, *, pages: int, **params):
+        """Every call, newest first, a page at a time."""
+        cursor = None
+        for _ in range(pages):
+            asked = dict(params)
+            if cursor:
+                asked["cursor"] = cursor
+            data = self._get("/meetings", **asked)
+            batch = data.get("items") or data.get("meetings") or data.get("data") or []
+            yield batch
+            cursor = data.get("next_cursor") or data.get("cursor")
+            if not cursor or not batch:
+                return
+
+    def look_for(self, share_url: str, *, pages: int = FIND_PAGES) -> tuple[FathomCall | None, list[dict]]:
+        """The call behind a posted link, looked for as far back as it takes -
+        a page at a time, stopping the moment it turns up. (call, every call
+        seen while looking)."""
+        seen: list[dict] = []
+        for batch in self._pages(pages=pages):
+            seen.extend(batch)
+            found = match_share_url(batch, share_url)
+            if found is not None:
+                return found, seen
+        return None, seen
+
+    def meeting_with_transcript(self, wanted_id: str, *, around: str = "") -> dict | None:
         """One call's full record, transcript included.
 
         The whole meeting rather than its text, because segmenting needs the
         speaker turns with their timings and flattening them first throws that
         away.
+
+        `around` is when the call was made: asked for the minute either side
+        of it, which is one request for one call however old it is. Walked
+        back for otherwise, the same as finding it.
         """
         if not wanted_id:
             return None
-        for meeting in self.meetings(include_transcript=True):
-            if meeting_id(meeting) == wanted_id:
-                return meeting
+        if around:
+            try:
+                when = datetime.fromisoformat(str(around).replace("Z", "+00:00"))
+                window = {
+                    "created_after": (when - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "created_before": (when + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                for meeting in next(self._pages(pages=1, include_transcript="true", **window), []):
+                    if meeting_id(meeting) == wanted_id:
+                        return meeting
+            except (ValueError, FathomError):
+                pass
+        for batch in self._pages(pages=self.FIND_PAGES, include_transcript="true"):
+            for meeting in batch:
+                if meeting_id(meeting) == wanted_id:
+                    return meeting
         return None
 
     def transcript_for(self, wanted_id: str) -> str:
@@ -448,5 +496,4 @@ class FathomClient:
         match is the moment the response shape matters, so the evidence is
         handed back rather than thrown away.
         """
-        meetings = self.meetings()
-        return match_share_url(meetings, share_url), meetings
+        return self.look_for(share_url)

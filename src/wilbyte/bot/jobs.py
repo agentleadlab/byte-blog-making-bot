@@ -1056,8 +1056,8 @@ def fathom_transcript(config: Config, rec) -> str:
 
     client = fathom.FathomClient(config.secrets.fathom_api_key)
     try:
-        seen = client.meetings()
-        found, how = fathom.choose(seen, link=rec.url, filed=recordings.filed_ids())
+        found, seen = client.look_for(rec.url)
+        how = "the link" if found is not None else ""
         if found is None:
             # Say what was actually there rather than "not found". A link that
             # doesn't match is exactly when the response shape matters.
@@ -1583,12 +1583,18 @@ def _fathom_cues(config: Config, rec) -> tuple[list, str, str, str]:
 
     client = fathom.FathomClient(config.secrets.fathom_api_key)
     try:
-        seen = client.meetings()
-        found, _how = fathom.choose(seen, link=rec.url)
+        found, seen = client.look_for(rec.url)
         if found is None:
-            raise SegmentError(f"I couldn't find that call in Fathom. {fathom.describe(seen)}")
+            raise SegmentError(
+                f"I couldn't find that call in Fathom, going back {len(seen)} calls. "
+                "If it's older than that, or was recorded by somebody whose calls "
+                f"aren't shared with this Fathom key, I can't see it. {fathom.describe(seen)}"
+            )
 
-        meeting = client.meeting_with_transcript(fathom.meeting_id(found.raw or {}))
+        meeting = client.meeting_with_transcript(
+            fathom.meeting_id(found.raw or {}),
+            around=str((found.raw or {}).get("created_at") or ""),
+        )
         turns = fathom.timed_turns(meeting or {})
         if not turns:
             raise SegmentError(

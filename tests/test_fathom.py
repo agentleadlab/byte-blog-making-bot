@@ -273,3 +273,65 @@ def test_transcripts_are_left_out_of_the_listing(monkeypatch):
     client.meetings()
 
     assert "include_transcript" not in seen
+
+
+# --- a posted link, however far back the call is ---------------------------
+
+
+class Paged:
+    """A Fathom with ten calls a page, newest first."""
+
+    def __init__(self, calls, *, page=10):
+        self.calls, self.page, self.asked = calls, page, []
+
+    def __call__(self, path, **params):
+        self.asked.append(params)
+        if "created_after" in params:
+            return {"items": [c for c in self.calls
+                              if params["created_after"] <= c["created_at"] <= params["created_before"]]}
+        at = int(params.get("cursor") or 0)
+        batch = self.calls[at:at + self.page]
+        more = at + self.page < len(self.calls)
+        return {"items": batch, "next_cursor": str(at + self.page) if more else None}
+
+
+def _calls(n):
+    return [{"id": f"m{i}", "title": f"Strategy Session — Agent {i}",
+             "share_url": f"https://fathom.video/share/token{i}",
+             "created_at": f"2026-09-{30 - i // 10:02d}T{10 + i % 10:02d}:00:00Z"}
+            for i in range(n)]
+
+
+def test_a_call_further_back_than_the_recent_ones_is_found():
+    """Don Alimi's: "I couldn't find that call in Fathom. 25 call(s) visible"."""
+    from wilbyte import fathom
+
+    client = fathom.FathomClient("k")
+    fake = Paged(_calls(80))
+    client._get = fake
+    found, seen = client.look_for("https://fathom.video/share/token57")
+
+    assert found is not None and found.title == "Strategy Session — Agent 57"
+    # Stopped at the page it was on, not the whole history.
+    assert len(fake.asked) == 6 and len(seen) == 60
+
+
+def test_a_call_that_isnt_there_says_how_far_back_it_looked():
+    from wilbyte import fathom
+
+    client = fathom.FathomClient("k")
+    client._get = Paged(_calls(30))
+    found, seen = client.look_for("https://fathom.video/share/nothere")
+    assert found is None and len(seen) == 30
+
+
+def test_an_old_calls_transcript_is_one_request():
+    from wilbyte import fathom
+
+    client = fathom.FathomClient("k")
+    fake = Paged(_calls(80))
+    client._get = fake
+    meeting = client.meeting_with_transcript("m57", around="2026-09-25T17:00:00Z")
+
+    assert meeting["id"] == "m57"
+    assert len(fake.asked) == 1 and fake.asked[0]["include_transcript"] == "true"
