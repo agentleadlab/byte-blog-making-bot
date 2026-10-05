@@ -219,3 +219,59 @@ def test_answering_a_mention_writes_it_down(monkeypatch):
     asyncio.run(client.answer_mention(Bot(), _said(77, 0)))
 
     assert "77" in mentionseen.answered()
+
+
+# ------------------------------------- "no need for ryte to show updates here unless he was tag"
+
+
+def _updating(monkeypatch, tagged_ago):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    said = []
+
+    class Place:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(client, "_LAST_TAGGED", [])
+    if tagged_ago is not None:
+        client._LAST_TAGGED.append((datetime.now(timezone.utc) - timedelta(minutes=tagged_ago), Place()))
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(client.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(client.version, "update_waiting", lambda: "abc123 Something new")
+    announced = []
+    monkeypatch.setattr(client, "_announce_channel", lambda bot: announced.append(1) or Place())
+
+    def leave(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(client.os, "_exit", leave)
+
+    async def close():
+        return None
+
+    bot = SimpleNamespace(is_closed=lambda: False, run_lock=asyncio.Lock(), close=close)
+    try:
+        asyncio.run(client.updater_loop(bot))
+    except SystemExit:
+        pass
+    return said, announced
+
+
+def test_an_update_is_said_only_where_somebody_just_tagged_ryte(monkeypatch):
+    said, announced = _updating(monkeypatch, tagged_ago=2)
+    assert said and said[0].startswith("🔄 Updating myself")
+    assert announced == [], "it still went to the announcements channel"
+
+
+def test_an_update_nobody_is_waiting_on_is_said_nowhere(monkeypatch):
+    for ago in (None, 30):
+        said, announced = _updating(monkeypatch, tagged_ago=ago)
+        assert said == [] and announced == []

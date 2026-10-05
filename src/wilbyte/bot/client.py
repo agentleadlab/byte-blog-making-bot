@@ -422,8 +422,25 @@ class WilByteBot(discord.Client):
             await handle_sop_post(self, message)
 
 
+#: How recently somebody has to have tagged RYTE for a restart to be said.
+#: "no need for ryte to show updates here unless he was tag".
+TAGGED_LATELY = timedelta(minutes=10)
+
+#: (when, channel) of the last @RYTE - where to say "back in a moment".
+_LAST_TAGGED: list = []
+
+
+def _tagged_lately(now: datetime):
+    """The channel somebody tagged RYTE in within the last ten minutes, or None."""
+    if not _LAST_TAGGED:
+        return None
+    when, channel = _LAST_TAGGED[-1]
+    return channel if now - when <= TAGGED_LATELY else None
+
+
 async def answer_mention(bot: "WilByteBot", message) -> None:
     """Answer one @RYTE, and write down that it was answered."""
+    _LAST_TAGGED[:] = [(datetime.now(timezone.utc), getattr(message, "channel", None))]
     said = getattr(message, "id", None)
     try:
         if said is not None:
@@ -1605,9 +1622,14 @@ async def updater_loop(bot: "WilByteBot") -> None:
             log.info("Update %s is waiting, but a run is open - leaving it", waiting)
             continue
 
-        channel = _announce_channel(bot)
+        # Said only to somebody who has just tagged RYTE, where they tagged
+        # it - they're waiting on an answer. Otherwise nobody needs telling.
+        channel = _tagged_lately(datetime.now(timezone.utc))
         if channel is not None:
-            await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
+            try:
+                await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
+            except Exception:
+                log.warning("Couldn't say I was updating", exc_info=True)
         log.info("Restarting onto %s", waiting)
         await bot.close()
         os._exit(RESTART_EXIT_CODE)
