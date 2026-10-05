@@ -211,7 +211,7 @@ def test_nothing_new_writes_nothing(monkeypatch):
 
     monkeypatch.setattr(jobs, "_wordpress", lambda config: Site())
     said = jobs.success_post(SimpleNamespace(), [_item("Aged Leads", "BBBBBBBBBBB", "Old aged one")])
-    assert saved == [] and "Already up" in said
+    assert saved == [] and "Not added: Old aged one — already on the page under Aged Leads" in said
 
 
 def test_asking_for_it():
@@ -427,3 +427,82 @@ def test_with_no_link_in_the_tab_the_set_channels_are_searched(monkeypatch):
 
     assert [one[:6] for one in read] == ["UUmain", "UUseco"]
     assert [(one["what"], one["id"]) for one in items] == [("Full interview", "FULL0000000")]
+
+
+
+# ------------------------------------------------ "not to post similar/duplicates"
+
+
+def test_the_same_video_in_another_section_is_not_added():
+    _data, went, already = sp.add(sp.parse_live(_page()), [_item("Veteran Training", "BBBBBBBBBBB", "New title")])
+    assert went == [] and "already on the page under Aged Leads" in already[0]["why"]
+
+
+def test_a_re_upload_with_the_same_title_is_not_added():
+    _data, went, already = sp.add(sp.parse_live(_page()), [_item("Aged Leads", "ZZZZZZZZZZZ", "OLD AGED ONE!")])
+    assert went == [] and "looks the same as “Old aged one”" in already[0]["why"]
+
+
+def test_a_near_identical_title_is_not_added():
+    _data, went, already = sp.add(sp.parse_live(_page()), [
+        _item("Agent Success Full Interviews", "ZZZZZZZZZZZ", "Old full one (Full Interview)"),
+    ])
+    assert went == [] and already
+
+
+def test_the_same_one_twice_in_one_post_goes_up_once():
+    _data, went, already = sp.add(sp.parse_live(_page()), [
+        {**_item("Aged Leads", "CCCCCCCCCCC", "Brand new"), "what": "Segment 2"},
+        {**_item("Aged Leads", "CCCCCCCCCCC", "Brand new"), "what": "Segment 3"},
+    ])
+    assert [one["what"] for one in went] == ["Segment 2"]
+    assert "the same as Segment 2 in this post" in already[0]["why"]
+
+
+@pytest.mark.parametrize("one, other, same", [
+    ("Stop Trying to Marry the Client", "stop trying to marry the client!", True),
+    ("Karyn Giles: 13 Years", "Karyn Giles: 13 Years — Full Interview", True),
+    ("How She Closes Veterans, Part 1", "How She Closes Veterans, Part 2", False),
+    ("Why Aged Leads Work", "Why Fresh Leads Work", False),
+    ("The Full Veteran Telesales Script", "The Full IUL Telesales Script", False),
+    ("Why She Quizzes Veterans on Their Own Benefits Before She Ever Quotes",
+     "Why She Quizzes Veterans On Their Own Benefits Before She Quotes", True),
+])
+def test_what_counts_as_the_same_title(one, other, same):
+    assert sp.similar_titles(one, other) is same
+
+
+def test_duplicates_are_said_before_the_button(monkeypatch):
+    from wilbyte import docs, youtube_api
+    from wilbyte.bot import jobs
+
+    class Doc:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def contents(self):
+            return [(docs.Tab("t.1", "Karyn Giles"), LAID_OUT, "")]
+
+    class Site:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def load(self, **kw):
+            data = sp.parse_live(_page())
+            data["sections"][1]["v"].append({"id": "4JSaDVPFbTc", "t": "How to Make an Aged Lead Feel New", "w": "Karyn"})
+            return data
+
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: Doc())
+    monkeypatch.setattr(jobs, "_wordpress", lambda config: Site())
+    monkeypatch.setattr(youtube_api, "get_video", lambda vid: {"snippet": {}})
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D"))
+    _tab, items, skipped = jobs.success_plan(config, "Karyn Giles")
+
+    assert [one["what"] for one in items] == ["Full interview"]
+    assert any(one.startswith("Segment 2 — already on the page under Aged Leads") for one in skipped)

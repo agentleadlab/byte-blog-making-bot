@@ -81,22 +81,68 @@ def _section(data: dict, name: str) -> dict | None:
     )
 
 
+def _bare(title: str) -> str:
+    return " ".join(re.sub(r"[^\w$%]+", " ", str(title or "").casefold()).split())
+
+
+#: How alike two titles have to be to count as the same video posted twice.
+SIMILAR = 0.9
+#: Words a re-upload tends to gain that don't make it a different video.
+_DRESSING = re.compile(r"\b(?:full interview|full|interview|official|video|clip|short|shorts|hd)\b")
+
+
+def similar_titles(one: str, other: str) -> bool:
+    """Whether two titles are the same video posted twice: the same once
+    capitals, punctuation and a "(Full Interview)" are aside, or nearly the
+    same. A different number is a different video - Part 1 isn't Part 2."""
+    from difflib import SequenceMatcher
+
+    a, b = _bare(one), _bare(other)
+    if not a or not b:
+        return False
+    if re.findall(r"\d+", a) != re.findall(r"\d+", b):
+        return False
+    plain_a, plain_b = " ".join(_DRESSING.sub(" ", a).split()), " ".join(_DRESSING.sub(" ", b).split())
+    if a == b or (plain_a and plain_a == plain_b):
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= SIMILAR
+
+
+def duplicate_of(data: dict, item: dict) -> str:
+    """Why this is already on the page, or "" when it isn't - "it has to make
+    sure not to post similar/duplicates". The same video in any section, or
+    one whose title is the same or nearly so."""
+    for row in data.get("sections") or []:
+        for v in row.get("v") or []:
+            if v.get("id") == item["id"]:
+                return f"already on the page under {row['c']}"
+            if similar_titles(v.get("t"), item["title"]):
+                return f"looks the same as “{v.get('t')}” already under {row['c']}"
+    return ""
+
+
 def add(data: dict, items: list[dict]) -> tuple[dict, list[dict], list[dict]]:
     """Each {section, id, title, who} first in its section. (the new list,
-    what went up, what was already there). A video already in its section is
-    not added twice."""
+    what went up, what was already there - each with its `why`). Nothing is
+    added twice: not a video already on the page, not one with the same or a
+    near-identical title, and not the same one twice in one go."""
     data = json.loads(json.dumps(data))
     went, already = [], []
-    # Last first, so the order they were given in is the order they show in.
-    for item in reversed(items):
-        row = _section(data, item["section"])
-        if row is None:
+    for item in items:
+        if _section(data, item["section"]) is None:
             raise SuccessError(f"There's no “{item['section']}” section on the Success Stories page.")
-        if any(v["id"] == item["id"] for v in row["v"]):
-            already.insert(0, item)
+        why = duplicate_of(data, item) or next(
+            (f"the same as {one['what']} in this post" for one in went
+             if one["id"] == item["id"] or similar_titles(one["title"], item["title"])),
+            "",
+        )
+        if why:
+            already.append({**item, "why": why})
             continue
-        row["v"].insert(0, {"id": item["id"], "t": item["title"], "w": item["who"]})
-        went.insert(0, item)
+        went.append(item)
+    # Last first, so the order they were given in is the order they show in.
+    for item in reversed(went):
+        _section(data, item["section"])["v"].insert(0, {"id": item["id"], "t": item["title"], "w": item["who"]})
     return data, went, already
 
 

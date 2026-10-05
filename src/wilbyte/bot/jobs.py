@@ -10304,6 +10304,16 @@ def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
     # In the doc's order, whichever way each link was found.
     order = {one["what"]: at for at, one in enumerate(items + waiting)}
     items.sort(key=lambda one: order.get(one["what"], 0))
+    # What's already on the page is said before the button, not after it -
+    # the button's count is what will actually go up.
+    try:
+        with _wordpress(config) as site:
+            held, _started = _success_list(site)
+        _left, fresh, already = successpage.add(held, items)
+        items = fresh
+        skipped += [f"{one['what']} — {one['why']}, so not again" for one in already]
+    except Exception:
+        pass  # checked again when it is written
     return tab.title, items, skipped
 
 
@@ -10378,7 +10388,7 @@ def success_post(config: Config, items: list[dict]) -> str:
         if went:
             _success_save(site, updated)
     lines = [f"✅ **{one['title']}** → {one['section']}" for one in went]
-    lines += [f"• Already up: {one['title']} ({one['section']})" for one in already]
+    lines += [f"• Not added: {one['title']} — {one['why']}" for one in already]
     if started and went:
         lines.append("-# First one: I started from the videos already on the page.")
     return "\n".join(lines) or "Nothing to add."
