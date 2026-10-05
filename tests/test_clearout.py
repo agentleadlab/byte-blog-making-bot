@@ -418,7 +418,8 @@ class Guild:
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
              on_card="https://sheet", in_channel="", rows=None, unread=False,
-             welcomed=True, checks=None, auto=False, twin=False, target=None):
+             welcomed=True, checks=None, auto=False, twin=False, target=None,
+             ordering=(True, "No order card for them in the last 60 days")):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed.
     `checks` is what RYTE's look at its own work finds - all fine unless said.
     `twin` adds a second channel of the same name (id 12, kept as
@@ -472,6 +473,7 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
         return list(checks) if checks is not None else [(True, "all fine")]
 
     monkeypatch.setattr(bot_client, "_check_my_work", checked)
+    monkeypatch.setattr(bot_client.jobs, "recent_order", lambda config, name: ordering)
     if not picture:
         async def refuse(content=None, **kw):
             raise RuntimeError("Discord said no")
@@ -4251,3 +4253,196 @@ def test_a_run_is_told_the_channel_by_name_not_by_number():
     assert client._channel_label(bot, "<#222>") == "keith-harper-iul"
     assert client._channel_label(bot, "<#333>") == "<#333>"
     assert client._channel_label(bot, "jay-rodriguez") == "jay-rodriguez"
+
+
+# ------------------------------------------------ "MAKE SURE RYTE DONT MAKE MISTAKE HERE"
+
+
+def test_mujeeb_is_kept_from_the_start_both_spellings():
+    """"leave mujeeb out" - for good, before anybody types anything."""
+    from wilbyte import keeplist
+
+    for one in MUJEEB:
+        assert keeplist.kept("1", one)
+    assert not keeplist.kept("1", "jay-rodriguez")
+
+
+def test_keep_and_unkeep_by_person_and_by_channel():
+    from wilbyte import keeplist
+
+    keeplist.keep(["jayrodriguez"])
+    assert keeplist.kept("1", "jay_rodriguez-vet")
+    keeplist.unkeep(["jayrodriguez"])
+    assert not keeplist.kept("1", "jay_rodriguez-vet")
+    keeplist.keep(channels=["77"])
+    assert keeplist.kept("77", "anybody-vet") and not keeplist.kept("78", "anybody-vet")
+    assert keeplist.kept("1", MUJEEB[0]), "keeping somebody else dropped Mujeeb"
+
+
+def test_a_keep_list_that_cant_be_read_still_keeps_mujeeb():
+    from wilbyte import keeplist
+
+    keeplist.KEEP_PATH.write_text("{not json", encoding="utf-8")
+    assert keeplist.readable() is False
+    assert keeplist.kept("1", MUJEEB[1])
+
+
+@pytest.mark.parametrize("auto", [False, True])
+def test_a_kept_channel_is_never_cleared_out(monkeypatch, auto):
+    guild, channel, said, buttons = _closing(
+        monkeypatch, says=[True, True, None, None], called="mujeeb-anwari-standard-vet",
+        name="Mujeeb Anwari", auto=auto,
+    )
+    assert channel.deleted is False and buttons == []
+    assert "keep list" in said[-1]
+
+
+def test_the_delete_itself_refuses_a_kept_channel():
+    """The last look, in the one place a channel is deleted."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    channel = Channel("mujeeb_anwari-standard-vet")
+    guild = Guild(channel, None)
+    plan = clearout.Plan(name="mujeeb", channel=clearout.Channel(channel_id="11", name=channel.name),
+                         guild_id="3")
+    said = []
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    how = asyncio.run(client._delete_the_channel(Heard(), guild, plan, "mujeeb"))
+    assert how == "trouble" and channel.deleted is False
+    assert "keep list" in said[-1]
+
+
+def test_on_its_own_somebody_with_two_channels_is_left_for_you(monkeypatch):
+    guild, first, said, buttons = _closing(
+        monkeypatch, says=[None, None], auto=True, called="keith-harper-iul",
+        name="Keith Harper", twin=True, target="<#12>",
+    )
+    assert guild.twin.deleted is False and first.deleted is False and buttons == []
+    assert "they have 2 channels" in said[-1]
+
+
+def test_by_hand_two_channels_is_still_your_call(monkeypatch):
+    """Only the automatic run holds them - by hand, Franklin is the one deciding."""
+    guild, first, said, _ = _closing(
+        monkeypatch, says=[True, True], called="keith-harper-iul",
+        name="Keith Harper", twin=True, target="<#12>",
+    )
+    assert guild.twin.deleted is True and first.deleted is False
+
+
+@pytest.mark.parametrize("ordering", [
+    (False, "They have an order card from the last 60 days: AGED LEAD - Jay Rodriguez"),
+    (False, "Couldn't read the board to see if they still order: 503"),
+])
+def test_on_its_own_a_client_still_ordering_is_left_for_you(monkeypatch, ordering):
+    _guild, channel, said, buttons = _closing(monkeypatch, says=[None, None], auto=True, ordering=ordering)
+    assert channel.deleted is False and buttons == []
+    assert ordering[1] in said[-1]
+
+
+@pytest.mark.parametrize("card, same", [
+    ("Jay Rodriguez", True),
+    ("Jay Rodriguez OTP VET", True),
+    ("Jason Rodriguez", True),       # same surname and initial: held, to be safe
+    ("Jay Rodrigues", False),
+    ("Maria Rodriguez", False),
+    ("Jay Smith", False),
+])
+def test_same_person_errs_towards_holding(card, same):
+    assert clearout.same_person("jay_rodriguez-vet", card) is same
+
+
+def test_a_channel_with_only_a_first_name_still_finds_their_order():
+    assert clearout.same_person("mujeeb-vet", "AGED LEAD Mujeeb Anwari")
+
+
+def test_a_recent_order_card_is_found_and_an_old_one_is_not(monkeypatch):
+    from datetime import timezone as _tz
+
+    from wilbyte.bot import jobs
+
+    now = datetime(2026, 10, 5, tzinfo=_tz.utc)
+
+    def card_made(when, name):
+        return {"id": f"{int(when.timestamp()):08x}" + "0" * 16, "name": name, "shortUrl": "https://trello/c"}
+
+    recent = card_made(datetime(2026, 9, 20, tzinfo=_tz.utc), "AGED LEAD - Jay Rodriguez")
+    old = card_made(datetime(2026, 5, 1, tzinfo=_tz.utc), "New Agent - Jay Rodriguez")
+    monkeypatch.setattr(jobs, "_board_for_a_while", lambda config: [old])
+    assert jobs.recent_order(None, "jay_rodriguez-vet", now=now)[0] is True
+    monkeypatch.setattr(jobs, "_board_for_a_while", lambda config: [old, recent])
+    ok, said = jobs.recent_order(None, "jay_rodriguez-vet", now=now)
+    assert ok is False and "AGED LEAD - Jay Rodriguez" in said
+
+    def broken(config):
+        raise RuntimeError("503")
+
+    monkeypatch.setattr(jobs, "_board_for_a_while", broken)
+    assert jobs.recent_order(None, "jay_rodriguez-vet", now=now)[0] is False
+
+
+def test_the_automatic_run_never_picks_a_kept_channel(monkeypatch):
+    from wilbyte import keeplist
+
+    keeplist.keep(["agent00", "agent02"])
+    done, _said = _auto_run(monkeypatch)
+    assert "<#0>" not in done and "<#2>" not in done and done[0] == "<#1>"
+
+
+def test_the_automatic_run_stops_if_the_keep_list_cant_be_read(monkeypatch):
+    from wilbyte import keeplist
+
+    keeplist.KEEP_PATH.write_text("{not json", encoding="utf-8")
+    done, said = _auto_run(monkeypatch, on_its_own=True)
+    assert done == [] and "keep list" in said[-1]
+
+
+def test_quiet_keep_by_name_keeps_all_their_channels(monkeypatch):
+    import asyncio
+
+    from wilbyte import keeplist
+    from wilbyte.bot import client
+
+    keeplist.unkeep(["mujeebanwari"])
+    said = []
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    guild = SimpleNamespace(text_channels=[SimpleNamespace(id=n, name=one) for n, one in enumerate(MUJEEB)])
+    bot = SimpleNamespace(get_guild=lambda w: guild)
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"))
+    asyncio.run(client._quiet_keep(bot, Heard(), config, "keep", "mujeeb"))
+    assert all(keeplist.kept("9", one) for one in MUJEEB)
+    assert "mujeebanwari" in said[-1]
+    asyncio.run(client._quiet_keep(bot, Heard(), config, "kept", ""))
+    assert "mujeebanwari" in said[-1]
+    asyncio.run(client._quiet_keep(bot, Heard(), config, "unkeep", "Mujeeb Anwari"))
+    assert not keeplist.kept("9", MUJEEB[0])
+
+
+def test_quiet_unkeep_by_first_name_and_by_nobody(monkeypatch):
+    import asyncio
+
+    from wilbyte import keeplist
+    from wilbyte.bot import client
+
+    said = []
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    bot = SimpleNamespace(get_guild=lambda w: SimpleNamespace(text_channels=[]))
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_clients_guild_id="3"))
+    asyncio.run(client._quiet_keep(bot, Heard(), config, "unkeep", "nobody here"))
+    assert "isn't on the keep list" in said[-1] and keeplist.kept("1", MUJEEB[0])
+    asyncio.run(client._quiet_keep(bot, Heard(), config, "unkeep", "mujeeb"))
+    assert not keeplist.kept("1", MUJEEB[0])

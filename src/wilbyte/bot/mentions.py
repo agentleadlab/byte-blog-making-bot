@@ -1219,7 +1219,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **quiet auto** — the next 10 quiet channels now, RYTE pressing the buttons: each
 > kept, checked, and deleted only if every check passes; anything else is left and listed.
 > It also runs by itself every hour, 8am to 8pm, in Channel Deletion —
-> **quiet auto off** / **quiet auto on** to stop or start that
+> **quiet auto off** / **quiet auto on** to stop or start that. On its own it never deletes
+> someone with two channels, or with an order card in the last 60 days
+> @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.
+> **quiet unkeep <name>** takes them off; **quiet kept** shows the list
 > @RYTE **quiet** — every channel in the clients server nobody has used in
 > two months, quietest first. Add **3 months** for a tighter list. Reads only;
 > nothing is deleted, and `clearout` is still how anything goes

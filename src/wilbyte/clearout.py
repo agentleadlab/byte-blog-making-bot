@@ -221,6 +221,32 @@ def person_in(name: str) -> str:
     return "".join(words_of(name))
 
 
+def same_person(channel_name: str, agent: str) -> bool:
+    """Whether a Trello card's name could be this channel's person.
+
+    Generous on purpose: it decides whether an automatic clear-out stops and
+    leaves the channel for a person. Matching too much leaves a channel to be
+    looked at; matching too little deletes a client who is still ordering.
+    Every word of the channel's person in the card's name, or the same
+    surname and first initial - "Mike" and "Michael".
+    """
+    theirs, card = words_of(channel_name), words_of(agent)
+    if not theirs or not card:
+        return False
+    if set(theirs) <= set(card):
+        return True
+    return (len(theirs) > 1 and theirs[-1] in card
+            and any(one[:1] == theirs[0][:1] for one in card if one != theirs[-1]))
+
+
+def their_channels(one: Channel, channels) -> list:
+    """Every channel with the same person in its name - Mujeeb Anwari's two,
+    Keith Harper's two. More than one is a person's call, not RYTE's."""
+    person = person_in(one.name)
+    return [other for other in channels or []
+            if person and not off_limits(other) and person_in(other.name) == person]
+
+
 def _run(part: list, whole: list) -> bool:
     """Whether `part` sits in `whole` word for word, in one piece."""
     return any(whole[at:at + len(part)] == part for at in range(len(whole) - len(part) + 1))

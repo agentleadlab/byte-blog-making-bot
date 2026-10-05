@@ -1350,6 +1350,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 # Wherever it was asked, a copy in Channel Deletion - the whole
                 # run, buttons and all.
                 brief = request.brief or ""
+                keeping = re.search(r"\b(unkeep|keep|kept)\b\s*(.*)$", brief, re.IGNORECASE | re.DOTALL)
+                if keeping:
+                    await _quiet_keep(bot, responder, config, keeping.group(1).casefold(), keeping.group(2))
+                    return
                 is_auto = re.search(r"\bauto(?:matic(?:ally)?)?\b", brief, re.IGNORECASE)
                 if is_auto and re.search(r"\b(?:off|stop|pause|disable)\b", brief, re.IGNORECASE):
                     await _quiet_auto_switch(responder, config, False)
@@ -3082,6 +3086,15 @@ async def _clear_out(
         )
         return "trouble"
 
+    from .. import keeplist
+
+    if keeplist.kept(found[0].channel_id, found[0].name):
+        await responder.send(
+            f"🔒 **#{found[0].name}** is on the keep list, so I don't clear it out. "
+            f"`@RYTE quiet unkeep {found[0].name}` first if it really should go."
+        )
+        return "kept"
+
     plan = clearout.Plan(name=name, channel=found[0], guild_id=str(guild.id))
     member = _member_called(guild, name)
     if member is not None:
@@ -3142,6 +3155,17 @@ async def _clear_out(
     plan.problems += trouble
 
     held = list(plan.problems) + list(plan.notes) + ([] if plan.sheet else ["no sheet link found"])
+    if auto:
+        # Two more a person would think of before deleting on their own -
+        # "MAKE SURE RYTE DONT MAKE MISTAKE HERE".
+        theirs = clearout.their_channels(plan.channel, channels)
+        if len(theirs) > 1:
+            held.append(f"they have {len(theirs)} channels ("
+                        + ", ".join(f"#{one.name}" for one in theirs)
+                        + ") — which one goes is yours to say")
+        ordering, said = await asyncio.to_thread(jobs.recent_order, config, plan.channel.name)
+        if not ordering:
+            held.append(said)
     if auto and held:
         # On its own, anything that needed a person's eye is left for one: a
         # note (two sheets, a name that doesn't fit), a problem, no sheet.
@@ -3332,6 +3356,10 @@ async def _delete_the_channel(responder: Responder, guild, plan, name: str) -> s
     # the one this clear-out was for, in this server, and never one of the
     # server's own.
     refused = clearout.the_one_to_delete(plan, channel, guild_id=guild.id)
+    from .. import keeplist
+
+    if not refused and keeplist.kept(plan.channel.channel_id, getattr(channel, "name", plan.channel.name)):
+        refused = f"#{plan.channel.name} is on the keep list"
     if refused:
         trouble.append(f"Didn't delete anything — {refused}.")
     else:
@@ -3779,9 +3807,19 @@ async def _quiet_channels(
         ))
 
     quiet, ours, unknown = clearout.quiet_ones(channels, since=since)
+    from .. import keeplist
+
+    keep = keeplist.load()
+    held_back = [one for one in quiet if keeplist.kept(one.channel_id, one.name, keep)]
+    quiet = [one for one in quiet if one not in held_back]
     pages = clearout.describe_quiet(quiet, ours, unknown, since=since, now=now)
     offered = clearout.pick_from(quiet, now=now)
 
+    if held_back:
+        await responder.send(
+            "🔒 On the keep list, so not in the list: "
+            + ", ".join(f"#{one.name}" for one in held_back)
+        )
     # The picker goes on the last message, under the names it offers.
     for page in pages[:-1]:
         await responder.send(page)
@@ -3877,7 +3915,7 @@ async def _down_the_list(
             break
         if how == "deleted":
             went.append(name)
-        elif how == "left":
+        elif how in ("left", "kept"):
             left.append(name)
         else:
             trouble.append(name)
@@ -3965,7 +4003,12 @@ async def _quiet_auto(
     for him.
     """
     global _QUIET_RUNNING
-    from .. import clearout, quietauto
+    from .. import clearout, keeplist, quietauto
+
+    if not keeplist.readable():
+        # Without the keep list, there is no knowing who must never go.
+        await responder.send("⚠ I couldn't read the keep list, so I'm not clearing anything out on my own.")
+        return
 
     where = (config.secrets.discord_clients_guild_id or "").strip()
     guild = bot.get_guild(int(where)) if where.isdigit() else None
@@ -3990,7 +4033,9 @@ async def _quiet_auto(
         ))
     quiet, _ours, _unknown = clearout.quiet_ones(channels, since=since)
     waiting = quietauto.leave_alone(now)
-    ready = [one for one in quiet if one.readable and one.channel_id not in waiting]
+    keep = keeplist.load()
+    ready = [one for one in quiet if one.readable and one.channel_id not in waiting
+             and not keeplist.kept(one.channel_id, one.name, keep)]
     picked = ready[:AUTO_PER_RUN]
     batch = [clearout.target(one) for one in picked]
     called = {clearout.target(one): one.name for one in picked}
@@ -4035,6 +4080,8 @@ async def _quiet_auto(
             elif how == "left":
                 # A person said "leave it" - their answer, not one to retry.
                 left.append(target)
+                wrong_in_a_row = 0
+            elif how == "kept":
                 wrong_in_a_row = 0
             elif how == "held":
                 held.append(target)
@@ -4111,6 +4158,57 @@ async def quiet_auto_loop(bot: "WilByteBot") -> None:
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("The automatic quiet run failed; will try again later")
         await asyncio.sleep(QUIET_AUTO_LOOK_SECONDS)
+
+
+async def _quiet_keep(bot, responder: Responder, config: Config, how: str, who: str) -> None:
+    """`@RYTE quiet keep <name>` / `unkeep <name>` / `kept` - the channels no
+    clear-out touches. By the person, so all of their channels at once."""
+    from .. import clearout, keeplist
+
+    who = " ".join((who or "").replace("#", " ").split())
+    if how == "kept" or not who:
+        held = await asyncio.to_thread(keeplist.load)
+        people, ids = held.get("people", []), held.get("channels", [])
+        await responder.send(
+            "🔒 **Keep list** — never cleared out, by hand or on my own:\n"
+            + ("\n".join([f"• {one}" for one in people] + [f"• <#{one}>" for one in ids])
+               or "• (nobody)")
+            + "\n-# `@RYTE quiet keep <name>` adds, `@RYTE quiet unkeep <name>` takes off."
+        )
+        return
+    guild = _clients_guild(bot, config)
+    channels = [
+        clearout.Channel(channel_id=str(one.id), name=str(one.name))
+        for one in (guild.text_channels if guild is not None else [])
+    ]
+    by_id = re.fullmatch(r"<?#?(\d{6,})>?", who)
+    found = ([one for one in channels if one.channel_id == by_id.group(1)] if by_id
+             else clearout.channels_for(who, channels))
+    if not found and not by_id and how == "keep":
+        # Keeping too much only leaves a channel standing, so a first name on
+        # its own - "keep mujeeb" - is enough here, where it never is to delete.
+        wanted = set(clearout.words_of(who))
+        found = [one for one in channels if wanted and wanted <= set(clearout.words_of(one.name))]
+    found = [one for one in found if not clearout.off_limits(one)]
+    people = sorted({clearout.person_in(one.name) for one in found if clearout.person_in(one.name)})
+    if not found and not by_id:
+        people = [clearout.person_in(who)] if clearout.person_in(who) else []
+    if not people:
+        await responder.send(f"I couldn't tell whose channel **{who}** is.")
+        return
+    named = ", ".join(f"#{one.name}" for one in found) or "no channel right now"
+    if how == "keep":
+        await asyncio.to_thread(keeplist.keep, people)
+        await responder.send(f"🔒 Kept: **{', '.join(people)}** ({named}). No clear-out will touch them.")
+    else:
+        held = await asyncio.to_thread(keeplist.load)
+        typed = clearout.person_in(who)
+        gone = [one for one in held.get("people", []) if one in people or (typed and typed in one)]
+        if not gone:
+            await responder.send(f"**{who}** isn't on the keep list — `@RYTE quiet kept` shows who is.")
+            return
+        await asyncio.to_thread(keeplist.unkeep, gone)
+        await responder.send(f"🔓 Off the keep list: **{', '.join(gone)}** ({named}).")
 
 
 async def _quiet_auto_switch(responder: Responder, config: Config, on: bool) -> None:

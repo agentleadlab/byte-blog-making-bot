@@ -5518,6 +5518,59 @@ def quiet_check(newest, now) -> tuple[bool, str]:
     return True, f"Quiet: the newest message is from {newest:%b %-d, %Y} ({days} days ago)"
 
 
+#: An order card this recent means a client still buying, whatever their
+#: channel says - their channel is not RYTE's to delete on its own.
+RECENT_ORDER_DAYS = 60
+
+#: The board, read once for a run of ten rather than once a channel.
+_BOARD_READ: dict = {}
+_BOARD_READ_LOCK = threading.Lock()
+BOARD_READ_FOR = timedelta(minutes=10)
+
+
+def _board_for_a_while(config: Config) -> list:
+    now = datetime.now(timezone.utc)
+    with _BOARD_READ_LOCK:
+        held = _BOARD_READ.get("cards")
+        if held is not None and now - _BOARD_READ["at"] < BOARD_READ_FOR:
+            return held
+    client = open_trello(config)
+    try:
+        cards = client.board_cards(config.secrets.trello_board_id, archived=True)
+    finally:
+        client.close()
+    with _BOARD_READ_LOCK:
+        _BOARD_READ.update(cards=cards, at=now)
+    return cards
+
+
+def recent_order(config: Config, channel_name: str, *, now=None) -> tuple[bool, str]:
+    """(fine to go, said): no order card for this person in the last two
+    months. Not being able to read the board is not fine - a channel is
+    only deleted on its own when RYTE knows they've stopped ordering."""
+    from .. import agents as rules
+    from .. import clearout
+
+    now = now or datetime.now(timezone.utc)
+    try:
+        cards = _board_for_a_while(config)
+    except Exception as exc:
+        return False, f"Couldn't read the board to see if they still order: {_short(exc, 140)}"
+    since = now - timedelta(days=RECENT_ORDER_DAYS)
+    found = []
+    for card in cards or []:
+        title = str(card.get("name") or "")
+        made = rules.made_at(str(card.get("id") or ""))
+        if not rules.is_client_card(title) or made is None or made < since:
+            continue
+        if clearout.same_person(channel_name, rules.agent_name(title)):
+            found.append(f"{title} ({made:%b %-d}) <{card.get('shortUrl') or card.get('url') or ''}>")
+    if found:
+        return False, (f"They have an order card from the last {RECENT_ORDER_DAYS} days: "
+                       + "; ".join(found[:3]))
+    return True, f"No order card for them in the last {RECENT_ORDER_DAYS} days"
+
+
 def row_check(config: Config, plan) -> tuple[bool, str, bool]:
     """Whether Ryte Collection really has this clear-out's row, with the right
     sheet on it. (fine, said, missing altogether - so it can be written again)."""
