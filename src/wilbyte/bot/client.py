@@ -437,6 +437,9 @@ TAGGED_LATELY = timedelta(minutes=10)
 #: (when, channel) of the last @RYTE - where to say "back in a moment".
 _LAST_TAGGED: list = []
 
+#: {(channel, person): (when, what they asked)} - for "how about today".
+_LAST_ASKED: dict = {}
+
 
 def _tagged_lately(now: datetime):
     """The channel somebody tagged RYTE in within the last ten minutes, or None."""
@@ -1171,6 +1174,22 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
             if again.action != "help":
                 request = again
                 message = replied
+
+    # "how about today" after "how many agent going live tomorrow": the same
+    # question again for the new day, from the same person in the same place
+    # within ten minutes.
+    asked_by = (getattr(message.channel, "id", None), getattr(message.author, "id", None))
+    now = datetime.now(timezone.utc)
+    asked = message.content
+    if request.action == "help" and mentions.said_anything(message.content):
+        when, before = _LAST_ASKED.get(asked_by, (None, ""))
+        again = mentions.follow_up(message.content, before) if when and now - when <= TAGGED_LATELY else None
+        if again:
+            request = mentions.parse(again, max_batch=config.discord.max_batch)
+            asked = again
+    if request.action != "help":
+        # What was really asked, so "and friday?" after "how about today" works too.
+        _LAST_ASKED[asked_by] = (now, asked)
 
     if request.action == "help":
         # The version goes on the help text specifically, because this is the

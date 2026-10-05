@@ -611,3 +611,71 @@ def test_filing_an_sop_still_wins_over_it():
     """"add this to the sop" says add, and is not a board comment."""
     request = parse("<@1> add this to the sop https://example.com/doc")
     assert request.action == "filesop"
+
+
+# ------------------------------------------------ "how about today" after a question
+
+from wilbyte.bot import mentions  # noqa: E402
+
+
+@pytest.mark.parametrize("said, again", [
+    ("how about today <@1>", "how many agent going live today"),
+    ("<@1> what about friday?", "how many agent going live friday"),
+    ("<@1> and tomorrow", "how many agent going live tomorrow"),
+    ("<@1> how about 10/09", "how many agent going live 10/09"),
+    ("<@1> how about Ana", None),
+    ("<@1> write me an sms", None),
+])
+def test_a_follow_up_asks_the_last_question_for_another_day(said, again):
+    assert mentions.follow_up(said, "<@1> how many agent going live tomorrow") == again
+
+
+def test_a_follow_up_to_a_question_with_no_day_in_it_is_not_one():
+    assert mentions.follow_up("<@1> how about today", "<@1> delivered Jay Rodriguez") is None
+
+
+def test_ryte_follows_on_in_a_conversation(monkeypatch):
+    """"how about today @Ryte" got the help text."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def who_goes_live(responder, config, said):
+        asked.append(said)
+
+    monkeypatch.setattr(client, "_who_goes_live", who_goes_live)
+    monkeypatch.setattr(client, "_LAST_ASKED", {})
+    monkeypatch.setattr(client, "is_watched", lambda message, config: False)
+    monkeypatch.setattr(client, "is_allowed", lambda **kw: (True, ""))
+
+    class Typing:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    replies = []
+
+    async def reply(*a, **kw):
+        replies.append(a)
+
+    def said(text, person=7):
+        return SimpleNamespace(content=text, channel=SimpleNamespace(id=5, name="trello", typing=Typing,
+                                                                     send=reply),
+                               author=SimpleNamespace(id=person), guild=None, reply=reply, id=1)
+
+    config = SimpleNamespace(discord=SimpleNamespace(max_batch=10), secrets=SimpleNamespace())
+    bot = SimpleNamespace(config=config)
+    for text in ("<@1> how many agent going live tomorrow", "how about today <@1>", "<@1> and friday?"):
+        asyncio.run(client.handle_mention(bot, said(text)))
+
+    assert asked == ["how many agent going live tomorrow", "how many agent going live today",
+                     "how many agent going live friday"]
+
+    # Somebody else's "how about today" isn't a follow-up to Franklin's question.
+    asyncio.run(client.handle_mention(bot, said("<@1> how about today", person=8)))
+    assert len(asked) == 3

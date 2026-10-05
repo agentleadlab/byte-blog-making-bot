@@ -216,6 +216,41 @@ FORCE_WORDS = {"force", "again", "redo", "rerun", "anyway"}
 TODAY_WORDS = {"today", "now", "asap", "tonight", "immediately"}
 
 
+# "how about today", "what about friday?", "and tomorrow" - the last question
+# again, for another day.
+FOLLOW_UP = re.compile(
+    r"^\s*(?:(?:and\s+)?(?:how|what)\s+about|and|same\s+(?:for|with))\s+(?P<what>.+?)\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+DAY_WORDS = re.compile(
+    r"\b(?:today|tonight|tomorrow|tmrw?|yesterday|(?:this|next)\s+week"
+    r"|(?:(?:this|next)\s+)?(?:mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(?:day)?"
+    r"|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b",
+    re.IGNORECASE,
+)
+
+
+def follow_up(content: str, previous: str) -> str | None:
+    """The last question asked again for another day - "how about today"
+    after "how many agent going live tomorrow" - or None when this isn't one.
+
+    Only a day is swapped. "how about Ana" after a question about Jay is a
+    different question, and guessing which word Ana replaces is how the wrong
+    one gets answered.
+    """
+    text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
+    found = FOLLOW_UP.match(text)
+    if not found or not previous:
+        return None
+    what = found.group("what").strip()
+    if not DAY_WORDS.fullmatch(what):
+        return None
+    before = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", previous)).strip()
+    if not DAY_WORDS.search(before):
+        return None
+    return DAY_WORDS.sub(what, before, count=1)
+
+
 def said_anything(content: str) -> bool:
     """Whether a message says anything besides the mention itself.
 

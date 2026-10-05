@@ -5092,14 +5092,27 @@ def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
     # next to each name, and it is what the team actually works from - reading
     # sixty agent cards to rebuild it is guessing at something somebody has
     # already written down.
-    setup = next(
+    #
+    # This year's, newest first. The titles carry no year, so last October's
+    # "Going Live Tuesday 10/06" sits archived on the same board and matches
+    # just as well - and taken first, it answered "nobody" for a card with
+    # fourteen agents on it.
+    def made(one):
+        return rules.made_at(str(one.get("id") or ""))
+
+    recent = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) - timedelta(days=60)
+    setups = sorted(
         (one for one in every
          if rules.is_setup_card(str(one.get("name") or ""))
-         and rules.setup_covers(str(one.get("name") or ""), day)),
-        None,
+         and rules.setup_covers(str(one.get("name") or ""), day)
+         # An id with no date in it is not a card known to be old.
+         and (made(one) is None or made(one) >= recent)),
+        key=lambda one: (not one.get("closed"), made(one) or _NEVER), reverse=True,
     )
-    if setup is not None:
-        return _off_the_setup_card(config, setup, every)
+    for setup in setups:
+        found, undated, problems = _off_the_setup_card(config, setup, every)
+        if found or problems:
+            return found, undated, problems
 
     found, undated = [], 0
     for card in every:

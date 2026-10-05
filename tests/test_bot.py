@@ -7149,3 +7149,40 @@ def test_the_words_on_the_setup_line_itself_are_read_too(config, monkeypatch):
     board = SpreadBoard(on_setup="mortgage volume", their_card="Lead Type: Mortgage", checklists=MTG)
     _added, _conflicts, problems = spreading(board, monkeypatch, config)
     assert problems == [] and board.written[0][0] == "c0"
+
+
+def test_last_years_card_with_the_same_date_is_not_the_answer(config, monkeypatch):
+    """"how many agent going live tomorrow" - "Nobody's card says they go live
+    on Tuesday Oct 06", with this year's card sitting there with fourteen on
+    it. The titles have no year; last October's archived one matched first."""
+    from datetime import datetime as _dt, timezone as _tz
+    from types import SimpleNamespace
+
+    def card_id(when, tail):
+        return f"{int(when.timestamp()):08x}" + tail * 16
+
+    old = {"id": card_id(_dt(2025, 10, 4, tzinfo=_tz.utc), "0"), "closed": True,
+           "name": "Agent Setup Going Live Monday 10/06"}
+    new = {"id": card_id(_dt(2026, 10, 3, tzinfo=_tz.utc), "1"),
+           "name": "Agent Setup Going Live Tuesday 10/06"}
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [old, new] + SETUP_AGENTS
+
+        def card_checklists(self, card_id):
+            if card_id == old["id"]:
+                return [{"name": "Nicole", "checkItems": [
+                    {"name": "[New Agent - Last Year](https://trello.com/c/z9) 20 OTP VETS",
+                     "state": "complete"}]}]
+            return [{"name": "Therese", "checkItems": [
+                {"name": one, "state": state} for one, state in SETUP_ITEMS]}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    found, _undated, problems = jobs.going_live_on(
+        SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), date(2026, 10, 6))
+    assert problems == [] and [one["agent"] for one in found] == [
+        "Gavin Mathieu", "Steve Dass", "Ryan Kadnuck"]
