@@ -5498,6 +5498,91 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
     return tab, []
 
 
+#: A channel isn't quiet if anything - a message, a delivered lead - landed in
+#: it within this long. "check himself if the channel is really 1 month older".
+QUIET_AT_LEAST_DAYS = 30
+
+
+def quiet_check(newest, now) -> tuple[bool, str]:
+    """Whether the channel's newest message, of any kind, is old enough."""
+    if newest is None:
+        return True, "Quiet: nothing in the channel at all"
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    days = (now - newest).days
+    if days < QUIET_AT_LEAST_DAYS:
+        return False, (f"Not quiet: the newest message in the channel is from "
+                       f"{newest:%b %-d} — {days} day(s) ago, under a month")
+    return True, f"Quiet: the newest message is from {newest:%b %-d, %Y} ({days} days ago)"
+
+
+def row_check(config: Config, plan) -> tuple[bool, str, bool]:
+    """Whether Ryte Collection really has this clear-out's row, with the right
+    sheet on it. (fine, said, missing altogether - so it can be written again)."""
+    from .. import clearout
+
+    try:
+        rows, problems = cleared_out(config)
+    except Exception as exc:
+        return False, f"Couldn't read Ryte Collection back: {_short(exc, 120)}", False
+    if problems:
+        return False, "Couldn't read Ryte Collection back: " + "; ".join(problems), False
+    channel = (plan.channel.name if plan.channel else "").casefold()
+    mine = [row for row in rows if str(row.get("channel") or "").casefold() == channel]
+    if not mine:
+        return False, f"Ryte Collection has no row for #{plan.channel.name}", True
+    if plan.sheet and not any(clearout.same_sheet(str(row.get("sheet") or ""), plan.sheet) for row in mine):
+        return False, (f"Ryte Collection's row for #{plan.channel.name} has a different sheet "
+                       "from the one kept"), False
+    return True, f"Ryte Collection has #{plan.channel.name}'s row" + (" with its sheet" if plan.sheet else ""), False
+
+
+def sheet_check(config: Config, plan) -> tuple[bool, str]:
+    """Whether the sheet kept opens, and is this channel's leads by its name."""
+    from .. import clearout
+
+    if not plan.sheet:
+        return True, "No sheet to check"
+    titled = sheet_titles(config, [plan.sheet])
+    title = titled.get(plan.sheet)
+    if not title:
+        return False, "The sheet kept wouldn't open - check the link before the channel goes"
+    wanted = clearout.kinds_in(plan.channel.name if plan.channel else "")
+    kinds = clearout.kinds_in(title)
+    if wanted and kinds and not (wanted & kinds):
+        return False, (f"The sheet kept is “{title}”, which isn't this channel's leads "
+                       f"({', '.join(sorted(wanted))})")
+    return True, f"The sheet opens: “{title}”"
+
+
+def picture_check(config: Config, plan, link: str) -> tuple[bool, str]:
+    """Whether a picture is really in Drive, as a picture, in their folder."""
+    import re as _re
+
+    from .. import clearout, drive
+
+    found = _re.search(r"/d/([A-Za-z0-9_-]{10,})", link or "")
+    if not found:
+        return False, "A picture has no Drive link"
+    try:
+        with drive.open_drive(config.secrets) as reading:
+            meta = reading.about(found.group(1))
+            if not meta or meta.get("trashed"):
+                return False, f"“{meta.get('name') or link}” isn't in Drive any more"
+            if not str(meta.get("mimeType") or "").startswith("image/") or int(meta.get("size") or 0) < 5000:
+                return False, f"“{meta.get('name')}” isn't a proper picture"
+            parent = (meta.get("parents") or [""])[0]
+            folder = reading.about(parent) if parent else {}
+    except Exception as exc:
+        return False, f"Couldn't check the picture in Drive: {_short(exc, 120)}"
+    if str(folder.get("name") or "") != clearout.their_folder(plan):
+        return False, (f"“{meta.get('name')}” is in “{folder.get('name') or 'the top folder'}”, "
+                       f"not their folder “{clearout.their_folder(plan)}”")
+    return True, f"“{meta.get('name')}” is in their folder “{folder.get('name')}”"
+
+
 def keep_the_picture(
     config: Config, page: str, called: str, *, into: str = "",
 ) -> tuple[str, list[str]]:

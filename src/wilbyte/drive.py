@@ -165,6 +165,23 @@ class DriveClient:
             raise DriveError("Drive made that folder but sent no id back.")
         return got
 
+    def about(self, file_id: str) -> dict:
+        """One file's name, type, size, folder and whether it's in the bin -
+        for checking a picture is really there before its channel goes."""
+        try:
+            reply = self._client.get(
+                f"{FILES}/{file_id}",
+                params={"fields": "id,name,mimeType,size,parents,trashed"},
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+            )
+        except httpx.HTTPError as exc:
+            raise DriveError(f"Couldn't reach Drive: {exc}") from exc
+        if reply.status_code == 404:
+            return {}
+        if reply.status_code >= 400:
+            raise DriveError(self._refused(reply.status_code, reply.text))
+        return reply.json() or {}
+
     def _refused(self, code: int, body: str) -> str:
         """Why Drive said no, in a sentence that says what to change."""
         if code == 403:

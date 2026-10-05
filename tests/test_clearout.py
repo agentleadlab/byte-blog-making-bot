@@ -7,6 +7,22 @@ from types import SimpleNamespace
 
 import pytest
 
+from wilbyte.bot import client as _client
+
+#: RYTE's look at its own work, kept before every test here stands it in for
+#: one that finds everything fine - the tests about the checks call this.
+REAL_CHECK = _client._check_my_work
+
+
+@pytest.fixture(autouse=True)
+def _own_work_fine(monkeypatch):
+    async def fine(config, plan, messages, pictures):
+        return [(True, "all fine")]
+
+    monkeypatch.setattr(_client, "_check_my_work", fine)
+
+import pytest
+
 from wilbyte import clearout
 
 
@@ -396,8 +412,9 @@ class Guild:
 def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.png",
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
              on_card="https://sheet", in_channel="", rows=None, unread=False,
-             welcomed=True):
-    """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed."""
+             welcomed=True, checks=None):
+    """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed.
+    `checks` is what RYTE's look at its own work finds - all fine unless said."""
     import asyncio
     from types import SimpleNamespace
 
@@ -438,6 +455,11 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
         return tab, [] if tab else ["the sheet refused that"]
 
     monkeypatch.setattr(bot_client.jobs, "collect_client", collecting)
+
+    async def checked(config, plan, messages, pictures):
+        return list(checks) if checks is not None else [(True, "all fine")]
+
+    monkeypatch.setattr(bot_client, "_check_my_work", checked)
     if not picture:
         async def refuse(content=None, **kw):
             raise RuntimeError("Discord said no")
@@ -3744,3 +3766,161 @@ def test_a_fex_channel_keeps_its_fex_sheet_over_the_cards_other_order(monkeypatc
 
     assert rows[0][1] == channel_sheet
     assert any("keeping the channel's" in one for one in said)
+
+
+
+# ------------------------------------------------ "check himself"
+
+
+def test_a_failed_check_means_no_delete_button(monkeypatch):
+    """"check himself if the channel is really 1 month older, then if the
+    screenshots are right and on the folder"."""
+    _guild, channel, said, buttons = _closing(
+        monkeypatch, says=[True, True],
+        checks=[(True, "Quiet: 45 days"), (False, "“1 — jay.png” isn't in their folder")],
+    )
+    assert channel.deleted is False
+    assert not any("Delete" in getattr(one, "label", "") for one in buttons)
+    assert "🔎 **Checked my own work:**" in said[-1] and "❌ “1 — jay.png”" in said[-1]
+    assert "Nothing deleted" in said[-1]
+
+
+def test_all_checks_fine_shows_them_with_the_button(monkeypatch):
+    _guild, _channel, said, buttons = _closing(
+        monkeypatch, says=[True, False], checks=[(True, "Quiet: 45 days"), (True, "Row is there")],
+    )
+    assert any("Delete" in getattr(one, "label", "") for one in buttons)
+    assert any("✅ Quiet: 45 days" in one for one in said)
+
+
+def test_a_channel_with_anything_from_this_month_is_not_quiet():
+    from datetime import timezone
+
+    from wilbyte.bot import jobs
+
+    now = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    ok, said = jobs.quiet_check(datetime(2026, 9, 23, tzinfo=timezone.utc), now)
+    assert ok is False and "12 day(s) ago" in said
+    assert jobs.quiet_check(datetime(2026, 8, 1, tzinfo=timezone.utc), now)[0] is True
+    assert jobs.quiet_check(None, now)[0] is True
+
+
+def _cleared_plan(name="tristen_miller-vet", sheet="https://docs.google.com/spreadsheets/d/" + "s" * 30 + "/edit"):
+    return clearout.Plan(name="Tristen Miller", channel=channel(name), sheet=sheet)
+
+
+def test_the_row_is_found_by_its_channel_and_sheet(monkeypatch):
+    from wilbyte.bot import jobs
+
+    plan = _cleared_plan()
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: (
+        [{"channel": "tristen_miller-vet", "sheet": plan.sheet + "?usp=sharing"}], []))
+    assert jobs.row_check(None, plan)[0] is True
+
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: ([], []))
+    ok, said, missing = jobs.row_check(None, plan)
+    assert (ok, missing) == (False, True)
+
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: (
+        [{"channel": "tristen_miller-vet", "sheet": "https://docs.google.com/spreadsheets/d/" + "x" * 30}], []))
+    ok, said, missing = jobs.row_check(None, plan)
+    assert (ok, missing) == (False, False) and "different sheet" in said
+
+
+def test_the_sheet_must_be_the_channels_leads(monkeypatch):
+    """Jeremy Fox's FEX channel collected with his vets sheet."""
+    from wilbyte.bot import jobs
+
+    plan = _cleared_plan("jeremy-fox-fex")
+    monkeypatch.setattr(jobs, "sheet_titles", lambda config, links: {plan.sheet: "Jeremy_Fox - OTP VET"})
+    ok, said = jobs.sheet_check(None, plan)
+    assert ok is False and "isn't this channel's leads" in said
+
+    monkeypatch.setattr(jobs, "sheet_titles", lambda config, links: {plan.sheet: "Jeremy_Fox - OTP FEX"})
+    assert jobs.sheet_check(None, plan)[0] is True
+
+    monkeypatch.setattr(jobs, "sheet_titles", lambda config, links: {})
+    assert jobs.sheet_check(None, plan)[0] is False
+
+
+class Drive:
+    def __init__(self, files):
+        self.files = files
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def about(self, file_id):
+        return self.files.get(file_id, {})
+
+
+def _picture_files(folder="Tristen Miller", size=80000, kind="image/png", trashed=False):
+    return {"PIC123456789": {"name": "1 — tristen.png", "mimeType": kind, "size": str(size),
+                             "parents": ["FOLD12345678"], "trashed": trashed},
+            "FOLD12345678": {"name": folder}}
+
+
+@pytest.mark.parametrize("files, fine", [
+    (_picture_files(), True),
+    (_picture_files(folder="D"), False),
+    (_picture_files(size=200), False),
+    (_picture_files(kind="text/html"), False),
+    (_picture_files(trashed=True), False),
+    ({}, False),
+])
+def test_a_picture_must_be_a_picture_in_their_folder(monkeypatch, files, fine):
+    from wilbyte import drive
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(drive, "open_drive", lambda secrets: Drive(files))
+    config = SimpleNamespace(secrets=None)
+    ok, _said = jobs.picture_check(config, _cleared_plan(), "https://drive.google.com/file/d/PIC123456789/view")
+    assert ok is fine
+
+
+def test_a_picture_that_didnt_land_is_taken_again_once(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    taken = []
+    monkeypatch.setattr(jobs, "row_check", lambda config, plan: (True, "row", False))
+    monkeypatch.setattr(jobs, "sheet_check", lambda config, plan: (True, "sheet"))
+    looks = iter([(False, "not in their folder"), (True, "in their folder")])
+    monkeypatch.setattr(jobs, "picture_check", lambda config, plan, link: next(looks))
+
+    def take():
+        taken.append(1)
+        return "https://drive.google.com/file/d/NEW123456789/view", []
+
+    checks = asyncio.run(REAL_CHECK(None, _cleared_plan(), [], [("old link", take)]))
+    assert taken == [1]
+    assert checks[-1][0] is True and "uploaded again" in checks[-1][1]
+
+
+def test_a_missing_row_is_written_again_once(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client, jobs
+
+    written = []
+    looks = iter([(False, "no row", True), (True, "row", False)])
+    monkeypatch.setattr(jobs, "row_check", lambda config, plan: next(looks))
+    monkeypatch.setattr(jobs, "collect_client", lambda config, plan, when: written.append(1) or ("Ryte Collection", []))
+    monkeypatch.setattr(jobs, "sheet_check", lambda config, plan: (True, "sheet"))
+
+    checks = asyncio.run(REAL_CHECK(None, _cleared_plan(), [], []))
+    assert written == [1] and checks[1] == (True, "row (written again)")
+
+
+def test_small_print_is_not_marked_twice(monkeypatch):
+    """"-# -# Read 20 new message(s) in # general-chat"."""
+    import inspect
+
+    from wilbyte.bot import client
+
+    source = inspect.getsource(client._clear_out)
+    assert 'one if one.startswith("-#") else f"-# {one}"' in source

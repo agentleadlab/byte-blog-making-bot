@@ -3173,17 +3173,18 @@ async def _clear_out(
         # Said rather than left out. A run with no picture line at all reads
         # exactly like one where the upload quietly failed.
         kept.append("-# No picture — there was nothing in the channel to draw.")
+    pictures = []
     for number, (where, group) in enumerate(groups, start=1):
-        picture, trouble = await asyncio.to_thread(
-            partial(
-                jobs.keep_the_picture, config,
-                clearout.as_page(plan, group),
-                clearout.picture_name(
-                    plan, when=today, where=where, order=number,
-                ),
+        def take(where=where, group=group, number=number):
+            return jobs.keep_the_picture(
+                config, clearout.as_page(plan, group),
+                clearout.picture_name(plan, when=today, where=where, order=number),
                 into=clearout.their_folder(plan),
             )
-        )
+
+        picture, trouble = await asyncio.to_thread(take)
+        if picture:
+            pictures.append((picture, take))
         named = f"#{where}" if where else "Picture"
         kept.append(
             f"✅ {named} → <{picture}>" if picture
@@ -3194,7 +3195,8 @@ async def _clear_out(
         # how a picture ends up in the wrong folder with nobody told.
         if picture and trouble:
             kept += [f"-# {one}" for one in trouble]
-    kept += [f"-# {one}" for one in looked]
+    # Already small print - "-# -# Read 20 new message(s)" was the marker twice.
+    kept += [one if one.startswith("-#") else f"-# {one}" for one in looked]
 
     # Only once both are kept. The whole point of the order is that a channel
     # is never deleted with the only copy of something still inside it - and a
@@ -3211,6 +3213,23 @@ async def _clear_out(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** One of those didn't work, and the "
             "channel is the only copy of what it didn't keep."
+        )
+        return "trouble"
+
+    # Its own work checked before the button, the way a person would before
+    # deleting: "check himself if the channel is really 1 month older, then if
+    # the screenshots are right and on the folder". Anything it can put right
+    # - a row or a picture that didn't land - it puts right once and looks
+    # again; anything it can't, and the channel stays.
+    checks = await _check_my_work(config, plan, messages, pictures)
+    kept.append("\n🔎 **Checked my own work:**\n" + "\n".join(
+        f"{'✅' if ok else '❌'} {said}" for ok, said in checks
+    ))
+    if not all(ok for ok, _said in checks):
+        await responder.send(
+            "\n".join(kept)
+            + "\n\n**Nothing deleted.** Something above isn't right, and the channel "
+            "is the only copy until it is."
         )
         return "trouble"
 
@@ -3297,6 +3316,33 @@ async def _payra_test(responder: Responder, config: Config) -> None:
 def _clients_guild(bot, config):
     where = (config.secrets.discord_clients_guild_id or "").strip()
     return bot.get_guild(int(where)) if where.isdigit() else None
+
+
+async def _check_my_work(config: Config, plan, messages, pictures) -> list[tuple[bool, str]]:
+    """The clear-out's own work, checked before its channel can go.
+    [(fine, said)]. A row or a picture that didn't land is done again once."""
+    now = datetime.now(timezone.utc)
+    stamps = [one.at for one in messages if getattr(one, "at", None)]
+    newest = max(stamps) if stamps else None
+    checks = [jobs.quiet_check(newest, now)]
+
+    ok, said, missing = await asyncio.to_thread(jobs.row_check, config, plan)
+    if missing:
+        await asyncio.to_thread(partial(jobs.collect_client, config, plan, when=now))
+        ok, said, _missing = await asyncio.to_thread(jobs.row_check, config, plan)
+        said += " (written again)" if ok else ""
+    checks.append((ok, said))
+    checks.append(await asyncio.to_thread(jobs.sheet_check, config, plan))
+
+    for link, take in pictures:
+        ok, said = await asyncio.to_thread(jobs.picture_check, config, plan, link)
+        if not ok:
+            again, _trouble = await asyncio.to_thread(take)
+            if again:
+                ok, said = await asyncio.to_thread(jobs.picture_check, config, plan, again)
+                said += f" (uploaded again: <{again}>)" if ok else ""
+        checks.append((ok, said))
+    return checks
 
 
 async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
