@@ -5909,8 +5909,8 @@ def test_the_editors_are_tagged_on_the_yt_vid_card(monkeypatch):
     said = dict(board.added)["ck-yt"]
 
     assert said.startswith(NAZCO)
-    assert "@mgproductions7" in said
-    assert "@mgvideoeditors" in said
+    assert "@vishwmitrashrivastava" in said
+    assert "@mg" not in said, "the MG editors are gone"
 
 
 def test_it_is_moved_to_done_afterwards(monkeypatch):
@@ -7252,7 +7252,7 @@ def test_the_segment_task_goes_on_videos_need_editing_now(monkeypatch):
 
     said = dict(board.added)
     assert problems == [] and "ck-yt" not in said
-    assert said["ck-editing"].startswith(NAZCO) and "@mgvideoeditors" in said["ck-editing"]
+    assert said["ck-editing"] == f"{NAZCO} @vishwmitrashrivastava"
 
 
 def test_neither_card_says_both_names(monkeypatch):

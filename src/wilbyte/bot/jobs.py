@@ -1320,9 +1320,10 @@ def doc_relayout(config: Config, planned: list) -> tuple[list[str], list[str]]:
     return done, problems
 
 
-#: Who cuts the interviews. Tagged on the YT VID checklist so the job reaches
-#: them rather than sitting on a card they would have to think to open.
-EDITORS = ("@mgproductions7", "@mgvideoeditors")
+#: Who cuts the interviews. Tagged on the Videos Need Editing checklist so the
+#: job reaches them rather than sitting on a card they would have to think to
+#: open. The MG editors are gone - "tag him instead".
+EDITORS = ("@vishwmitrashrivastava",)
 
 #: The card in Marketing Department that tracks what is waiting to be cut -
 #: "Videos Need Editing" now, YT VID before it. The old one only if the new
