@@ -5840,7 +5840,7 @@ NAZCO = "https://trello.com/c/29mTRImS/16224-emanuel-nazco-interview"
 class HandOffBoard:
     """A board with a General card, a YT VID card and a Done list."""
 
-    def __init__(self, *, general=True, yt=True, done=True, faith=True):
+    def __init__(self, *, general=True, yt=True, done=True, faith=True, editing=False):
         self.added, self.moved = [], []
         self.lists = [{"id": "T", "name": "Today"}, {"id": "M", "name": "Marketing Department"}]
         if done:
@@ -5850,6 +5850,8 @@ class HandOffBoard:
             self.cards.append({"id": "g", "idList": "T", "name": "💎 General 09/15/26"})
         if yt:
             self.cards.append({"id": "y", "idList": "M", "name": "YT VID"})
+        if editing:
+            self.cards.append({"id": "v", "idList": "M", "name": "Videos Need Editing"})
         self.faith = faith
 
     def board_lists(self, _board_id):
@@ -5864,6 +5866,8 @@ class HandOffBoard:
             if self.faith:
                 whose.insert(1, {"id": "ck-faith", "name": "Faith"})
             return whose
+        if card_id == "v":
+            return [{"id": "ck-editing", "name": "To-Do"}]
         return [{"id": "ck-yt", "name": "To cut"}]
 
     def add_check_item(self, checklist_id, name, checked=False):
@@ -7238,3 +7242,20 @@ def test_the_setup_lines_are_the_unchecked_ones_once_each(config, monkeypatch):
     monkeypatch.setattr(jobs, "going_live_on", live)
     found, problems = jobs.setup_lines_open(SimpleNamespace(), [date(2026, 9, 5), date(2026, 9, 6)])
     assert problems == [] and [one["agent"] for one in found] == ["Eric Karas"]
+
+
+
+def test_the_segment_task_goes_on_videos_need_editing_now(monkeypatch):
+    """"you know ryte add the segment task here right? should be here now"."""
+    board = HandOffBoard(editing=True)
+    _done, problems = _hand_off(monkeypatch, board)
+
+    said = dict(board.added)
+    assert problems == [] and "ck-yt" not in said
+    assert said["ck-editing"].startswith(NAZCO) and "@mgvideoeditors" in said["ck-editing"]
+
+
+def test_neither_card_says_both_names(monkeypatch):
+    board = HandOffBoard(yt=False)
+    _done, problems = _hand_off(monkeypatch, board)
+    assert any("Videos Need Editing" in one and "YT VID" in one for one in problems)

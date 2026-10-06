@@ -1324,8 +1324,11 @@ def doc_relayout(config: Config, planned: list) -> tuple[list[str], list[str]]:
 #: them rather than sitting on a card they would have to think to open.
 EDITORS = ("@mgproductions7", "@mgvideoeditors")
 
-#: The card in Marketing Department that tracks what is waiting to be cut.
-YT_CARD = "YT VID"
+#: The card in Marketing Department that tracks what is waiting to be cut -
+#: "Videos Need Editing" now, YT VID before it. The old one only if the new
+#: one isn't there, so a renamed card never drops a job on the floor.
+YT_CARD = "Videos Need Editing"
+YT_CARD_BEFORE = "YT VID"
 
 #: Whose list on the day's General card an interview goes onto.
 CUTS_THEM = "Faith"
@@ -1341,7 +1344,8 @@ def hand_off_interview(
 
       1. Faith's checklist on the day's General card, so it is on somebody's
          list for today rather than only on a board.
-      2. The YT VID card's checklist, tagging the two editors who cut it.
+      2. The Videos Need Editing card's checklist, tagging the two editors
+         who cut it.
       3. The interview card itself into Done, because being cut up is what the
          card was for and that part is finished.
 
@@ -1370,13 +1374,16 @@ def hand_off_interview(
             )
             (done if said.startswith("✅") else problems).append(said)
 
-        waiting = next(
-            (one for one in every
-             if str(one.get("name") or "").strip().casefold() == YT_CARD.casefold()),
-            None,
-        )
+        def called(name):
+            return next(
+                (one for one in every
+                 if str(one.get("name") or "").strip().casefold() == name.casefold()),
+                None,
+            )
+
+        waiting = called(YT_CARD) or called(YT_CARD_BEFORE)
         if waiting is None:
-            problems.append(f"No card called {YT_CARD!r} on the board.")
+            problems.append(f"No card called {YT_CARD!r} (or {YT_CARD_BEFORE!r}) on the board.")
         else:
             said = _onto_checklist(
                 client, str(waiting.get("id") or ""), "",

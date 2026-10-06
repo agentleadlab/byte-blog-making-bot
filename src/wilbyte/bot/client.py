@@ -5834,7 +5834,7 @@ async def _file_interview(
 
     # And onto the lists of the people who act on it. The card existing is not
     # the same as anybody knowing it exists: it goes on Faith's list for today
-    # and on the YT VID card where the editors are tagged, and then into Done,
+    # and on the Videos Need Editing card where the editors are tagged, then into Done,
     # because being cut up is what it was for and that part is finished.
     try:
         did, trouble = await asyncio.to_thread(
