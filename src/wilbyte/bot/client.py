@@ -2254,6 +2254,27 @@ async def _send_unticked(responder: Responder, config: Config, said: str = "") -
         return
     # No ping: somebody just asked, so they are already looking at it.
     await responder.send(embed=_unmarked_card(found, days=covers))
+    if day is not None:
+        # A day named is not the only thing worth knowing. "trello unticked
+        # yesterday" at 2:59 in the morning is a question about the card just
+        # worked - Tuesday's, going live today - and Monday's one leftover
+        # was the whole answer while Tuesday's sat unticked.
+        try:
+            soon, _trouble = await asyncio.to_thread(
+                partial(jobs.unmarked_agents, ahead=True), config, day=None,
+            )
+        except PIPELINE_ERRORS:
+            soon = []
+        shown = {str(one.get("id") or "") for one in found}
+        soon = [one for one in soon if str(one.get("id") or "") not in shown]
+        if soon:
+            ahead = dailyops.days_chased(_today(config))
+            await responder.send(
+                f"⚠ And **{len(soon)} going live {ahead}** "
+                f"{'is' if len(soon) == 1 else 'are'} unticked too:",
+                embed=_unmarked_card(soon, days=ahead),
+            )
+            found = list(found) + soon
     await _offer_the_top_ups(responder, config, found)
 
 

@@ -4085,7 +4085,11 @@ def unmarked_agents(
     """
     from .. import agents, dailyops, trello
 
-    day = day or board_day(config)
+    # The day the labels are said against. The afternoon check passes the day
+    # it runs on; a person asking about one day (`ahead=False`) is asking on
+    # the real one - Isaiah Wehner, live Monday, read "live today" on Tuesday.
+    really = (day or board_day(config)) if ahead else board_day(config)
+    day = day or really
     tomorrow = dailyops.next_day(day)
     through = dailyops.chased_through(day) if ahead else day
     client = open_trello(config)
@@ -4121,9 +4125,12 @@ def unmarked_agents(
                 # fourth, describes a day it wasn't asked about - and on a
                 # Friday reaching to Monday there are three days that are
                 # neither today nor tomorrow.
+                # Against the real day, not the day asked about: Isaiah
+                # Wehner, live Monday, read "live today" on Tuesday morning.
                 "when": (
-                    "today" if launch == day
-                    else "tomorrow" if ahead and launch == tomorrow
+                    "today" if launch == really
+                    else "tomorrow" if launch == dailyops.next_day(really)
+                    else "yesterday" if dailyops.next_day(launch) == really
                     else f"{launch:%a %b %d}"
                 ),
                 "launch": launch,

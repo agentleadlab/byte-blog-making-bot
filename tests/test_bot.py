@@ -6983,15 +6983,23 @@ def test_a_clean_day_with_nothing_coming_is_plainly_clean(config, monkeypatch):
     assert "But" not in words
 
 
-def test_a_day_with_its_own_unticked_does_not_also_look_ahead(config, monkeypatch):
-    """It already has something to say, about the day that was asked."""
-    asked, _ = _unticked(
-        monkeypatch, config, "unticked yesterday",
-        found=[{"name": "New Agent - Someone", "url": "", "when": "Thu Sep 03"}],
-        soon=THURSDAY,
-    )
+def test_a_day_with_its_own_unticked_still_says_what_goes_live_next(config, monkeypatch):
+    """"trello unticked yesterday" at 2:59 in the morning: Monday's one
+    leftover, Isaiah Wehner, was the whole answer - with Tuesday's setup card
+    open beside it, seven of its agents unticked."""
+    monday = [{"id": "m1", "name": "New Agent - Isaiah Wehner", "url": "", "when": "yesterday"}]
+    asked, sent = _unticked(monkeypatch, config, "unticked yesterday", found=monday, soon=THURSDAY)
+    words = " ".join(str(getattr(one, "content", one) or "") for one in sent)
 
-    assert len(asked["calls"]) == 1
+    assert asked["calls"][1] == (None, True), "never looked ahead"
+    assert "4 going live" in words and "unticked too" in words
+
+
+def test_one_already_shown_is_not_said_twice(config, monkeypatch):
+    both = [{"id": "x1", "name": "New Agent - Don Alimi", "url": "", "when": "today"}]
+    _asked, sent = _unticked(monkeypatch, config, "unticked today", found=both, soon=both)
+    words = " ".join(str(getattr(one, "content", one) or "") for one in sent)
+    assert "unticked too" not in words
 
 
 def test_no_day_named_is_asked_once(config, monkeypatch):
@@ -7186,3 +7194,12 @@ def test_last_years_card_with_the_same_date_is_not_the_answer(config, monkeypatc
         SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), date(2026, 10, 6))
     assert problems == [] and [one["agent"] for one in found] == [
         "Gavin Mathieu", "Steve Dass", "Ryan Kadnuck"]
+
+
+def test_a_day_asked_about_is_labelled_by_the_real_day(config, monkeypatch):
+    """Isaiah Wehner, live Monday, read "live today" when asked about on Tuesday."""
+    found, _ = _unticked_on(
+        monkeypatch, config, date(2026, 9, 4),
+        [("Connor Swart", "Launch Date: Thursday, September 3")], day=date(2026, 9, 3), ahead=False,
+    )
+    assert [one["when"] for one in found] == ["yesterday"]
