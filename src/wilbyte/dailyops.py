@@ -376,6 +376,11 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
     wrong card is a message somebody reads as being about their work.
     """
     said = " ".join((text or "").split())
+    # "on today's general card" - the day with an 's on it is still the day.
+    said = re.sub(
+        r"\b(today|tomorrow|yesterday|" + "|".join(WEEKDAYS) + r")['’]s\b", r"\1", said,
+        flags=re.IGNORECASE,
+    )
 
     first = _leading_card(said)
     if first is not None:

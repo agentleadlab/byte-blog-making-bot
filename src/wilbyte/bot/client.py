@@ -2667,12 +2667,16 @@ async def _comment_on_card(
                 # landed on, so a wrong one is one line away from being right.
                 kind, guessed = dailyops.FALLBACK_CARD, True
 
+    if not kind and text:
+        # "@Ryte add to trello / put on board tho let's collate all logins" -
+        # something to say and no card named. General, said rather than
+        # asked: the reply names the card, so a wrong one is one line away.
+        kind, guessed = dailyops.FALLBACK_CARD, True
     if not kind:
         await responder.send(
-            "Say which card and I'll post it — `@RYTE comment on monday "
-            "general card <what to say>`, or put the card at the end instead. "
-            "The four are general, ops, ads and lead order; a weekday or a "
-            "date picks the day, otherwise it's today's."
+            "Say what to put on it — `@RYTE comment on general card <what to say>`, "
+            "or reply to a message with `@RYTE add to trello`. The four are general, "
+            "ops, ads and lead order; it's today's unless you say a day."
         )
         return
     if not text:

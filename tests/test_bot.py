@@ -7370,3 +7370,24 @@ def test_the_tagged_name_is_tagged_on_trello(monkeypatch):
         day=date(2026, 9, 14), text="K2: @Franklin collate all logins", tag=["Franklin", "Nobody Here"])
     assert said == ["@franklinmay\nK2: @Franklin collate all logins"]
     assert problems == ["Nobody on the board is called Nobody Here — not tagged."]
+
+
+def test_todays_with_an_apostrophe_is_still_today():
+    from wilbyte import dailyops
+
+    for said in ("on today's general card let's collate all logins plz",
+                 "on today’s general card let's collate all logins plz"):
+        assert dailyops.comment_target(said, today=date(2026, 10, 6)) == (
+            "let's collate all logins plz", "general", date(2026, 10, 6))
+    assert dailyops.comment_target("on tomorrow's ads card fix the pixel", today=date(2026, 10, 6))[1:] == (
+        "ads", date(2026, 10, 7))
+
+
+def test_something_to_say_and_no_card_named_goes_on_general(monkeypatch):
+    """"@Ryte add to trello / put on board tho let's collate all logins plz"
+    got "Say which card" instead of being posted."""
+    posted, said = _putting(monkeypatch, "put on board tho let's collate all logins plz")
+
+    assert posted["kind"] == "general"
+    assert posted["text"] == "put on board tho let's collate all logins plz"
+    assert "Nobody said which card" in said[-1]
