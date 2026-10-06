@@ -7146,6 +7146,20 @@ async def _offer_tags_now(
                     log.warning("Offered %s again; on file for that comment: %s",
                                 _said_key(one), ", ".join(before))
 
+    if remember:
+        # "Make sure that they are task, to be done and not updates ... then
+        # automatically add them to the checklist without asking me anymore."
+        # The watcher files what the reading judged a job, drops what it
+        # judged not one, and asks only about a line it has no judgement on.
+        sure = [one for one in tasks if one.is_task is True]
+        tasks = [one for one in tasks if one.is_task is None]
+        if sure:
+            await _file_on_its_own(responder, config, sure)
+        if not tasks:
+            if problems:
+                await responder.send("⚠ " + "\n⚠ ".join(problems))
+            return
+
     # A description line and a comment are two different things and get asked
     # about separately. The description is the card's own standing list of who
     # is doing what; a comment is somebody handing over a job during the day.
@@ -7173,6 +7187,19 @@ async def _offer_tags_now(
         )
         for at, (these, emoji, what) in enumerate(both)
     ))
+
+
+async def _file_on_its_own(responder: Responder, config: Config, tasks) -> None:
+    """Put the jobs on their checklists, then say what went where."""
+    landed, trouble = await asyncio.to_thread(jobs.file_tags, config, tasks)
+    if landed:
+        said = f"📌 Added {len(landed)} to the checklists:\n" + "\n".join(
+            f"• {line}" for line in landed[:TAGS_SHOWN])
+        if len(landed) > TAGS_SHOWN:
+            said += f"\n…and {len(landed) - TAGS_SHOWN} more."
+        await responder.send(said)
+    if trouble:
+        await responder.send("⚠ " + "\n⚠ ".join(trouble))
 
 
 async def _offer_these(

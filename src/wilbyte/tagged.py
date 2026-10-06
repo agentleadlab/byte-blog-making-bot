@@ -130,6 +130,10 @@ class Task:
     judged: bool = False
     #: True when it came from `@card` and so belongs to everybody on it.
     everyone: bool = False
+    #: Whether the reading judged it a job to be done - not an update, a
+    #: report, a question or chatter. None when it wasn't asked (a reading
+    #: kept from before), which is asked about rather than filed.
+    is_task: bool | None = None
 
     def item(self) -> str:
         """What goes on the checklist, summary then the comment it came from."""

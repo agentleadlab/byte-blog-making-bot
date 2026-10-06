@@ -3573,8 +3573,14 @@ def _one_line(note, person, entry: dict, cards, problems, *, own_card=False):
     return tagged.Task(
         note=note, person=person, kind=kind, checklist=person.keeps[kind],
         card_id=str(card.get("id") or ""), card_title=str(card.get("name") or ""),
-        summary=summary, judged=judged,
+        summary=summary, judged=judged, is_task=_judged_a_task(entry),
     )
+
+
+def _judged_a_task(entry: dict) -> bool | None:
+    """The reading's is_task, or None when the reading predates asking it."""
+    said = (entry or {}).get("is_task")
+    return said if isinstance(said, bool) else None
 
 
 def _lines_from(
@@ -3600,7 +3606,7 @@ def _lines_from(
             note=note, person=None, kind=told_kind, checklist=told_list,
             card_id=str(card.get("id") or ""),
             card_title=str(card.get("name") or ""),
-            summary=summary, everyone=True,
+            summary=summary, everyone=True, is_task=_judged_a_task(said),
         )]
 
     # A lead schedule goes on whole and always onto Ads. Not summarised and
@@ -3627,7 +3633,8 @@ def _lines_from(
             note=note, person=person, kind=kind, checklist=person.keeps[kind],
             card_id=str(card.get("id") or ""),
             card_title=str(card.get("name") or ""),
-            summary=summary, judged=judged,
+            # The hours somebody's leads run is always work to set up.
+            summary=summary, judged=judged, is_task=True,
         )]
 
     # Every job the reading gave this person, minus however many lines from
@@ -3715,7 +3722,11 @@ def _read_tags_fresh(config: Config, notes: list, people: dict) -> dict:
             "You turn comments on a team's Trello cards into checklist lines. "
             "Say what the tagged person has to do, in the words the comment "
             "used. Never invent a task the comment does not ask for, and never "
-            "give somebody a line about work the comment gave to somebody else."
+            "give somebody a line about work the comment gave to somebody else. "
+            "Mark is_task true only when the comment asks that person to DO "
+            "something still to be done. It is false for an update or report "
+            "of work already done, an FYI, a question, a thank-you, a reply, "
+            "or chatter - those go on nobody's checklist. When unsure, false."
         ),
         tools=[{
             "name": "lines",
@@ -3732,8 +3743,13 @@ def _read_tags_fresh(config: Config, notes: list, people: dict) -> dict:
                                 "person": {"type": "string"},
                                 "summary": {"type": "string"},
                                 "kind": {"type": "string", "enum": list(tagged.WORK)},
+                                "is_task": {
+                                    "type": "boolean",
+                                    "description": "A job this person still has to do - "
+                                                   "not an update, report, FYI, question or chatter.",
+                                },
                             },
-                            "required": ["comment_id", "person", "summary", "kind"],
+                            "required": ["comment_id", "person", "summary", "kind", "is_task"],
                         },
                     }
                 },

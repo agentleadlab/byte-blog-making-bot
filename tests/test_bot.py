@@ -7259,3 +7259,74 @@ def test_neither_card_says_both_names(monkeypatch):
     board = HandOffBoard(yt=False)
     _done, problems = _hand_off(monkeypatch, board)
     assert any("Videos Need Editing" in one and "YT VID" in one for one in problems)
+
+
+# ------- "Make sure that they are task ... then automatically add them to the checklist without asking"
+
+
+def _judged(is_task, comment="c1", summary="Zero these out"):
+    from wilbyte import tagged
+
+    return tagged.Task(
+        note=tagged.Note(comment_id=comment, text=summary, card_short="IU4PM7wJ"),
+        kind="ads", checklist="Nicole", card_id="a", card_title="📊 Ads 10/06/26",
+        summary=summary, is_task=is_task,
+    )
+
+
+def test_the_watcher_files_a_real_job_without_asking(monkeypatch):
+    filed, said = _watching(monkeypatch, tasks=[_judged(True)], press=False, remember=True)
+
+    assert [one.summary for one in filed] == ["Zero these out"]
+    assert said[0].startswith("📌 Added 1 to the checklists:")
+    assert not any("not on a checklist yet" in one for one in said), "it still asked"
+
+
+def test_the_watcher_drops_an_update_or_chatter(monkeypatch):
+    filed, said = _watching(monkeypatch, tasks=[_judged(False, summary="CRM connected")],
+                            press=True, remember=True)
+    assert filed == [] and said == []
+
+
+def test_a_line_with_no_judgement_is_still_asked_about(monkeypatch):
+    """A reading kept from before is_task was asked carries no answer."""
+    filed, said = _watching(monkeypatch, tasks=[_judged(None)], press=False, remember=True)
+    assert filed == [] and "not on a checklist yet" in said[0]
+
+
+def test_typing_trello_tags_still_asks(monkeypatch):
+    """By hand it lists everything - including what was left - so it asks."""
+    filed, said = _watching(monkeypatch, tasks=[_judged(True)], press=False, remember=False)
+    assert filed == [] and "not on a checklist yet" in said[0]
+
+
+def test_the_reading_is_asked_whether_it_is_a_job(monkeypatch):
+    import anthropic
+    from types import SimpleNamespace
+
+    from wilbyte import tagged
+
+    seen = {}
+
+    class Claude:
+        def __init__(self, **kw):
+            self.messages = self
+
+        def create(self, **kw):
+            seen.update(kw)
+            return SimpleNamespace(stop_reason="tool_use", content=[SimpleNamespace(
+                type="tool_use", name="lines", input={"lines": [
+                    {"comment_id": "c1", "person": "kc", "summary": "Zero these out", "kind": "general",
+                     "is_task": True}]})])
+
+    monkeypatch.setattr(anthropic, "Anthropic", Claude)
+    monkeypatch.setattr(tagged, "summary_prompt", lambda notes, people: "x")
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="m"))
+    written = jobs._read_tags_fresh(config, [], {})
+
+    line = seen["tools"][0]["input_schema"]["properties"]["lines"]["items"]
+    assert "is_task" in line["required"]
+    assert "is_task true only when" in seen["system"] and "When unsure, false" in seen["system"]
+    assert jobs._judged_a_task(written["c1"][0]) is True
+    assert jobs._judged_a_task({}) is None and jobs._judged_a_task({"is_task": "yes"}) is None
