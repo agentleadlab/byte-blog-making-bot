@@ -2415,7 +2415,7 @@ def test_one_of_each_is_reported_as_the_serious_one():
 
 
 def _unticked(monkeypatch, config, said, *, found=(), top_ups=(), ticked=None,
-              soon=()):
+              soon=(), setup_lines=()):
     """Run the handler and report what reached the board. (asked, sent)
 
     `found` answers the question asked; `soon` answers the look ahead that a
@@ -2437,6 +2437,7 @@ def _unticked(monkeypatch, config, said, *, found=(), top_ups=(), ticked=None,
         return list(top_ups), []
 
     monkeypatch.setattr(jobs, "unmarked_agents", reading)
+    monkeypatch.setattr(jobs, "setup_lines_open", lambda cfg, days: (list(setup_lines), []))
     monkeypatch.setattr(jobs, "ongoing_to_tick", top_up_check)
     monkeypatch.setattr(
         jobs, "tick_ongoing",
@@ -7203,3 +7204,37 @@ def test_a_day_asked_about_is_labelled_by_the_real_day(config, monkeypatch):
         [("Connor Swart", "Launch Date: Thursday, September 3")], day=date(2026, 9, 3), ahead=False,
     )
     assert [one["when"] for one in found] == ["yesterday"]
+
+
+
+# ------------------------------------------------ "yes add the setup card lines too"
+
+
+def test_unticked_also_says_the_setup_card_lines_nobody_checked_off(config, monkeypatch):
+    lines = [
+        {"agent": "Eric Karas", "url": "https://trello.com/c/e", "setup_by": "Nicole", "day": date(2026, 9, 4)},
+        {"agent": "Marcus Uhrich", "url": "", "setup_by": "Nicole", "day": date(2026, 9, 4)},
+        {"agent": "Genesis", "url": "", "setup_by": "Kathleen", "day": date(2026, 9, 5)},
+    ]
+    _asked, sent = _unticked(monkeypatch, config, "unticked", found=[], setup_lines=lines)
+    last = str(getattr(sent[-1], "content", sent[-1]) or "")
+
+    assert last.startswith("📋 **3 not checked off on the setup card:**")
+    assert "**Nicole** — [Eric Karas](<https://trello.com/c/e>) (today), Marcus Uhrich (today)" in last
+    assert "**Kathleen** — Genesis (tomorrow)" in last
+
+
+def test_the_setup_lines_are_the_unchecked_ones_once_each(config, monkeypatch):
+    """A Saturday-Monday card covers three days; each of its lines is said once."""
+    from types import SimpleNamespace
+
+    def live(cfg, day):
+        return [
+            {"agent": "Eric Karas", "url": "u1", "setup_by": "Nicole", "setup_done": False},
+            {"agent": "Bram Gutierrez", "url": "u2", "setup_by": "Nicole", "setup_done": True},
+            {"agent": "No Setup Card", "url": "u3"},
+        ], 0, []
+
+    monkeypatch.setattr(jobs, "going_live_on", live)
+    found, problems = jobs.setup_lines_open(SimpleNamespace(), [date(2026, 9, 5), date(2026, 9, 6)])
+    assert problems == [] and [one["agent"] for one in found] == ["Eric Karas"]

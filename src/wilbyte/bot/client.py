@@ -2191,6 +2191,49 @@ async def _lead_words(responder: Responder, said: str) -> None:
 
 
 async def _send_unticked(responder: Responder, config: Config, said: str = "") -> None:
+    """The cards nobody ticked, then the setup-card lines nobody checked off -
+    "yes add the setup card lines too"."""
+    from .. import dailyops
+
+    await _send_unticked_cards(responder, config, said)
+    today = _today(config)
+    named = dailyops.day_named(said, today=today)
+    days = [named] if named else []
+    day = today
+    while day <= dailyops.chased_through(today):
+        if day not in days:
+            days.append(day)
+        day = dailyops.next_day(day)
+    try:
+        lines, problems = await asyncio.to_thread(jobs.setup_lines_open, config, days)
+    except PIPELINE_ERRORS as exc:
+        lines, problems = [], [f"Couldn't read the setup cards: {exc}"]
+    if lines:
+        await responder.send(_setup_lines_said(lines, today=today), quiet=True)
+    for one in problems:
+        log.info("Setup lines: %s", one)
+
+
+def _setup_lines_said(lines: list[dict], *, today) -> str:
+    """Grouped by whose checklist they are on - that is who to ask."""
+    by_whom: dict = {}
+    for one in lines:
+        by_whom.setdefault(one["setup_by"] or "?", []).append(one)
+    said = [f"📋 **{len(lines)} not checked off on the setup card:**"]
+    for whom, theirs in by_whom.items():
+        names = []
+        for one in theirs:
+            name = f"[{one['agent']}](<{one['url']}>)" if one["url"] else str(one["agent"])
+            when = ("today" if one["day"] == today
+                    else "tomorrow" if one["day"] == today + timedelta(days=1)
+                    else "yesterday" if one["day"] == today - timedelta(days=1)
+                    else f"{one['day']:%a %b %d}")
+            names.append(f"{name} ({when})")
+        said.append(f"• **{whom}** — " + ", ".join(names))
+    return "\n".join(said)
+
+
+async def _send_unticked_cards(responder: Responder, config: Config, said: str = "") -> None:
     """The same look the afternoon takes, when somebody asks for it now.
 
     A day can be named - "unticked yesterday" - and it used to be dropped on

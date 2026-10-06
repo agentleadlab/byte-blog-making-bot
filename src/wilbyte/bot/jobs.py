@@ -5143,6 +5143,34 @@ def going_live_on(config: Config, day) -> tuple[list[dict], int, list[str]]:
     return found, undated, []
 
 
+def setup_lines_open(config: Config, days) -> tuple[list[dict], list[str]]:
+    """The lines on these days' setup cards nobody has checked off yet.
+
+    ([{"agent", "url", "setup_by", "day"}], problems). Not the same claim as
+    the green tick on the agent's own card: a checked line is the person who
+    set them up saying it's done - Eric Karas and Marcus Uhrich sat unchecked
+    on Tuesday's card while "unticked" only looked at the cards themselves.
+    Reads only. Each line once, however many days its card covers.
+    """
+    found, problems, seen = [], [], set()
+    for day in days:
+        agents_on, _undated, trouble = going_live_on(config, day)
+        problems += [one for one in trouble if one not in problems]
+        for one in agents_on:
+            # Only lines off a setup card say whether they were checked off.
+            if "setup_done" not in one or one["setup_done"]:
+                continue
+            key = (str(one.get("agent") or "").casefold(), str(one.get("setup_by") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "agent": one.get("agent"), "url": str(one.get("url") or one.get("shortUrl") or ""),
+                "setup_by": str(one.get("setup_by") or ""), "day": day,
+            })
+    return found, problems
+
+
 def _off_the_setup_card(config: Config, setup: dict, every: list) -> tuple:
     """Who is on the setup card's checklists, in the order somebody wrote them.
 
