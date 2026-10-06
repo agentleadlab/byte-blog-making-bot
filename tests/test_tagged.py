@@ -1478,6 +1478,26 @@ def test_a_comment_that_is_only_a_screenshot_is_left(config, monkeypatch):
     assert "said here" in said
 
 
+def test_kathleens_update_with_a_picture_says_nothing(config, monkeypatch):
+    """"OTP BC setup for Alexander Manchester is going live tomorrow" with a
+    screenshot - "this is just an update" - was called a bare attachment."""
+    board = TaggedBoard({"g": [
+        {"id": "c1", "author": "Kathleen Rabaya", "text":
+         "OTP BC setup for Alexander Manchester is going live tomorrow\n\n"
+         "![image.webp](https://trello.com/1/cards/x/attachments/y/download/image.webp)"},
+    ]})
+
+    tasks, problems = planning(board, monkeypatch, config)
+
+    assert tasks == [] and not any("attachment" in one for one in problems)
+
+
+def test_a_picture_tagging_nobody_says_nothing(config, monkeypatch):
+    board = TaggedBoard({"g": [{"id": "c1", "text": '[image.png]( "")', "author": "Tre"}]})
+    _tasks, problems = planning(board, monkeypatch, config)
+    assert not any("attachment" in one for one in problems)
+
+
 # ---------------------------------- a line with words as well as a tag
 
 DEV = """- @elisadeko2
@@ -1639,3 +1659,23 @@ def test_a_comment_that_reports_and_then_hands_out_a_job_keeps_the_job():
     assert tagged.only_a_report(
         "Updated the budget on the widow campaign and the trucker one, Kath set up the call"
     ) is False
+
+
+# ---------------------------- "OTP BC setup for Alexander Manchester is going live tomorrow" - "just an update"
+
+import pytest as _pytest  # noqa: E402
+
+from wilbyte import tagged as _tagged  # noqa: E402
+
+
+@_pytest.mark.parametrize("text, only", [
+    ("OTP BC setup for Alexander Manchester is going live tomorrow\n\n![image.webp](https://trello.com/1/x/image.webp)", False),
+    ("OTP BC setup for Alexander Manchester is going live tomorrow image.webp", False),
+    ("@kc please fix this ![a.png](https://trello.com/a.png)", False),
+    ("@kc ![OTP MTG PLUS relaunch setup sc.png](https://trello.com/1/x/a.png)", True),
+    ('@kc [image.png]( "")', True),
+    ("@kc image.png", True),
+    ("@kc Screenshot 2026-10-06 at 5.03.12 PM.png", True),
+])
+def test_a_sentence_with_a_picture_on_the_end_is_not_just_a_file(text, only):
+    assert _tagged.only_a_file(text) is only

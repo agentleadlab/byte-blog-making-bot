@@ -3212,7 +3212,10 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             # comment as a link to it, so all the words say is "image.png",
             # which went onto KC's list looking exactly like that.
             if tagged.only_a_file(note.text):
-                nothing_said.append(note)
+                # Said only when it was handed to somebody. A picture tagging
+                # nobody is nobody's job, and saying so is noise.
+                if tagged.mentioned(note.text):
+                    nothing_said.append(note)
                 continue
 
             if tagged.everyones_job(note.text):

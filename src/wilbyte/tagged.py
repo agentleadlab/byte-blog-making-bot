@@ -620,15 +620,25 @@ def strip_mentions(text: str) -> str:
 # A filename and nothing else. Trello writes an attachment into the comment
 # as a link to it, so a comment that is a screenshot and a tag reduces to
 # "image.png" - which is not a job, and is not worth a line on anybody's list.
+_FILE_ENDS = r"\.(?:png|jpe?g|gif|webp|heic|pdf|mov|mp4|csv|xlsx?|docx?)"
+# A file's name typed out bare: one word, or a screenshot's name with its
+# date and time in it. Not any run of words ending in one - "OTP BC setup for
+# Alexander Manchester is going live tomorrow image.webp" is a sentence with
+# a picture on the end, and was read as a file called all of that.
 JUST_A_FILE = re.compile(
-    r"^[\w .\-]+\.(png|jpe?g|gif|webp|heic|pdf|mov|mp4|csv|xlsx?|docx?)$",
+    rf"^(?:[\w.\-]+|(?:screen\s*shot|screenshot|image|img|photo)[\w .\-]*){_FILE_ENDS}$",
     re.IGNORECASE,
 )
+# What Trello writes for an attachment in a comment: ![name](link).
+_ATTACHED = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
 
 
 def only_a_file(text: str) -> bool:
     """Whether all a comment says is the name of what was attached to it."""
-    return bool(JUST_A_FILE.match(strip_mentions(text).strip()))
+    # The attachment comes off first, before the markdown it is written in.
+    rest = strip_mentions(_ATTACHED.sub(" ", text or ""))
+    rest = " ".join(re.sub(r"https?://\S+", " ", rest).split())
+    return not rest or bool(JUST_A_FILE.match(rest))
 
 
 def person_named(name: str, people: dict):
