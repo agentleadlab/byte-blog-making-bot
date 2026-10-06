@@ -2451,6 +2451,7 @@ async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
 
     config = bot.config
     text = _as_somebody_said(said)
+    tag = _tagged_in(said, bot_id=getattr(bot, "user", None))
     kind = (dailyops.kinds_named(where) or [dailyops.FALLBACK_CARD])[0]
     day = _today(config)
 
@@ -2473,7 +2474,7 @@ async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
 
     try:
         title, url, problems = await asyncio.to_thread(
-            jobs.comment_on_daily, config, kind=kind, day=day, text=text
+            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag)
         )
     except PIPELINE_ERRORS as exc:
         await message.reply(
@@ -2654,10 +2655,12 @@ async def _comment_on_card(
     # Nothing to say, but a message being answered. That is the one being
     # put on the board - the reply RYTE receives carries none of its words.
     guessed = False
+    tag: list[str] = []
     if not text and message is not None:
         replied = await _replied_to(message)
         if replied is not None and (replied.content or "").strip():
             text = _as_somebody_said(replied)
+            tag = _tagged_in(replied, bot_id=getattr(getattr(message, "guild", None), "me", None))
             if not kind:
                 # Said rather than refused. General is where anything that is
                 # not ops or ads work lives, and the message names the card it
@@ -2681,7 +2684,7 @@ async def _comment_on_card(
 
     try:
         title, url, problems = await asyncio.to_thread(
-            jobs.comment_on_daily, config, kind=kind, day=day, text=text
+            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag)
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
@@ -2701,6 +2704,28 @@ async def _comment_on_card(
     await responder.send(note)
 
 
+def _plain_name(member) -> str:
+    """"Franklin 👩‍💼| General Manager" -> "Franklin": the name, without the
+    job title and decoration a Discord nickname carries."""
+    said = str(getattr(member, "display_name", None) or getattr(member, "name", "") or "")
+    said = said.split("|")[0]
+    said = re.sub(r"[^\w\s'.-]", " ", said)
+    return " ".join(said.split())
+
+
+def _tagged_in(message, *, bot_id=None) -> list[str]:
+    """The people a Discord message tags, by name - never RYTE itself."""
+    me = getattr(bot_id, "id", bot_id)
+    found = []
+    for one in getattr(message, "mentions", None) or []:
+        if me is not None and getattr(one, "id", None) == me:
+            continue
+        name = _plain_name(one)
+        if name and name not in found:
+            found.append(name)
+    return found
+
+
 def _as_somebody_said(message) -> str:
     """One person's Discord message, ready to be a Trello comment.
 
@@ -2714,7 +2739,11 @@ def _as_somebody_said(message) -> str:
         or getattr(author, "name", "")
         or ""
     ).strip()
-    said = " ".join((message.content or "").split())
+    said = str(message.content or "")
+    # "<@1234567890>" means nothing on the board - the name does.
+    for one in getattr(message, "mentions", None) or []:
+        said = re.sub(rf"<@!?{getattr(one, 'id', '')}>", f"@{_plain_name(one)}", said)
+    said = " ".join(said.split())
     return f"{who}: {said}" if who else said
 
 

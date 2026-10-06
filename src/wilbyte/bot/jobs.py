@@ -4387,7 +4387,7 @@ def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
 
 
 def comment_on_daily(
-    config: Config, *, kind: str, day: date, text: str
+    config: Config, *, kind: str, day: date, text: str, tag=(),
 ) -> tuple[str, str, list[str]]:
     """Say something on one of the four dated cards. (title, url, problems).
 
@@ -4411,9 +4411,17 @@ def comment_on_daily(
             named = dailyops.CARD_KINDS.get(kind, kind)
             return "", "", [f"No {named} card dated {day:%m/%d/%y} anywhere on the board."]
 
-        said, handles, strangers = dailyops.tag_asked(
-            text, dailyops.who_is_known(client.board_members(config.secrets.trello_board_id))
-        )
+        known = dailyops.who_is_known(client.board_members(config.secrets.trello_board_id))
+        said, handles, strangers = dailyops.tag_asked(text, known)
+        # Whoever was tagged on Discord in the message being put on the board,
+        # tagged on Trello too - "@K2: @Franklin put on board tho let's
+        # collate all logins" reaches Franklin's checklist only as a tag.
+        for name in tag or ():
+            who = known.get(" ".join(str(name).split()).casefold())
+            if who and who not in handles:
+                handles.append(who)
+            elif not who:
+                strangers.append(str(name))
         if handles:
             said = " ".join(f"@{one}" for one in handles) + ("\n" + said if said else "")
 

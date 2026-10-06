@@ -4489,8 +4489,8 @@ def _putting(monkeypatch, said, *, answering=None):
 
     posted = {}
 
-    def comment(config, *, kind, day, text):
-        posted.update({"kind": kind, "day": day, "text": text})
+    def comment(config, *, kind, day, text, tag=()):
+        posted.update({"kind": kind, "day": day, "text": text, "tag": list(tag)})
         return f"💎 General {day:%m/%d/%y}", "https://trello.com/c/AAA", []
 
     monkeypatch.setattr(bot_client.jobs, "comment_on_daily", comment)
@@ -4616,7 +4616,7 @@ def _telling_the_room(monkeypatch, *, where="", answering=None, before=None,
 
     posted = {}
 
-    def comment(config, *, kind, day, text):
+    def comment(config, *, kind, day, text, tag=()):
         posted.update({"kind": kind, "day": day, "text": text})
         return "💻 Ops 09/14/26", "https://trello.com/c/AAA", []
 
@@ -7330,3 +7330,43 @@ def test_the_reading_is_asked_whether_it_is_a_job(monkeypatch):
     assert "is_task true only when" in seen["system"] and "When unsure, false" in seen["system"]
     assert jobs._judged_a_task(written["c1"][0]) is True
     assert jobs._judged_a_task({}) is None and jobs._judged_a_task({"is_task": "yes"}) is None
+
+
+
+# ------------------- "@Ryte add to trello" on K2's "@Franklin put on board tho let's collate all logins plz"
+
+
+def test_a_tag_in_the_message_becomes_a_name_and_a_trello_tag(monkeypatch):
+    franklin = SimpleNamespace(id=42, display_name="Franklin 👩‍💼| General Manager", name="franklin")
+    k2 = Said("<@42> put on board tho let’s collate all logins plz", author="K2")
+    k2.mentions = [franklin]
+    posted, _said = _putting(monkeypatch, "", answering=k2)
+
+    assert posted["text"] == "K2: @Franklin put on board tho let’s collate all logins plz"
+    assert posted["tag"] == ["Franklin"]
+
+
+def test_the_tagged_name_is_tagged_on_trello(monkeypatch):
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "g", "name": "💎 General 09/14/26", "url": "https://trello.com/c/g"}]
+
+        def board_members(self, board_id):
+            return [{"username": "franklinmay", "fullName": "Franklin May Maldonado"}]
+
+        def add_comment(self, card_id, text):
+            said.append(text)
+
+        def close(self):
+            pass
+
+    said = []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    _title, url, problems = jobs.comment_on_daily(
+        SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), kind="general",
+        day=date(2026, 9, 14), text="K2: @Franklin collate all logins", tag=["Franklin", "Nobody Here"])
+    assert said == ["@franklinmay\nK2: @Franklin collate all logins"]
+    assert problems == ["Nobody on the board is called Nobody Here — not tagged."]
