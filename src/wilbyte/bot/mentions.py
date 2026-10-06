@@ -251,6 +251,21 @@ def follow_up(content: str, previous: str) -> str | None:
     return DAY_WORDS.sub(what, before, count=1)
 
 
+# "@RYTE commands" - the one way to get the menu now. Anything else that
+# isn't a command gets talked to: "when i @ryte can it not show command,
+# unless it was prompt @ryte command".
+_MENU = re.compile(
+    r"^\s*(?:help|commands?|menu|what\s+can\s+you\s+do|what\s+do\s+you\s+do"
+    r"|how\s+do\s+i\s+use\s+you|list\s+(?:of\s+)?commands?)\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def wants_the_menu(content: str) -> bool:
+    text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or ""))
+    return bool(_MENU.match(text))
+
+
 def said_anything(content: str) -> bool:
     """Whether a message says anything besides the mention itself.
 

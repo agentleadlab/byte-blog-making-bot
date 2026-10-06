@@ -647,6 +647,12 @@ def test_ryte_follows_on_in_a_conversation(monkeypatch):
         asked.append(said)
 
     monkeypatch.setattr(client, "_who_goes_live", who_goes_live)
+    chatted = []
+
+    async def chat(responder, config, message):
+        chatted.append(message.content)
+
+    monkeypatch.setattr(client, "_chat", chat)
     monkeypatch.setattr(client, "_LAST_ASKED", {})
     monkeypatch.setattr(client, "is_watched", lambda message, config: False)
     monkeypatch.setattr(client, "is_allowed", lambda **kw: (True, ""))
@@ -678,4 +684,58 @@ def test_ryte_follows_on_in_a_conversation(monkeypatch):
 
     # Somebody else's "how about today" isn't a follow-up to Franklin's question.
     asyncio.run(client.handle_mention(bot, said("<@1> how about today", person=8)))
-    assert len(asked) == 3
+    assert len(asked) == 3 and chatted == ["<@1> how about today"], "it should just be talked to"
+
+
+
+# --------------------- "when i @ryte can it not show command, unless it was prompt @ryte command"
+
+
+@pytest.mark.parametrize("text, menu", [
+    ("<@1> commands", True), ("<@1> help", True), ("<@1> what can you do?", True),
+    ("<@1> command", True), ("<@1> list of commands", True),
+    ("<@1> how are you today", False), ("<@1> who made you", False), ("<@1>", False),
+])
+def test_only_asking_for_the_menu_gets_the_menu(text, menu):
+    assert mentions.wants_the_menu(text) is menu
+
+
+def _mentioned(monkeypatch, text):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    chatted, sent = [], []
+
+    async def chat(responder, config, message):
+        chatted.append(message.content)
+
+    async def send(*a, **kw):
+        sent.append(a[0] if a else kw.get("content"))
+
+    class Typing:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(client, "_chat", chat)
+    monkeypatch.setattr(client, "is_watched", lambda message, config: False)
+    monkeypatch.setattr(client, "is_allowed", lambda **kw: (True, ""))
+    message = SimpleNamespace(content=text, channel=SimpleNamespace(id=5, name="x", typing=Typing, send=send),
+                              author=SimpleNamespace(id=7), guild=None, reply=send, id=1)
+    config = SimpleNamespace(discord=SimpleNamespace(max_batch=10), secrets=SimpleNamespace())
+    asyncio.run(client.handle_mention(SimpleNamespace(config=config), message))
+    return chatted, sent
+
+
+def test_talking_to_ryte_is_answered_not_given_the_menu(monkeypatch):
+    chatted, sent = _mentioned(monkeypatch, "<@1> are you even awake")
+    assert chatted == ["<@1> are you even awake"] and sent == []
+
+
+def test_asking_for_commands_still_gets_the_menu(monkeypatch):
+    chatted, sent = _mentioned(monkeypatch, "<@1> commands")
+    assert chatted == [] and sent and "Hi, I'm RYTE" in sent[0]

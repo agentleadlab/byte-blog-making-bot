@@ -449,6 +449,40 @@ def _tagged_lately(now: datetime):
     return channel if now - when <= TAGGED_LATELY else None
 
 
+async def _chat(responder: Responder, config: Config, message) -> None:
+    """Answer somebody who talked to RYTE rather than giving it a command -
+    from what it knows, with some attitude. Talks only."""
+    from .. import chat, sops
+
+    question = mentions.MENTION_RE.sub(" ", str(message.content or ""))
+    question = " ".join(mentions.ROLE_MENTION_RE.sub(" ", question).split())
+    history = []
+    try:
+        async for one in message.channel.history(limit=chat.HISTORY, before=message):
+            said = " ".join(str(getattr(one, "content", "") or "").split())
+            if not said:
+                continue
+            who = getattr(one.author, "display_name", None) or getattr(one.author, "name", "?")
+            if getattr(one.author, "bot", False):
+                who = f"{who} (bot)"
+            history.append(f"{who}: {said[:400]}")
+        history.reverse()
+    except Exception:  # no history is a worse answer, not no answer
+        log.info("Couldn't read the channel before answering", exc_info=True)
+    try:
+        index = await asyncio.to_thread(sops.load_index)
+        titles = {hit.title for hit in sops.index_matches(index, sops.wanted_topic(question), limit=3)}
+        matched = [one for one in index if one.get("title") in titles]
+    except Exception:
+        matched = []
+    said = await asyncio.to_thread(
+        chat.answer, config, question,
+        who=str(getattr(message.author, "display_name", "") or ""),
+        today=_today(config), history=history, sops=matched, commands=mentions.HELP_TEXT,
+    )
+    await responder.send(said[:1900], quiet=True)
+
+
 async def answer_mention(bot: "WilByteBot", message) -> None:
     """Answer one @RYTE, and write down that it was answered."""
     _LAST_TAGGED[:] = [(datetime.now(timezone.utc), getattr(message, "channel", None))]
@@ -1192,10 +1226,15 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         _LAST_ASKED[asked_by] = (now, asked)
 
     if request.action == "help":
-        # The version goes on the help text specifically, because this is the
-        # message you get when RYTE doesn't recognise a word - and "that word
-        # is new, this copy is old" is the most likely reason why.
-        await responder.send(f"{mentions.HELP_TEXT}\n\n-# Running `{version.code_version()}`")
+        if mentions.wants_the_menu(message.content):
+            # The version goes on the help text specifically - "that word is
+            # new, this copy is old" is the likeliest reason a command wasn't
+            # recognised.
+            await responder.send(f"{mentions.HELP_TEXT}\n\n-# Running `{version.code_version()}`")
+            return
+        # Not a command, and not asking for the menu: talked to.
+        async with _typing(message.channel):
+            await _chat(responder, config, message)
         return
 
     async with _typing(message.channel):
