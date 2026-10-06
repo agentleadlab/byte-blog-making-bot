@@ -31,6 +31,13 @@ class Moved:
     who: str = ""
     when: str = ""
     said: str = ""
+    #: Where the line is now, for moving it: the setup card, its checklist,
+    #: the line itself, and whether it was ticked.
+    setup_card_id: str = ""
+    checklist_id: str = ""
+    item_id: str = ""
+    item_name: str = ""
+    ticked: bool = False
 
     def key(self) -> str:
         return f"livemoved|{self.card_url}|{self.live.isoformat()}"
@@ -79,3 +86,8 @@ def describe(found: list[Moved]) -> str:
         lines.append(line)
     return ("📅 **Live date changed after filing:**\n" + "\n".join(lines)
             + "\n-# Move their line to the right setup card - and Lead Order, if it's been spread.")
+
+
+def one_line(one: Moved) -> str:
+    """One finding, for a message with its own Move button."""
+    return describe([one]).split("\n-#")[0]

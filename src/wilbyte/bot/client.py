@@ -7465,10 +7465,14 @@ async def live_moved_loop(bot: "WilByteBot") -> None:
                 said = await asyncio.to_thread(alreadysaid.said_lately, day)
                 fresh = [one for one in found if one.key() not in said]
                 if fresh:
-                    ping = _unmarked_ping(bot.config)
-                    await responder.send(((ping + "\n") if ping else "") + livemoved.describe(fresh),
-                                         quiet=True)
                     await asyncio.to_thread(alreadysaid.remember, day, [one.key() for one in fresh])
+                    ping = _unmarked_ping(bot.config)
+                    if ping:
+                        await responder.send(ping)
+                    # Each with its own button, and let go of: a button waits
+                    # hours, and the loop shouldn't.
+                    for one in fresh:
+                        _also_running(asyncio.create_task(_offer_to_move(responder, bot.config, one)))
                 if problems:
                     log.warning("Live-date check: %s", "; ".join(problems))
         except asyncio.CancelledError:
@@ -7480,12 +7484,39 @@ async def live_moved_loop(bot: "WilByteBot") -> None:
 
 async def _live_moved_now(responder: Responder, config: Config) -> None:
     """`@RYTE live changes` - the same look, now, whether or not it was said."""
+    found, problems = await asyncio.to_thread(jobs.live_dates_moved, config)
+    if not found:
+        await responder.send(
+            ("📅 Every agent on the coming week's setup cards still goes live on that card's day."
+             if not problems else "") + "".join(f"\n⚠ {one}" for one in problems))
+        return
+    await asyncio.gather(*(_offer_to_move(responder, config, one) for one in found))
+    if problems:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+
+
+async def _offer_to_move(responder: Responder, config: Config, one) -> None:
+    """One agent whose day moved, with a button that moves their line -
+    "yes add the button to move it"."""
     from .. import livemoved
 
-    found, problems = await asyncio.to_thread(jobs.live_dates_moved, config)
-    said = livemoved.describe(found) if found else (
-        "📅 Every agent on the coming week's setup cards still goes live on that card's day." if not problems else "")
-    await responder.send(said + "".join(f"\n⚠ {one}" for one in problems), quiet=True)
+    view = views.ConfirmView(
+        requester_id=None,
+        timeout=config.discord.approval_timeout_seconds,
+        label=f"Move to {one.live:%a %b %d}",
+        emoji="📅",
+    )
+    await responder.send(
+        "📅 **Live date changed after filing:**\n" + livemoved.one_line(one)
+        + "\n-# The button moves their setup line - and their Lead Order line, if it's been spread.",
+        view=view, quiet=True,
+    )
+    await view.wait()
+    if not view.confirmed:
+        return
+    done, problems = await asyncio.to_thread(jobs.move_live_line, config, one)
+    await responder.send("\n".join(done + [f"⚠ {problem}" for problem in problems])
+                         or "Nothing needed moving.")
 
 
 async def paid_check_loop(bot: "WilByteBot") -> None:

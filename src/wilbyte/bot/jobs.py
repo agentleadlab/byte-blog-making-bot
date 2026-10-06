@@ -7075,10 +7075,102 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                         who=str((note or {}).get("author") or ""),
                         when=f"{when:%b %-d %-I:%M %p}" if when else "",
                         said=str((note or {}).get("text") or ""),
+                        setup_card_id=str(setup.get("id") or ""),
+                        checklist_id=str(checklist.get("id") or ""),
+                        item_id=str(item.get("id") or ""),
+                        item_name=str(item.get("name") or ""),
+                        ticked=str(item.get("state") or "") == "complete",
                     ))
         return found, problems
     except Exception as exc:
         return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+
+def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
+    """Move an agent whose go-live day changed: their line off the old setup
+    card onto the new day's, on the same person's list - and the same on the
+    Lead Order cards if they've been spread already. (done, problems).
+
+    "yes add the button to move it". Each line is added where it goes before
+    it comes off where it was, so a failure part way leaves it in two places
+    rather than none. Nothing is made up: no setup card, Lead Order card or
+    list for the new day, and that part is left and said.
+    """
+    from .. import agents as rules
+    from .. import dailyops, trello
+
+    done, problems = [], []
+    day = moved.live
+    recent = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) - timedelta(days=30)
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id)
+
+        def same_list(checklists, name):
+            return next((one for one in checklists
+                         if str(one.get("name") or "").strip().casefold() == name.strip().casefold()), None)
+
+        # The setup card.
+        targets = sorted(
+            (card for card in every
+             if rules.is_setup_card(str(card.get("name") or ""))
+             and rules.setup_covers(str(card.get("name") or ""), day)
+             and str(card.get("id") or "") != moved.setup_card_id
+             and (rules.made_at(str(card.get("id") or "")) or recent) >= recent),
+            key=lambda card: rules.made_at(str(card.get("id") or "")) or _NEVER, reverse=True,
+        )
+        if not targets:
+            problems.append(f"There's no setup card for {day:%a %b %d} yet - make it and press again.")
+            return done, problems
+        target = targets[0]
+        theirs = same_list(client.card_checklists(str(target.get("id") or "")), moved.checklist)
+        if theirs is None:
+            problems.append(f"{target.get('name')} has no {moved.checklist} list, so I left it where it is.")
+            return done, problems
+        still = same_list(client.card_checklists(moved.setup_card_id), moved.checklist) or {}
+        line = next((one for one in still.get("checkItems") or [] if str(one.get("id") or "") == moved.item_id), None)
+        if line is None:
+            problems.append(f"{moved.agent} isn't on {moved.setup_card} any more - somebody moved them already.")
+            return done, problems
+        client.add_check_item(str(theirs.get("id") or ""), moved.item_name, checked=moved.ticked)
+        client.remove_check_item(moved.checklist_id, moved.item_id)
+        done.append(f"✅ Setup: {moved.setup_card} → **{target.get('name')}** ({moved.checklist})")
+
+        # The Lead Order cards, if the spread already put them on the old day.
+        short = trello.linked_card_id(moved.card_url) or ""
+        old_title = moved.setup_card
+        olds = [card for card in every
+                if (dailyops.parse_card_title(str(card.get("name") or "")) or ("",))[0] == "lead_order"
+                and any(rules.setup_covers(old_title, one)
+                        for one in dailyops.card_days(str(card.get("name") or "")))]
+        new_order = dailyops.cards_covering(every, day).get("lead_order")
+        for old in olds:
+            for checklist in client.card_checklists(str(old.get("id") or "")):
+                for item in checklist.get("checkItems") or []:
+                    said = str(item.get("name") or "")
+                    if not short or trello.linked_card_id(said) != short:
+                        continue
+                    if new_order is None:
+                        problems.append(f"No Lead Order card for {day:%a %b %d} yet, so their line is still "
+                                        f"on {old.get('name')}.")
+                        continue
+                    place = same_list(client.card_checklists(str(new_order.get("id") or "")),
+                                      str(checklist.get("name") or ""))
+                    if place is None:
+                        problems.append(f"{new_order.get('name')} has no “{checklist.get('name')}” list, so "
+                                        f"their line is still on {old.get('name')}.")
+                        continue
+                    client.add_check_item(str(place.get("id") or ""), said,
+                                          checked=str(item.get("state") or "") == "complete")
+                    client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
+                    done.append(f"✅ Lead Order: {old.get('name')} → **{new_order.get('name')}** "
+                                f"({checklist.get('name')})")
+        return done, problems
+    except Exception as exc:
+        problems.append(f"Couldn't finish moving {moved.agent}: {_short(exc, 140)}")
+        return done, problems
     finally:
         client.close()
 
