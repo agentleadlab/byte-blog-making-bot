@@ -7000,6 +7000,89 @@ def wrong_day_lines(
         client.close()
 
 
+#: Agent cards as last read for the live-date check: {card id: (last
+#: activity, (launch, note))}. Read again only once the card has been touched.
+_LAUNCH_READS: dict = {}
+
+#: How far ahead the setup cards are read back.
+LIVE_MOVED_AHEAD = 7
+
+
+def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
+    """Agents on a setup card for a day they no longer go live on.
+    ([livemoved.Moved], problems). Reads only."""
+    from zoneinfo import ZoneInfo
+
+    from .. import agents as rules
+    from .. import livemoved
+
+    today = today or board_day(config)
+    zone = config.schedule.timezone
+    days = [today + timedelta(days=n) for n in range(LIVE_MOVED_AHEAD + 1)]
+    recent = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc) - timedelta(days=30)
+    client = open_trello(config)
+    found, problems = [], []
+    try:
+        every = client.board_cards(config.secrets.trello_board_id)
+        by_url = {}
+        for card in every:
+            for field in ("url", "shortUrl"):
+                if card.get(field):
+                    by_url[str(card[field])] = card
+        setups = [
+            card for card in every
+            if rules.is_setup_card(str(card.get("name") or ""))
+            and any(rules.setup_covers(str(card.get("name") or ""), day) for day in days)
+            and (rules.made_at(str(card.get("id") or "")) or recent) >= recent
+        ]
+        for setup in setups:
+            title = str(setup.get("name") or "")
+            try:
+                checklists = client.card_checklists(str(setup.get("id") or ""))
+            except Exception as exc:
+                problems.append(f"Couldn't read {title}: {_short(exc, 120)}")
+                continue
+            for checklist in checklists:
+                for item in checklist.get("checkItems") or []:
+                    name, _leads, url = rules.split_setup_item(str(item.get("name") or ""))
+                    card = by_url.get(url)
+                    if card is None:
+                        continue
+                    card_id = str(card.get("id") or "")
+                    touched = str(card.get("dateLastActivity") or "")
+                    held = _LAUNCH_READS.get(card_id)
+                    if held is not None and held[0] == touched:
+                        launch, note = held[1]
+                    else:
+                        made = rules.made_at(card_id)
+                        try:
+                            notes = client.card_notes(card_id)
+                        except Exception as exc:
+                            problems.append(f"Couldn't read {name}'s card: {_short(exc, 120)}")
+                            continue
+                        launch, note = livemoved.current_launch(
+                            notes, str(card.get("desc") or ""),
+                            made=made.date() if made else today, timezone=zone,
+                        )
+                        _LAUNCH_READS[card_id] = (touched, (launch, note))
+                    if launch is None or rules.setup_covers(title, launch):
+                        continue
+                    when = livemoved._local((note or {}).get("when"), ZoneInfo(zone))
+                    found.append(livemoved.Moved(
+                        agent=name or rules.agent_name(str(card.get("name") or "")),
+                        card_url=str(card.get("shortUrl") or card.get("url") or url),
+                        setup_card=title, checklist=str(checklist.get("name") or ""), live=launch,
+                        who=str((note or {}).get("author") or ""),
+                        when=f"{when:%b %-d %-I:%M %p}" if when else "",
+                        said=str((note or {}).get("text") or ""),
+                    ))
+        return found, problems
+    except Exception as exc:
+        return [], [f"Couldn't read the board: {_short(exc, 140)}"]
+    finally:
+        client.close()
+
+
 def describe_wrong_days(findings, *, most: int = 20) -> str:
     """What the sweep found, as one message."""
     if not findings:

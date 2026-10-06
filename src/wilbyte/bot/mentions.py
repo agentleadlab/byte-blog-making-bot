@@ -816,6 +816,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*(?:contracts|contract\s+check|check\s+contracts)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="contracts", brief=text)
+    if re.match(r"\s*(?:live\s+(?:date\s+)?changes?|(?:live\s+)?dates?\s+(?:changed|changes|moved)|moved\s+(?:live\s+)?dates?)\s*[.?!]*\s*$",
+                text, re.IGNORECASE):
+        return MentionRequest(action="livemoved", brief=text)
     if re.match(r"\s*(?:paid\s+(?:but\s+)?not\s+set\s*up|not\s+set\s*up|unset|payra\s+(?:setup|set\s*up|cards?))\s*[.?!]*\s*$",
                 text, re.IGNORECASE):
         return MentionRequest(action="notsetup", brief=text)
@@ -1282,6 +1285,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ordered against the leads on their sheet, with the line a dispute needs. **delivered**
 > on its own lists every order a week or more live that's short. I also say so on my own
 > each morning, once per order
+> @RYTE **live changes** — agents on the coming week's setup cards whose card now says a
+> different go-live day (a comment like "go live same day", or the description). I also say
+> so on my own, once each
 > @RYTE **not set up** — everybody who paid in Payra in the last three days with no card
 > on the board, or a New Agent card with no launch date
 > @RYTE **quiet keep Mujeeb** — never clear this person's channels, by hand or on my own.

@@ -1961,7 +1961,8 @@ def _date_in(sentence: str, *, today: date) -> date | None:
         return _made(month, int(written.group(2)), None, today=today)
 
     said = sentence.lower()
-    if re.search(r"\btoday\b|\bimmediate(?:ly)?\b", said) or ASAP.search(said):
+    # "he is to go live same day" - the day it was said.
+    if re.search(r"\btoday\b|\bimmediate(?:ly)?\b|\bsame[\s-]*day\b", said) or ASAP.search(said):
         return today
     # "Add to his active order" with no date on it. Adding to an order that
     # already exists is the same-day job, so today is what it means rather

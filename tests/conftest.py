@@ -37,6 +37,7 @@ def _said_nothing_yet(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jobs, "_CARD_READS", {})
     monkeypatch.setattr(jobs, "_BOARD_READ", {})
+    monkeypatch.setattr(jobs, "_LAUNCH_READS", {})
 
 
 @pytest.fixture

@@ -206,6 +206,7 @@ class WilByteBot(discord.Client):
         self.contract_task: asyncio.Task | None = None
         self.delivery_task: asyncio.Task | None = None
         self.paid_task: asyncio.Task | None = None
+        self.live_task: asyncio.Task | None = None
         self.tags_task: asyncio.Task | None = None
         self.ring_task: asyncio.Task | None = None
         self.offered_the_run = False
@@ -333,6 +334,12 @@ class WilByteBot(discord.Client):
         # Paid in Payra with nothing on the board for it: only when asked,
         # `@RYTE not set up`. Its first run on its own posted every aged-lead
         # order of the last two weeks at once - "WTH IS THIS SPAMMMINGG".
+        # A go-live day changed after the agent was filed. On the agents
+        # switch - it is about them - and reads only.
+        if self.config.secrets.trello_agents_auto and (
+            self.live_task is None or self.live_task.done()
+        ):
+            self.live_task = self.loop.create_task(live_moved_loop(self))
         # Proof of delivery, each morning: short orders said once. On the
         # agents switch - it is about them - and reads only.
         if self.config.secrets.trello_agents_auto and (
@@ -1397,6 +1404,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if not said and not problems:
                     said = "Nobody going live today or tomorrow."
                 await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
+                return
+
+            if request.action == "livemoved":
+                await _live_moved_now(responder, config)
                 return
 
             if request.action == "notsetup":
@@ -7432,6 +7443,49 @@ async def alive_loop(bot: "WilByteBot") -> None:
         except Exception:
             log.warning("Down alarm check-in failed", exc_info=True)
         await asyncio.sleep(alive.BEAT_SECONDS)
+
+
+#: How often filed agents' go-live days are read back against their setup card.
+LIVE_MOVED_SECONDS = 900
+
+
+async def live_moved_loop(bot: "WilByteBot") -> None:
+    """"people changes their live date sometimes even they got move to done".
+    Every quarter of an hour, the coming week's setup cards against the
+    agents on them; a day that moved is said once, Franklin tagged. Reads
+    only, and only cards touched since the last look are opened again."""
+    from .. import alreadysaid, livemoved
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            if responder is not None:
+                day = await asyncio.to_thread(jobs.board_day, bot.config)
+                found, problems = await asyncio.to_thread(jobs.live_dates_moved, bot.config, today=day)
+                said = await asyncio.to_thread(alreadysaid.said_lately, day)
+                fresh = [one for one in found if one.key() not in said]
+                if fresh:
+                    ping = _unmarked_ping(bot.config)
+                    await responder.send(((ping + "\n") if ping else "") + livemoved.describe(fresh),
+                                         quiet=True)
+                    await asyncio.to_thread(alreadysaid.remember, day, [one.key() for one in fresh])
+                if problems:
+                    log.warning("Live-date check: %s", "; ".join(problems))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.exception("Live-date check failed; will try again shortly")
+        await asyncio.sleep(LIVE_MOVED_SECONDS)
+
+
+async def _live_moved_now(responder: Responder, config: Config) -> None:
+    """`@RYTE live changes` - the same look, now, whether or not it was said."""
+    from .. import livemoved
+
+    found, problems = await asyncio.to_thread(jobs.live_dates_moved, config)
+    said = livemoved.describe(found) if found else (
+        "📅 Every agent on the coming week's setup cards still goes live on that card's day." if not problems else "")
+    await responder.send(said + "".join(f"\n⚠ {one}" for one in problems), quiet=True)
 
 
 async def paid_check_loop(bot: "WilByteBot") -> None:
