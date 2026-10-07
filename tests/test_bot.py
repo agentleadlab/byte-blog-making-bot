@@ -7391,3 +7391,49 @@ def test_something_to_say_and_no_card_named_goes_on_general(monkeypatch):
     assert posted["kind"] == "general"
     assert posted["text"] == "put on board tho let's collate all logins plz"
     assert "Nobody said which card" in said[-1]
+
+
+# ---------------- "[Errno 8] nodename nor servname provided" - the network blinking, not an error
+
+
+def _members(monkeypatch, outcomes, *, held=None):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    left = list(outcomes)
+
+    def read(config):
+        one = left.pop(0)
+        if isinstance(one, Exception):
+            raise one
+        return one, []
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(jobs, "levinson_members", read)
+    monkeypatch.setattr(client.asyncio, "sleep", no_wait)
+    bot = SimpleNamespace(config=None)
+    if held is not None:
+        bot._levinson_members, bot._levinson_members_at = held, 0.0
+    return asyncio.run(client._levinson_members(bot)), left
+
+
+def test_a_network_blink_is_tried_again_not_reported(monkeypatch):
+    blink = OSError("[Errno 8] nodename nor servname provided, or not known")
+    (members, _notes), left = _members(monkeypatch, [blink, ["Ana"]])
+    assert members == ["Ana"] and left == []
+
+
+def test_still_down_uses_the_list_read_before(monkeypatch):
+    blink = OSError("[Errno 8] nodename nor servname provided")
+    (members, _notes), _left = _members(monkeypatch, [blink, blink, blink], held=["Bo"])
+    assert members == ["Bo"]
+
+
+def test_still_down_with_nothing_to_go_on_is_an_error(monkeypatch):
+    blink = OSError("[Errno 8] nodename nor servname provided")
+    with pytest.raises(OSError):
+        _members(monkeypatch, [blink, blink, blink])

@@ -8807,6 +8807,10 @@ MEMBERS_GOOD_FOR = 30 * 60
 SAY_AGAIN_AFTER = 60 * 60
 
 
+#: Tries at reading the Levinson members, and the wait before the next one.
+LEVINSON_TRIES, LEVINSON_WAIT = 3, 5
+
+
 async def _levinson_members(bot: "WilByteBot") -> tuple[list, list[str]]:
     """The member list, from memory when it was read recently enough."""
     held = getattr(bot, "_levinson_members", None)
@@ -8814,7 +8818,25 @@ async def _levinson_members(bot: "WilByteBot") -> tuple[list, list[str]]:
     if held is not None and time.time() - read_at < MEMBERS_GOOD_FOR:
         return held, []
 
-    members, notes = await asyncio.to_thread(jobs.levinson_members, bot.config)
+    # Three tries a few seconds apart. "[Errno 8] nodename nor servname
+    # provided" is the Mac's network blinking, not GHL saying no - and a red
+    # "Something went wrong" for it is a false alarm. Still failing, the list
+    # read earlier is used if there is one; only with nothing to go on is it
+    # an error.
+    error = None
+    for attempt in range(LEVINSON_TRIES):
+        try:
+            members, notes = await asyncio.to_thread(jobs.levinson_members, bot.config)
+            break
+        except Exception as exc:
+            error = exc
+            if attempt < LEVINSON_TRIES - 1:
+                await asyncio.sleep(LEVINSON_WAIT * (attempt + 1))
+    else:
+        if held is not None:
+            log.warning("Couldn't refresh the Levinson members, using the last copy: %s", error)
+            return held, []
+        raise error
     if members:
         bot._levinson_members = members
         bot._levinson_members_at = time.time()

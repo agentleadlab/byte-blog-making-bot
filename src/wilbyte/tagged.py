@@ -633,6 +633,25 @@ JUST_A_FILE = re.compile(
 _ATTACHED = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
 
 
+def attached_name(text: str) -> str:
+    """The name of what was attached - out of the attachment Trello writes
+    into the comment, or the end of its link - or "a file". `“”` told
+    nobody which file it was."""
+    from urllib.parse import unquote, urlsplit
+
+    found = _ATTACHED.search(text or "")
+    if found:
+        said = re.match(r"!?\[([^\]]*)\]\(([^)\s]*)", found.group(0))
+        if said and said.group(1).strip():
+            return " ".join(said.group(1).split())
+        if said and said.group(2):
+            tail = unquote(urlsplit(said.group(2)).path.rsplit("/", 1)[-1])
+            if tail:
+                return tail
+    rest = " ".join(strip_mentions(text or "").split())
+    return rest or "a file"
+
+
 def only_a_file(text: str) -> bool:
     """Whether all a comment says is the name of what was attached to it."""
     # The attachment comes off first, before the markdown it is written in.

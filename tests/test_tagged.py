@@ -1679,3 +1679,14 @@ from wilbyte import tagged as _tagged  # noqa: E402
 ])
 def test_a_sentence_with_a_picture_on_the_end_is_not_just_a_file(text, only):
     assert _tagged.only_a_file(text) is only
+
+
+@_pytest.mark.parametrize("text, name", [
+    ("@kennethwalsh @elisadeko2 ![](https://trello.com/1/x/download/Screenshot%202026-10-07.png)",
+     "Screenshot 2026-10-07.png"),
+    ('@kc [image.png]( "")', "image.png"),
+    ("@kc ![]()", "a file"),
+])
+def test_the_attachment_is_named_never_left_as_empty_quotes(text, name):
+    """"A comment with just an attachment ... — “” —" named no file at all."""
+    assert _tagged.attached_name(text) == name

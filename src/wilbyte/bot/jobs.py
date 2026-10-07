@@ -3313,7 +3313,7 @@ def _tags_on(config, client, every, members, day, problems) -> list:
     # attached to them, so I left them: OTP MTG PLUS relaunch setup sc" was a
     # "huh?". Which file, for whom, and where - one line each.
     for one in nothing_said:
-        file = " ".join(tagged.plain(tagged.strip_mentions(one.text)).split())
+        file = tagged.attached_name(one.text)
         if len(file) > 80:
             file = file[:77] + "…"
         who = ", ".join(f"@{name}" for name in tagged.mentioned(one.text))
