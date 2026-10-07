@@ -5732,21 +5732,36 @@ def itinerary_calendar(config: Config, link: str, *, today=None):
     sheet_id = gsheets.sheet_id_in(link)
     if not sheet_id:
         return "", "", None, ["That doesn't look like a Google Sheets link."]
+    today = today or board_day(config)
     try:
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
             name = client.title(sheet_id) or "Itinerary"
             gid = gsheets.gid_in(link)
             tab = client.tab_named(sheet_id, gid) if gid else ""
-            if not tab:
-                tabs = client.tabs(sheet_id)
-                tab = str((tabs[0] if tabs else {}).get("title") or "Sheet1")
-            rows = client.rows(sheet_id, f"'{tab}'!A1:Z600")
+            if tab:
+                tried = [tab]
+            else:
+                # No tab in the link: the first one is "Airbnbs", and the
+                # schedule is on "Cebu Itinerary". Every tab, the ones named
+                # like a schedule first, and the first that reads as one.
+                titles = [str(one.get("title") or "") for one in client.tabs(sheet_id)]
+                tried = sorted(titles, key=lambda title: not re.search(
+                    r"itinerar|schedule|agenda|plan", title, re.IGNORECASE))
+            found, used = None, ""
+            for title in tried:
+                rows = client.rows(sheet_id, f"'{title}'!A1:Z600")
+                read = itinerary.read(rows, today=today)
+                if read.events:
+                    found, used = read, title
+                    break
+                found = found or read
     except Exception as exc:
         return "", "", None, [f"Couldn't read the sheet: {_short(exc, 160)} - is it shared with RYTE's Google account?"]
-    found = itinerary.read(rows, today=today or board_day(config))
-    if not found.events:
-        return "", name, found, ["No rows with a date and a time to put in a calendar."]
-    return itinerary.ics(found.events, name=name), name, found, []
+    if found is None or not found.events:
+        return "", name, found, [
+            "No tab with a Time and an Activity column and rows under them to put in a calendar"
+            + (f" (looked at: {', '.join(tried)})." if tried else ".")]
+    return itinerary.ics(found.events, name=name), (f"{name} · {used}" if used and len(tried) > 1 else name), found, []
 
 
 def sheet_titles(config: Config, links) -> dict:

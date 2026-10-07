@@ -98,3 +98,39 @@ def test_the_command_posts_the_file_with_the_eastern_time_said(monkeypatch):
     assert "Oct 8 1:30 AM in Manila, is Oct 7 1:30 PM Eastern" in text
     assert "row 12 “SM Seaside” (no time)" in text
     assert file.filename == "Agent-Lead-Lab-goes-to-Cebu.ics"
+
+
+def test_a_link_with_no_tab_finds_the_itinerary_tab(monkeypatch):
+    """The link had no #gid, so the first tab - "Airbnbs" - was read, and
+    "No rows with a date and a time to put in a calendar"."""
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+
+    class Sheets:
+        def __init__(self, creds):
+            self.read = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def title(self, sheet_id):
+            return "Agent Lead Lab goes to Cebu"
+
+        def tabs(self, sheet_id):
+            return [{"title": "Airbnbs"}, {"title": "Expenses & Activities to Book"}, {"title": "Cebu Itinerary"}]
+
+        def rows(self, sheet_id, span):
+            return CEBU if span.startswith("'Cebu Itinerary'") else [["Name", "Price"], ["Casa", "100"]]
+
+    monkeypatch.setattr(gsheets, "SheetsClient", Sheets)
+    monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
+    text, name, found, problems = jobs.itinerary_calendar(
+        SimpleNamespace(secrets=None),
+        "https://docs.google.com/spreadsheets/d/1j2h8vq1waZXem1U67LroRC13AaTw-sqhg003078OQVI/edit?usp=sharing",
+        today=date(2026, 10, 7))
+
+    assert problems == [] and len(found.events) == 5
+    assert name == "Agent Lead Lab goes to Cebu · Cebu Itinerary"
