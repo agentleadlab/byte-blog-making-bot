@@ -2508,3 +2508,49 @@ def test_the_rebuttal_never_guesses_the_cardholders_gender():
     said = rebuttal.writing_prompt(rebuttal.read_facts(JULIANA), rebuttal.Gathered(), [])
     assert "Never call the cardholder he, she, him, her" in said
     assert "'the cardholder'" in said
+
+
+def test_payras_paid_invoice_goes_in_as_an_exhibit(monkeypatch, tmp_path):
+    """"we fought them using payra time stamps and reference and all of that"
+    - Juliana's was won on Payra's invoice. It goes in by itself now."""
+    import asyncio
+
+    from wilbyte import rebuttal
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    written = {}
+
+    def write(config, dispute, found, exhibits, *, into):
+        written["exhibits"] = list(exhibits)
+        into = tmp_path / into.name
+        into.write_bytes(b"docx")
+        return into
+
+    monkeypatch.setattr(jobs, "rebuttal_evidence", lambda config, dispute: rebuttal.Gathered())
+    monkeypatch.setattr(jobs, "write_rebuttal", write)
+    monkeypatch.setattr(jobs, "paid_invoice_pdf", lambda who, config: (b"%PDF-1.4 invoice", [{}], ""))
+
+    async def no_tracker(*a, **kw):
+        return None
+
+    monkeypatch.setattr(bot_client, "_offer_the_tracker", no_tracker)
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    class Message:
+        attachments: list = []
+        reference = None
+
+    class Config:
+        class secrets:
+            anthropic_api_key = "x"
+
+    asyncio.run(bot_client._rebuttal(Responder(), Config(), Message(), JULIANA))
+
+    [invoice] = [one for one in written["exhibits"] if one.kind == "invoice"]
+    assert invoice.name == "Payra-paid-invoice-Juliana-Hernandez.pdf"
+    assert invoice.data.startswith(b"%PDF")

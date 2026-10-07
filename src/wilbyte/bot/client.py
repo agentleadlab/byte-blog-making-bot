@@ -3062,6 +3062,23 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
                 data=found.contract_pdf,
                 kind="contract",
             ))
+        # Payra's paid invoice, as an exhibit - "we fought them using payra
+        # time stamps and reference and all of that". The figures are the
+        # ones in the document; this is the document they come from. Not when
+        # somebody attached an invoice themselves.
+        if not any(one.kind == "invoice" for one in exhibits):
+            try:
+                who = dispute.customer_email or dispute.customer_name
+                pdf, _invoices, _problem = await asyncio.to_thread(jobs.paid_invoice_pdf, who, config)
+            except Exception:
+                log.warning("Couldn't make the Payra invoice exhibit", exc_info=True)
+                pdf = b""
+            if pdf:
+                exhibits.append(rules_doc.Exhibit(
+                    name="Payra-paid-invoice-" + (re.sub(r"[^A-Za-z0-9]+", "-", dispute.customer_name
+                                                         or "customer").strip("-")) + ".pdf",
+                    data=pdf, kind="invoice",
+                ))
         where = Path(DEFAULT_OUTPUT_DIR) / _rebuttal_name(dispute)
         path = await asyncio.to_thread(
             jobs.write_rebuttal, config, dispute, found, exhibits, into=where
