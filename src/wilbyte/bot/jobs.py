@@ -4049,6 +4049,10 @@ def aged_to_archive(config: Config) -> tuple[list[dict], list[str]]:
             if str(card.get("idList") or held) == held
             and card.get("dueComplete")
             and not agents.is_setup_card(str(card.get("name") or ""))
+            # Nor a New Agent card filed in the wrong list - "NEW AGENT-
+            # Bernardo Rico" sat in Aged Leads Order Done. It is the record of
+            # their setup and belongs in Done, not in the archive.
+            and not agents.is_agent_card(str(card.get("name") or ""))
         ], []
     finally:
         client.close()

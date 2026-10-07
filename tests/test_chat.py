@@ -78,3 +78,10 @@ def test_the_answer_is_what_claude_wrote(monkeypatch):
                        commands="")
     assert said == "Awake? Darling, I never sleep."
     assert seen["max_tokens"] == 500 and "sassy" in seen["system"]
+
+
+def test_he_says_what_a_command_does_in_its_own_words():
+    """"clears out the ticked cards sitting in Done" - it's Aged Leads Order
+    Done, and `trello unticked` isn't about those at all."""
+    system, _messages = _built()
+    assert "in the command list's" in system and "no wider and no narrower" in system

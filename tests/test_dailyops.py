@@ -4179,3 +4179,15 @@ def test_the_aged_archive_leaves_a_setup_card_alone(monkeypatch, config):
     cards, problems = jobs.aged_to_archive(config)
     assert problems == []
     assert [card["name"] for card in cards] == ["Aged 500 — Levinson"]
+
+
+def test_a_new_agent_card_in_the_aged_list_is_never_archived(monkeypatch, config):
+    """"NEW AGENT- Bernardo Rico" sat in Aged Leads Order Done - filed in the
+    wrong list, and once ticked the ten o'clock archive would have taken it."""
+    from wilbyte.bot import jobs
+
+    board = aged_board(KENE, {"id": "br", "name": "NEW AGENT- Bernardo Rico", "dueComplete": True})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    jobs.archive_aged(config)
+    assert board.archived == ["kene"]
