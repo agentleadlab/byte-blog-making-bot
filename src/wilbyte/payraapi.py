@@ -471,6 +471,23 @@ def _spelled(stamp) -> str:
     return f"{day:%B} {day.day}, {day.year}" if day else str(stamp or "?")[:10]
 
 
+def contacts_for(data: dict, *, name: str, email: str = "") -> tuple[set, set]:
+    """({emails}, {phones}) on this customer's Payra invoices - by email or
+    whole name, the same as `for_dispute` - for finding their card on the
+    board when the name on it is spelled another way."""
+    from .clearout import name_match
+
+    email = str(email or "").strip().casefold()
+    emails, phones = set(), set()
+    for one in (data.get("invoices") or {}).values():
+        if (email and one.get("email") == email) or name_match(name, one.get("name", "")) >= 2:
+            if one.get("email"):
+                emails.add(str(one["email"]).casefold())
+            if one.get("phone"):
+                phones.add(str(one["phone"]))
+    return emails, phones
+
+
 def for_dispute(data: dict, *, name: str, email: str = "", amount: str = "",
                 paid_on=None, card: str = "") -> tuple[str, bool]:
     """What Payra holds on a disputed charge. (what it says, certain?).

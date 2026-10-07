@@ -2470,3 +2470,41 @@ def test_the_command_says_why_when_there_is_no_pdf(monkeypatch):
 
     assert "No signed contract" in sent[0][0]
     assert sent[0][1] is None
+
+
+# ---------------------------------------------- Meilee Reddy's rebuttal
+
+
+def test_a_card_under_another_spelling_is_found_by_the_email_on_it(monkeypatch):
+    """"No card for Meilee reddy anywhere on the board" - and the rebuttal went
+    out without her order, her setup or her sheet."""
+    other = {"id": "c9", "name": "AGED LEAD - Juli H. Lopez", "desc": HER_DESC}
+    found = _gathering(monkeypatch, cards=[other])
+
+    assert not any("anywhere on the board" in one for one in found.holes)
+    assert found.sheet == "25 rows of leads"
+
+
+def test_an_aged_lead_invoice_asks_for_no_contract_card_or_no_card(monkeypatch):
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(jobs, "_payra_record", lambda dispute: (
+        'Invoice: "This payment is for a list of aged leads provided by Agent Lead Lab"', ""))
+
+    def never(config, dispute):
+        raise AssertionError("looked for a contract an aged-lead order never signs")
+
+    monkeypatch.setattr(jobs, "_signed_contract", never)
+    found = _gathering(monkeypatch, cards=[])
+
+    assert found.aged is True
+    assert not any("contract" in one.casefold() for one in found.holes)
+
+
+def test_the_rebuttal_never_guesses_the_cardholders_gender():
+    """"on her own Mastercard" - nothing in the record says which."""
+    from wilbyte import rebuttal
+
+    said = rebuttal.writing_prompt(rebuttal.read_facts(JULIANA), rebuttal.Gathered(), [])
+    assert "Never call the cardholder he, she, him, her" in said
+    assert "'the cardholder'" in said

@@ -5303,12 +5303,20 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     client = open_trello(config)
     try:
         every = client.board_cards(config.secrets.trello_board_id, archived=True)
-        cards = rules.named_that(name, every)
+        cards = rules.named_that(name, every) or _cards_by_contact(dispute, every)
     except Exception as exc:
         found.holes.append(f"Couldn't read the board: {_short(exc, 120)}")
         return found
     finally:
         client.close()
+    # A client with several orders has a card for each: the one made nearest
+    # the disputed charge is the order being disputed.
+    paid = dispute.paid()
+    if paid is not None and len(cards) > 1:
+        def distance(card):
+            made = rules.made_at(str(card.get("id") or ""))
+            return abs((made.date() - paid).days) if made else 10**6
+        cards = sorted(cards, key=distance)
 
     # No card is a hole in the document, not the end of gathering. The receipt
     # is in Gmail and has nothing to do with the board, and returning here
@@ -5390,6 +5398,10 @@ def rebuttal_evidence(config: Config, dispute) -> "object":
     record, trouble = _payra_record(dispute)
     if record:
         found.invoice = (found.invoice + "\n\n" if found.invoice else "") + record
+        # An aged-lead order says so on its invoice, card or no card - and
+        # signs no contract, so none is asked for.
+        if re.search(r"\baged\s+leads?\b", record, re.IGNORECASE):
+            found.aged = True
     if trouble:
         found.holes.append(trouble)
 
@@ -6036,6 +6048,29 @@ def _photograph(html_path: Path, png_path: Path) -> None:
             page.screenshot(path=str(png_path), full_page=True)
         finally:
             browser.close()
+
+
+def _cards_by_contact(dispute, every: list) -> list:
+    """The client cards carrying the email or phone on their Payra invoices -
+    Meilee Reddy's card wasn't found by her name, and the rebuttal went out
+    without her order, her setup or her delivered sheet."""
+    from .. import agents as rules
+    from .. import payraapi
+    from ..contracts import card_email
+    from ..smsreplies import phones_in
+
+    emails, phones = payraapi.contacts_for(
+        payraapi.load(), name=dispute.customer_name, email=dispute.customer_email)
+    if dispute.customer_email:
+        emails.add(str(dispute.customer_email).casefold())
+    if not emails and not phones:
+        return []
+    return [
+        card for card in every or []
+        if rules.is_client_card(str(card.get("name") or ""))
+        and (card_email(str(card.get("desc") or "")) in emails
+             or phones & phones_in(str(card.get("desc") or "")))
+    ]
 
 
 def _payra_record(dispute) -> tuple[str, str]:
