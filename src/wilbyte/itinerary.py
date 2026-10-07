@@ -56,11 +56,22 @@ class Event:
         return finish if finish > self.starts() else finish + timedelta(days=1)
 
 
+#: An event longer than this is almost always AM where PM was meant - "10:30
+#: PM - 11:00 AM" for a waterfall. Put in, and listed to be looked at.
+TOO_LONG = timedelta(hours=9)
+
+_MERIDIEM = re.compile(r"[AaPp]\.?[Mm]")
+
+
 @dataclass
 class Read:
     events: list = field(default_factory=list)
     #: (row number, what it said, why it was left out)
     skipped: list = field(default_factory=list)
+
+    def to_check(self) -> list:
+        """Events so long they're more likely a typo in the sheet."""
+        return [one for one in self.events if one.ends() - one.starts() > TOO_LONG]
 
 
 def the_year(rows: list, *, today: date) -> int:
@@ -148,13 +159,13 @@ def read(rows: list, *, today: date) -> Read:
     def cell(row, at):
         return " ".join(str(row[at]).split()) if at is not None and at < len(row) else ""
 
-    day = None
+    day, before = None, None   # the day, and the last start on it
     for number, row in enumerate(rows[header + 1:], start=header + 2):
         if not any(str(one).strip() for one in row):
             continue
         written = as_date(cell(row, at_date), year=year)
         if written:
-            day = written
+            day, before = written, None
         when, what = cell(row, at_time), cell(row, at_what)
         category = cell(row, at_category)
         if not when and not what and not category:
@@ -170,10 +181,22 @@ def read(rows: list, *, today: date) -> Read:
         if start is None:
             found.skipped.append((number, said, "no time" if not when else f"couldn't read the time “{when}”"))
             continue
+        on = day
+        if before is not None and start < before:
+            if not _MERIDIEM.search(when) and start.hour < 12 and time(start.hour + 12, start.minute) >= before:
+                # "8:30 - 9:30" after a 7 PM dinner is the evening: the sheet
+                # gave no AM or PM, and the rows run in order through the day.
+                start = time(start.hour + 12, start.minute)
+                end = time(end.hour + 12, end.minute) if end is not None and end.hour < 12 else end
+            elif before.hour >= 18 and start.hour < 6:
+                # "12:00 AM" after a 10 PM night out is the next morning.
+                on = day + timedelta(days=1)
         found.events.append(Event(
-            day=day, start=start, end=end, title=said, where=cell(row, at_where),
+            day=on, start=start, end=end, title=said, where=cell(row, at_where),
             category=category, links=cell(row, at_links), row=number,
         ))
+        if on == day:
+            before = start
     return found
 
 

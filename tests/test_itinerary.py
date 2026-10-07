@@ -137,3 +137,49 @@ def test_a_link_with_no_tab_finds_the_itinerary_tab(monkeypatch):
 
     assert problems == [] and len(found.events) == 5
     assert name == "Agent Lead Lab goes to Cebu · Cebu Itinerary"
+
+
+
+# ------------------------------------------- what the 93-event Cebu file got wrong
+
+
+def _day(*rows, first="Oct 16"):
+    head = [["", "Date", "Time", "Category", "Activity", "Location / Notes", "Links"]]
+    body = [["", first if n == 0 else "", when, "Activity / Tour", what] for n, (when, what) in enumerate(rows)]
+    return itinerary.read(head + body, today=date(2026, 10, 7))
+
+
+def test_a_time_with_no_am_or_pm_after_dinner_is_the_evening():
+    """"Free Time" 8:30-9:30 sat at 8:30 in the morning after a 7 PM dinner."""
+    found = _day(("7:00 PM - 8:30 PM", "Dinner"), ("8:30 - 9:30", "Free Time"))
+    free = found.events[1]
+    assert (free.start, free.end) == (time(20, 30), time(21, 30))
+
+
+def test_a_morning_time_without_am_or_pm_stays_morning():
+    found = _day(("7:00 AM - 8:00 AM", "Breakfast"), ("8:30 - 9:30", "Walk"))
+    assert found.events[1].start == time(8, 30)
+
+
+def test_after_midnight_belongs_to_the_next_day():
+    """"Back to Airbnb" at 12 AM after a 10 PM night club landed at the start
+    of the same day."""
+    found = _day(("10:00 PM - 11:00 PM", "Night Club"), ("12:00 AM - 12:30 AM", "Back to Airbnb"),
+                 first="Oct 18")
+    back = found.events[1]
+    assert back.day == date(2026, 10, 19) and back.start == time(0, 0)
+
+
+def test_the_next_days_rows_are_unaffected():
+    head = [["", "Date", "Time", "Category", "Activity"]]
+    rows = head + [["", "Oct 18", "10:00 PM - 11:00 PM", "x", "Night Club"],
+                   ["", "Oct 19", "11:00 AM - 12:00 PM", "x", "Prep for Check Out"]]
+    found = itinerary.read(rows, today=date(2026, 10, 7))
+    assert found.events[1].day == date(2026, 10, 19) and found.events[1].start == time(11, 0)
+
+
+def test_an_event_too_long_to_be_right_is_put_in_and_listed():
+    """"Tumalog Falls" 10:30 PM - 11:00 AM, "Going to Balamban" 12:00 AM - 2:00 PM."""
+    found = _day(("10:00 AM - 10:30 AM", "Going to Tumalog Falls"), ("10:30 PM - 11:00 AM", "Tumalog Falls"))
+    assert [one.title for one in found.to_check()] == ["Tumalog Falls"]
+    assert len(found.events) == 2

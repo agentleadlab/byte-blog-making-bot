@@ -7562,6 +7562,10 @@ async def _itinerary_calendar(responder: Responder, config: Config, said: str) -
         f"-# Imported, each shows in your own time: the first, {first:%b %-d %-I:%M %p} in Manila, "
         f"is {first.astimezone(eastern):%b %-d %-I:%M %p} Eastern.",
     ]
+    odd = found.to_check()
+    if odd:
+        lines.append("⚠ **Check these in the sheet** — so long they're probably AM for PM: " + "; ".join(
+            f"row {one.row} “{one.title}” {one.starts():%b %-d %-I:%M %p}–{one.ends():%-I:%M %p}" for one in odd))
     if found.skipped:
         lines.append("Left out: " + "; ".join(
             f"row {row} “{what}” ({why})" for row, what, why in found.skipped[:12]))
