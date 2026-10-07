@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import time
+
 import httpx
 
 BASE_URL = "https://services.leadconnectorhq.com"
@@ -142,6 +144,10 @@ def post_key(post: dict) -> str:
     return repr(sorted(post.items()))
 
 
+#: Waits before trying a connection that couldn't be opened again.
+CONNECT_PAUSES = (2.0, 5.0, 10.0, 20.0, 30.0)
+
+
 class GHLClient:
     def __init__(self, token: str, location_id: str, *, timeout: float = 60.0):
         self.location_id = location_id
@@ -167,10 +173,19 @@ class GHLClient:
     # ---------------------------------------------------------------- requests
 
     def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
-        try:
-            response = self._client.request(method, path, **kwargs)
-        except httpx.HTTPError as exc:
-            raise GHLError(f"{method} {path} failed to send: {exc}") from exc
+        # A connection that never opened - the Mac's network blinking, "[Errno
+        # 8] nodename nor servname provided" - is tried again for about a
+        # minute. It never reached GHL, so nothing can be done twice.
+        for pause in (*CONNECT_PAUSES, None):
+            try:
+                response = self._client.request(method, path, **kwargs)
+                break
+            except httpx.ConnectError as exc:
+                if pause is None:
+                    raise GHLError(f"{method} {path} failed to send: {exc}") from exc
+                time.sleep(pause)
+            except httpx.HTTPError as exc:
+                raise GHLError(f"{method} {path} failed to send: {exc}") from exc
 
         if response.status_code >= 400:
             raise GHLError(

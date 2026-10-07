@@ -28,6 +28,12 @@ BASE_URL = "https://api.trello.com/1"
 # outage in the middle of a rollover abandons it half done.
 RETRY_PAUSES = (1.0, 3.0, 8.0)
 
+#: When the request couldn't even be sent - "[Errno 8] nodename nor servname
+#: provided" is the Mac's network gone for a moment - it is asked again for
+#: about a minute before it counts as an error. It never reached Trello, so
+#: asking again can't do anything twice.
+CONNECT_PAUSES = (2.0, 5.0, 10.0, 20.0, 30.0)
+
 # Worth asking again about. 429 is the rate limiter, which means the request
 # was not performed at all; 5xx is their end having a moment.
 _AGAIN = {429, 500, 502, 503, 504}
@@ -94,14 +100,26 @@ class TrelloClient:
         Returns the last response whatever it says - a 503 that never clears is
         still a 503, and the caller raises it with the status in the message.
         """
+        unsent = list(CONNECT_PAUSES)
         for pause in (*RETRY_PAUSES, None):
-            try:
-                response = self._client.request(method, path, params=params, **kwargs)
-            except httpx.HTTPError as exc:
-                # A request that failed to send never reached Trello, so asking
-                # again cannot duplicate anything, whatever the method was.
-                if pause is None:
-                    raise TrelloError(f"{method} {path} failed to send: {exc}") from exc
+            while True:
+                try:
+                    response = self._client.request(method, path, params=params, **kwargs)
+                    break
+                except httpx.ConnectError as exc:
+                    # Never reached Trello: the network, not Trello. Waited
+                    # out for about a minute before it is anybody's problem.
+                    if not unsent:
+                        raise TrelloError(f"{method} {path} failed to send: {exc}") from exc
+                    self._wait(unsent.pop(0))
+                except httpx.HTTPError as exc:
+                    # A request that failed to send never reached Trello, so asking
+                    # again cannot duplicate anything, whatever the method was.
+                    if pause is None:
+                        raise TrelloError(f"{method} {path} failed to send: {exc}") from exc
+                    response = None
+                    break
+            if response is None:
                 self._wait(pause)
                 continue
 

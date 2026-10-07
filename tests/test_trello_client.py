@@ -96,7 +96,7 @@ def test_a_connection_that_never_left_the_laptop_is_asked_again(client):
 
 
 def test_a_connection_that_never_comes_back_says_so(client):
-    client._client = Answering(*[httpx.ConnectError("no route") for _ in range(4)])
+    client._client = Answering(*[httpx.ConnectError("no route") for _ in range(6)])
 
     with pytest.raises(TrelloError) as raised:
         client._request("GET", "/cards/abc")
@@ -188,3 +188,19 @@ def test_the_whole_board_in_one_request_in_the_order_the_lists_give(client):
 
     assert [card["id"] for card in got] == ["a1", "a2", "b1", "b2"]
     assert client._client.asked == [("GET", "/boards/board/cards/open")]
+
+
+
+def test_a_network_blink_of_most_of_a_minute_is_waited_out(client):
+    """"[Errno 8] nodename nor servname provided" - the Mac's network gone for
+    a while, then back. Five tries in, it reads the card."""
+    blink = httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known")
+    client._client = Answering(blink, blink, blink, blink, blink, replied(200))
+
+    assert client._request("GET", "/cards/abc") == {"id": "abc"}
+
+
+def test_a_connection_failure_is_waited_out_for_about_a_minute():
+    from wilbyte import trello
+
+    assert sum(trello.CONNECT_PAUSES) >= 60

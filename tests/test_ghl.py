@@ -312,3 +312,64 @@ def test_a_cursor_that_is_no_use_is_left_out_rather_than_guessed():
     assert as_millis("") is None
     assert as_millis(None) is None
     assert as_millis("whenever") is None
+
+
+# ------------------- "[Errno 8] nodename nor servname provided" - waited out, not reported
+
+
+def _ghl_answering(monkeypatch, *outcomes):
+    import httpx
+
+    from wilbyte import ghl
+
+    left = list(outcomes)
+    asked = []
+
+    class Stub:
+        def request(self, method, path, **kw):
+            asked.append(path)
+            one = left.pop(0)
+            if isinstance(one, Exception):
+                raise one
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request(method, "https://x" + path))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ghl.time, "sleep", lambda seconds: None)
+    client = ghl.GHLClient("token", "loc")
+    client._client = Stub()
+    return client, asked
+
+
+def test_ghl_waits_out_a_network_blink(monkeypatch):
+    import httpx
+
+    blink = httpx.ConnectError("[Errno 8] nodename nor servname provided")
+    client, asked = _ghl_answering(monkeypatch, blink, blink, "ok")
+    assert client._request("GET", "/contacts/") == {"ok": True} and len(asked) == 3
+
+
+def test_ghl_gives_up_after_about_a_minute(monkeypatch):
+    import httpx
+
+    from wilbyte import ghl
+
+    blink = httpx.ConnectError("[Errno 8] nodename nor servname provided")
+    client, asked = _ghl_answering(monkeypatch, *[blink] * 6)
+    with pytest.raises(ghl.GHLError):
+        client._request("GET", "/contacts/")
+    assert len(asked) == 6 and sum(ghl.CONNECT_PAUSES) >= 60
+
+
+def test_ghl_never_repeats_a_request_that_may_have_landed(monkeypatch):
+    """A timeout after sending may have reached GHL - a write asked twice is
+    done twice."""
+    import httpx
+
+    from wilbyte import ghl
+
+    client, asked = _ghl_answering(monkeypatch, httpx.ReadTimeout("slow"), "ok")
+    with pytest.raises(ghl.GHLError):
+        client._request("POST", "/contacts/x/tags")
+    assert len(asked) == 1
