@@ -5724,6 +5724,31 @@ def paid_not_set_up(config: Config, *, now=None) -> tuple[list, list[str]]:
         client.close()
 
 
+def itinerary_calendar(config: Config, link: str, *, today=None):
+    """A trip itinerary sheet as a calendar file. (ics text, the sheet's name,
+    itinerary.Read, problems). Reads only."""
+    from .. import gsheets, itinerary
+
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return "", "", None, ["That doesn't look like a Google Sheets link."]
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            name = client.title(sheet_id) or "Itinerary"
+            gid = gsheets.gid_in(link)
+            tab = client.tab_named(sheet_id, gid) if gid else ""
+            if not tab:
+                tabs = client.tabs(sheet_id)
+                tab = str((tabs[0] if tabs else {}).get("title") or "Sheet1")
+            rows = client.rows(sheet_id, f"'{tab}'!A1:Z600")
+    except Exception as exc:
+        return "", "", None, [f"Couldn't read the sheet: {_short(exc, 160)} - is it shared with RYTE's Google account?"]
+    found = itinerary.read(rows, today=today or board_day(config))
+    if not found.events:
+        return "", name, found, ["No rows with a date and a time to put in a calendar."]
+    return itinerary.ics(found.events, name=name), name, found, []
+
+
 def sheet_titles(config: Config, links) -> dict:
     """{link: the spreadsheet's name} for these links. Read only; a sheet that
     can't be opened is left out rather than guessed at."""

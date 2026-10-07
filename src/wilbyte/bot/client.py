@@ -1406,6 +1406,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
                 return
 
+            if request.action == "calendar":
+                await _itinerary_calendar(responder, config, request.brief or "")
+                return
+
             if request.action == "livemoved":
                 await _live_moved_now(responder, config)
                 return
@@ -7530,6 +7534,42 @@ async def live_moved_loop(bot: "WilByteBot") -> None:
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("Live-date check failed; will try again shortly")
         await asyncio.sleep(LIVE_MOVED_SECONDS)
+
+
+async def _itinerary_calendar(responder: Responder, config: Config, said: str) -> None:
+    """`@RYTE calendar <sheet link>` - the itinerary as a calendar file, in
+    Philippine time, for anybody to import in their own."""
+    import io
+
+    from .. import itinerary
+
+    link = next(iter(re.findall(r"https?://docs\.google\.com/spreadsheets/\S+", said or "")), "")
+    if not link:
+        await responder.send("Which sheet? `@RYTE calendar <Google Sheets link>` - the itinerary, "
+                             "shared with my Google account.")
+        return
+    text, name, found, problems = await asyncio.to_thread(jobs.itinerary_calendar, config, link)
+    if not text:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+        return
+    events = found.events
+    eastern = ZoneInfo("America/New_York")
+    manila = ZoneInfo(itinerary.ZONE)
+    first = events[0].starts().replace(tzinfo=manila)
+    lines = [
+        f"📅 **{name}** — {len(events)} event(s), {events[0].day:%b %-d} to {events[-1].day:%b %-d}, "
+        "in Philippine time.",
+        f"-# Imported, each shows in your own time: the first, {first:%b %-d %-I:%M %p} in Manila, "
+        f"is {first.astimezone(eastern):%b %-d %-I:%M %p} Eastern.",
+    ]
+    if found.skipped:
+        lines.append("Left out: " + "; ".join(
+            f"row {row} “{what}” ({why})" for row, what, why in found.skipped[:12]))
+    lines.append("**To add it:** download the file, then in Google Calendar on a computer → ⚙️ "
+                 "Settings → Import & export → Import → pick the file and the calendar → Import.")
+    filename = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-") + ".ics"
+    await responder.send("\n".join(lines),
+                         file=discord.File(io.BytesIO(text.encode("utf-8")), filename=filename))
 
 
 async def _live_moved_now(responder: Responder, config: Config) -> None:
