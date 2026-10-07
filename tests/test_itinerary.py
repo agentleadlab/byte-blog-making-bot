@@ -50,6 +50,9 @@ def test_sleeping_time_and_a_row_with_no_time_are_left_out_and_said():
     ("6:00 - 9:00 PM", time(18, 0), time(21, 0)),
     ("9:00PM +", time(21, 0), None),
     ("23:30", time(23, 30), None),
+    ("6:00 PM onwards", time(18, 0), None),
+    ("7:30 PM onward", time(19, 30), None),
+    ("8 PM until late", time(20, 0), None),
     ("12:00 AM - 1:00 AM", time(0, 0), time(1, 0)),
 ])
 def test_times_written_every_way(said, start, end):

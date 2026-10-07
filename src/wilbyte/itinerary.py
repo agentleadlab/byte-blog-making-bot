@@ -111,7 +111,9 @@ def times(said: str) -> tuple[time | None, time | None]:
     """(start, end) out of "1:30 AM - 2:00 AM", "6:00PM - 9:00PM", "9:00PM +",
     "23:30". A start written without AM/PM takes the end's."""
     said = " ".join(str(said or "").replace("–", "-").replace("—", "-").split())
-    said = said.rstrip("+ ").strip()
+    # "9:00PM +", "6:00 PM onwards", "7:30 PM until late" - a start, no end.
+    said = re.sub(r"\s*(?:\+|onwards?|and\s+(?:on|after)|until\s+late|till\s+late|-\s*late|late)\s*$",
+                  "", said, flags=re.IGNORECASE).strip()
     if not said:
         return None, None
     parts = [one.strip() for one in re.split(r"\s*-\s*|\s+to\s+", said, maxsplit=1)]
