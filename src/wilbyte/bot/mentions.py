@@ -805,6 +805,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="websitecheck", brief=text)
     if INVOICE_PLAINLY.match(_without_links(text)):
         return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
+    # "hub check", "hub check Tavin Dougher" - the Distro Hub's fulfilled
+    # orders against the sheets. Not "hub.agentleadlab.com/...", a link.
+    hubbed = re.match(r"\s*(?:distro\s+)?hub(?![.\w/])(?:\s+(?:check|fulfilled|status))?\b\s*(?:for\s+)?(.*?)\s*[.?!]*\s*$",
+                      text, re.IGNORECASE | re.DOTALL)
+    if hubbed:
+        return MentionRequest(action="hubcheck", brief=hubbed.group(1))
     if re.match(r"\s*(?:update|update\s+(?:now|yourself)|restart|pull)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="update", brief=text)
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
@@ -1275,6 +1281,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > screenshots attached — a chargeback rebuttal as a .docx. I read the board,
 > the setup confirmations and the delivered lead sheet, work out what each
 > attachment is, and put them under the proof each belongs to
+> @RYTE **hub check** — the orders the Distro Hub marked fulfilled lately,
+> counted against each agent's sheet; **hub check Tavin Dougher** for one.
+> New ones are checked by themselves and only the short ones said
 > @RYTE **update** — take a newly pushed version now instead of at the next
 > check (every 2 minutes). Never with a run open
 > @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the

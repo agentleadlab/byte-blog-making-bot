@@ -250,6 +250,10 @@ class Secrets:
     # The down alarm's check-in link (healthchecks.io, free): RYTE visits it
     # every five minutes, and when the visits stop that service tells Franklin.
     healthcheck_url: str | None = None
+    # The Distro Hub's read-only API (Nova's), for checking a fulfilled
+    # order against the agent's sheet. The URL defaults to the hub's own.
+    hub_api_url: str | None = None
+    hub_api_token: str | None = None
     # The YouTube channels the interviews go up on, main one first - links,
     # @handles or UC... ids, comma-separated - for finding a segment's video by
     # its exact title.
@@ -429,6 +433,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 payra_site_id=_env("PAYRA_SITE_ID"),
                 pandadoc_api_key=_env("PANDADOC_API_KEY"),
                 healthcheck_url=_env("HEALTHCHECK_URL"),
+                hub_api_url=_env("HUB_API_URL"),
+                hub_api_token=_env("HUB_API_TOKEN"),
                 youtube_channel_id=_env("YOUTUBE_CHANNEL_ID"),
                 wordpress_url=_env("WORDPRESS_URL"),
                 wordpress_user=_env("WORDPRESS_USER"),

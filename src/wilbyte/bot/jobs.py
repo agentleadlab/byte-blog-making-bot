@@ -1862,7 +1862,25 @@ def check_recordings(config: Config) -> list[tuple[bool, str]]:
     results.extend(_check_gmail(config))
     results.extend(_check_docs(config))
     results.extend(_check_tracker(config))
+    results.extend(_check_hub(config))
     return results
+
+
+def _check_hub(config: Config) -> list[tuple[bool, str]]:
+    """Whether Nova's read-only hub API answers RYTE's key, and with what."""
+    from collections import Counter
+
+    from .. import hub
+
+    if not (getattr(config.secrets, "hub_api_token", "") or "").strip():
+        return [(None, "Distro Hub not set up - no HUB_API_TOKEN, so fulfilled orders aren't checked")]
+    try:
+        found = hub.agents(config.secrets, status="all")
+    except Exception as exc:
+        return [(False, f"Distro Hub - {_short(exc, 200)}")]
+    by = Counter((one.status or "?").casefold() for one in found)
+    return [(True, f"Distro Hub - {len(found)} agent(s): "
+             + ", ".join(f"{many} {status}" for status, many in by.most_common()))]
 
 
 def _check_google_scopes(config: Config) -> list[tuple[bool, str]]:
@@ -5684,6 +5702,24 @@ def _delivery_of(config: Config, card: dict, client, every: list):
     if trouble:
         one.problems.append(trouble)
     return one
+
+
+def hub_check(config: Config, agents: list) -> list:
+    """Each hub agent's fulfilled order against their sheet. [hub.Checked].
+    Reads only: the sheets."""
+    from .. import hub
+
+    done = []
+    for agent in agents:
+        one = hub.Checked(agent=agent)
+        if not agent.sheet_url:
+            one.problems.append("the hub has no sheet link for them")
+        else:
+            one.counted, trouble = _count_sheet(config, agent.sheet_url)
+            if trouble:
+                one.problems.append(trouble)
+        done.append(one)
+    return done
 
 
 def delivered_for(config: Config, name: str) -> tuple[list, list[str]]:

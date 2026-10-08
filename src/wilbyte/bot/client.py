@@ -367,6 +367,10 @@ class WilByteBot(discord.Client):
             # The down alarm: say how long RYTE was gone, then check in
             # every five minutes for as long as it's up.
             _also_running(self.loop.create_task(alive_loop(self)))
+            # The hub's fulfilled orders against the agents' sheets - only
+            # once Nova's read-only key is in .env.
+            if getattr(self.config.secrets, "hub_api_token", None):
+                _also_running(self.loop.create_task(hub_check_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -1372,6 +1376,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "responder":
                 await _set_responder(responder, request.brief or "")
+                return
+
+            if request.action == "hubcheck":
+                await _hub_check(responder, config, request.brief or "")
                 return
 
             if request.action == "update":
@@ -7806,6 +7814,78 @@ async def delivery_check_loop(bot: "WilByteBot") -> None:
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("Delivery check failed; will try again shortly")
         await asyncio.sleep(CONTRACT_CHECK_SECONDS)
+
+
+#: How often the hub is asked who's newly fulfilled.
+HUB_CHECK_SECONDS = 30 * 60
+
+
+async def hub_check_loop(bot: "WilByteBot") -> None:
+    """Every order the hub newly marks fulfilled, against the agent's sheet -
+    "if they really received the right amount". Each order checked once;
+    only the short ones said, together, in one message. Reads only."""
+    from .. import hub
+
+    while not bot.is_closed():
+        try:
+            responder = _board_responder(bot)
+            if responder is not None:
+                found = await asyncio.to_thread(hub.agents, bot.config.secrets)
+                said = await asyncio.to_thread(hub.checked)
+                fresh = hub.due(found, now=datetime.now(timezone.utc), said=said)
+                if fresh:
+                    done = await asyncio.to_thread(jobs.hub_check, bot.config, fresh)
+                    short = [one for one in done if one.short_by()]
+                    if short:
+                        ping = _unmarked_ping(bot.config)
+                        await responder.send(
+                            ((ping + "\n") if ping else "")
+                            + "📦 **Marked fulfilled on the hub, but short on their sheet:**\n"
+                            + "\n".join(hub.describe(one) for one in short)
+                            + "\n-# `@RYTE hub check <name>` to look again.",
+                            quiet=True,
+                        )
+                    # Remembered only once the sheet was read, so a sheet
+                    # Google wouldn't open is tried again next time.
+                    await asyncio.to_thread(hub.remember, {
+                        hub.key(one.agent): one.on_sheet for one in done if one.on_sheet is not None
+                    })
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad tick must not take the loop down for good
+            log.warning("Hub check failed; will try again", exc_info=True)
+        await asyncio.sleep(HUB_CHECK_SECONDS)
+
+
+async def _hub_check(responder: Responder, config: Config, who: str) -> None:
+    """`@RYTE hub check` - the orders fulfilled in the last few days, or
+    `hub check Tavin Dougher` for one agent's, every one shown."""
+    from .. import hub
+
+    try:
+        found = await asyncio.to_thread(hub.agents, config.secrets)
+    except hub.HubError as exc:
+        await responder.send(f"⚠ {exc}")
+        return
+    if who.strip():
+        picked = hub.named(found, who)
+        if not picked:
+            await responder.send(f"Nobody called **{who.strip()}** is fulfilled on the hub.")
+            return
+    else:
+        picked = hub.due(found, now=datetime.now(timezone.utc), said={})
+        if not picked:
+            await responder.send(f"The hub has {len(found)} fulfilled — none in the last "
+                                 f"{hub.LOOK_BACK.days} days. `@RYTE hub check <name>` for one of them.")
+            return
+    await responder.send(f"Counting {len(picked[:hub.MOST_PER_PASS])} sheet(s) against the hub —")
+    done = await asyncio.to_thread(jobs.hub_check, config, picked[:hub.MOST_PER_PASS])
+    short = sum(1 for one in done if one.short_by())
+    await responder.send(
+        "\n".join(hub.describe(one) for one in done)
+        + ("\n-# Test leads, the colour key and the dispo banners aren't counted."
+           + (f" {short} short." if short else " None short."))
+    )
 
 
 async def contract_check_loop(bot: "WilByteBot") -> None:
