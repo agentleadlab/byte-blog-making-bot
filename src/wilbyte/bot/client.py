@@ -7564,7 +7564,7 @@ async def _itinerary_calendar(responder: Responder, config: Config, said: str) -
     ]
     odd = found.to_check()
     if odd:
-        lines.append("⚠ **Check these in the sheet** — so long they're probably AM for PM: " + "; ".join(
+        lines.append("⚠ **Check these in the sheet** — so long it's probably an AM/PM mix-up: " + "; ".join(
             f"row {one.row} “{one.title}” {one.starts():%b %-d %-I:%M %p}–{one.ends():%-I:%M %p}" for one in odd))
     if found.skipped:
         lines.append("Left out: " + "; ".join(
