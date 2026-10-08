@@ -193,6 +193,18 @@ class Checked:
             return 0
         return max(wanted - got, 0)
 
+    def hub_short(self) -> int:
+        """What the hub itself says it never sent - "19/21" marked done."""
+        if self.agent.delivered is None or self.agent.ordered is None:
+            return 0
+        return max(self.agent.ordered - self.agent.delivered, 0)
+
+    def missing_from_sheet(self) -> int:
+        """What the hub says it sent that isn't on the sheet."""
+        if self.on_sheet is None or self.agent.delivered is None:
+            return 0
+        return max(self.agent.delivered - self.on_sheet, 0)
+
 
 def describe(one: Checked) -> str:
     agent = one.agent
@@ -204,11 +216,22 @@ def describe(one: Checked) -> str:
         mark, said = "•", "sheet not read" + (f" ({one.problems[0]})" if one.problems else "")
     else:
         mark = "⚠" if one.short_by() else "✅"
+        tab = getattr(one.counted, "tab", "")
         said = (f"the sheet has **{got}**"
+                + (f" on “{tab}”" if tab else "")
                 + (f" since {agent.start_date:%b %-d}" if one.dated and agent.start_date else "")
-                + ("" if one.dated else " (the whole sheet - it doesn't date its leads)"))
+                + ("" if one.dated else " (all of it - it doesn't date its leads)"))
         if one.short_by():
             said += f" — **{one.short_by()} short**"
+            # Which side it's on: the hub closing an order it never filled,
+            # or leads the hub sent that never reached the sheet.
+            why = []
+            if one.hub_short():
+                why.append(f"the hub marked it done having sent {agent.delivered} of {agent.ordered}")
+            if one.missing_from_sheet():
+                why.append(f"{one.missing_from_sheet()} the hub says it sent aren't on the sheet")
+            if why:
+                said += " (" + "; ".join(why) + ")"
     line = (f"{mark} **{agent.name or agent.id}**" + (f" ({agent.lead_type})" if agent.lead_type else "")
             + f" — hub says {hub}, {said}")
     if agent.sheet_url:

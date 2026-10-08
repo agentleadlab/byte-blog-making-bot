@@ -224,3 +224,67 @@ def test_the_hubs_own_word_done_is_fulfilled():
     """`@RYTE check`: "1512 done, 147 live, 35 scheduled, 17 paused"."""
     assert hub.read(record(status="done", fulfilled=None)).fulfilled is True
     assert hub.read(record(status="live", fulfilled=False)).fulfilled is False
+
+
+def _workbook(monkeypatch, tabs: dict):
+    """A lead sheet with these tabs: {title: number of leads}."""
+    from wilbyte import gsheets
+
+    class Sheets:
+        def __init__(self, creds):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def tabs(self, sheet):
+            return [{"title": one} for one in tabs]
+
+        def rows(self, sheet, span):
+            title = span.split("!")[0].strip("'")
+            return [["Name", "Email", "Phone Number"]] + [[f"L{n}", "x@example.com", "555"] for n in range(tabs[title])]
+
+    monkeypatch.setattr(gsheets, "SheetsClient", Sheets)
+    monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
+
+
+LINK = "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd/edit"
+
+
+def test_the_leads_are_found_on_whichever_tab_they_are(monkeypatch):
+    """Joevanny Astorga: "the sheet has 0" with 22 on a tab that isn't the first."""
+    from wilbyte.bot import jobs
+
+    _workbook(monkeypatch, {"Instructions": 0, "Leads": 22})
+    counted, trouble = jobs._count_lead_tab(SimpleNamespace(secrets=None), LINK, "Text Verified Trucker IUL")
+    assert trouble == "" and counted.rows == 22 and counted.tab == "Leads"
+
+
+def test_the_tab_named_for_the_lead_type_wins(monkeypatch):
+    from wilbyte.bot import jobs
+
+    _workbook(monkeypatch, {"Vets": 40, "Trucker": 22})
+    counted, _ = jobs._count_lead_tab(SimpleNamespace(secrets=None), LINK, "Text Verified Trucker IUL")
+    assert counted.tab == "Trucker" and counted.rows == 22
+
+
+def test_another_orders_tab_is_never_counted_as_this_ones(monkeypatch):
+    """Abraham's mortgage order is not the 19 leads on his IUL tab."""
+    from wilbyte.bot import jobs
+
+    _workbook(monkeypatch, {"IUL Plus": 19, "Mortgage": 0})
+    counted, _ = jobs._count_lead_tab(SimpleNamespace(secrets=None), LINK,
+                                      "Text Verified Mortgage Protection Standard")
+    assert counted.rows == 0
+
+
+def test_short_says_which_side_its_on():
+    marked_early = hub.Checked(agent=hub.read(record(delivered=19, ordered=21, progress="19/21")),
+                               counted=_sheet(*["10/06/2026"] * 19))
+    assert "marked it done having sent 19 of 21" in hub.describe(marked_early)
+    lost = hub.Checked(agent=hub.read(record(delivered=22, ordered=22, progress="22/22")),
+                       counted=_sheet(*["10/06/2026"] * 20))
+    assert "2 the hub says it sent aren't on the sheet" in hub.describe(lost)

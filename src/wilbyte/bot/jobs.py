@@ -5715,11 +5715,63 @@ def hub_check(config: Config, agents: list) -> list:
         if not agent.sheet_url:
             one.problems.append("the hub has no sheet link for them")
         else:
-            one.counted, trouble = _count_sheet(config, agent.sheet_url)
+            one.counted, trouble = _count_lead_tab(config, agent.sheet_url, agent.lead_type)
             if trouble:
                 one.problems.append(trouble)
         done.append(one)
     return done
+
+
+#: Tabs looked at on one lead sheet.
+MOST_TABS = 8
+
+#: What a lead type or a tab title can be named for. A tab named for a type
+#: this order isn't - "IUL" for a mortgage order - is another order's.
+_FAMILIES = {
+    "vet": {"vet", "vets", "veteran", "veterans"},
+    "iul": {"iul"},
+    "trucker": {"trucker", "truckers"},
+    "mortgage": {"mortgage", "mtg", "mp"},
+    "fex": {"fex", "final", "expense"},
+    "spanish": {"spanish"},
+    "widow": {"widow", "widows"},
+}
+
+
+def _families(said: str) -> set:
+    words = set(re.findall(r"[a-z]+", (said or "").casefold()))
+    return {family for family, names in _FAMILIES.items() if words & names}
+
+
+def _count_lead_tab(config: Config, link: str, lead_type: str = ""):
+    """(the leads on the tab this order's are on, a problem or "").
+
+    Not just the first tab. Joevanny Astorga's came back "the sheet has 0"
+    with 22 leads on it - on a tab that isn't the first. Every tab is
+    counted; of those with leads, the one named for this lead type ("Trucker",
+    "Mortgage"), else the one with the most.
+    """
+    from .. import delivery, gsheets
+
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return None, f"Couldn't read a sheet id out of {link}"
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            titles = [str((one or {}).get("title") or "") for one in client.tabs(sheet_id)][:MOST_TABS]
+            counts = [delivery.count_rows(client.rows(sheet_id, f"'{title}'!A1:Z2000"), tab=title)
+                      for title in titles if title]
+    except Exception as exc:
+        return None, f"Couldn't read the lead sheet: {_short(exc, 120)}"
+    if not counts:
+        return None, "That sheet has no tabs I can read."
+    ordered = _families(lead_type)
+    # Abraham's mortgage order is not the 19 leads on his IUL tab.
+    theirs = [one for one in counts
+              if one.rows and not (ordered and _families(one.tab) and not (_families(one.tab) & ordered))]
+    if not theirs:
+        return counts[0] if len(counts) == 1 else delivery.Counted(tab=""), ""
+    return max(theirs, key=lambda one: (len(_families(one.tab) & ordered), one.rows)), ""
 
 
 def delivered_for(config: Config, name: str) -> tuple[list, list[str]]:
