@@ -438,7 +438,11 @@ def test_no_tabs_at_all_is_said():
 def test_the_headings_are_read_off_that_month_s_tab(monkeypatch):
     paper, _ = _offered(monkeypatch, press=False)
 
-    assert paper.asked == ["'Sept 2026'!1:1"]  # nothing written, nothing else read
+    # The headings, then the list itself to see they aren't on it already -
+    # nothing written, nothing else read.
+    assert paper.asked[0] == "'Sept 2026'!1:1"
+    assert [one for one in paper.asked[1:] if not one.startswith("'Sept 2026'!A:")] == []
+    assert not getattr(paper, "written", None)
 
 
 def test_a_missing_month_is_made_by_copying_the_newest(monkeypatch):

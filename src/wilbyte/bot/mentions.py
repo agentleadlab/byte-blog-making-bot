@@ -825,6 +825,17 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*(?:paid\s+(?:but\s+)?not\s+set\s*up|not\s+set\s*up|unset|payra\s+(?:setup|set\s*up|cards?))\s*[.?!]*\s*$",
                 text, re.IGNORECASE):
         return MentionRequest(action="notsetup", brief=text)
+    # "@Ryte add to tracker", replying to the chargeback card - the row on its
+    # own, without building a rebuttal first. Not the Levinson tracker: that
+    # one is named.
+    tracked = re.match(
+        r"\s*(?:(?:add|put)\s+(?:(?:it|this|her|him|them)\s+)?(?:on|to|in(?:to)?)\s+(?:the\s+)?"
+        r"(?:chargeback\s+|dispute\s+)?tracker|track\s+(?:it|this)|(?:chargeback\s+)?tracker\s+add)\b"
+        r"\s*(?:for\s+)?(.*?)\s*[.?!]*\s*$",
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if tracked:
+        return MentionRequest(action="tracker", brief=tracked.group(1))
     # "delivered Jay Rodriguez" - ordered against what's on their sheet. At the
     # front only: "delivered" is a word a copy brief can easily contain.
     delivered = re.match(
@@ -1262,6 +1273,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > screenshots attached — a chargeback rebuttal as a .docx. I read the board,
 > the setup confirmations and the delivered lead sheet, work out what each
 > attachment is, and put them under the proof each belongs to
+> @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the
+> chargeback tracker on its own, shown with a button first. Or **add to tracker
+> Megan Lucas** to find her notice above. Never twice for the same person
 > @RYTE **noticed** — what I've picked up while working, as suggestions. I
 > never act on them; `noticed all` for the raw list, `noticed forget <thing>`
 > to stop me raising one

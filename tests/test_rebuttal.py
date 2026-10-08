@@ -2554,3 +2554,153 @@ def test_payras_paid_invoice_goes_in_as_an_exhibit(monkeypatch, tmp_path):
     [invoice] = [one for one in written["exhibits"] if one.kind == "invoice"]
     assert invoice.name == "Payra-paid-invoice-Juliana-Hernandez.pdf"
     assert invoice.data.startswith(b"%PDF")
+
+
+# ------------------------------------- "@Ryte add to tracker", on its own
+
+MEGAN_CARD = """⚖️ **Chargeback**
+• **Customer** — Megan Lucas
+• **Amount** — $1,035.00
+• **Transaction** — 6/9/2026
+• **ARN** — 24556406161808893255685
+[The notice](https://discord.com/x)"""
+
+
+@pytest.mark.parametrize("said, who", [
+    ("add to tracker", ""),
+    ("Add it to the tracker", ""),
+    ("put this on the chargeback tracker", ""),
+    ("add to tracker Megan Lucas", "Megan Lucas"),
+    ("add to tracker for Megan Lucas.", "Megan Lucas"),
+])
+def test_add_to_tracker_is_a_command(said, who):
+    """"I've got no tracker command to hand you either" - it was a chat."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse(said)
+    assert asked.action == "tracker"
+    assert (asked.brief or "") == who
+
+
+def test_the_levinson_tracker_is_not_the_chargeback_one():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("add to levinson tracker").action != "tracker"
+
+
+def _tracking(monkeypatch, *, replied=None, above=(), who="", already=0):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs
+
+    offered, sent = [], []
+
+    async def offer(responder, config, dispute, found):
+        offered.append(dispute)
+
+    def card(text, bot=True):
+        return SimpleNamespace(content=text, author=SimpleNamespace(bot=bot), jump_url="https://discord.com/n")
+
+    async def replied_to(message):
+        return card(replied) if replied else None
+
+    async def said_before(message, **kw):
+        for one in above:
+            yield card(one)
+
+    monkeypatch.setattr(bot_client, "_offer_the_tracker", offer)
+    monkeypatch.setattr(bot_client, "_replied_to", replied_to)
+    monkeypatch.setattr(bot_client, "_said_before", said_before)
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    asyncio.run(bot_client._to_the_tracker(Responder(), None, SimpleNamespace(), who))
+    return offered, sent
+
+
+def test_replying_to_the_card_offers_its_row(monkeypatch):
+    offered, _sent = _tracking(monkeypatch, replied=MEGAN_CARD)
+    [dispute] = offered
+    assert dispute.customer_name == "Megan Lucas"
+    assert dispute.amount.endswith("1,035.00")
+
+
+def test_a_name_finds_their_card_and_not_the_nearest_one(monkeypatch):
+    """The nearest card above was Meilee's; a row for her under Megan's ask
+    is a deduction off the wrong closer."""
+    offered, _sent = _tracking(monkeypatch, above=(HER_FLAG_CARD, MEGAN_CARD), who="megan lucas")
+    [dispute] = offered
+    assert dispute.customer_name == "Megan Lucas"
+
+
+def test_no_reply_and_no_name_asks_rather_than_guessing(monkeypatch):
+    offered, sent = _tracking(monkeypatch, above=(MEGAN_CARD,))
+    assert offered == []
+    assert "Reply to the ⚖️ Chargeback card" in sent[-1]
+
+
+def test_a_name_with_no_notice_says_so(monkeypatch):
+    offered, sent = _tracking(monkeypatch, above=(HER_FLAG_CARD,), who="Megan Lucas")
+    assert offered == []
+    assert "couldn't find" in sent[-1]
+
+
+def test_somebody_already_on_the_tracker_is_never_added_twice(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte import rebuttal
+    from wilbyte.bot import client as bot_client
+    from wilbyte.bot import jobs, views
+
+    monkeypatch.setattr(jobs, "tracker_headings", lambda config: (
+        ["Name of Disputer", "Date of Transaction", "Amount", "Closer", "Status"], "Oct 2026", [], []))
+    monkeypatch.setattr(jobs, "already_tracked", lambda config, tab, name, wide: 2)
+
+    def never(**kw):
+        raise AssertionError("offered the button for somebody already on the tracker")
+
+    monkeypatch.setattr(views, "ConfirmView", never)
+    sent = []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(bot_client._offer_the_tracker(
+        Responder(), config, rebuttal.read_facts(HER_FLAG_CARD), rebuttal.Gathered()))
+    assert "already on **Oct 2026**, row 2" in sent[-1]
+
+
+def test_already_tracked_matches_the_whole_name_in_any_case(monkeypatch):
+    from types import SimpleNamespace
+
+    from wilbyte import gsheets
+    from wilbyte.bot import jobs
+
+    class Sheets:
+        def __init__(self, creds):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def rows(self, sheet, span):
+            return [["Name of Disputer", "Date", "Amount"], ["Meilee Reddy", "9/23/2026", "$279.45"]]
+
+    monkeypatch.setattr(gsheets, "SheetsClient", Sheets)
+    monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
+    config = SimpleNamespace(secrets=SimpleNamespace(tracker_sheet_id="SHEET1234567890"))
+    assert jobs.already_tracked(config, "Oct 2026", "Meilee  reddy", 5) == 2
+    assert jobs.already_tracked(config, "Oct 2026", "Meilee", 5) == 0
+    assert jobs.already_tracked(config, "Oct 2026", "Megan Lucas", 5) == 0

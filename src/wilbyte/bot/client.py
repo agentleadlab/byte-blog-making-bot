@@ -1492,6 +1492,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _rebuttal(responder, config, message, request.brief or "")
                 return
 
+            if request.action == "tracker":
+                await _to_the_tracker(responder, config, message, request.brief or "")
+                return
+
             if request.action == "archive":
                 await _archive_aged(responder, config)
                 return
@@ -3140,6 +3144,21 @@ async def _offer_the_tracker(
     if not headings:
         return
 
+    # Once per dispute. Megan Lucas asked for on her own after a rebuttal
+    # already offered the row would otherwise be two deductions.
+    try:
+        already = await asyncio.to_thread(
+            jobs.already_tracked, config, tab, dispute.customer_name, len(headings),
+        )
+    except PIPELINE_ERRORS:
+        already = 0
+    if already:
+        await responder.send(
+            f"🧾 **{dispute.customer_name}** is already on **{tab}**, row {already} — "
+            "not adding them twice. If this is a second dispute, add that row yourself."
+        )
+        return
+
     row = rules_doc.row_for_tracker(
         headings, dispute, found, when=_today(config),
     )
@@ -3168,6 +3187,54 @@ async def _offer_the_tracker(
     await responder.send(
         f"🧾 Added to **{where}**." if where else "⚠ " + "\n⚠ ".join(trouble)
     )
+
+
+async def _to_the_tracker(responder: Responder, config: Config, message, who: str) -> None:
+    """`@RYTE add to tracker`, replying to the chargeback card - the row on
+    its own. "I've got no tracker command" was the answer Megan Lucas's
+    notice got: the row was only ever offered at the end of a rebuttal.
+
+    The dispute comes off the message replied to, or off the nearest notice
+    above for the name given - never just the nearest notice. A row for the
+    wrong customer in the tracker is a deduction off the wrong closer.
+    """
+    from .. import rebuttal as rules_doc
+
+    def facts(older):
+        if older is None or not worth_reading(older):
+            return None
+        said, _paid = rules_doc.split_payment((getattr(older, "content", "") or "").strip())
+        found = rules_doc.read_facts(said)
+        if not found.customer_name:
+            found.customer_name = rules_doc.named_in(said)
+        return None if found.missing() else found
+
+    def same_person(asked: str, named: str) -> bool:
+        asked_words = set(re.findall(r"[a-z]+", asked.casefold()))
+        return bool(asked_words) and asked_words <= set(re.findall(r"[a-z]+", (named or "").casefold()))
+
+    replied = await _replied_to(message)
+    dispute, source = facts(replied), replied
+    if dispute is None and who.strip():
+        source = None
+        async for older in _said_before(message):
+            found = facts(older)
+            if found is not None and same_person(who, found.customer_name):
+                dispute, source = found, older
+                break
+    if dispute is None:
+        await responder.send(
+            "Reply to the ⚖️ Chargeback card with `@RYTE add to tracker` — or say whose: "
+            "`@RYTE add to tracker Megan Lucas` and I'll find their notice above."
+            if not who.strip() else
+            f"I couldn't find a chargeback notice for **{who.strip()}** above. Reply to "
+            "their ⚖️ Chargeback card with `@RYTE add to tracker` instead."
+        )
+        return
+    came_from = getattr(source, "jump_url", "")
+    if came_from:
+        await responder.send(f"-# For **{dispute.customer_name}**, off [the notice](<{came_from}>).")
+    await _offer_the_tracker(responder, config, dispute, rules_doc.Gathered())
 
 
 def _rebuttal_name(dispute) -> str:
