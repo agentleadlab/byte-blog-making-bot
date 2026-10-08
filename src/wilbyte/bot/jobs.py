@@ -1926,10 +1926,42 @@ def _check_gmail(config: Config) -> list[tuple[bool, str]]:
         with inbox.open_gmail(config.secrets) as reading:
             who, many = reading.whoami()
     except inbox.GmailError as exc:
-        return [(False, f"Gmail - {_short(exc, 480)}")]
+        return [(False, f"Gmail - {_short(exc, 480)}" + _token_hint(config))]
     except Exception as exc:
-        return [(False, f"Gmail - {_short(exc, 480)}")]
+        return [(False, f"Gmail - {_short(exc, 480)}" + _token_hint(config))]
     return [(True, f"Gmail - reading **{who}** ({many:,} messages)")]
+
+
+def _token_hint(config: Config, *, env: Path | None = None) -> str:
+    """What RYTE is actually holding as GMAIL_REFRESH_TOKEN, without saying it.
+
+    "Rejected" after a new token was pasted is one of four things, and from
+    the outside they look the same: the old one still running, the line twice
+    in .env with the old one winning, the access token copied instead of the
+    refresh token, or a bit of the token lost on the way. The last few
+    characters - compared with the end of the one in the Playground - and the
+    file itself tell them apart. Never the token.
+    """
+    from ..config import REPO_ROOT
+
+    held = (getattr(config.secrets, "gmail_refresh_token", "") or "").strip()
+    if not held:
+        return ""
+    said = [f"RYTE is using the one ending **…{held[-4:]}** ({len(held)} characters)"]
+    if held.startswith("ya29."):
+        said.append("that's an *access* token - the refresh token is the one starting 1//")
+    elif not held.startswith("1//"):
+        said.append("a refresh token starts 1// - this doesn't")
+    if any(ch in held for ch in "\"' "):
+        said.append("it has quotes or spaces in it")
+    try:
+        lines = (env or REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    times = sum(1 for one in lines if one.strip().startswith("GMAIL_REFRESH_TOKEN="))
+    if times > 1:
+        said.append(f"GMAIL_REFRESH_TOKEN is in .env {times} times - the last one wins, delete the others")
+    return "\n-# " + "; ".join(said)
 
 
 def _check_tracker(config: Config) -> list[tuple[bool, str]]:

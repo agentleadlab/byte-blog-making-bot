@@ -385,3 +385,22 @@ def test_a_refused_gmail_token_is_named_as_the_gmail_one(monkeypatch):
     except docs.DocsError as exc:
         said = str(exc)
     assert "GMAIL_REFRESH_TOKEN" in said and "GOOGLE_REFRESH_TOKEN" not in said
+
+
+def test_a_rejected_gmail_token_says_which_one_ryte_is_holding(tmp_path):
+    """"no the thing is i changed password three days ago" - and a new token
+    pasted still came back rejected. The end of it, never the whole of it."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    env = tmp_path / ".env"
+    env.write_text("GMAIL_REFRESH_TOKEN=1//old\nOTHER=x\nGMAIL_REFRESH_TOKEN=1//0gNEWtokenABCD\n")
+    config = SimpleNamespace(secrets=SimpleNamespace(gmail_refresh_token="1//0gNEWtokenABCD"))
+    said = jobs._token_hint(config, env=env)
+    assert "…ABCD" in said and "0gNEWtoken" not in said
+    assert "2 times" in said and "last one wins" in said
+
+    access = SimpleNamespace(secrets=SimpleNamespace(gmail_refresh_token="ya29.a0Afake"))
+    assert "access" in jobs._token_hint(access, env=env)
+    assert jobs._token_hint(SimpleNamespace(secrets=SimpleNamespace(gmail_refresh_token="")), env=env) == ""
