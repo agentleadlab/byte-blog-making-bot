@@ -3465,7 +3465,7 @@ async def _clear_out(
         # Said rather than left out. A run with no picture line at all reads
         # exactly like one where the upload quietly failed.
         kept.append("-# No picture — there was nothing in the channel to draw.")
-    pictures = []
+    pictures, undrawn = [], []
     for number, (where, group) in enumerate(groups, start=1):
         def take(where=where, group=group, number=number):
             return jobs.keep_the_picture(
@@ -3475,9 +3475,14 @@ async def _clear_out(
             )
 
         picture, trouble = await asyncio.to_thread(take)
+        if not picture:
+            # Once more - a blip is not a broken Drive.
+            picture, trouble = await asyncio.to_thread(take)
         if picture:
             pictures.append((picture, take))
         named = f"#{where}" if where else "Picture"
+        if not picture:
+            undrawn.append(named)
         kept.append(
             f"✅ {named} → <{picture}>" if picture
             else f"⚠ {named} — " + "; ".join(trouble)
@@ -3505,6 +3510,20 @@ async def _clear_out(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** One of those didn't work, and the "
             "channel is the only copy of what it didn't keep."
+        )
+        return "trouble"
+    if auto and undrawn:
+        # A picture that never reached Drive is never checked - there is no
+        # link to look at - so "every check passed" would be said of a
+        # channel whose six-months-on copy doesn't exist. Lydia Richard's went
+        # to the 15-second press with Google refusing the Drive sign-in. On
+        # its own, RYTE doesn't delete without it; a person still can.
+        await responder.send(
+            "\n".join(kept)
+            + "\n\n**Nothing deleted.** " + ", ".join(undrawn)
+            + " didn't reach Drive, and on my own I don't delete a channel "
+            "without its picture kept. Fix Drive, then run it again — or "
+            f"`@RYTE clearout {name}` to do it yourself."
         )
         return "trouble"
 

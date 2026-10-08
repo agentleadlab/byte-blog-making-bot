@@ -12,6 +12,7 @@ from wilbyte.bot import client as _client
 #: RYTE's look at its own work, kept before every test here stands it in for
 #: one that finds everything fine - the tests about the checks call this.
 REAL_CHECK = _client._check_my_work
+REAL_PICTURE = _client.jobs.keep_the_picture
 
 
 @pytest.fixture(autouse=True)
@@ -419,7 +420,7 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
              name="Jay Rodriguez", called="jay-rodriguez", member=True,
              on_card="https://sheet", in_channel="", rows=None, unread=False,
              welcomed=True, checks=None, auto=False, twin=False, target=None,
-             ordering=(True, "No order card for them in the last 60 days")):
+             ordering=(True, "No order card for them in the last 60 days"), drawn=None):
     """One `@RYTE clearout <name>`, with the board, Drive and buttons stubbed.
     `checks` is what RYTE's look at its own work finds - all fine unless said.
     `twin` adds a second channel of the same name (id 12, kept as
@@ -474,6 +475,16 @@ def _closing(monkeypatch, *, says, tab="ALL CLIENTS", picture="https://drive/p.p
 
     monkeypatch.setattr(bot_client, "_check_my_work", checked)
     monkeypatch.setattr(bot_client.jobs, "recent_order", lambda config, name: ordering)
+    # `drawn`: whether the pictures reach Drive - or one answer per try. Left
+    # alone when the test has put its own in already.
+    lands = list(drawn) if isinstance(drawn, (list, tuple)) else None
+
+    def photographing(config, page, called, **kw):
+        ok = (lands.pop(0) if lands else False) if lands is not None else drawn is not False
+        return ("https://drive/p.png", []) if ok else ("", ["Google rejected the refresh token."])
+
+    if drawn is not None or bot_client.jobs.keep_the_picture is REAL_PICTURE:
+        monkeypatch.setattr(bot_client.jobs, "keep_the_picture", photographing)
     if not picture:
         async def refuse(content=None, **kw):
             raise RuntimeError("Discord said no")
@@ -4017,6 +4028,30 @@ def test_on_its_own_a_failed_check_is_never_deleted(monkeypatch):
     assert channel.deleted is False
     assert len(buttons) == 1, "the delete button was offered after a failed check"
     assert "Nothing deleted" in said[-1]
+
+
+def test_on_its_own_a_picture_that_never_reached_drive_is_never_deleted(monkeypatch):
+    """Lydia Richard's channel went to the 15-second press with "⚠ #lydia_richard-iul
+    — Google rejected the refresh token": a failed upload has no link, so the
+    check never looked at it, and "every check passed"."""
+    _guild, channel, said, buttons = _closing(monkeypatch, says=[None, None], auto=True, drawn=False)
+    assert channel.deleted is False
+    assert len(buttons) == 1, "the delete button was offered with no picture kept"
+    assert "Nothing deleted" in said[-1] and "didn't reach Drive" in said[-1]
+
+
+def test_a_failed_picture_is_tried_once_more(monkeypatch):
+    """A blip is not a broken Drive."""
+    _guild, channel, _said, buttons = _closing(monkeypatch, says=[None, None], auto=True, drawn=[False, True])
+    assert channel.deleted is True
+    assert len(buttons) == 2
+
+
+def test_by_hand_a_picture_that_didnt_land_is_still_yours_to_decide(monkeypatch):
+    """A person sees the warning and chooses; only RYTE on its own holds back."""
+    _guild, channel, said, _buttons = _closing(monkeypatch, says=[True, True], drawn=False)
+    assert channel.deleted is True
+    assert any("Google rejected the refresh token" in one for one in said)
 
 
 def test_on_its_own_a_person_saying_leave_it_first_wins(monkeypatch):
