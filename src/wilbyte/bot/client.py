@@ -7867,6 +7867,8 @@ async def _hub_check(responder: Responder, config: Config, who: str) -> None:
     except hub.HubError as exc:
         await responder.send(f"⚠ {exc}")
         return
+    # The hub's Fulfilled tab only - its Done tab is orders already closed.
+    found = [one for one in found if one.fulfilled]
     if who.strip():
         picked = hub.named(found, who)
         if not picked:

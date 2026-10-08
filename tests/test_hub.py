@@ -220,9 +220,12 @@ def test_a_wrong_address_says_where_the_api_is(monkeypatch):
     assert "/distro/api/agents" in str(raised.value) and "HUB_API_URL" in str(raised.value)
 
 
-def test_the_hubs_own_word_done_is_fulfilled():
-    """`@RYTE check`: "1512 done, 147 live, 35 scheduled, 17 paused"."""
-    assert hub.read(record(status="done", fulfilled=None)).fulfilled is True
+def test_the_done_tab_is_not_the_fulfilled_tab():
+    """"joevanny is not even here" - he's in Done, closed out; the check is
+    for the hub's Fulfilled tab. The API flags both as fulfilled."""
+    assert hub.read(record(status="done", fulfilled=True)).fulfilled is False
+    assert hub.read(record(status="fulfilled", fulfilled=None)).fulfilled is True
+    assert hub.read(record(status="live", fulfilled=True)).fulfilled is True
     assert hub.read(record(status="live", fulfilled=False)).fulfilled is False
 
 

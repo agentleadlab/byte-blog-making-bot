@@ -39,8 +39,11 @@ MOST_PER_PASS = 15
 CONNECT_PAUSES = (2.0, 5.0, 10.0)
 
 
-#: What the hub calls an order that's finished.
-DONE_WORDS = ("fulfilled", "done", "complete", "completed", "ended")
+#: The hub's "Done" tab - orders already closed out and moved on from. Not
+#: what's being checked: "joevanny is not even here" - the check is for the
+#: hub's Fulfilled tab, the 52 waiting to be closed. The API's own
+#: `fulfilled` flag is true for both.
+DONE_WORDS = ("done", "complete", "completed", "ended", "archived")
 
 
 class HubError(RuntimeError):
@@ -104,9 +107,9 @@ def read(record: dict) -> HubAgent:
         id=str(record.get("id") or ""),
         name=" ".join(str(record.get("name") or record.get("client_facing_name") or "").split()),
         status=str(record.get("status") or ""),
-        # The hub's own word is "done" - "1512 done, 147 live" - and the
-        # flag is the hub's other way of saying so.
-        fulfilled=bool(record.get("fulfilled")) or str(record.get("status") or "").casefold() in DONE_WORDS,
+        # The Fulfilled tab, not the Done one: the flag is true for both.
+        fulfilled=(bool(record.get("fulfilled")) or str(record.get("status") or "").casefold() == "fulfilled")
+        and str(record.get("status") or "").casefold() not in DONE_WORDS,
         lead_type=str(record.get("lead_type_label") or record.get("lead_type") or ""),
         start_date=_day(record.get("start_date")),
         delivered=delivered, ordered=ordered, progress=progress,
