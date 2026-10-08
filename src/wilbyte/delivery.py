@@ -105,12 +105,37 @@ class Counted:
         return sum(many for when, many in self.by_day.items() if when >= day)
 
 
+#: What a lead sheet's heading row says. Two of these in one row is it.
+_LEAD_HEADING = re.compile(r"^\s*(?:(?:first\s+|full\s+|last\s+)?name|e-?mail|phone(?:\s+number)?|state|age|dob)\s*$",
+                           re.IGNORECASE)
+
+#: Rows on a sheet that aren't leads: the test rows the sheet is set up with,
+#: and the banner telling the agent where to dispo a sale.
+_NOT_A_LEAD = re.compile(r"^\s*test(?:\s+lead)?\s*$|^test@|when\s+you\s+make\s+a\s+sale", re.IGNORECASE)
+
+
+def _heading_row(rows: list) -> int:
+    """Which row the lead columns are headed on. Tavin Dougher's sheet has a
+    colour key and two banners above it - row 10, not row 1 - and counting
+    from row 1 made those nine lines leads."""
+    for at, row in enumerate(rows[:40]):
+        if sum(bool(_LEAD_HEADING.match(str(cell or ""))) for cell in row) >= 2:
+            return at
+    return 0
+
+
 def count_rows(rows: list, *, tab: str = "") -> Counted:
     """The lead rows on a sheet: everything under the heading row that has
-    anything in it."""
+    anything in it - not the test leads it was set up with, not a banner."""
     if not rows:
         return Counted(tab=tab)
-    heads, body = rows[0], [row for row in rows[1:] if any(str(cell).strip() for cell in row)]
+    top = _heading_row(rows)
+    heads = rows[top]
+    body = [
+        row for row in rows[top + 1:]
+        if any(str(cell).strip() for cell in row)
+        and not any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3])
+    ]
     at = date_column(heads, body)
     by_day: dict = {}
     if at is not None:

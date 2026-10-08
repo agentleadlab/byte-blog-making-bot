@@ -270,3 +270,24 @@ def test_each_short_order_is_said_once():
     assert delivery.flagged()["c1"] == 7
     delivery.remember({"c2": 3})
     assert set(delivery.flagged()) == {"c1", "c2"}
+
+
+def test_a_sheet_with_a_colour_key_above_counts_from_its_heading_row():
+    """Tavin Dougher's sheet: a black bar, a banner, the colour key, the banner
+    again, then "Name | Email | Phone Number" on row 10 and two test leads.
+    Counting from row 1 made eleven lines that aren't leads into leads."""
+    banner = "When YOU MAKE A SALE HERE IS THE LINK TO DISPO THE LEAD ---- LINK ---- https://x"
+    rows = [
+        [""],
+        [banner],
+        ["Green", "Sold"], ["Purple", "Call Disconnected"], ["Blue", "Call Blocker"],
+        ["Yellow", "Booked Appointment"], ["Red", "Not Interested"], ["Teal", "Contact Attempted"],
+        [banner],
+        ["Name", "Email", "Phone Number", "Age", "State", "Branch of Service"],
+        ["Test Lead", "test@agentleadlab.com", "214-555-0100", "45", "Texas", "TEST"],
+        ["Test Lead", "test@agentleadlab.com", "214-555-0100", "45", "Alabama", "TEST"],
+        ["Leroy Example", "leroy@example.com", "555-010-0001", "65", "Texas", "Army"],
+        ["Danny Example", "danny@example.com", "555-010-0002", "83", "Indiana", "Navy"],
+        ["Marion Example", "marion@example.com", "555-010-0003", "75", "Georgia", "Army"],
+    ]
+    assert delivery.count_rows(rows).rows == 3
