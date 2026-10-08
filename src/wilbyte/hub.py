@@ -39,6 +39,10 @@ MOST_PER_PASS = 15
 CONNECT_PAUSES = (2.0, 5.0, 10.0)
 
 
+#: What the hub calls an order that's finished.
+DONE_WORDS = ("fulfilled", "done", "complete", "completed", "ended")
+
+
 class HubError(RuntimeError):
     pass
 
@@ -100,7 +104,9 @@ def read(record: dict) -> HubAgent:
         id=str(record.get("id") or ""),
         name=" ".join(str(record.get("name") or record.get("client_facing_name") or "").split()),
         status=str(record.get("status") or ""),
-        fulfilled=bool(record.get("fulfilled")) or str(record.get("status") or "").casefold() == "fulfilled",
+        # The hub's own word is "done" - "1512 done, 147 live" - and the
+        # flag is the hub's other way of saying so.
+        fulfilled=bool(record.get("fulfilled")) or str(record.get("status") or "").casefold() in DONE_WORDS,
         lead_type=str(record.get("lead_type_label") or record.get("lead_type") or ""),
         start_date=_day(record.get("start_date")),
         delivered=delivered, ordered=ordered, progress=progress,
