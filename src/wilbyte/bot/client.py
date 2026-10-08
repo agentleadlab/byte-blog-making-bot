@@ -3144,18 +3144,20 @@ async def _offer_the_tracker(
     if not headings:
         return
 
-    # Once per dispute. Megan Lucas asked for on her own after a rebuttal
-    # already offered the row would otherwise be two deductions.
+    # Once per dispute - the same person for the same amount. Megan Lucas
+    # asked for on her own after a rebuttal already offered the row would
+    # otherwise be two deductions.
     try:
         already = await asyncio.to_thread(
             jobs.already_tracked, config, tab, dispute.customer_name, len(headings),
+            dispute.amount or "",
         )
     except PIPELINE_ERRORS:
         already = 0
     if already:
         await responder.send(
-            f"🧾 **{dispute.customer_name}** is already on **{tab}**, row {already} — "
-            "not adding them twice. If this is a second dispute, add that row yourself."
+            f"🧾 **{dispute.customer_name}** for {dispute.amount or 'this amount'} is already "
+            f"on **{tab}**, row {already} — not adding it twice."
         )
         return
 

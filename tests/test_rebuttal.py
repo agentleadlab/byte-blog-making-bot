@@ -2659,7 +2659,7 @@ def test_somebody_already_on_the_tracker_is_never_added_twice(monkeypatch):
 
     monkeypatch.setattr(jobs, "tracker_headings", lambda config: (
         ["Name of Disputer", "Date of Transaction", "Amount", "Closer", "Status"], "Oct 2026", [], []))
-    monkeypatch.setattr(jobs, "already_tracked", lambda config, tab, name, wide: 2)
+    monkeypatch.setattr(jobs, "already_tracked", lambda config, tab, name, wide, amount="": 2)
 
     def never(**kw):
         raise AssertionError("offered the button for somebody already on the tracker")
@@ -2677,6 +2677,7 @@ def test_somebody_already_on_the_tracker_is_never_added_twice(monkeypatch):
     asyncio.run(bot_client._offer_the_tracker(
         Responder(), config, rebuttal.read_facts(HER_FLAG_CARD), rebuttal.Gathered()))
     assert "already on **Oct 2026**, row 2" in sent[-1]
+    assert "$129.37" in sent[-1]
 
 
 def test_already_tracked_matches_the_whole_name_in_any_case(monkeypatch):
@@ -2704,3 +2705,7 @@ def test_already_tracked_matches_the_whole_name_in_any_case(monkeypatch):
     assert jobs.already_tracked(config, "Oct 2026", "Meilee  reddy", 5) == 2
     assert jobs.already_tracked(config, "Oct 2026", "Meilee", 5) == 0
     assert jobs.already_tracked(config, "Oct 2026", "Megan Lucas", 5) == 0
+    # The same row's amount is the same dispute; another amount is another.
+    assert jobs.already_tracked(config, "Oct 2026", "Meilee reddy", 5, "$279.45") == 2
+    assert jobs.already_tracked(config, "Oct 2026", "Meilee reddy", 5, "$181.12") == 0, (
+        "her second dispute, $181.12 the same day, was turned away as the first")

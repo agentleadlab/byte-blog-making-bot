@@ -4913,11 +4913,14 @@ def _column_letter(how_many: int) -> str:
     return name
 
 
-def already_tracked(config: Config, tab: str, name: str, wide: int) -> int:
-    """The row this customer is already on in that tab, or 0. Reads only.
+def already_tracked(config: Config, tab: str, name: str, wide: int, amount: str = "") -> int:
+    """The row this dispute is already on in that tab, or 0. Reads only.
 
     By the whole name in any cell of the list - "Meilee Reddy" and "Meilee
-    reddy" are one person, "Meilee" alone is not asked about.
+    reddy" are one person, "Meilee" alone is not asked about - and the
+    amount, when there is one. Meilee Reddy disputed two charges from the
+    same day, $279.45 and $181.12: one person, two rows, and the second was
+    turned away as the first.
     """
     from .. import gsheets
 
@@ -4928,10 +4931,21 @@ def already_tracked(config: Config, tab: str, name: str, wide: int) -> int:
     sheet = gsheets.sheet_id_in(sheet) or sheet
     with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as reading:
         rows = reading.rows(sheet, f"'{tab}'!A:{_column_letter(wide)}")
+    cents = _cents_in(amount)
     for at, row in enumerate(rows[1:], start=2):
-        if any(" ".join(str(cell).split()).casefold() == wanted for cell in row):
+        if not any(" ".join(str(cell).split()).casefold() == wanted for cell in row):
+            continue
+        if cents is None or any(_cents_in(str(cell)) == cents for cell in row):
             return at
     return 0
+
+
+def _cents_in(said: str) -> int | None:
+    """"$1,035.00" -> 103500. None when it isn't an amount."""
+    found = re.fullmatch(r"\s*\$?\s*([\d,]+)(?:\.(\d{1,2}))?\s*", str(said or ""))
+    if not found:
+        return None
+    return int(found.group(1).replace(",", "") or 0) * 100 + int((found.group(2) or "0").ljust(2, "0"))
 
 
 def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str]]:
