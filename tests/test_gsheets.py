@@ -195,7 +195,8 @@ def test_a_token_without_the_new_scope_says_so(monkeypatch):
 
     assert ok is False
     assert "gmail.readonly" in said
-    assert "still the old token" in said
+    assert "no **documents**" in said and "no **drive.file**" in said
+    assert "no **gmail.readonly**" not in said
 
 
 def test_a_token_with_it_passes(monkeypatch):
@@ -210,7 +211,8 @@ def test_a_token_with_it_passes(monkeypatch):
             200,
             json={"scope": (
                 "https://www.googleapis.com/auth/gmail.readonly "
-                "https://www.googleapis.com/auth/documents"
+                "https://www.googleapis.com/auth/documents "
+                "https://www.googleapis.com/auth/drive.file"
             )},
             request=httpx.Request("POST", "https://x"),
         )
@@ -223,7 +225,30 @@ def test_a_token_with_it_passes(monkeypatch):
 
     assert ok is True
     assert "documents" in said
-    assert "old token" not in said
+    assert "no **" not in said
+
+
+def test_a_token_minted_without_documents_says_what_breaks(monkeypatch):
+    """Re-minted with gmail.readonly and drive.file only - the Doc the
+    segments go into signs in with the same token."""
+    import httpx
+
+    from wilbyte.bot import jobs
+    from types import SimpleNamespace
+
+    def answer(url, **kwargs):
+        return httpx.Response(200, json={"scope": (
+            "https://www.googleapis.com/auth/gmail.readonly "
+            "https://www.googleapis.com/auth/drive.file"
+        )}, request=httpx.Request("POST", "https://x"))
+
+    monkeypatch.setattr(httpx, "post", answer)
+    (ok, said), = jobs._check_google_scopes(SimpleNamespace(secrets=SimpleNamespace(
+        google_client_id="i", google_client_secret="s", google_refresh_token="1//new",
+        gmail_refresh_token="", gmail_client_id="", gmail_client_secret="",
+    )))
+    assert ok is False
+    assert "no **documents**" in said and "segments" in said
 
 
 def test_it_asks_about_the_token_the_docs_actually_use(monkeypatch):

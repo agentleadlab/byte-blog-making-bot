@@ -1893,12 +1893,20 @@ def _check_google_scopes(config: Config) -> list[tuple[bool, str]]:
     except Exception as exc:
         return [(False, f"Google token - {_short(exc, 160)}")]
 
-    wanted = doc.SCOPE.rsplit("/", 1)[-1]
-    has_it = wanted in scopes
+    # Every scope something signs in with this token for. A token re-minted
+    # with two of the three ticks works for those two and fails the third
+    # weeks later, in the middle of whatever needed it.
+    needs = {
+        doc.SCOPE.rsplit("/", 1)[-1]: "the segments can't be written into the Doc",
+        "drive.file": "clear-out pictures can't go into Drive",
+        "gmail.readonly": "Payra receipts can't be read for rebuttals",
+    }
+    missing = [scope for scope in needs if scope not in scopes]
     return [(
-        has_it,
+        not missing,
         f"Google token grants: {', '.join(scopes) or 'nothing'}"
-        + ("" if has_it else f" - no **{wanted}**, so it is still the old token"),
+        + "".join(f" - no **{scope}**, so {needs[scope]}" for scope in missing)
+        + (" - mint it again with all three ticked" if missing else ""),
     )]
 
 
