@@ -27,7 +27,7 @@ one bot, sharing one Discord account and one `.env`; a second launcher would
 start a second copy on the same token and every message would be answered
 twice.
 
-It also restarts itself. Every fifteen minutes it checks whether a newer
+It also restarts itself. Every two minutes it checks whether a newer
 version has been pushed, and when one has it says so in Discord and comes back
 on it - but only when nothing is open, because a run holds its lock through
 every approval click and restarting mid-review would drop posts someone is

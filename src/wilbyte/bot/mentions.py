@@ -805,6 +805,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="websitecheck", brief=text)
     if INVOICE_PLAINLY.match(_without_links(text)):
         return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
+    if re.match(r"\s*(?:update|update\s+(?:now|yourself)|restart|pull)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="update", brief=text)
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
         return MentionRequest(action="cost", brief=text)
     finding = re.match(r"\s*payra\s+(?:find|search|look\s*up|lookup)\s+(.+?)\s*$", text, re.IGNORECASE)
@@ -1273,6 +1275,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > screenshots attached — a chargeback rebuttal as a .docx. I read the board,
 > the setup confirmations and the delivered lead sheet, work out what each
 > attachment is, and put them under the proof each belongs to
+> @RYTE **update** — take a newly pushed version now instead of at the next
+> check (every 2 minutes). Never with a run open
 > @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the
 > chargeback tracker on its own, shown with a button first. Or **add to tracker
 > Megan Lucas** to find her notice above. Never twice for the same person

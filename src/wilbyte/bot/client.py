@@ -1374,6 +1374,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _set_responder(responder, request.brief or "")
                 return
 
+            if request.action == "update":
+                await _update_now(bot, responder)
+                return
+
             if request.action == "cost":
                 from .. import usage
 
@@ -1687,9 +1691,10 @@ async def _warn_if_stale(bot: "WilByteBot") -> None:
 # crashed, and the launcher deliberately does not loop on those.
 RESTART_EXIT_CODE = 42
 
-# Often enough that a fix lands the same morning, rarely enough that it isn't
-# a git fetch every minute for the rest of the year.
-UPDATE_CHECK_SECONDS = 900
+# "can the update be less than 15 minutes?" - a fix asked for in Discord is
+# wanted while the person is still looking at the screen. A fetch is cheap,
+# and a run that is open still holds the restart off. `@RYTE update` for now.
+UPDATE_CHECK_SECONDS = 120
 
 
 async def updater_loop(bot: "WilByteBot") -> None:
@@ -1729,6 +1734,30 @@ async def updater_loop(bot: "WilByteBot") -> None:
         log.info("Restarting onto %s", waiting)
         await bot.close()
         os._exit(RESTART_EXIT_CODE)
+
+
+async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
+    """`@RYTE update` - look for a newer version now rather than at the next
+    check, and come back on it. The same rule as the loop: never with a run
+    open."""
+    try:
+        waiting = await asyncio.to_thread(version.update_waiting)
+    except Exception as exc:
+        await responder.send(f"Couldn't check for an update: {jobs._short(exc, 200)}")
+        return
+    if not waiting:
+        await responder.send(f"Already on the latest — {version.code_version() or 'this version'}.")
+        return
+    if bot.run_lock.locked():
+        await responder.send(
+            f"There's an update ({waiting}), but a run is open — I'll take it as soon "
+            "as that's done."
+        )
+        return
+    await responder.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
+    log.info("Restarting onto %s, asked for", waiting)
+    await bot.close()
+    os._exit(RESTART_EXIT_CODE)
 
 
 # ------------------------------------------------------------------- publishing

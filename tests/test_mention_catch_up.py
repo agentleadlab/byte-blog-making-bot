@@ -295,3 +295,76 @@ def test_an_at_ryte_is_answered_as_spoken_to(monkeypatch):
     monkeypatch.setattr(client.mentionseen, "add", lambda said: None)
     asyncio.run(client.answer_mention(None, SimpleNamespace(id=1, channel=None)))
     assert seen == [True] and mirror._SPOKEN_TO.get() is False
+
+
+def test_updates_are_looked_for_every_couple_of_minutes():
+    """"can the update be less than 15 minutes?\""""
+    from wilbyte.bot import client
+
+    assert client.UPDATE_CHECK_SECONDS <= 120
+
+
+@pytest.mark.parametrize("said", ["<@1> update", "<@1> update now", "<@1> restart", "<@1> Update!"])
+def test_at_ryte_update_is_a_command(said):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(said).action == "update"
+
+
+def test_update_in_a_sentence_is_not_the_command():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> update the card for Jay Rodriguez").action != "update"
+
+
+def _asking_to_update(monkeypatch, *, waiting, locked=False):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    said, closed = [], []
+    monkeypatch.setattr(client.version, "update_waiting", lambda: waiting)
+    monkeypatch.setattr(client.version, "code_version", lambda: "abc1234 Oct 08 15:00")
+
+    def leave(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(client.os, "_exit", leave)
+
+    async def close():
+        closed.append(1)
+
+    lock = asyncio.Lock()
+
+    async def go():
+        if locked:
+            await lock.acquire()
+
+        class Responder:
+            async def send(self, text=None, **kw):
+                said.append(text)
+
+        await client._update_now(SimpleNamespace(run_lock=lock, close=close), Responder())
+
+    try:
+        asyncio.run(go())
+    except SystemExit as exc:
+        said.append(f"exit {exc.code}")
+    return said, closed
+
+
+def test_update_now_restarts_onto_a_new_version(monkeypatch):
+    said, closed = _asking_to_update(monkeypatch, waiting="def5678 Tracker fix")
+    assert said[0].startswith("🔄 Updating myself") and closed == [1]
+    assert said[-1] == "exit 42"
+
+
+def test_update_now_with_nothing_new_says_so(monkeypatch):
+    said, closed = _asking_to_update(monkeypatch, waiting="")
+    assert "Already on the latest" in said[0] and closed == []
+
+
+def test_update_now_never_restarts_through_an_open_run(monkeypatch):
+    said, closed = _asking_to_update(monkeypatch, waiting="def5678 Tracker fix", locked=True)
+    assert "a run is open" in said[0] and closed == []
