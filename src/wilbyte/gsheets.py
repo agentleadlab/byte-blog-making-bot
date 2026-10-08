@@ -88,7 +88,8 @@ def why_refused(body: str) -> str:
     return " ".join(str(found or "").split())[:400]
 
 
-def granted(creds: Credentials, *, timeout: float = 20.0) -> list[str]:
+def granted(creds: Credentials, *, timeout: float = 20.0,
+            which: str = "GOOGLE_REFRESH_TOKEN") -> list[str]:
     """Which scopes this refresh token actually carries.
 
     Google says so on every refresh, in the `scope` field of the reply, and it
@@ -114,7 +115,7 @@ def granted(creds: Credentials, *, timeout: float = 20.0) -> list[str]:
     except httpx.HTTPError as exc:
         raise SheetsError(f"Couldn't reach Google to sign in: {exc}") from exc
     if reply.status_code >= 400:
-        raise SheetsError(explain_token(reply.status_code, reply.text))
+        raise SheetsError(explain_token(reply.status_code, reply.text, which=which))
     said = str((reply.json() or {}).get("scope") or "")
     return [one.rsplit("/", 1)[-1] for one in said.split() if one]
 

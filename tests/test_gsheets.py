@@ -345,3 +345,43 @@ def test_the_docs_error_carries_what_google_said():
     assert "has not been used in project" in said
     assert "minted without" not in said, "it asserted a cause again"
     client.close()
+
+
+def test_a_refused_gmail_token_is_named_as_the_gmail_one(monkeypatch):
+    """"❌ Google token - Google rejected the refresh token in GOOGLE_REFRESH_TOKEN"
+    while the sheets were fine - it was GMAIL_REFRESH_TOKEN that was asked."""
+    import httpx
+
+    from wilbyte import docs
+    from wilbyte.bot import jobs
+    from types import SimpleNamespace
+
+    def refuse(url, **kwargs):
+        return httpx.Response(400, json={"error": "invalid_grant"}, request=httpx.Request("POST", "https://x"))
+
+    monkeypatch.setattr(httpx, "post", refuse)
+    secrets = SimpleNamespace(
+        google_client_id="i", google_client_secret="s", google_refresh_token="1//sheets",
+        gmail_refresh_token="1//gmail", gmail_client_id="", gmail_client_secret="",
+        segments_doc_id="https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit",
+    )
+    (ok, said), = jobs._check_google_scopes(SimpleNamespace(secrets=secrets))
+    assert ok is False and "GMAIL_REFRESH_TOKEN" in said and "GOOGLE_REFRESH_TOKEN" not in said
+
+    class Refusing:
+        def __init__(self, **kw):
+            pass
+
+        def post(self, url, **kw):
+            return refuse(url)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(docs.httpx, "Client", Refusing)
+    client = docs.open_docs(secrets)
+    try:
+        client._access_token()
+    except docs.DocsError as exc:
+        said = str(exc)
+    assert "GMAIL_REFRESH_TOKEN" in said and "GOOGLE_REFRESH_TOKEN" not in said

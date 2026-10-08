@@ -150,6 +150,8 @@ class DocsClient:
         self._client = httpx.Client(timeout=timeout)
         self._token = ""
         self._token_until = 0.0
+        #: The .env line the refresh token came from, for saying which to fix.
+        self.which = "GOOGLE_REFRESH_TOKEN"
 
     def __enter__(self) -> "DocsClient":
         return self
@@ -178,7 +180,7 @@ class DocsClient:
         except httpx.HTTPError as exc:
             raise DocsError(f"Couldn't reach Google to sign in: {exc}") from exc
         if reply.status_code >= 400:
-            raise DocsError(explain_token(reply.status_code, reply.text))
+            raise DocsError(explain_token(reply.status_code, reply.text, which=self.which))
         got = reply.json()
         self._token = str(got.get("access_token") or "")
         self._token_until = time.time() + float(got.get("expires_in") or 3600) - 60
@@ -395,6 +397,9 @@ def open_docs(secrets) -> DocsClient:
             or creds.client_secret,
             instead,
         )
-    return DocsClient(
+    client = DocsClient(
         creds, document=doc_id_in(getattr(secrets, "segments_doc_id", "") or "")
     )
+    if instead:
+        client.which = "GMAIL_REFRESH_TOKEN"
+    return client

@@ -1889,7 +1889,7 @@ def _check_google_scopes(config: Config) -> list[tuple[bool, str]]:
             instead,
         )
     try:
-        scopes = gsheets.granted(creds)
+        scopes = gsheets.granted(creds, which="GMAIL_REFRESH_TOKEN" if instead else "GOOGLE_REFRESH_TOKEN")
     except Exception as exc:
         return [(False, f"Google token - {_short(exc, 160)}")]
 
