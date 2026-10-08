@@ -267,14 +267,10 @@ def _updating(monkeypatch, tagged_ago):
     return said, announced
 
 
-def test_an_update_is_said_only_where_somebody_just_tagged_ryte(monkeypatch):
-    said, announced = _updating(monkeypatch, tagged_ago=2)
-    assert said and said[0].startswith("🔄 Updating myself")
-    assert announced == [], "it still went to the announcements channel"
-
-
-def test_an_update_nobody_is_waiting_on_is_said_nowhere(monkeypatch):
-    for ago in (None, 30):
+def test_an_automatic_update_is_said_nowhere(monkeypatch):
+    """"why is it sending the updates here again" - a blog run tagged in
+    #blogs-copywriter got "Updating myself" two minutes later."""
+    for ago in (None, 2, 30):
         said, announced = _updating(monkeypatch, tagged_ago=ago)
         assert said == [] and announced == []
 
@@ -368,3 +364,14 @@ def test_update_now_with_nothing_new_says_so(monkeypatch):
 def test_update_now_never_restarts_through_an_open_run(monkeypatch):
     said, closed = _asking_to_update(monkeypatch, waiting="def5678 Tracker fix", locked=True)
     assert "a run is open" in said[0] and closed == []
+
+
+def test_hub_alerts_go_to_the_hub_channel_when_there_is_one():
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    hub_channel = SimpleNamespace(name="📮｜hub-agent-fulfillment")
+    bot = SimpleNamespace(guilds=[SimpleNamespace(text_channels=[SimpleNamespace(name="announcements"), hub_channel])])
+    assert client._hub_responder(bot).channel is hub_channel
+    assert client._hub_responder(SimpleNamespace(guilds=[SimpleNamespace(text_channels=[])])) is None

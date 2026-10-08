@@ -1730,15 +1730,9 @@ async def updater_loop(bot: "WilByteBot") -> None:
             log.info("Update %s is waiting, but a run is open - leaving it", waiting)
             continue
 
-        # Said only to somebody who has just tagged RYTE, where they tagged
-        # it - they're waiting on an answer. Otherwise nobody needs telling.
-        channel = _tagged_lately(datetime.now(timezone.utc))
-        if channel is not None:
-            try:
-                with mirror.answering():
-                    await channel.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
-            except Exception:
-                log.warning("Couldn't say I was updating", exc_info=True)
+        # Said nowhere. "why is it sending the updates here again" - a blog
+        # run tagged in #blogs-copywriter got "Updating myself" in the
+        # middle of it. Only `@RYTE update`, which asked, is answered.
         log.info("Restarting onto %s", waiting)
         await bot.close()
         os._exit(RESTART_EXIT_CODE)
@@ -7829,6 +7823,7 @@ async def hub_check_loop(bot: "WilByteBot") -> None:
     while not bot.is_closed():
         try:
             responder = _board_responder(bot)
+            responder = _hub_responder(bot) or responder
             if responder is not None:
                 found = await asyncio.to_thread(hub.agents, bot.config.secrets)
                 said = await asyncio.to_thread(hub.checked)
@@ -7855,6 +7850,16 @@ async def hub_check_loop(bot: "WilByteBot") -> None:
         except Exception:  # a bad tick must not take the loop down for good
             log.warning("Hub check failed; will try again", exc_info=True)
         await asyncio.sleep(HUB_CHECK_SECONDS)
+
+
+def _hub_responder(bot: "WilByteBot"):
+    """#hub-agent-fulfillment in Ryte The Goat, made for these - found by its
+    name - or None for the board's channel."""
+    for guild in getattr(bot, "guilds", None) or []:
+        for channel in getattr(guild, "text_channels", None) or []:
+            if "hub-agent-fulfil" in str(getattr(channel, "name", "")).casefold():
+                return ChannelResponder(channel)
+    return None
 
 
 async def _hub_check(responder: Responder, config: Config, who: str) -> None:
