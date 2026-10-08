@@ -439,8 +439,11 @@ def folder_id_in(link: str) -> str:
     return said if re.fullmatch(r"[A-Za-z0-9_-]{15,}", said) else ""
 
 
-def explain_token(status: int, body: str) -> str:
-    """Why signing in failed, in terms of what to do about it."""
+def explain_token(status: int, body: str, *, which: str = "GOOGLE_REFRESH_TOKEN") -> str:
+    """Why signing in failed, in terms of what to do about it. `which` is
+    the .env line the token came from - Drive and Gmail sign in with
+    GMAIL_REFRESH_TOKEN when it is set, and naming the other one sends
+    somebody to fix a token that works."""
     said = _said(body)
     if "unauthorized_client" in said:
         # The token is real and the client is real; they are just not each
@@ -456,12 +459,14 @@ def explain_token(status: int, body: str) -> str:
             "Authorized redirect URIs."
         )
     if "invalid_grant" in said or status == 400:
+        account = ("agentleadlab@gmail.com" if which == "GOOGLE_REFRESH_TOKEN"
+                   else "the Google account it was minted for")
         return (
-            "Google rejected the refresh token. That happens when the OAuth "
+            f"Google rejected the refresh token in {which}. That happens when the OAuth "
             "app is back in Testing mode (tokens expire after 7 days), when "
-            "the password on agentleadlab@gmail.com changed, or when access "
+            f"the password on {account} changed, or when access "
             "was revoked. Re-run the consent step and put the new "
-            "GOOGLE_REFRESH_TOKEN in .env."
+            f"{which} in .env."
         )
     if status in (401, 403):
         return f"Google refused the sign-in ({status}). {said}"

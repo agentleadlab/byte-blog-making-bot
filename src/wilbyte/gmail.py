@@ -99,6 +99,8 @@ class GmailClient:
                 "to search."
             )
         self._creds = creds
+        #: The .env line the refresh token came from, for saying which to fix.
+        self.which = "GOOGLE_REFRESH_TOKEN"
         self._sender = sender.strip()
         self._client = httpx.Client(timeout=timeout)
         self._token = ""
@@ -131,7 +133,7 @@ class GmailClient:
         except httpx.HTTPError as exc:
             raise GmailError(f"Couldn't reach Google to sign in: {exc}") from exc
         if reply.status_code >= 400:
-            raise GmailError(explain_token(reply.status_code, reply.text))
+            raise GmailError(explain_token(reply.status_code, reply.text, which=self.which))
         got = reply.json()
         self._token = str(got.get("access_token") or "")
         self._token_until = time.time() + float(got.get("expires_in") or 3600) - 60
@@ -314,9 +316,12 @@ def open_gmail(secrets) -> GmailClient:
     Left blank, Gmail signs in as everything else does, which is right when
     the invoices come to the same address.
     """
-    return GmailClient(
+    client = GmailClient(
         _signed_in(secrets), sender=getattr(secrets, "gmail_invoice_sender", "")
     )
+    if (getattr(secrets, "gmail_refresh_token", "") or "").strip():
+        client.which = "GMAIL_REFRESH_TOKEN"
+    return client
 
 
 def _signed_in(secrets) -> Credentials:

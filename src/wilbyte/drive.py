@@ -67,6 +67,8 @@ class DriveClient:
                 "put anything."
             )
         self._creds = creds
+        #: The .env line the refresh token came from, for saying which to fix.
+        self.which = "GOOGLE_REFRESH_TOKEN"
         self._folder = folder.strip()
         self._client = httpx.Client(timeout=timeout)
         self._token = ""
@@ -99,7 +101,7 @@ class DriveClient:
         except httpx.HTTPError as exc:
             raise DriveError(f"Couldn't reach Google to sign in: {exc}") from exc
         if reply.status_code >= 400:
-            raise DriveError(explain_token(reply.status_code, reply.text))
+            raise DriveError(explain_token(reply.status_code, reply.text, which=self.which))
         got = reply.json()
         self._token = str(got.get("access_token") or "")
         self._token_until = time.time() + float(got.get("expires_in") or 3600) - 60
@@ -256,7 +258,10 @@ def open_drive(secrets) -> DriveClient:
             or creds.client_secret,
             instead,
         )
-    return DriveClient(
+    client = DriveClient(
         creds,
         folder=folder_id_in(getattr(secrets, "clients_drive_folder", "") or ""),
     )
+    if instead:
+        client.which = "GMAIL_REFRESH_TOKEN"
+    return client

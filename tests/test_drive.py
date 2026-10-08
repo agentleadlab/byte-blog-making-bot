@@ -154,6 +154,32 @@ def test_it_signs_in_with_the_same_token_gmail_uses(monkeypatch):
     assert used["refresh_token"] == "the-one-with-drive"
 
 
+def test_a_refused_token_names_the_env_line_it_came_from(monkeypatch):
+    """Lydia Richard's picture said to fix GOOGLE_REFRESH_TOKEN - the one the
+    sheet row had just been written with. Drive signs in with Gmail's."""
+
+    class Refusing(FakeDrive):
+        def post(self, url, data=None, **kwargs):
+            if url.endswith("/token"):
+                return SimpleNamespace(status_code=400, text='{"error": "invalid_grant"}',
+                                       json=lambda: {"error": "invalid_grant"})
+            return super().post(url, data=data, **kwargs)
+
+    monkeypatch.setattr(drive.httpx, "Client", lambda **kw: Refusing())
+    secrets = dict(
+        google_client_id="sheets-id", google_client_secret="sheets-secret",
+        google_refresh_token="sheets-token", clients_drive_folder=FOLDER,
+    )
+    with pytest.raises(drive.DriveError) as raised:
+        drive.open_drive(SimpleNamespace(**secrets, gmail_refresh_token="inbox-token"))._access_token()
+    assert "GMAIL_REFRESH_TOKEN" in str(raised.value)
+    assert "GOOGLE_REFRESH_TOKEN" not in str(raised.value)
+
+    with pytest.raises(drive.DriveError) as raised:
+        drive.open_drive(SimpleNamespace(**secrets, gmail_refresh_token=""))._access_token()
+    assert "GOOGLE_REFRESH_TOKEN" in str(raised.value)
+
+
 def test_the_folder_can_be_a_link_or_an_id():
     from wilbyte.gsheets import folder_id_in
 
