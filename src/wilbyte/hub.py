@@ -23,7 +23,9 @@ import httpx
 
 from .state import _state_dir
 
-DEFAULT_URL = "https://hub.agentleadlab.com/api/agents"
+#: Under /distro, where the hub itself lives - not /api/agents, which is what
+#: was asked for and answers 404.
+DEFAULT_URL = "https://hub.agentleadlab.com/distro/api/agents"
 
 #: How far back a fulfilled order is checked on its own. "fulfilled_at" is the
 #: row's last save, so an old order touched today comes back as fresh - the
@@ -143,6 +145,9 @@ def agents(secrets, *, status: str = "fulfilled", timeout: float = 30.0) -> list
     if reply.status_code in (401, 403):
         raise HubError("The hub refused RYTE's key - check HUB_API_TOKEN in .env against "
                        "the one Nova gave.")
+    if reply.status_code == 404:
+        raise HubError(f"The hub has nothing at {url} (404). Its API is at {DEFAULT_URL} - "
+                       "fix HUB_API_URL in .env, or delete that line to use it.")
     if reply.status_code >= 400:
         raise HubError(f"The hub answered {reply.status_code}.")
     try:

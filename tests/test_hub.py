@@ -209,3 +209,12 @@ def test_a_hub_link_is_not_the_command():
     from wilbyte.bot import mentions
 
     assert mentions.parse("<@1> https://hub.agentleadlab.com/distro/agents").action != "hubcheck"
+
+
+def test_a_wrong_address_says_where_the_api_is(monkeypatch):
+    """"Distro Hub - The hub answered 404" - /api/agents, when the hub's API
+    is under /distro."""
+    _answering(monkeypatch, status=404, body={})
+    with pytest.raises(hub.HubError) as raised:
+        hub.agents(SimpleNamespace(hub_api_token=TOKEN, hub_api_url="https://hub.agentleadlab.com/api/agents"))
+    assert "/distro/api/agents" in str(raised.value) and "HUB_API_URL" in str(raised.value)
