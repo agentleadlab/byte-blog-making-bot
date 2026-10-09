@@ -7825,7 +7825,7 @@ async def hub_check_loop(bot: "WilByteBot") -> None:
             responder = _board_responder(bot)
             responder = _hub_responder(bot) or responder
             if responder is not None:
-                found = await asyncio.to_thread(hub.agents, bot.config.secrets)
+                found = await asyncio.to_thread(hub.fulfilled_tab, bot.config.secrets)
                 said = await asyncio.to_thread(hub.checked)
                 fresh = hub.due(found, now=datetime.now(timezone.utc), said=said)
                 if fresh:
@@ -7873,13 +7873,12 @@ async def _hub_check(responder: Responder, config: Config, who: str) -> None:
     from .. import hub
 
     try:
-        found = await asyncio.to_thread(hub.agents, config.secrets)
+        # The hub's Fulfilled tab only - not its Done tab, nor paused agents
+        # who once reached their count.
+        found = await asyncio.to_thread(hub.fulfilled_tab, config.secrets)
     except hub.HubError as exc:
         await responder.send(f"⚠ {exc}")
         return
-    # The hub's Fulfilled tab only - not its Done tab, nor paused agents who
-    # once reached their count.
-    found = [one for one in found if one.fulfilled]
     if who.strip():
         picked = hub.named(found, who)
         if not picked:
@@ -7888,7 +7887,20 @@ async def _hub_check(responder: Responder, config: Config, who: str) -> None:
     else:
         picked = [one for one in found if one.sheet_url][:HUB_CHECK_MOST]
         if not picked:
-            await responder.send("Nobody is on the hub's Fulfilled tab right now.")
+            # Said with what the hub did send, so a word for the tab that
+            # isn't "fulfilled" or "ended" can be seen rather than guessed.
+            from collections import Counter
+
+            try:
+                seen = await asyncio.to_thread(hub.agents, config.secrets, status="fulfilled")
+            except hub.HubError:
+                seen = []
+            kinds = Counter((one.status or "?") for one in seen)
+            await responder.send(
+                "Nobody is on the hub's Fulfilled tab right now."
+                + (f"\n-# Asked for fulfilled, the hub sent: "
+                   + ", ".join(f"{many} {status}" for status, many in kinds.most_common()) if kinds else "")
+            )
             return
     await responder.send(f"Counting {len(picked)} sheet(s) against the hub —")
     done = await asyncio.to_thread(jobs.hub_check, config, picked)

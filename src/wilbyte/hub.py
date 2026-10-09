@@ -43,7 +43,13 @@ CONNECT_PAUSES = (2.0, 5.0, 10.0)
 #: what's being checked: "joevanny is not even here" - the check is for the
 #: hub's Fulfilled tab, the 52 waiting to be closed. The API's own
 #: `fulfilled` flag is true for both.
-DONE_WORDS = ("done", "complete", "completed", "ended", "archived")
+DONE_WORDS = ("done", "complete", "completed", "archived")
+
+#: The Fulfilled tab's status. The hub's own page for it is
+#: /distro/agents?status=ended - "ended" underneath, "fulfilled" on the pill.
+#: "Nobody is on the hub's Fulfilled tab right now" came of looking for the
+#: pill's word.
+FULFILLED_WORDS = ("fulfilled", "ended")
 
 
 class HubError(RuntimeError):
@@ -111,7 +117,7 @@ def read(record: dict) -> HubAgent:
         # Not the API's `fulfilled` flag: that's true for anybody who ever
         # reached their count, and brought back Joevanny Astorga, paused, and
         # a dozen others who aren't on that tab.
-        fulfilled=str(record.get("status") or "").casefold() == "fulfilled",
+        fulfilled=str(record.get("status") or "").casefold() in FULFILLED_WORDS,
         lead_type=str(record.get("lead_type_label") or record.get("lead_type") or ""),
         start_date=_day(record.get("start_date")),
         delivered=delivered, ordered=ordered, progress=progress,
@@ -131,6 +137,18 @@ def _records(body) -> list[dict]:
             if isinstance(body.get(name), list):
                 return [one for one in body[name] if isinstance(one, dict)]
     return []
+
+
+def fulfilled_tab(secrets) -> list[HubAgent]:
+    """Everybody on the hub's Fulfilled tab. Asked as "fulfilled", and as
+    "ended" - the tab's own word - if that finds nobody on it."""
+    found = [one for one in agents(secrets, status="fulfilled") if one.fulfilled]
+    if not found:
+        try:
+            found = [one for one in agents(secrets, status="ended") if one.fulfilled]
+        except HubError:
+            pass
+    return found
 
 
 def agents(secrets, *, status: str = "fulfilled", timeout: float = 30.0) -> list[HubAgent]:

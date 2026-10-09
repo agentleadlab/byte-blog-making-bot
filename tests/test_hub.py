@@ -157,7 +157,7 @@ def test_the_loop_says_only_the_short_ones_and_remembers_what_it_read(monkeypatc
 
     found = [hub.read(record(id="full", name="Full Agent")), hub.read(record(id="short", name="Short Agent")),
              hub.read(record(id="unread", name="Unread Agent"))]
-    monkeypatch.setattr(hub, "agents", lambda secrets: found)
+    monkeypatch.setattr(hub, "fulfilled_tab", lambda secrets: found)
 
     def checking(config, agents):
         out = []
@@ -225,6 +225,8 @@ def test_the_done_tab_is_not_the_fulfilled_tab():
     for the hub's Fulfilled tab. The API flags both as fulfilled."""
     assert hub.read(record(status="done", fulfilled=True)).fulfilled is False
     assert hub.read(record(status="fulfilled", fulfilled=None)).fulfilled is True
+    # The tab's page is /distro/agents?status=ended.
+    assert hub.read(record(status="ended", fulfilled=True)).fulfilled is True
     # Joevanny Astorga, paused, reached his count once - not on the tab.
     assert hub.read(record(status="paused", fulfilled=True)).fulfilled is False
     assert hub.read(record(status="live", fulfilled=True)).fulfilled is False
@@ -293,3 +295,16 @@ def test_short_says_which_side_its_on():
     lost = hub.Checked(agent=hub.read(record(delivered=22, ordered=22, progress="22/22")),
                        counted=_sheet(*["10/06/2026"] * 20))
     assert "2 the hub sent aren't on the sheet" in hub.describe(lost)
+
+
+def test_the_tab_is_asked_for_as_ended_if_fulfilled_finds_nobody(monkeypatch):
+    """"Nobody is on the hub's Fulfilled tab right now" - with 52 on it."""
+    asked = []
+
+    def agents(secrets, *, status="fulfilled"):
+        asked.append(status)
+        return [hub.read(record(status="paused"))] if status == "fulfilled" else [hub.read(record(status="ended"))]
+
+    monkeypatch.setattr(hub, "agents", agents)
+    assert [one.status for one in hub.fulfilled_tab(None)] == ["ended"]
+    assert asked == ["fulfilled", "ended"]
