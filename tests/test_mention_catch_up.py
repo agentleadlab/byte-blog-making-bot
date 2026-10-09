@@ -375,3 +375,17 @@ def test_hub_alerts_go_to_the_hub_channel_when_there_is_one():
     bot = SimpleNamespace(guilds=[SimpleNamespace(text_channels=[SimpleNamespace(name="announcements"), hub_channel])])
     assert client._hub_responder(bot).channel is hub_channel
     assert client._hub_responder(SimpleNamespace(guilds=[SimpleNamespace(text_channels=[])])) is None
+
+
+@pytest.mark.parametrize("name", ["📮｜hub-agent-fulfillment", "📮┃𝗁𝗎𝖻-𝖺𝗀𝖾𝗇𝗍-𝖿𝗎𝗅𝖿𝗂𝗅𝗅𝗆𝖾𝗇𝗍", "hub_agent_fulfilment"])
+def test_the_hub_channel_is_found_however_its_name_is_written(name, monkeypatch):
+    """"why is it updating here, iwant it here" - the alert went to
+    #trello-manager when the channel's name wasn't plain letters."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    monkeypatch.delenv("DISCORD_HUB_CHANNEL_ID", raising=False)
+    hub_channel = SimpleNamespace(name=name)
+    bot = SimpleNamespace(guilds=[SimpleNamespace(text_channels=[SimpleNamespace(name="trello-manager"), hub_channel])])
+    assert client._hub_responder(bot).channel is hub_channel

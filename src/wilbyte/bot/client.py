@@ -1379,7 +1379,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 return
 
             if request.action == "hubcheck":
-                await _hub_check(responder, config, request.brief or "")
+                await _hub_check(responder, config, request.brief or "", bot=bot)
                 return
 
             if request.action == "update":
@@ -7853,12 +7853,27 @@ async def hub_check_loop(bot: "WilByteBot") -> None:
 
 
 def _hub_responder(bot: "WilByteBot"):
-    """#hub-agent-fulfillment in Ryte The Goat, made for these - found by its
-    name - or None for the board's channel."""
+    """#hub-agent-fulfillment in Ryte The Goat, made for these, or None for
+    the board's channel. DISCORD_HUB_CHANNEL_ID if it's set; else found by
+    name - letters only, whatever font or separators the name is written in.
+    "why is it updating here, iwant it here": the alert went to
+    #trello-manager because a plain look for "hub-agent-fulfil" missed it."""
+    import unicodedata
+
+    configured = (os.getenv("DISCORD_HUB_CHANNEL_ID") or "").strip()
+    if configured.isdigit():
+        channel = bot.get_channel(int(configured))
+        if channel is not None:
+            return ChannelResponder(channel)
+
+    def letters(name) -> str:
+        return re.sub(r"[^a-z]", "", unicodedata.normalize("NFKC", str(name or "")).casefold())
+
     for guild in getattr(bot, "guilds", None) or []:
         for channel in getattr(guild, "text_channels", None) or []:
-            if "hub-agent-fulfil" in str(getattr(channel, "name", "")).casefold():
+            if "hubagentfulfil" in letters(getattr(channel, "name", "")):
                 return ChannelResponder(channel)
+    log.warning("No #hub-agent-fulfillment found - hub alerts go to the board's channel")
     return None
 
 
@@ -7866,7 +7881,7 @@ def _hub_responder(bot: "WilByteBot"):
 HUB_CHECK_MOST = 60
 
 
-async def _hub_check(responder: Responder, config: Config, who: str) -> None:
+async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None) -> None:
     """`@RYTE hub check` - everybody on the hub's Fulfilled tab, the short
     ones listed and the rest counted; `hub check Tavin Dougher` for one,
     shown in full."""
@@ -7913,8 +7928,12 @@ async def _hub_check(responder: Responder, config: Config, who: str) -> None:
         lines.append(f"✅ {fine} other(s) match the hub." if shown else f"✅ All {fine} match the hub.")
     for start in range(0, len(lines), 12):
         await responder.send("\n".join(lines[start:start + 12]))
+    alerts = _hub_responder(bot) if bot is not None else None
+    where = f"<#{alerts.channel.id}>" if alerts is not None and getattr(alerts.channel, "id", None) else \
+        "the board's channel (no #hub-agent-fulfillment found)"
     await responder.send("-# The sheet's leads against what the hub says it sent. Test leads, the "
-                         "colour key and the dispo banners aren't counted.")
+                         "colour key and the dispo banners aren't counted. New shorts are posted "
+                         f"in {where} by themselves.")
 
 
 async def contract_check_loop(bot: "WilByteBot") -> None:
