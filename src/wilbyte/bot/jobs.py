@@ -1876,11 +1876,14 @@ def _check_hub(config: Config) -> list[tuple[bool, str]]:
         return [(None, "Distro Hub not set up - no HUB_API_TOKEN, so fulfilled orders aren't checked")]
     try:
         found = hub.agents(config.secrets, status="all")
+        ended = [one for one in hub.agents(config.secrets, status="ended") if one.fulfilled]
     except Exception as exc:
         return [(False, f"Distro Hub - {_short(exc, 200)}")]
     by = Counter((one.status or "?").casefold() for one in found)
+    # Both numbers to hold against the hub's own panel: ALL, and FULFILLED.
     return [(True, f"Distro Hub - {len(found)} agent(s): "
-             + ", ".join(f"{many} {status}" for status, many in by.most_common()))]
+             + ", ".join(f"{many} {status}" for status, many in by.most_common())
+             + f" · Fulfilled tab: {len(ended)}")]
 
 
 def _check_google_scopes(config: Config) -> list[tuple[bool, str]]:
