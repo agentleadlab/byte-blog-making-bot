@@ -4760,3 +4760,13 @@ def test_a_trucker_card_written_basic_is_still_plus():
 def test_a_trucker_card_naming_no_tier_is_plus():
     assert agents.tier_hint("Lead Type: Truckers\n20 truckers") == "plus"
     assert agents.tier_hint("Lead Type: Vets\n20 vets") is None
+
+
+@pytest.mark.parametrize("said", ["veteran-widows", "veteran-widows — 40 leads · one-time pack"])
+def test_veteran_widows_go_on_the_widows_checklist(said):
+    """Collins Workspace landed on the vets checklist: "this is widows, not
+    vets". The hub calls it VET_WIDOW, "Text Verified Widow Plus"."""
+    have = ["Phoenix Standard", "Phoenix Plus", "OTP VET Plus", "OTP Widows", "OTP IUL Plus"]
+    assert agents.family_of(said) == "widows"
+    assert agents.match_checklist(said, have) == "OTP Widows"
+    assert agents.match_checklist("20 otp vets", have) == "OTP VET Plus"

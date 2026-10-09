@@ -185,8 +185,11 @@ FAMILIES = (
     ),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
-    ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
+    # Widows ahead of vets: "veteran-widows" is the widow product (the hub's
+    # VET_WIDOW, "Text Verified Widow Plus"), and read first-match it went
+    # onto the vets checklist - "this is widows, not vets".
     ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
+    ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
     # Uprise and Phoenix are one product under two names - "PHNX Standard" and
     # "UPRISE STANDARDS" are the same leads - so they reduce to one family and
     # a card written either way lands on the same checklist.
