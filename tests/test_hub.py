@@ -100,22 +100,22 @@ def test_a_short_sheet_says_by_how_many():
     one = hub.Checked(agent=hub.read(record()), counted=_sheet(*["10/06/2026"] * 23))
     assert one.short_by() == 3
     line = hub.describe(one)
-    assert line.startswith("⚠") and "hub says 26/26" in line and "**3 short**" in line
+    assert line.startswith("⚠") and "hub says 26/26" in line and "3 the hub sent aren't on the sheet" in line
 
 
-def test_leads_from_an_earlier_order_on_the_same_sheet_dont_count():
-    """A reorder reuses the sheet. Only rows dated since this order started
-    are this order's."""
-    one = hub.Checked(agent=hub.read(record()),
-                      counted=_sheet(*(["09/01/2026"] * 26 + ["10/06/2026"] * 20)))
-    assert one.on_sheet == 20 and one.short_by() == 6
+def test_the_whole_sheet_is_set_against_the_hubs_running_count():
+    """Hunter Kiser: "hub says 229/40, the sheet has 231". The hub's first
+    number is everything it has ever sent him; the sheet holds it all."""
+    one = hub.Checked(agent=hub.read(record(delivered=229, ordered=40, progress="229/40")),
+                      counted=_sheet(*["10/06/2026"] * 231))
+    assert one.short_by() == 0 and hub.describe(one).startswith("✅")
 
 
-def test_an_undated_sheet_is_counted_whole_and_says_so():
-    rows = [["Name", "Email", "Phone Number"]] + [[f"L{n}", "x@example.com", "555"] for n in range(26)]
-    one = hub.Checked(agent=hub.read(record()), counted=delivery.count_rows(rows))
-    assert one.on_sheet == 26
-    assert "doesn't date its leads" in hub.describe(one)
+def test_more_on_the_sheet_than_the_hub_sent_is_fine():
+    """Leads from before the hub, on the same sheet."""
+    one = hub.Checked(agent=hub.read(record(delivered=27, ordered=27, progress="27/27")),
+                      counted=_sheet(*["10/06/2026"] * 191))
+    assert one.short_by() == 0
 
 
 def test_an_unread_sheet_is_never_called_short():
@@ -188,7 +188,7 @@ def test_the_loop_says_only_the_short_ones_and_remembers_what_it_read(monkeypatc
     asyncio.run(client.hub_check_loop(bot))
 
     [message] = sent
-    assert "Short Agent" in message and "6 short" in message
+    assert "Short Agent" in message and "6 the hub sent aren't on the sheet" in message
     assert "Full Agent" not in message and "Unread Agent" not in message
     held = hub.checked()
     assert hub.key(found[0]) in held and hub.key(found[1]) in held
@@ -225,7 +225,9 @@ def test_the_done_tab_is_not_the_fulfilled_tab():
     for the hub's Fulfilled tab. The API flags both as fulfilled."""
     assert hub.read(record(status="done", fulfilled=True)).fulfilled is False
     assert hub.read(record(status="fulfilled", fulfilled=None)).fulfilled is True
-    assert hub.read(record(status="live", fulfilled=True)).fulfilled is True
+    # Joevanny Astorga, paused, reached his count once - not on the tab.
+    assert hub.read(record(status="paused", fulfilled=True)).fulfilled is False
+    assert hub.read(record(status="live", fulfilled=True)).fulfilled is False
     assert hub.read(record(status="live", fulfilled=False)).fulfilled is False
 
 
@@ -287,7 +289,7 @@ def test_another_orders_tab_is_never_counted_as_this_ones(monkeypatch):
 def test_short_says_which_side_its_on():
     marked_early = hub.Checked(agent=hub.read(record(delivered=19, ordered=21, progress="19/21")),
                                counted=_sheet(*["10/06/2026"] * 19))
-    assert "marked it done having sent 19 of 21" in hub.describe(marked_early)
+    assert "marked fulfilled 2 short" in hub.describe(marked_early)
     lost = hub.Checked(agent=hub.read(record(delivered=22, ordered=22, progress="22/22")),
                        counted=_sheet(*["10/06/2026"] * 20))
-    assert "2 the hub says it sent aren't on the sheet" in hub.describe(lost)
+    assert "2 the hub sent aren't on the sheet" in hub.describe(lost)

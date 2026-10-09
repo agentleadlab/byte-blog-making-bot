@@ -107,9 +107,11 @@ def read(record: dict) -> HubAgent:
         id=str(record.get("id") or ""),
         name=" ".join(str(record.get("name") or record.get("client_facing_name") or "").split()),
         status=str(record.get("status") or ""),
-        # The Fulfilled tab, not the Done one: the flag is true for both.
-        fulfilled=(bool(record.get("fulfilled")) or str(record.get("status") or "").casefold() == "fulfilled")
-        and str(record.get("status") or "").casefold() not in DONE_WORDS,
+        # The hub's Fulfilled tab - the "fulfilled" status under the name.
+        # Not the API's `fulfilled` flag: that's true for anybody who ever
+        # reached their count, and brought back Joevanny Astorga, paused, and
+        # a dozen others who aren't on that tab.
+        fulfilled=str(record.get("status") or "").casefold() == "fulfilled",
         lead_type=str(record.get("lead_type_label") or record.get("lead_type") or ""),
         start_date=_day(record.get("start_date")),
         delivered=delivered, ordered=ordered, progress=progress,
@@ -179,22 +181,15 @@ class Checked:
 
     @property
     def on_sheet(self) -> int | None:
-        """This order's leads on the sheet: those dated since it started, when
-        the sheet dates them, else every lead on it."""
-        if self.counted is None:
-            return None
-        since = self.counted.since(self.agent.start_date)
-        return since if since is not None else self.counted.rows
-
-    @property
-    def dated(self) -> bool:
-        return self.counted is not None and self.counted.since(self.agent.start_date) is not None
+        """Every lead on the tab. Against the hub's own running count, not
+        the order: the hub's "229/40" is everything it has ever sent Hunter
+        Kiser, and his sheet holds 231 - the two agree, and the order size
+        says nothing about either."""
+        return None if self.counted is None else self.counted.rows
 
     def short_by(self) -> int:
-        got, wanted = self.on_sheet, self.agent.ordered
-        if got is None or wanted is None:
-            return 0
-        return max(wanted - got, 0)
+        """The bigger of the two ways an agent comes up short."""
+        return max(self.hub_short(), self.missing_from_sheet())
 
     def hub_short(self) -> int:
         """What the hub itself says it never sent - "19/21" marked done."""
@@ -220,21 +215,13 @@ def describe(one: Checked) -> str:
     else:
         mark = "⚠" if one.short_by() else "✅"
         tab = getattr(one.counted, "tab", "")
-        said = (f"the sheet has **{got}**"
-                + (f" on “{tab}”" if tab else "")
-                + (f" since {agent.start_date:%b %-d}" if one.dated and agent.start_date else "")
-                + ("" if one.dated else " (all of it - it doesn't date its leads)"))
-        if one.short_by():
-            said += f" — **{one.short_by()} short**"
-            # Which side it's on: the hub closing an order it never filled,
-            # or leads the hub sent that never reached the sheet.
-            why = []
-            if one.hub_short():
-                why.append(f"the hub marked it done having sent {agent.delivered} of {agent.ordered}")
-            if one.missing_from_sheet():
-                why.append(f"{one.missing_from_sheet()} the hub says it sent aren't on the sheet")
-            if why:
-                said += " (" + "; ".join(why) + ")"
+        said = f"the sheet has **{got}**" + (f" on “{tab}”" if tab else "")
+        # Which side it's on: the hub closing an order it never filled, or
+        # leads the hub sent that never reached the sheet.
+        if one.hub_short():
+            said += f" — **marked fulfilled {one.hub_short()} short** ({agent.delivered} of {agent.ordered} sent)"
+        if one.missing_from_sheet():
+            said += f" — **{one.missing_from_sheet()} the hub sent aren't on the sheet**"
     line = (f"{mark} **{agent.name or agent.id}**" + (f" ({agent.lead_type})" if agent.lead_type else "")
             + f" — hub says {hub}, {said}")
     if agent.sheet_url:

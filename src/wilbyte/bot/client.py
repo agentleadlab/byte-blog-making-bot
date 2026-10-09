@@ -7862,9 +7862,14 @@ def _hub_responder(bot: "WilByteBot"):
     return None
 
 
+#: Sheets read for one `@RYTE hub check` of the whole Fulfilled tab.
+HUB_CHECK_MOST = 60
+
+
 async def _hub_check(responder: Responder, config: Config, who: str) -> None:
-    """`@RYTE hub check` - the orders fulfilled in the last few days, or
-    `hub check Tavin Dougher` for one agent's, every one shown."""
+    """`@RYTE hub check` - everybody on the hub's Fulfilled tab, the short
+    ones listed and the rest counted; `hub check Tavin Dougher` for one,
+    shown in full."""
     from .. import hub
 
     try:
@@ -7872,27 +7877,32 @@ async def _hub_check(responder: Responder, config: Config, who: str) -> None:
     except hub.HubError as exc:
         await responder.send(f"⚠ {exc}")
         return
-    # The hub's Fulfilled tab only - its Done tab is orders already closed.
+    # The hub's Fulfilled tab only - not its Done tab, nor paused agents who
+    # once reached their count.
     found = [one for one in found if one.fulfilled]
     if who.strip():
         picked = hub.named(found, who)
         if not picked:
-            await responder.send(f"Nobody called **{who.strip()}** is fulfilled on the hub.")
+            await responder.send(f"Nobody called **{who.strip()}** is on the hub's Fulfilled tab.")
             return
     else:
-        picked = hub.due(found, now=datetime.now(timezone.utc), said={})
+        picked = [one for one in found if one.sheet_url][:HUB_CHECK_MOST]
         if not picked:
-            await responder.send(f"The hub has {len(found)} fulfilled — none in the last "
-                                 f"{hub.LOOK_BACK.days} days. `@RYTE hub check <name>` for one of them.")
+            await responder.send("Nobody is on the hub's Fulfilled tab right now.")
             return
-    await responder.send(f"Counting {len(picked[:hub.MOST_PER_PASS])} sheet(s) against the hub —")
-    done = await asyncio.to_thread(jobs.hub_check, config, picked[:hub.MOST_PER_PASS])
-    short = sum(1 for one in done if one.short_by())
-    await responder.send(
-        "\n".join(hub.describe(one) for one in done)
-        + ("\n-# Test leads, the colour key and the dispo banners aren't counted."
-           + (f" {short} short." if short else " None short."))
-    )
+    await responder.send(f"Counting {len(picked)} sheet(s) against the hub —")
+    done = await asyncio.to_thread(jobs.hub_check, config, picked)
+    short = [one for one in done if one.short_by()]
+    unread = [one for one in done if one.on_sheet is None]
+    fine = len(done) - len(short) - len(unread)
+    shown = done if who.strip() else short + unread
+    lines = [hub.describe(one) for one in shown]
+    if not who.strip():
+        lines.append(f"✅ {fine} other(s) match the hub." if shown else f"✅ All {fine} match the hub.")
+    for start in range(0, len(lines), 12):
+        await responder.send("\n".join(lines[start:start + 12]))
+    await responder.send("-# The sheet's leads against what the hub says it sent. Test leads, the "
+                         "colour key and the dispo banners aren't counted.")
 
 
 async def contract_check_loop(bot: "WilByteBot") -> None:
