@@ -8020,6 +8020,12 @@ RING_CHECK_SECONDS = 60
 #: somebody; said every minute it is a channel nobody reads by lunchtime.
 _RING_SAID: set = set()
 
+#: Passes in a row (a minute apart) RingCentral couldn't be reached before it
+#: is said. "Couldn't reach RingCentral to sign in: [Errno 8]" was the Mac's
+#: network dropping for a minute - news only when it lasts.
+RING_UNREACHABLE_SAY_AFTER = 5
+_RING_UNREACHABLE: list = [0]
+
 #: Whether this run has said it is connected. Once per start: with no agent
 #: waiting, a working watcher and a broken one are otherwise equally silent.
 _RING_READY: list = []
@@ -8215,7 +8221,10 @@ async def _ring_once(bot: "WilByteBot") -> None:
     _where, trouble = _ring_channel(bot)
     if trouble:
         problems = [trouble] + list(problems)
-    fresh = [one for one in problems if one not in _RING_SAID]
+    blips = [one for one in problems if "Couldn't reach RingCentral" in one]
+    _RING_UNREACHABLE[0] = _RING_UNREACHABLE[0] + 1 if blips else 0
+    lasting = _RING_UNREACHABLE[0] >= RING_UNREACHABLE_SAY_AFTER
+    fresh = [one for one in problems if one not in _RING_SAID and (lasting or one not in blips)]
     if fresh and responder is not None:
         _RING_SAID.update(fresh)
         await responder.send("⚠ RingCentral: " + "\n⚠ ".join(fresh))
@@ -8235,7 +8244,15 @@ async def _ring_once(bot: "WilByteBot") -> None:
     _RING_POSTS.update(jobs.ring_posts(data))
     if not problems and not _RING_READY and responder is not None:
         _RING_READY.append(True)
-        await responder.send(_ring_ready(len(texts), len(done)))
+        # Not every start - RYTE restarts onto every update, and the channel
+        # filled with "Connected to RingCentral". Every few days, or to say
+        # it's back after a problem was said.
+        from .. import alreadysaid
+
+        today = date.today()
+        if _RING_SAID or "ring-connected" not in alreadysaid.said_lately(today):
+            alreadysaid.remember(today, ["ring-connected"])
+            await responder.send(_ring_ready(len(texts), len(done)))
     if responder is not None and done and not problems:
         await _write_the_playbook(bot, responder, data, done)
     if responder is None:

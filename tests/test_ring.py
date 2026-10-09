@@ -1910,3 +1910,52 @@ def test_blanks_that_come_back_as_one_string_are_one_blank():
     assert jobs._listed('["[launch date]", "[count]"]') == ["[launch date]", "[count]"]
     assert jobs._listed(["[a]", " ", "[b]"]) == ["[a]", "[b]"]
     assert jobs._listed(None) == []
+
+
+def test_a_restart_doesnt_say_connected_again(monkeypatch):
+    """The channel filled with "Connected to RingCentral" - one per update."""
+    from wilbyte.bot import client
+
+    client._RING_SAID.clear()
+    first, _ = _once(monkeypatch, found=False, ready=False)
+    again, _ = _once(monkeypatch, found=False, ready=False)  # the next start
+    assert len(first) == 1 and again == []
+
+
+def test_a_network_blip_isnt_said_until_it_lasts(monkeypatch):
+    """"Couldn't reach RingCentral to sign in: [Errno 8]" - the Mac's network
+    for a minute."""
+    from wilbyte.bot import client
+
+    client._RING_SAID.clear()
+    monkeypatch.setattr(client, "_RING_UNREACHABLE", [0])
+    blip = "Couldn't reach RingCentral to sign in: [Errno 8] nodename nor servname provided"
+    heard = []
+    for _ in range(client.RING_UNREACHABLE_SAY_AFTER - 1):
+        said, _ = _once(monkeypatch, found=False, problems=[blip])
+        heard += said
+    assert heard == []
+    said, _ = _once(monkeypatch, found=False, problems=[blip])
+    assert said and blip in said[0]
+
+
+def test_sign_in_is_tried_again_after_a_dropped_lookup(monkeypatch):
+    import httpx
+
+    from wilbyte import ringcentral
+
+    tries = []
+
+    class Client:
+        def post(self, url, **kw):
+            tries.append(1)
+            if len(tries) < 3:
+                raise httpx.ConnectError("[Errno 8] nodename nor servname provided")
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600},
+                                  request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(ringcentral.time, "sleep", lambda s: None)
+    ring = ringcentral.RingClient.__new__(ringcentral.RingClient)
+    ring._client, ring._server, ring._token, ring._token_until = Client(), "https://x", "", 0.0
+    ring._creds = NS(client_id="i", client_secret="s", jwt="j")
+    assert ring._access_token() == "t" and len(tries) == 3

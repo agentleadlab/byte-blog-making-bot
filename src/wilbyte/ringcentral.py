@@ -87,18 +87,26 @@ class RingClient:
         basic = base64.b64encode(
             f"{self._creds.client_id}:{self._creds.client_secret}".encode()
         ).decode()
-        try:
-            reply = self._client.post(
-                self._server + TOKEN_PATH,
-                headers={
-                    "Authorization": f"Basic {basic}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                },
-                data={"grant_type": JWT_GRANT, "assertion": self._creds.jwt},
-            )
-        except httpx.HTTPError as exc:
-            raise RingError(f"Couldn't reach RingCentral to sign in: {exc}") from exc
+        # A dropped lookup on the Mac's network ("[Errno 8] nodename nor
+        # servname") is seconds long; tried again before it's a failure.
+        for pause in (2.0, 5.0, 10.0, None):
+            try:
+                reply = self._client.post(
+                    self._server + TOKEN_PATH,
+                    headers={
+                        "Authorization": f"Basic {basic}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    },
+                    data={"grant_type": JWT_GRANT, "assertion": self._creds.jwt},
+                )
+                break
+            except httpx.ConnectError as exc:
+                if pause is None:
+                    raise RingError(f"Couldn't reach RingCentral to sign in: {exc}") from exc
+                time.sleep(pause)
+            except httpx.HTTPError as exc:
+                raise RingError(f"Couldn't reach RingCentral to sign in: {exc}") from exc
         if reply.status_code >= 400:
             raise RingError(_why_not_signed_in(reply.status_code, reply.text))
         got = reply.json()
