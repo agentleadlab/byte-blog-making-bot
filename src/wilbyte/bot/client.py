@@ -804,6 +804,63 @@ def message_files(message) -> tuple[tuple[str, ...], tuple[str, ...]]:
 # What RYTE leaves on a post he has filed, in place of a message.
 SOP_FILED_REACTION = "📘"
 
+#: Files read as an SOP's contents: "Live Call Battle Sheet.pdf" came back
+#: "There's nothing in that to file".
+SOP_DOCUMENTS = (".pdf", ".docx", ".txt", ".md")
+MOST_SOP_DOCUMENT_BYTES = 15 * 1024 * 1024
+
+
+def _document_text(name: str, data: bytes) -> str:
+    """The words in a PDF, Word file or text file - "" if none come out."""
+    low = name.casefold()
+    if low.endswith(".pdf"):
+        return jobs._pdf_text(data)
+    if low.endswith(".docx"):
+        try:
+            import io
+
+            import docx
+
+            return "\n".join(one.text for one in docx.Document(io.BytesIO(data)).paragraphs)
+        except Exception:
+            log.warning("Couldn't read %s", name, exc_info=True)
+            return ""
+    return data.decode("utf-8", errors="replace")
+
+
+async def _with_documents(message, text: str, sop):
+    """The SOP, with any document attached to the message read into it - or
+    one made from the document alone. None when there's still nothing."""
+    from .. import sops
+
+    read = []
+    for one in getattr(message, "attachments", None) or []:
+        name = str(getattr(one, "filename", "") or "")
+        if not name.casefold().endswith(SOP_DOCUMENTS) or (getattr(one, "size", 0) or 0) > MOST_SOP_DOCUMENT_BYTES:
+            continue
+        try:
+            words = _document_text(name, await one.read())
+        except Exception:
+            log.warning("Couldn't download %s", name, exc_info=True)
+            continue
+        words = "\n".join(line.strip() for line in words.splitlines() if line.strip())
+        if words:
+            read.append((name, words))
+    if not read:
+        return sop
+    written = "\n\n".join(f"{name}\n{words}" for name, words in read)
+    if sop is not None:
+        sop.body = (sop.body + "\n\n" + written).strip()
+        sop.kind = sop.kind or "Document"
+        return sop
+    title = sops.find_title(text or "") or Path(read[0][0]).stem.replace("_", " ")[:120]
+    return sops.Sop(
+        title=title, named_by_hand=True, kind="Document",
+        # The card points back at the message the file is on - Discord's own
+        # link to the file stops working after a day.
+        url=str(getattr(message, "jump_url", "") or ""), body=written,
+    )
+
 
 async def handle_sop_post(bot: WilByteBot, message) -> None:
     """File what somebody posted in the SOP channel."""
@@ -817,6 +874,7 @@ async def handle_sop_post(bot: WilByteBot, message) -> None:
 
     images, audio = message_files(message)
     sop = sops.find_sop(message.content or "", images=images, audio=audio)
+    sop = await _with_documents(message, message.content or "", sop)
     if sop is None:
         # Chatter. Filing it is how a library stops being worth searching.
         return
@@ -6921,6 +6979,7 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
 
     images, audio = message_files(message)
     sop = sops.find_sop(text, images=images, audio=audio)
+    sop = await _with_documents(message, text, sop)
     if sop is None:
         await responder.send(
             "There's nothing in that to file — give me a link, a file, or the "

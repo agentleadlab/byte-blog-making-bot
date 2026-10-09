@@ -658,3 +658,58 @@ def test_filing_nothing_is_not_filing_an_empty_card():
     from wilbyte.bot import mentions
 
     assert sops.find_sop(mentions.parse("add to sop").brief) is None
+
+
+def _attached(name, data):
+    from types import SimpleNamespace
+
+    async def read():
+        return data
+
+    return SimpleNamespace(filename=name, size=len(data), read=read, url="https://cdn/x", content_type="")
+
+
+def test_an_attached_document_is_an_sop_by_itself():
+    """"@Ryte add to sop" with Live Call Battle Sheet.pdf attached came back
+    "There's nothing in that to file"."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    message = SimpleNamespace(
+        attachments=[_attached("Live Call Battle Sheet.txt", b"Open with the hook\n\nAsk about the spouse\n")],
+        jump_url="https://discord.com/channels/1/2/3",
+    )
+    sop = asyncio.run(client._with_documents(message, "", None))
+    assert sop is not None and sop.title == "Live Call Battle Sheet"
+    assert "Ask about the spouse" in sop.body and sop.kind == "Document"
+    assert sop.url == "https://discord.com/channels/1/2/3"
+
+
+def test_a_word_file_is_read_too():
+    import asyncio
+    import io
+    from types import SimpleNamespace
+
+    import docx
+
+    from wilbyte.bot import client
+
+    made = docx.Document()
+    made.add_paragraph("Step 1: open the dialer")
+    out = io.BytesIO()
+    made.save(out)
+    message = SimpleNamespace(attachments=[_attached("Dialer.docx", out.getvalue())], jump_url="")
+    sop = asyncio.run(client._with_documents(message, "", None))
+    assert "Step 1: open the dialer" in sop.body
+
+
+def test_no_document_leaves_it_as_it_was():
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    message = SimpleNamespace(attachments=[_attached("photo.png", b"\x89PNG")], jump_url="")
+    assert asyncio.run(client._with_documents(message, "", None)) is None
