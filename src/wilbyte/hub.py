@@ -197,13 +197,34 @@ class Checked:
     counted: object = None
     problems: list = field(default_factory=list)
 
+    def counted_how(self) -> tuple[int | None, str]:
+        """(this order's leads on the sheet, how they were picked out).
+
+        This order's, where the sheet says which those are: the leads under
+        its last "NEW LEAD ORDER 10/05" line (Ian Miller's 30 of the 87 on
+        his sheet), or those stamped since it started. Every lead on it
+        otherwise - and also when the hub's count runs past the order, which
+        makes it everything the hub has ever sent: "229/40" for Hunter
+        Kiser, whose whole sheet holds 231.
+        """
+        counted = self.counted
+        if counted is None:
+            return None, ""
+        if counted.this_order is not None:
+            section, how = counted.this_order, f"under “{counted.order_mark}”"
+        else:
+            section = counted.since(self.agent.start_date)
+            how = f"since {self.agent.start_date:%b %-d}" if section is not None else ""
+        if section is None:
+            return counted.rows, "all of it"
+        sent, wanted = self.agent.delivered, self.agent.ordered
+        if sent is not None and wanted is not None and sent > wanted and section < sent <= counted.rows:
+            return counted.rows, "all of it - the hub's count is everything it has sent"
+        return section, how
+
     @property
     def on_sheet(self) -> int | None:
-        """Every lead on the tab. Against the hub's own running count, not
-        the order: the hub's "229/40" is everything it has ever sent Hunter
-        Kiser, and his sheet holds 231 - the two agree, and the order size
-        says nothing about either."""
-        return None if self.counted is None else self.counted.rows
+        return self.counted_how()[0]
 
     def short_by(self) -> int:
         """The bigger of the two ways an agent comes up short."""
@@ -248,7 +269,9 @@ def describe(one: Checked) -> str:
     else:
         mark = "⚠" if one.short_by() else "✅"
         tab = getattr(one.counted, "tab", "")
-        said = f"the sheet has **{got}**" + (f" on “{tab}”" if tab else "")
+        how = one.counted_how()[1]
+        said = (f"the sheet has **{got}**" + (f" on “{tab}”" if tab else "")
+                + (f" ({how})" if how and how != "all of it" else ""))
         # Which side it's on: the hub closing an order it never filled, or
         # leads the hub sent that never reached the sheet.
         if one.hub_short():

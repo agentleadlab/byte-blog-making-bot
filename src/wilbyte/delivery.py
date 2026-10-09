@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 #: Days after going live by which an order should be all in. Before then a
 #: short sheet is leads still arriving, not leads missing.
@@ -54,16 +54,31 @@ _FORMATS = (
 )
 
 
-def as_day(cell) -> date | None:
+#: The hub's own stamp: "Oct 5, 7:20:33 PM EDT" - no year, a zone name.
+_NO_YEAR = ("%b %d, %I:%M:%S %p", "%b %d, %I:%M %p", "%b %d %I:%M:%S %p", "%b %d")
+
+_ZONE_NAME = re.compile(r"\s+(?:[ECMP][SD]T|UTC|GMT|AK[SD]T|HST)$", re.IGNORECASE)
+
+
+def as_day(cell, *, today: date | None = None) -> date | None:
     said = " ".join(str(cell or "").split())
     if not said:
         return None
     said = re.sub(r"(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$", "", said)
+    said = _ZONE_NAME.sub("", said)
     for shape in _FORMATS:
         try:
             return datetime.strptime(said, shape).date()
         except ValueError:
             continue
+    # No year written: this year, or last year's if that would be the future.
+    today = today or date.today()
+    for shape in _NO_YEAR:
+        try:
+            day = datetime.strptime(f"{said} {today.year}", f"{shape} %Y").date()
+        except ValueError:
+            continue
+        return day.replace(year=today.year - 1) if day > today + timedelta(days=1) else day
     return None
 
 
@@ -97,6 +112,11 @@ class Counted:
     def last(self) -> date | None:
         return max(self.by_day) if self.by_day else None
 
+    #: The leads under the last "NEW LEAD ORDER 10/05" line, when the sheet
+    #: marks where each order starts - and that line, as written.
+    this_order: int | None = None
+    order_mark: str = ""
+
     def since(self, day: date | None) -> int | None:
         """Rows dated on or after `day`, or None when nothing is dated -
         a sheet carried over from an earlier order counts only this one."""
@@ -108,6 +128,10 @@ class Counted:
 #: What a lead sheet's heading row says. Two of these in one row is it.
 _LEAD_HEADING = re.compile(r"^\s*(?:(?:first\s+|full\s+|last\s+)?name|e-?mail|phone(?:\s+number)?|state|age|dob)\s*$",
                            re.IGNORECASE)
+
+#: The line a sheet starts each new order under: "NEW LEAD ORDER 10/05" on
+#: Ian Miller's, with the 30 leads of that order below it.
+_ORDER_MARK = re.compile(r"\bnew\s+(?:lead\s+)?order\b|\blead\s+order\s+\d", re.IGNORECASE)
 
 #: Rows on a sheet that aren't leads: the test rows the sheet is set up with,
 #: and the banner telling the agent where to dispo a sale.
@@ -131,11 +155,19 @@ def count_rows(rows: list, *, tab: str = "") -> Counted:
         return Counted(tab=tab)
     top = _heading_row(rows)
     heads = rows[top]
-    body = [
-        row for row in rows[top + 1:]
-        if any(str(cell).strip() for cell in row)
-        and not any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3])
-    ]
+    body, mark, after = [], "", None
+    for row in rows[top + 1:]:
+        filled = [str(cell).strip() for cell in row if str(cell).strip()]
+        if not filled or any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3]):
+            continue
+        # A line on its own saying a new order starts here: not a lead, and
+        # the leads below it are that order's.
+        if len(filled) == 1 and _ORDER_MARK.search(filled[0]):
+            mark, after = filled[0], 0
+            continue
+        body.append(row)
+        if after is not None:
+            after += 1
     at = date_column(heads, body)
     by_day: dict = {}
     if at is not None:
@@ -143,7 +175,7 @@ def count_rows(rows: list, *, tab: str = "") -> Counted:
             when = as_day(row[at]) if at < len(row) else None
             if when is not None:
                 by_day[when] = by_day.get(when, 0) + 1
-    return Counted(rows=len(body), tab=tab, by_day=by_day)
+    return Counted(rows=len(body), tab=tab, by_day=by_day, this_order=after, order_mark=mark)
 
 
 @dataclass

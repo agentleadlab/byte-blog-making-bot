@@ -331,3 +331,46 @@ def test_the_hub_check_paces_itself_between_sheets(monkeypatch):
     monkeypatch.setattr(jobs, "_count_lead_tab", lambda config, link, kind="": (_sheet("10/06/2026"), ""))
     jobs.hub_check(None, [hub.read(record(id=str(n))) for n in range(3)])
     assert slept == [jobs.HUB_SHEET_PAUSE] * 2
+
+
+IAN = [
+    [""], ["When YOU MAKE A SALE HERE IS THE LINK TO DISPO THE LEAD ---- LINK ---- https://x"],
+    ["Name", "Email", "Phone Number", "Age", "State", "Notes", "Lead Opt In Time Stamp"],
+] + [[f"Old {n}", f"o{n}@example.com", "555-010-0000", "70", "Georgia", "called", "Oct 2, 1:12:36 AM EDT"]
+     for n in range(57)] + [
+    ["NEW LEAD ORDER 10/05"],
+] + [[f"New {n}", f"n{n}@example.com", "555-010-0001", "65", "Texas", "called", "Oct 5, 7:40:53 PM EDT"]
+     for n in range(30)]
+
+
+def test_the_order_is_counted_under_its_own_new_lead_order_line():
+    """Ian Miller: "NEW LEAD ORDER 10/05", and the 30 under it are the hub's 30/30."""
+    counted = delivery.count_rows(IAN)
+    assert counted.rows == 87 and counted.this_order == 30
+    assert counted.order_mark == "NEW LEAD ORDER 10/05"
+    one = hub.Checked(agent=hub.read(record(name="Ian Miller", delivered=30, ordered=30, progress="30/30",
+                                            start_date="2026-10-05")), counted=counted)
+    assert one.on_sheet == 30 and one.short_by() == 0
+    assert "under “NEW LEAD ORDER 10/05”" in hub.describe(one)
+
+
+def test_a_short_order_under_its_line_is_caught():
+    rows = IAN[:-3]   # 27 of the 30
+    one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30")),
+                      counted=delivery.count_rows(rows))
+    assert one.short_by() == 3
+
+
+def test_the_hubs_own_time_stamp_is_a_date():
+    assert delivery.as_day("Oct 5, 7:20:33 PM EDT", today=date(2026, 10, 9)) == date(2026, 10, 5)
+    assert delivery.as_day("Dec 30, 9:00:00 AM EST", today=date(2026, 1, 3)) == date(2025, 12, 30)
+
+
+def test_a_count_past_the_order_is_held_against_the_whole_sheet():
+    """Hunter Kiser, 229/40: the hub's count is everything it has sent."""
+    rows = [["Name", "Email", "Phone Number", "Date Added"]]
+    rows += [[f"L{n}", "x@example.com", "555", "09/01/2026"] for n in range(191)]
+    rows += [[f"L{n}", "x@example.com", "555", "10/06/2026"] for n in range(40)]
+    one = hub.Checked(agent=hub.read(record(delivered=229, ordered=40, progress="229/40", start_date="2026-10-05")),
+                      counted=delivery.count_rows(rows))
+    assert one.on_sheet == 231 and one.short_by() == 0
