@@ -388,6 +388,17 @@ check the deploy logs: a bad `DISCORD_BOT_TOKEN` surfaces as a login failure,
 and missing config surfaces as a named `Missing required environment
 variable(s)` error.
 
+**4. Bring the Mac's memory across.** What RYTE remembers - posted videos,
+Faith's lessons and playbook, the Payra history, the keep list, what it has
+already said - lives in `state/` on whichever machine ran it. On the Mac:
+`bash scripts/pack-state.sh` makes `ryte-state.tar.gz` on the Desktop. Once the
+Railway copy is up (and the Mac copy stopped), `@RYTE restore state` with that
+file attached unpacks it onto the volume - Franklin only, shown first, the old
+memory kept in `/data/backups`, the message deleted after.
+
+On Railway there is nothing to pull: every push to the branch deploys by
+itself, and `@RYTE update` says so.
+
 Any other host works the same way — it's a plain container with one long-running
 process. `docker build -t wilbyte . && docker run --env-file .env -v wilbyte:/data wilbyte`
 runs it locally.

@@ -1386,6 +1386,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _update_now(bot, responder)
                 return
 
+            if request.action == "restorestate":
+                await _restore_state(bot, responder, config, message)
+                return
+
             if request.action == "cost":
                 from .. import usage
 
@@ -1738,6 +1742,64 @@ async def updater_loop(bot: "WilByteBot") -> None:
         os._exit(RESTART_EXIT_CODE)
 
 
+async def _restore_state(bot: "WilByteBot", responder: Responder, config: Config, message) -> None:
+    """`@RYTE restore state` with ryte-state.tar.gz attached - the memory the
+    Mac kept, unpacked here. Franklin's only, shown before it's written, the
+    old memory kept aside, and the file taken out of Discord after."""
+    from .. import corpus, statemove
+    from ..state import _state_dir
+
+    owner = str(getattr(config.secrets, "discord_notify_user_id", "") or "")
+    if not owner or str(getattr(getattr(message, "author", None), "id", "")) != owner:
+        await responder.send("Only Franklin can replace my memory.")
+        return
+    files = [one for one in getattr(message, "attachments", []) or []
+             if str(one.filename).endswith((".tar.gz", ".tgz", ".zip"))]
+    if not files:
+        await responder.send("Attach the **ryte-state.tar.gz** that `scripts/pack-state.sh` made on the Mac.")
+        return
+    try:
+        found = statemove.read(await files[0].read())
+    except ValueError as exc:
+        await responder.send(f"⚠ Couldn't use that file — {exc}.")
+        return
+    if not found.files:
+        await responder.send("⚠ Nothing in that file is my memory — it should have a `state/` folder in it.")
+        return
+    view = views.ConfirmView(
+        requester_id=responder.requester_id, timeout=config.discord.approval_timeout_seconds,
+        label="Restore it", emoji="🧠",
+    )
+    await responder.send(
+        f"🧠 **{found.count('state')}** memory file(s) and **{found.count('corpus')}** copy-library file(s), "
+        f"{found.size / 1024 / 1024:.1f} MB."
+        + (f"\n-# Left out (not memory): {', '.join(found.refused[:5])}" if found.refused else "")
+        + "\nThis replaces what I remember here. What's here now is kept aside first. I restart after.",
+        view=view,
+    )
+    await view.wait()
+    if not view.confirmed:
+        await responder.send("Left as it was.")
+        return
+    try:
+        kept = await asyncio.to_thread(
+            statemove.restore, found, state_dir=_state_dir(), corpus_dir=corpus.corpus_dir(),
+            backup_dir=_state_dir().parent / "backups",
+        )
+    except OSError as exc:
+        await responder.send(f"⚠ Couldn't write it: {exc}")
+        return
+    # Faith's texts and payments are in it - not left sitting in a channel.
+    try:
+        await message.delete()
+        gone = "I've deleted the message with the file."
+    except Exception:
+        gone = "Delete the message with the file - it has client data in it."
+    await responder.send(f"✅ Restored. The old memory is kept as `{kept.name}`. {gone} Restarting now.")
+    await bot.close()
+    os._exit(RESTART_EXIT_CODE)
+
+
 async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
     """`@RYTE update` - look for a newer version now rather than at the next
     check, and come back on it. The same rule as the loop: never with a run
@@ -1748,7 +1810,12 @@ async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
         await responder.send(f"Couldn't check for an update: {jobs._short(exc, 200)}")
         return
     if not waiting:
-        await responder.send(f"Already on the latest — {version.code_version() or 'this version'}.")
+        here = version.code_version() or "this version"
+        if "not a git checkout" in here:
+            # Railway: a push deploys by itself, there's nothing to pull.
+            await responder.send("I'm hosted — every update deploys by itself as soon as it's pushed.")
+            return
+        await responder.send(f"Already on the latest — {here}.")
         return
     if bot.run_lock.locked():
         await responder.send(

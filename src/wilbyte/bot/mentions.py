@@ -811,6 +811,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
                       text, re.IGNORECASE | re.DOTALL)
     if hubbed:
         return MentionRequest(action="hubcheck", brief=hubbed.group(1))
+    if re.match(r"\s*restore\s+(?:your\s+|the\s+|my\s+)?(?:state|memory)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="restorestate", brief=text)
     if re.match(r"\s*(?:update|update\s+(?:now|yourself)|restart|pull)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="update", brief=text)
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
