@@ -254,6 +254,10 @@ def _workbook(monkeypatch, tabs: dict):
             title = span.split("!")[0].strip("'")
             return [["Name", "Email", "Phone Number"]] + [[f"L{n}", "x@example.com", "555"] for n in range(tabs[title])]
 
+        def rows_of(self, sheet, spans):
+            self.reads = getattr(self, "reads", 0) + 1
+            return [self.rows(sheet, one) for one in spans]
+
     monkeypatch.setattr(gsheets, "SheetsClient", Sheets)
     monkeypatch.setattr(gsheets, "credentials", lambda secrets: None)
 
@@ -308,3 +312,22 @@ def test_the_tab_is_asked_for_as_ended_if_fulfilled_finds_nobody(monkeypatch):
     monkeypatch.setattr(hub, "agents", agents)
     assert [one.status for one in hub.fulfilled_tab(None)] == ["ended"]
     assert asked == ["fulfilled", "ended"]
+
+
+def test_a_count_the_hub_never_moved_isnt_called_short():
+    """Daniella Martinez: "hub says 0/25, the sheet has 26"."""
+    one = hub.Checked(agent=hub.read(record(delivered=0, ordered=25, progress="0/25")),
+                      counted=_sheet(*["10/06/2026"] * 26))
+    assert one.short_by() == 0 and one.counter_off()
+    assert hub.describe(one).startswith("❔") and "hub's count that's behind" in hub.describe(one)
+
+
+def test_the_hub_check_paces_itself_between_sheets(monkeypatch):
+    """Two sheets unread at the end of 51: "Google is rate-limiting us (429)"."""
+    from wilbyte.bot import jobs
+
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(jobs, "_count_lead_tab", lambda config, link, kind="": (_sheet("10/06/2026"), ""))
+    jobs.hub_check(None, [hub.read(record(id=str(n))) for n in range(3)])
+    assert slept == [jobs.HUB_SHEET_PAUSE] * 2

@@ -7921,8 +7921,9 @@ async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None
     done = await asyncio.to_thread(jobs.hub_check, config, picked)
     short = [one for one in done if one.short_by()]
     unread = [one for one in done if one.on_sheet is None]
-    fine = len(done) - len(short) - len(unread)
-    shown = done if who.strip() else short + unread
+    behind = [one for one in done if one.counter_off()]
+    fine = len(done) - len(short) - len(unread) - len(behind)
+    shown = done if who.strip() else short + behind + unread
     lines = [hub.describe(one) for one in shown]
     if not who.strip():
         lines.append(f"✅ {fine} other(s) match the hub." if shown else f"✅ All {fine} match the hub.")

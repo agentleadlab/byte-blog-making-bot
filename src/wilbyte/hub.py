@@ -210,10 +210,21 @@ class Checked:
         return max(self.hub_short(), self.missing_from_sheet())
 
     def hub_short(self) -> int:
-        """What the hub itself says it never sent - "19/21" marked done."""
+        """What the hub itself says it never sent - "19/21" marked done -
+        unless the sheet holds the whole order anyway, which is the hub's
+        count being off rather than the agent being short."""
         if self.agent.delivered is None or self.agent.ordered is None:
             return 0
+        if self.counter_off():
+            return 0
         return max(self.agent.ordered - self.agent.delivered, 0)
+
+    def counter_off(self) -> bool:
+        """Daniella Martinez: "hub says 0/25, the sheet has 26". The leads are
+        there; it's the hub's count that never moved."""
+        agent = self.agent
+        return (self.on_sheet is not None and agent.delivered is not None and agent.ordered is not None
+                and agent.delivered < agent.ordered <= self.on_sheet)
 
     def missing_from_sheet(self) -> int:
         """What the hub says it sent that isn't on the sheet."""
@@ -230,6 +241,10 @@ def describe(one: Checked) -> str:
     got = one.on_sheet
     if got is None:
         mark, said = "•", "sheet not read" + (f" ({one.problems[0]})" if one.problems else "")
+    elif one.counter_off():
+        mark = "❔"
+        said = (f"the sheet has **{got}** on “{getattr(one.counted, 'tab', '')}” — the whole order looks "
+                "delivered; it's the hub's count that's behind")
     else:
         mark = "⚠" if one.short_by() else "✅"
         tab = getattr(one.counted, "tab", "")

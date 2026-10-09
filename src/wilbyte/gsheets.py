@@ -216,6 +216,16 @@ class SheetsClient:
         got = self._request("GET", f"/{sheet_id}/values/{quoted(span)}")
         return [[str(cell) for cell in row] for row in got.get("values", [])]
 
+    def rows_of(self, sheet_id: str, spans: list[str]) -> list[list[list[str]]]:
+        """Several ranges in one request - one read against Google's quota
+        rather than one per tab. In the order asked."""
+        if not spans:
+            return []
+        query = "&".join(f"ranges={quoted(one)}" for one in spans)
+        got = self._request("GET", f"/{sheet_id}/values:batchGet?{query}")
+        return [[[str(cell) for cell in row] for row in (one.get("values") or [])]
+                for one in got.get("valueRanges", [])]
+
     # ------------------------------------------------------------------ writing
 
     def tab_named(self, sheet_id: str, gid: str | int) -> str:

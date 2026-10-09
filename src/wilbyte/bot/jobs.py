@@ -5712,8 +5712,14 @@ def hub_check(config: Config, agents: list) -> list:
     Reads only: the sheets."""
     from .. import hub
 
+    import time
+
     done = []
-    for agent in agents:
+    for at, agent in enumerate(agents):
+        if at:
+            # Paced: two reads a sheet, and Google allows about a minute's
+            # worth of sixty.
+            time.sleep(HUB_SHEET_PAUSE)
         one = hub.Checked(agent=agent)
         if not agent.sheet_url:
             one.problems.append("the hub has no sheet link for them")
@@ -5724,6 +5730,9 @@ def hub_check(config: Config, agents: list) -> list:
         done.append(one)
     return done
 
+
+#: Seconds between one lead sheet and the next in a hub check.
+HUB_SHEET_PAUSE = 1.0
 
 #: Tabs looked at on one lead sheet.
 MOST_TABS = 8
@@ -5761,9 +5770,12 @@ def _count_lead_tab(config: Config, link: str, lead_type: str = ""):
         return None, f"Couldn't read a sheet id out of {link}"
     try:
         with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
-            titles = [str((one or {}).get("title") or "") for one in client.tabs(sheet_id)][:MOST_TABS]
-            counts = [delivery.count_rows(client.rows(sheet_id, f"'{title}'!A1:Z2000"), tab=title)
-                      for title in titles if title]
+            titles = [title for title in (str((one or {}).get("title") or "")
+                                          for one in client.tabs(sheet_id)) if title][:MOST_TABS]
+            # Every tab in one read: 51 sheets a tab at a time ran into
+            # Google's limit ("rate-limiting us (429)") two sheets from the end.
+            read = client.rows_of(sheet_id, [f"'{title}'!A1:Z2000" for title in titles])
+            counts = [delivery.count_rows(rows, tab=title) for title, rows in zip(titles, read)]
     except Exception as exc:
         return None, f"Couldn't read the lead sheet: {_short(exc, 120)}"
     if not counts:
