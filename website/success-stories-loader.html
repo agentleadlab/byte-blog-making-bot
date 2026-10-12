@@ -1,7 +1,8 @@
 <!-- ============================================================
      SUCCESS STORIES VIDEOS — kept up to date by RYTE.
      agentleadlab.com/success_stories: paste ONCE in the page's
-     Settings -> Tracking Code -> Body (or Footer) code. It reads the
+     Settings -> Tracking Code -> Body (or Footer) code - or the whole
+     website's Body tracking code, under whatever is already there. It reads the
      list RYTE keeps on leadlabcrm.com and redraws "Video Training"
      with the page's own cards - three per section, newest first.
      Nothing else on the page is touched. If the list can't be read,
@@ -9,6 +10,9 @@
      ============================================================ -->
 <script>
 (function(){
+  /* Safe to paste for the whole website: on any page but Success Stories it
+     does nothing at all - no request, nothing read or drawn. */
+  if (!/success[_-]?stories/i.test(location.pathname)) return;
   var LL_DATA = 'https://leadlabcrm.com/wp-json/wp/v2/pages?slug=ll-training-data&_fields=content';
   var SHOWN = 3, KEY = 'll-training-v1';
 
