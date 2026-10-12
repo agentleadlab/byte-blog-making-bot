@@ -584,3 +584,13 @@ def test_month_tabs_with_no_year_on_them_are_not_copied_from(monkeypatch):
     assert paper.copied == [], "copied a tab that could be from any year"
     assert paper.written == []
     assert "no tab for Sep 2026" in said[0]
+
+
+def test_a_name_in_a_fancy_font_is_the_plain_name():
+    """"Nobody on the board is called 𝒩𝒾𝒸𝑜𝓁𝑒 — not tagged.\""""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    assert client._plain_name(SimpleNamespace(display_name="𝒩𝒾𝒸𝑜𝓁𝑒")) == "Nicole"
+    assert client._plain_name(SimpleNamespace(display_name="Faith 🌺 | Client Advisor")) == "Faith"

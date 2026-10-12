@@ -2875,7 +2875,12 @@ async def _comment_on_card(
 def _plain_name(member) -> str:
     """"Franklin 👩‍💼| General Manager" -> "Franklin": the name, without the
     job title and decoration a Discord nickname carries."""
+    import unicodedata
+
     said = str(getattr(member, "display_name", None) or getattr(member, "name", "") or "")
+    # "𝒩𝒾𝒸𝑜𝓁𝑒" is Nicole in a fancy font - letters to Python, so they passed
+    # through untouched and "Nobody on the board is called 𝒩𝒾𝒸𝑜𝓁𝑒".
+    said = unicodedata.normalize("NFKC", said)
     said = said.split("|")[0]
     said = re.sub(r"[^\w\s'.-]", " ", said)
     return " ".join(said.split())
@@ -2902,11 +2907,13 @@ def _as_somebody_said(message) -> str:
     on blue collar till EOD.
     """
     author = getattr(message, "author", None)
-    who = (
+    import unicodedata
+
+    who = unicodedata.normalize("NFKC", (
         getattr(author, "display_name", None)
         or getattr(author, "name", "")
         or ""
-    ).strip()
+    )).strip()
     said = str(message.content or "")
     # "<@1234567890>" means nothing on the board - the name does.
     for one in getattr(message, "mentions", None) or []:
