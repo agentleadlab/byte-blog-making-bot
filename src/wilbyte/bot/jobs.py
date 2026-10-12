@@ -11392,7 +11392,34 @@ def success_post(config: Config, items: list[dict]) -> str:
     lines += [f"• Not added: {one['title']} — {one['why']}" for one in already]
     if started and went:
         lines.append("-# First one: I started from the videos already on the page.")
+    # And first on each section's own training page, with the doc's paragraph.
+    if went:
+        try:
+            lines += training_pages_add(config, went)
+        except Exception as exc:
+            lines.append(f"-# Couldn't update the training pages: {_short(exc, 120)}")
     return "\n".join(lines) or "Nothing to add."
+
+
+def training_pages_add(config: Config, items: list[dict]) -> list[str]:
+    """Each video first on its section's own training page - one that has
+    its WEBSITE DESCRIPTION in the doc. What happened, a line each."""
+    from .. import fullpage
+
+    placed = [one for one in items if one.get("about") and one.get("section") in fullpage.PAGES]
+    lines = [f"-# Not on the {one['section']} page: no WEBSITE DESCRIPTION for {one['what']} in the doc."
+             for one in items if not one.get("about") and one.get("section") in fullpage.PAGES]
+    if not placed:
+        return lines
+    with _wordpress(config) as site:
+        held = full_page_list(site)
+        # Last first, so the doc's order is the order they show in.
+        for one in reversed(placed):
+            held = fullpage.add(held, {"id": one["id"], "title": one["title"], "name": one.get("who") or "",
+                                       "about": one["about"]}, one["section"])
+        _full_page_save(site, held)
+    pages = list(dict.fromkeys(one["section"] for one in placed))
+    return lines + ["✅ First on its training page too: " + ", ".join(f"**{one}**" for one in pages)]
 
 
 def success_lookup(config: Config, said: str) -> list[dict]:
@@ -11418,9 +11445,24 @@ def success_take_down(config: Config, said: str) -> str:
         if not gone:
             return "It's already off the Success Stories page."
         _success_save(site, updated)
-    return "🗑 Off the Success Stories page: " + "; ".join(
+    said = "🗑 Off the Success Stories page: " + "; ".join(
         f"**{one['t']}** ({one['section']})" for one in gone
     )
+    # And off that section's own training page.
+    try:
+        from .. import fullpage
+
+        sections = [one for one in dict.fromkeys(row["section"] for row in gone) if one in fullpage.PAGES]
+        if sections:
+            with _wordpress(config) as site:
+                held = full_page_list(site)
+                for one in sections:
+                    held = fullpage.remove(held, vid, one)
+                _full_page_save(site, held)
+            said += "\n🗑 Off its training page too."
+    except Exception as exc:
+        said += f"\n-# Couldn't update the training pages: {_short(exc, 120)}"
+    return said
 
 
 def _youtube_title(video_id: str) -> str:

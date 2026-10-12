@@ -25,7 +25,7 @@ def test_taking_one_off_hides_it_even_when_built_by_hand_and_adding_brings_it_ba
     data = fullpage.add(None, {"id": "AAAAAAAAAAA", "title": "A", "name": "Ann", "about": "a"})
     data = fullpage.remove(data, "AAAAAAAAAAA")
     data = fullpage.remove(data, "HANDBUILT00")
-    assert data["rows"] == [] and data["gone"] == ["AAAAAAAAAAA", "HANDBUILT00"]
+    assert data["rows"] == [] and data["gone"] == ["AAAAAAAAAAA", "HANDBUILT00"] and data["sections"] == {}
     assert fullpage.remove(data, "HANDBUILT00")["gone"] == data["gone"], "said once"
     back = fullpage.add(data, {"id": "HANDBUILT00", "title": "H", "name": "Hal", "about": "h"})
     assert back["gone"] == ["AAAAAAAAAAA"] and back["rows"][0]["id"] == "HANDBUILT00"
@@ -138,7 +138,7 @@ def test_taking_one_down_takes_it_off_the_full_interviews_page_too(wp, monkeypat
     monkeypatch.setattr(jobs, "_success_list", lambda site: ({"sections": []}, False))
     said = jobs.testimonial_take_down(CONFIG, "9Ul9Fv3Jxzs")
     assert "Off the Full Interviews page too" in said
-    assert _full(wp) == {"rows": [], "gone": ["9Ul9Fv3Jxzs"]}
+    assert _full(wp) == {"rows": [], "gone": ["9Ul9Fv3Jxzs"], "sections": {}}
 
 
 def test_the_card_shows_the_paragraph_before_add(monkeypatch):
@@ -259,3 +259,96 @@ def test_if_the_list_cant_be_read_the_page_is_left_as_it_was():
 def test_the_snippet_does_nothing_on_other_pages():
     _shown, _lines, _playing, asked = _show({"rows": [], "gone": []}, path="/success_stories")
     assert asked == [], "not even a request"
+
+
+def test_each_section_has_its_own_page_list():
+    data = fullpage.add(None, {"id": "FULL0000000", "title": "f", "name": "Ann", "about": "a"})
+    data = fullpage.add(data, {"id": "VET00000000", "title": "v", "name": "Karyn Giles", "about": "b"},
+                        "Veteran Training")
+    data = fullpage.remove(data, "HANDBUILT00", "Veteran Training")
+    assert [one["id"] for one in data["rows"]] == ["FULL0000000"]
+    assert fullpage.page(data, "Veteran Training") == {
+        "rows": [{"id": "VET00000000", "title": "v", "name": "Karyn Giles", "about": "b"}], "gone": ["HANDBUILT00"]}
+    assert fullpage.page(data, "Aged Leads") == {"rows": [], "gone": []}
+    with pytest.raises(ValueError):
+        fullpage.add(data, {"id": "x"}, "Not A Section")
+
+
+def test_the_snippet_knows_every_training_page():
+    text = LOADER.read_text(encoding="utf-8")
+    from wilbyte import segments
+
+    assert set(fullpage.PAGES) == set(segments.SECTIONS)
+    for section, slug in fullpage.PAGES.items():
+        said = "''" if section == segments.FULL_INTERVIEWS else (
+            '"' + section + '"' if "'" in section else "'" + section + "'")
+        assert f"'{slug}': {said}" in text, slug
+
+
+def test_a_section_page_shows_its_own_list():
+    data = fullpage.add(None, {"id": "FULL0000000", "title": "Not here", "name": "x", "about": "x"})
+    data = fullpage.add(data, {"id": "NEW00000000", "title": "Pat's veteran clip", "name": "Pat Tester",
+                               "about": "Pat explains the veteran intro."}, "Veteran Training")
+    data = fullpage.remove(data, "nxsWmQrPq-Q", "Veteran Training")
+    shown, _lines, playing, _asked = _show(data, path="/training/veteran-protection")
+    assert [one[0] for one in shown] == ["Pat's veteran clip", "Emanuel's story", "Raymond's story"]
+    assert shown[0][1:3] == ["with Pat Tester", "Pat explains the veteran intro."]
+    assert playing.startswith("https://www.youtube-nocookie.com/embed/NEW00000000")
+
+
+LAID_OUT = """Karyn Giles — interview segments
+Segment 2  ·  00:10:39–00:19:21  ·  8:42
+YOUTUBE TITLE
+How to Make an Aged Lead Feel New
+WEBSITE SECTION
+Aged Leads
+YOUTUBE LINK
+https://youtu.be/4JSaDVPFbTc
+YOUTUBE DESCRIPTION
+The opener.
+WEBSITE DESCRIPTION
+Karyn Giles gives the verbatim opener.
+She explains why it works.
+Segment 3  ·  00:19:21–00:28:53  ·  9:32
+YOUTUBE TITLE
+The Full Veteran Telesales Script
+WEBSITE SECTION
+Veteran Training
+YOUTUBE LINK
+https://youtu.be/LPXWs31S5TY
+YOUTUBE DESCRIPTION
+The script.
+"""
+
+
+def test_the_doc_s_website_description_is_the_page_s_paragraph():
+    from wilbyte import successpage
+
+    items, _skipped, _waiting = successpage.from_tab("Karyn Giles", LAID_OUT)
+    assert [(one["id"], one["about"]) for one in items] == [
+        ("4JSaDVPFbTc", "Karyn Giles gives the verbatim opener. She explains why it works."),
+        ("LPXWs31S5TY", ""),
+    ]
+
+
+def test_posting_segments_puts_them_on_their_training_pages(wp, monkeypatch):
+    from wilbyte import successpage
+    from wilbyte.bot import jobs
+
+    held = {"sections": [{"c": name, "v": []} for name in fullpage.PAGES]}
+    monkeypatch.setattr(jobs, "_success_list", lambda site: (held, False))
+    monkeypatch.setattr(jobs, "_success_save", lambda site, data: held.update(data))
+    items, _skipped, _waiting = successpage.from_tab("Karyn Giles", LAID_OUT)
+
+    said = jobs.success_post(CONFIG, items)
+    assert "✅ First on its training page too: **Aged Leads**" in said
+    assert "Not on the Veteran Training page: no WEBSITE DESCRIPTION for Segment 3" in said
+    kept = _full(wp)
+    assert fullpage.page(kept, "Aged Leads")["rows"] == [{
+        "id": "4JSaDVPFbTc", "title": "How to Make an Aged Lead Feel New", "name": "Karyn Giles",
+        "about": "Karyn Giles gives the verbatim opener. She explains why it works."}]
+    assert fullpage.page(kept, "Veteran Training")["rows"] == []
+
+    said = jobs.success_take_down(CONFIG, "https://youtu.be/4JSaDVPFbTc")
+    assert "Off its training page too" in said
+    assert fullpage.page(_full(wp), "Aged Leads") == {"rows": [], "gone": ["4JSaDVPFbTc"]}

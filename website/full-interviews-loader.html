@@ -1,19 +1,43 @@
 <!-- ============================================================
-     FULL INTERVIEWS PAGE — kept up to date by RYTE.
-     agentleadlab.com/training/agent-success-full-interviews: paste ONCE
-     in that page's Settings -> Tracking Code -> Body code (or the whole
-     website's Body tracking code), under whatever is already there.
-     Each interview RYTE adds goes first, newest first: a copy of the
-     page's own top row - video, title, "with ...", paragraph - with the
-     new one swapped in, or the row already on the page moved up. Rows built in GHL stay as they are, except one RYTE was
-     told to take off. If the list can't be read, the page stays exactly
-     as it is.
+     TRAINING PAGES — kept up to date by RYTE.
+     agentleadlab.com/training/...: Agent Success Full Interviews and
+     each Success Stories section's own page (Mortgage Protection,
+     Final Expense, IUL, Veteran, Aged Leads and the rest).
+     Paste ONCE in the Trainings website's Settings -> Tracking Code ->
+     Footer/Body code, under whatever is already there.
+     Each video RYTE adds goes first on its page, newest first: a copy of
+     the page's own top row - video, title, "with ...", paragraph - with
+     the new one swapped in, or the row already on the page moved up.
+     Rows built in GHL stay as they are, except one RYTE was told to
+     take off. If the list can't be read, the page stays exactly as it is.
      ============================================================ -->
 <script>
 (function(){
-  /* Safe to paste for the whole website: on any other page it does nothing
-     at all - no request, nothing read or changed. */
-  if (!/full[-_]?interviews/i.test(location.pathname)) return;
+  /* Which training page this is - the section whose list it shows. Safe to
+     paste for the whole website: on any other page it does nothing at all -
+     no request, nothing read or changed. */
+  var PAGES = {
+    'agent-success-full-interviews': '',
+    'mortgage-protection': 'Mortgage Protection Training',
+    'final-expense': 'Final Expense Training',
+    'indexed-universal-life': 'IUL Training',
+    'veteran-protection': 'Veteran Training',
+    'the-blueprint-to-building-your-own-insurance-system': 'The Blueprint To Building Your Own Insurance System',
+    'why-choose-us': 'Why Agent Lead Lab',
+    'agents-expectations': "Agent's Expectations",
+    'effective-strategies-for-prospect-engagement': 'Effective Strategies For Prospect Engagement',
+    'aged-leads': 'Aged Leads'
+  };
+  var slug = (location.pathname.replace(/\/+$/, '').split('/').pop() || '').toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(PAGES, slug)) return;
+  var SECTION = PAGES[slug];
+  /* This page's own list out of everything RYTE keeps. */
+  function listFor(all){
+    if (!all) return null;
+    if (!SECTION) return { rows: all.rows || [], gone: all.gone || [] };
+    var one = (all.sections || {})[SECTION] || {};
+    return { rows: one.rows || [], gone: one.gone || [] };
+  }
   var LL_DATA = 'https://leadlabcrm.com/wp-json/wp/v2/pages?slug=ll-full-interviews-data&_fields=content';
   var KEY = 'll-full-v1';
   var YT = /(?:img\.youtube\.com\/vi|youtube(?:-nocookie)?\.com\/embed|i\.ytimg\.com\/vi)\/([\w-]{11})/;
@@ -188,7 +212,7 @@
   }
 
   var data = null;
-  try { data = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+  try { data = listFor(JSON.parse(localStorage.getItem(KEY) || 'null')); } catch (e) {}
   function run(){ try { apply(data); } catch (e) {} }
 
   fetch(LL_DATA, { cache: 'no-store' })
@@ -199,7 +223,7 @@
       if (!m) return;
       var fresh = fromHex(m[1]);
       try { localStorage.setItem(KEY, JSON.stringify(fresh)); } catch (e) {}
-      data = fresh;
+      data = listFor(fresh);
       run();
     })
     .catch(function(){});

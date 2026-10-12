@@ -195,7 +195,8 @@ _HEAD = re.compile(
     r"^(Full interview|Segment \d+)\s+·\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*(\d{1,2}:\d{2}(?::\d{2})?)",
     re.IGNORECASE,
 )
-_LABELS = {"YOUTUBE TITLE": "title", "WEBSITE SECTION": "section", "YOUTUBE LINK": "link"}
+_LABELS = {"YOUTUBE TITLE": "title", "WEBSITE SECTION": "section", "YOUTUBE LINK": "link",
+           "WEBSITE DESCRIPTION": "about"}
 
 
 def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
@@ -219,7 +220,7 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
             if head:
                 current = {"what": head.group(1).capitalize() if head.group(1)[0].islower() else head.group(1),
                            "long": head.group(1).casefold() == "full interview",
-                           "title": "", "section": "", "link": "", "links": []}
+                           "title": "", "section": "", "link": "", "about": "", "links": []}
                 found.append(current)
                 field = ""
                 continue
@@ -232,13 +233,18 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
                 field = ""
                 continue
             current["links"] += [one for one in re.findall(r"https?://\S+", bare) if video_id(one)]
+            if field == "about":
+                # The training page's paragraph - every line of it, up to the next label.
+                if bare:
+                    current["about"] = (current["about"] + " " + bare).strip()
+                continue
             if field and bare and not current[field]:
                 current[field] = bare
                 field = ""
         entries = [
             {"what": one["what"], "long": one["long"],
              "title": " ".join(re.sub(r"https?://\S+", " ", one["title"]).split()),
-             "section": one["section"],
+             "section": one["section"], "about": one["about"],
              "link": one["link"] if video_id(one["link"]) else (one["links"][0] if one["links"] else "")}
             for one in found
         ]
@@ -253,6 +259,7 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
             entries.append({
                 "what": "Full interview" if one.long_form else f"Segment {number}",
                 "long": one.long_form, "title": one.yt_title, "section": one.website_section,
+                "about": " ".join(str(getattr(one, "website_description", "") or "").split()),
                 "link": one.youtube.split()[0] if one.youtube else "",
             })
 
@@ -273,7 +280,8 @@ def from_tab(name: str, text: str) -> tuple[list[dict], list[str], list[dict]]:
             continue
         vid = video_id(one["link"])
         entry = {"section": known,
-                 "id": vid, "title": one["title"], "who": name, "what": one["what"]}
+                 "id": vid, "title": one["title"], "who": name, "what": one["what"],
+                 "about": one.get("about", "")}
         if not vid:
             waiting.append(entry)
             continue
