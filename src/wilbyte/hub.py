@@ -200,30 +200,20 @@ class Checked:
     def counted_how(self) -> tuple[int | None, str]:
         """(this order's leads on the sheet, how they were picked out).
 
-        This order's, where the sheet says which those are: the leads under
-        its last "NEW LEAD ORDER 10/05" line (Ian Miller's 30 of the 87 on
-        his sheet), or those stamped since it started. Every lead on it
-        otherwise - and also when the hub's count runs past the order, which
-        makes it everything the hub has ever sent: "229/40" for Hunter
-        Kiser, whose whole sheet holds 231.
+        Under the sheet's last "NEW LEAD ORDER 10/05" line when it has one -
+        Ian Miller's 30 of the 87 on his sheet, said in so many words. Every
+        lead on it otherwise.
+
+        Never by the dates. The stamp is when the lead opted in, not when it
+        was sent: Corbin Reed's 25 trucker leads, all on his sheet, were
+        stamped before his order went live and came out "the sheet has 1".
         """
         counted = self.counted
         if counted is None:
             return None, ""
         if counted.this_order is not None:
-            section, how = counted.this_order, f"under “{counted.order_mark}”"
-        else:
-            # Leaving out the earlier orders' leads rather than counting this
-            # one's: a stamp missing or unreadable, or a lead sent the night
-            # before going live, is still this order's lead.
-            section = counted.all_but_before(self.agent.start_date)
-            how = f"since {self.agent.start_date:%b %-d}" if section is not None else ""
-        if section is None:
-            return counted.rows, "all of it"
-        sent, wanted = self.agent.delivered, self.agent.ordered
-        if sent is not None and wanted is not None and sent > wanted and section < sent <= counted.rows:
-            return counted.rows, "all of it - the hub's count is everything it has sent"
-        return section, how
+            return counted.this_order, f"under “{counted.order_mark}”"
+        return counted.rows, "all of it"
 
     @property
     def on_sheet(self) -> int | None:
@@ -251,10 +241,14 @@ class Checked:
                 and agent.delivered < agent.ordered <= self.on_sheet)
 
     def missing_from_sheet(self) -> int:
-        """What the hub says it sent that isn't on the sheet."""
-        if self.on_sheet is None or self.agent.delivered is None:
+        """What the hub says it sent for this order that isn't on the sheet -
+        up to the order's size: Cooper Feinen's "21/20" is one over the
+        order, and a sheet holding the 20 bought isn't short."""
+        sent, wanted = self.agent.delivered, self.agent.ordered
+        if self.on_sheet is None or sent is None:
             return 0
-        return max(self.agent.delivered - self.on_sheet, 0)
+        owed = min(sent, wanted) if wanted is not None else sent
+        return max(owed - self.on_sheet, 0)
 
 
 def describe(one: Checked) -> str:
@@ -300,25 +294,11 @@ def working(one: Checked) -> str:
     if counted.left_out:
         bits.append(f"{counted.left_out} test/banner row(s) not counted")
     got, how = one.counted_how()
-    start = one.agent.start_date
     if counted.this_order is not None:
         bits.append(f"counted the {counted.this_order} under “{counted.order_mark}”, "
                     f"{counted.rows - counted.this_order} above it are earlier orders")
-    elif how.startswith("since") and start is not None and counted.by_day:
-        cutoff = start - timedelta(days=1)
-        dated = sum(counted.by_day.values())
-        before = sum(n for day, n in counted.by_day.items() if day < cutoff)
-        early = sum(n for day, n in counted.by_day.items() if cutoff <= day < start)
-        on_or_after = dated - before - early
-        bits.append(f"left out {before} stamped before {cutoff:%b %-d} (earlier orders)")
-        parts = [f"{on_or_after} stamped {start:%b %-d} or later"]
-        if early:
-            parts.append(f"{early} stamped {cutoff:%b %-d}")
-        if counted.rows - dated:
-            parts.append(f"{counted.rows - dated} with no readable stamp")
-        bits.append(f"counted {got}: " + ", ".join(parts))
     else:
-        bits.append(f"counted all {got}")
+        bits.append(f"counted all {got} - no “NEW LEAD ORDER” line to start this order from")
     return "-# How I counted: " + " · ".join(bits)
 
 

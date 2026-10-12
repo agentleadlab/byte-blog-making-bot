@@ -376,32 +376,35 @@ def test_a_count_past_the_order_is_held_against_the_whole_sheet():
     assert one.on_sheet == 231 and one.short_by() == 0
 
 
-def test_a_lead_without_a_readable_stamp_still_counts():
-    """Matthew Moreno: "hub says 30/30, the sheet has 27 (since Oct 9)" - with 30 on it."""
+def test_opt_in_stamps_never_decide_whats_this_orders():
+    """Corbin Reed: 25 trucker leads on his sheet, all stamped (opted in)
+    before his order went live - "the sheet has 1"."""
     rows = [["Name", "Email", "Phone Number", "Lead Opt In Time Stamp"]]
-    rows += [[f"Old {n}", "o@example.com", "555", "Oct 1, 9:00:00 AM EDT"] for n in range(20)]
-    rows += [[f"New {n}", "n@example.com", "555", "Oct 9, 9:00:00 AM EDT"] for n in range(27)]
-    rows += [["Late", "l@example.com", "555", ""], ["Odd", "d@example.com", "555", "9th"],
-             ["Early", "e@example.com", "555", "Oct 8, 11:50:00 PM EDT"]]
-    one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30", start_date="2026-10-09")),
-                      counted=delivery.count_rows(rows))
-    assert one.on_sheet == 30 and one.short_by() == 0
+    rows += [[f"Lead {n}", "x@example.com", "555", "Oct 3, 9:00:00 AM EDT"] for n in range(24)]
+    rows += [["Last", "l@example.com", "555", "Oct 8, 9:00:00 AM EDT"]]
+    one = hub.Checked(agent=hub.read(record(name="Corbin Reed", delivered=25, ordered=25, progress="25/25",
+                                            start_date="2026-10-08")), counted=delivery.count_rows(rows))
+    assert one.on_sheet == 25 and one.short_by() == 0
 
+
+def test_one_over_the_order_isnt_short():
+    """Cooper Feinen: "hub says 21/20, the sheet has 20"."""
+    rows = [["Name", "Email", "Phone Number"]] + [[f"L{n}", "x@example.com", "555"] for n in range(20)]
+    one = hub.Checked(agent=hub.read(record(delivered=21, ordered=20, progress="21/20")),
+                      counted=delivery.count_rows(rows))
+    assert one.short_by() == 0
 
 def test_one_persons_check_shows_its_working():
     """"how can i trust him" - the count, broken down to check by eye."""
-    rows = [["Name", "Email", "Phone Number", "Lead Opt In Time Stamp"],
-            ["Test Lead", "test@agentleadlab.com", "214-555-0100", ""]]
-    rows += [[f"Old {n}", "o@example.com", "555", "Oct 1, 9:00:00 AM EDT"] for n in range(20)]
-    rows += [[f"New {n}", "n@example.com", "555", "Oct 9, 9:00:00 AM EDT"] for n in range(27)]
-    rows += [["Late", "l@example.com", "555", ""], ["Odd", "d@example.com", "555", "9th"],
-             ["Early", "e@example.com", "555", "Oct 8, 11:50:00 PM EDT"]]
-    one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30", start_date="2026-10-09")),
+    rows = [["Name", "Email", "Phone Number"], ["Test Lead", "test@agentleadlab.com", "214-555-0100"]]
+    rows += [[f"L{n}", "x@example.com", "555"] for n in range(30)]
+    one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30")),
                       counted=delivery.count_rows(rows, tab="Leads"))
     said = hub.working(one)
-    assert "50 lead row(s) on “Leads”" in said and "1 test/banner row(s) not counted" in said
-    assert "left out 20 stamped before Oct 8" in said
-    assert "counted 30: 27 stamped Oct 9 or later, 1 stamped Oct 8, 2 with no readable stamp" in said
+    assert "30 lead row(s) on “Leads”" in said and "1 test/banner row(s) not counted" in said
+    assert "counted all 30" in said
+    marked = hub.Checked(agent=hub.read(record(delivered=30, ordered=30)), counted=delivery.count_rows(IAN))
+    assert "counted the 30 under “NEW LEAD ORDER 10/05”, 57 above it are earlier orders" in hub.working(marked)
 
 
 @pytest.mark.parametrize("said, who", [
