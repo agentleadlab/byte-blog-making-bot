@@ -125,8 +125,8 @@ FIRST_DAYS = 90
 
 #: Documents whose recipients are read in one pass. The first read is a few
 #: hundred; the rest are read on the passes after it rather than all at once.
-#: Sixty in a burst was PandaDoc's "too many requests", every pass.
-DETAILS_PER_PASS = 20
+#: A second apart: sixty in a burst was PandaDoc's "too many requests", every pass.
+DETAILS_PER_PASS = 60
 
 #: Seconds between one document's details and the next.
 DETAILS_PAUSE = 1.0

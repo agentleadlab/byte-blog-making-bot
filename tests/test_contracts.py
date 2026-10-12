@@ -203,3 +203,24 @@ def test_no_key_says_so():
 
     paired, problems = jobs.contract_check(SimpleNamespace(secrets=SimpleNamespace()), today=date(2026, 10, 2))
     assert paired == [] and "PANDADOC_API_KEY" in problems[0]
+
+
+def test_nothing_is_flagged_while_pandadoc_is_still_being_read(monkeypatch):
+    """Twenty-six "No signed contract" the morning the read started catching up:
+    a contract whose signers aren't read yet matches nobody."""
+    from types import SimpleNamespace
+
+    from wilbyte import pandadoc
+    from wilbyte.bot import jobs
+
+    monkeypatch.setattr(pandadoc, "sync", lambda key: {"docs": {"d1": {"title": "x"}, "d2": {"emails": []}}})
+
+    def never(config):
+        raise AssertionError("read the board while PandaDoc was still catching up")
+
+    monkeypatch.setattr(jobs, "open_trello", never)
+    config = SimpleNamespace(secrets=SimpleNamespace(pandadoc_api_key="k"))
+    from datetime import date
+
+    paired, problems = jobs.contract_check(config, today=date(2026, 10, 12))
+    assert paired == [] and "1 to go" in problems[0]

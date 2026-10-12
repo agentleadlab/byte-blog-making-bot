@@ -5173,6 +5173,13 @@ def contract_check(config: Config, *, today=None, sync: bool = True) -> tuple[li
         data = pandadoc.sync(key) if sync else pandadoc.load()
     except pandadoc.PandaDocError as exc:
         return [], [str(exc)]
+    # Nothing said while PandaDoc is still being read. A contract whose
+    # signers aren't read yet can't be matched to anybody, so every order
+    # looked unsigned - twenty-six of them in one message, the morning the
+    # read stopped failing and started catching up.
+    waiting = sum(1 for one in (data.get("docs") or {}).values() if "emails" not in one)
+    if waiting:
+        return [], [f"Still reading PandaDoc's contracts ({waiting} to go) - not flagging until they're all in."]
     client = open_trello(config)
     try:
         every = client.board_cards(config.secrets.trello_board_id, archived=True)
@@ -5186,7 +5193,9 @@ def contract_check(config: Config, *, today=None, sync: bool = True) -> tuple[li
     for card in every:
         title = str(card.get("name") or "")
         made = rules.made_at(str(card.get("id") or ""))
-        if not rules.is_client_card(title) or made is None or made < since:
+        # New agents only. "aged leads we dont have contracts, only fresh/new
+        # agents" - an aged-lead order has nothing to sign.
+        if not rules.is_agent_card(title) or made is None or made < since:
             continue
         desc = str(card.get("desc") or "")
         orders.append(matching.Order(
