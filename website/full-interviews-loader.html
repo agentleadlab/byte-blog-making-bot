@@ -1,0 +1,223 @@
+<!-- ============================================================
+     FULL INTERVIEWS PAGE — kept up to date by RYTE.
+     agentleadlab.com/training/agent-success-full-interviews: paste ONCE
+     in that page's Settings -> Tracking Code -> Body code (or the whole
+     website's Body tracking code), under whatever is already there.
+     Each interview RYTE adds goes first, newest first: a copy of the
+     page's own top row - video, title, "with ...", paragraph - with the
+     new one swapped in, or the row already on the page moved up. Rows built in GHL stay as they are, except one RYTE was
+     told to take off. If the list can't be read, the page stays exactly
+     as it is.
+     ============================================================ -->
+<script>
+(function(){
+  /* Safe to paste for the whole website: on any other page it does nothing
+     at all - no request, nothing read or changed. */
+  if (!/full[-_]?interviews/i.test(location.pathname)) return;
+  var LL_DATA = 'https://leadlabcrm.com/wp-json/wp/v2/pages?slug=ll-full-interviews-data&_fields=content';
+  var KEY = 'll-full-v1';
+  var YT = /(?:img\.youtube\.com\/vi|youtube(?:-nocookie)?\.com\/embed|i\.ytimg\.com\/vi)\/([\w-]{11})/;
+
+  function fromHex(h){
+    var bytes = new Uint8Array(h.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(h.substr(i * 2, 2), 16);
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  }
+
+  /* The video a row shows - from its thumbnail, or its player once playing. */
+  function videoOf(row){
+    var bits = row.querySelectorAll('[data-bg-src], [style*="youtube"], iframe[src], img[src]');
+    for (var i = 0; i < bits.length; i++){
+      var b = bits[i];
+      var m = YT.exec((b.getAttribute('data-bg-src') || '') + ' ' + (b.getAttribute('style') || '') + ' ' + (b.getAttribute('src') || ''));
+      if (m) return m[1];
+    }
+    return '';
+  }
+  /* Every interview row: a GHL row holding a YouTube video element. */
+  function interviewRows(){
+    var figs = document.querySelectorAll('figure.video-container, .c-video');
+    var rows = [];
+    for (var i = 0; i < figs.length; i++){
+      var row = figs[i].closest ? figs[i].closest('.c-row') : null;
+      if (row && rows.indexOf(row) < 0 && videoOf(row)) rows.push(row);
+    }
+    return rows;
+  }
+  /* The thin divider row GHL puts between two interviews, if there is one. */
+  function dividerAfter(row){
+    var next = row.nextElementSibling;
+    if (next && next.classList.contains('c-row') && !next.querySelector('figure, .c-video')
+        && !(next.innerText || next.textContent || '').trim()) return next;
+    return null;
+  }
+
+  function setText(wrapper, text, asEm){
+    if (!wrapper) return;
+    var el = wrapper.querySelector('h1, h2, h3, h4, h5, h6, p') || wrapper;
+    var parent = el.parentNode;
+    /* one paragraph only - a copied row could have had several */
+    if (parent) {
+      var extra = parent.querySelectorAll(el.tagName);
+      for (var i = 1; i < extra.length; i++) extra[i].parentNode.removeChild(extra[i]);
+    }
+    var em = asEm ? el.querySelector('em, i') : null;
+    if (em) em.textContent = text; else el.textContent = text;
+  }
+
+  function thumbnail(box, id){
+    var big = 'https://img.youtube.com/vi/' + id + '/maxresdefault.jpg';
+    var small = 'https://img.youtube.com/vi/' + id + '/hqdefault.jpg';
+    function show(src){
+      box.setAttribute('data-bg-src', src);
+      box.style.background = 'url("' + src + '") center center / cover no-repeat';
+      box.style.paddingBottom = '56.25%';
+    }
+    show(small);
+    /* the bigger picture when the video has one (YouTube answers 120px wide when not) */
+    var probe = new Image();
+    probe.onload = function(){ if (probe.naturalWidth > 120) show(big); };
+    probe.src = big;
+  }
+
+  function play(figure, id){
+    figure.innerHTML = '<div style="position:relative;width:100%;padding-bottom:56.25%;">' +
+      '<iframe src="https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0" title="Full interview" ' +
+      'style="position:absolute;inset:0;width:100%;height:100%;border:0;" ' +
+      'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div>';
+  }
+
+  /* A copy of the page's own row with this interview in it. */
+  function rowFor(template, it){
+    var row = template.cloneNode(true);
+    row.setAttribute('data-ll-full', it.id);
+    row.removeAttribute('data-ll-gone');
+    row.style.display = '';
+
+    var figure = row.querySelector('figure.video-container') || row.querySelector('.c-video');
+    if (figure){
+      var box = figure.querySelector('[data-bg-src]') || figure.querySelector('div');
+      if (box && !figure.querySelector('iframe')) thumbnail(box, it.id);
+      else {
+        figure.innerHTML = '<span class="w-100"><div class="w-100"></div></span>';
+        thumbnail(figure.querySelector('div'), it.id);
+      }
+      figure.style.cursor = 'pointer';
+      figure.setAttribute('role', 'button');
+      figure.setAttribute('tabindex', '0');
+      figure.setAttribute('aria-label', 'Play: ' + it.title);
+      figure.addEventListener('click', function(){ play(figure, it.id); });
+      figure.addEventListener('keydown', function(e){
+        if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); play(figure, it.id); }
+      });
+    }
+
+    setText(row.querySelector('.c-heading'), it.title);
+    var paras = row.querySelectorAll('.c-paragraph'), withP = null, aboutP = null, longest = -1;
+    for (var i = 0; i < paras.length; i++){
+      var said = (paras[i].textContent || '').trim();
+      if (!withP && /^with\s/i.test(said)) { withP = paras[i]; continue; }
+      if (said.length > longest){ longest = said.length; aboutP = paras[i]; }
+    }
+    setText(withP, 'with ' + it.name, true);
+    setText(aboutP, it.about);
+    return row;
+  }
+
+  function apply(data){
+    if (!data || !data.rows) return;
+    var rows = interviewRows();
+    if (!rows.length) return;
+    var template = null, i, onPage = {};
+    for (i = 0; i < rows.length; i++){
+      var id = rows[i].getAttribute('data-ll-full') || videoOf(rows[i]);
+      if (!onPage[id]) onPage[id] = rows[i];
+      if (!template && !rows[i].getAttribute('data-ll-full')) template = rows[i];
+    }
+    if (!template) return;
+    var gone = data.gone || [];
+
+    /* Taken off: hidden, with the divider under it. */
+    for (var id2 in onPage){
+      if (gone.indexOf(id2) < 0 || onPage[id2].getAttribute('data-ll-gone')) continue;
+      var off = onPage[id2], line = dividerAfter(off);
+      off.style.display = 'none'; off.setAttribute('data-ll-gone', '1');
+      if (line) line.style.display = 'none';
+    }
+
+    /* RYTE's interviews go first, newest first: one already on the page is
+       moved up with its divider, a new one is a copy of the page's own row. */
+    var wanted = [], ids = {};
+    for (i = 0; i < data.rows.length; i++){
+      var it = data.rows[i];
+      if (!it || !it.id || ids[it.id] || gone.indexOf(it.id) >= 0) continue;
+      if (!onPage[it.id] && !it.about) continue;
+      ids[it.id] = 1;
+      wanted.push(it);
+    }
+    if (!wanted.length) return;
+    var anchor = null;
+    for (i = 0; i < rows.length; i++){
+      var rid = rows[i].getAttribute('data-ll-full') || videoOf(rows[i]);
+      if (!ids[rid]) { anchor = rows[i]; break; }
+    }
+    var parent = (anchor || rows[0]).parentNode, divider = dividerAfter(template);
+    var order = [];
+    for (i = 0; i < wanted.length; i++){
+      var row = onPage[wanted[i].id], line2 = row ? dividerAfter(row) : null;
+      if (!row){
+        row = rowFor(template, wanted[i]);
+        onPage[wanted[i].id] = row;
+        if (divider){
+          line2 = divider.cloneNode(true);
+          line2.style.display = '';
+          line2.setAttribute('data-ll-full', wanted[i].id + '-line');
+        }
+      }
+      order.push(row);
+      if (line2) order.push(line2);
+    }
+    /* Already in place: touch nothing (moving them would only wake this up again). */
+    var end = anchor || (function(){ var last = rows[rows.length - 1]; var l = dividerAfter(last) || last; return l.nextElementSibling; })();
+    var placed = order[0].parentNode === parent;
+    for (i = 0; placed && i < order.length; i++){
+      if ((order[i + 1] || end) !== order[i].nextElementSibling) placed = false;
+    }
+    if (placed) return;
+    for (i = 0; i < order.length; i++) parent.insertBefore(order[i], end);
+  }
+
+  var data = null;
+  try { data = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+  function run(){ try { apply(data); } catch (e) {} }
+
+  fetch(LL_DATA, { cache: 'no-store' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(pages){
+      var html = (pages && pages[0] && pages[0].content && pages[0].content.rendered) || '';
+      var m = /LLFULL-([0-9a-f]+)/.exec(html);
+      if (!m) return;
+      var fresh = fromHex(m[1]);
+      try { localStorage.setItem(KEY, JSON.stringify(fresh)); } catch (e) {}
+      data = fresh;
+      run();
+    })
+    .catch(function(){});
+
+  /* GHL draws the page in steps and can redraw it: look again a few times,
+     and whenever it changes for a little while. Each look only adds what's
+     missing, so nothing is ever added twice. */
+  run();
+  [600, 1500, 3000, 6000, 10000].forEach(function(t){ setTimeout(run, t); });
+  if (window.MutationObserver){
+    var queued = false;
+    var watch = new MutationObserver(function(){
+      if (queued) return;
+      queued = true;
+      setTimeout(function(){ queued = false; run(); }, 250);
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    setTimeout(function(){ watch.disconnect(); }, 20000);
+  }
+})();
+</script>

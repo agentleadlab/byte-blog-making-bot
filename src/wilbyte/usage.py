@@ -59,6 +59,7 @@ JOBS = {
     "check_anthropic": "Health check",
     "testimonial_draft": "Website testimonials",
     "_pick_testimonial": "Website testimonials",
+    "_write_about": "Website testimonials",
 }
 
 #: ...and by the module, where one module is one job.

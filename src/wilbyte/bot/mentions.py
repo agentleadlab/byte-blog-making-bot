@@ -633,17 +633,32 @@ TESTIMONIAL_REMOVE = re.compile(
 _TESTIMONIAL_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S+", re.IGNORECASE)
 
 
+_TESTIMONIAL_KEY = re.compile(r"\b(name|quote|about)\s*:", re.IGNORECASE)
+
+
+def _testimonial_fields(said: str) -> dict:
+    """{"name": ..., "quote": ..., "about": ...} - each runs to the next one,
+    in whatever order they were written."""
+    text = str(said or "")
+    keys = list(_TESTIMONIAL_KEY.finditer(text))
+    got = {}
+    for at, key in enumerate(keys):
+        end = keys[at + 1].start() if at + 1 < len(keys) else len(text)
+        got.setdefault(key.group(1).casefold(), " ".join(text[key.end():end].split()))
+    return got
+
+
 def testimonial_parts(said: str) -> tuple[str, str, str]:
     """(the YouTube link, a name given, a quote given) off the message."""
     text = str(said or "")
     link = _TESTIMONIAL_LINK.search(text)
-    name = re.search(r"\bname\s*:\s*(.+?)(?=\s+quote\s*:|$)", text, re.IGNORECASE | re.DOTALL)
-    quote = re.search(r"\bquote\s*:\s*(.+)$", text, re.IGNORECASE | re.DOTALL)
-    return (
-        link.group(0).rstrip(">)") if link else "",
-        " ".join(name.group(1).split()) if name else "",
-        " ".join(quote.group(1).split()) if quote else "",
-    )
+    fields = _testimonial_fields(text)
+    return (link.group(0).rstrip(">)") if link else "", fields.get("name", ""), fields.get("quote", ""))
+
+
+def testimonial_about(said: str) -> str:
+    """The Full Interviews page's paragraph, when given as `about: ...`."""
+    return _testimonial_fields(said).get("about", "")
 
 
 # The same asked plainly enough to go before the action words: "paid" is a
@@ -1399,7 +1414,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **redo bell Dylan Rankin** — draw their ring-da-bell picture again from
 > their own messages, into a folder named for them
 > @RYTE **testimonial https://youtu.be/…** — a full interview for the website's video
-> section, with `quote: …` after the link (and `name: …` if the video doesn't say), then Add.
+> section and the Full Interviews page, with `quote: …` after the link (and `name: …` if the
+> video doesn't say, `about: …` to write its Full Interviews paragraph yourself), then Add.
 > @RYTE **testimonial remove Raymond** — take one off the website (and Full Interviews), after a button.
 > **website check** — whether I can reach the site
 > @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents

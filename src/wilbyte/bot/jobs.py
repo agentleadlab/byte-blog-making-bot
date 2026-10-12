@@ -11066,9 +11066,12 @@ def website_check(config: Config) -> str:
             f"Reading {where}: **{featured}** featured, {len(held.get('videos') or [])} more in the grid.")
 
 
-def testimonial_draft(config: Config, link: str, *, name: str = "", quote: str = "") -> dict:
-    """The interview's name and a quote for the site, before anything is
-    added. {"id", "title", "name", "quote"}. Either one given is used as given."""
+def testimonial_draft(config: Config, link: str, *, name: str = "", quote: str = "",
+                      about: str = "") -> dict:
+    """The interview's name and a quote for the site, and the paragraph about
+    it for the Full Interviews page, before anything is added.
+    {"id", "title", "name", "quote", "about"}. Any one given is used as given;
+    "about" is "" when the captions couldn't be read to write it."""
     from .. import website
 
     video_id = youtube.extract_video_id(link)
@@ -11076,8 +11079,10 @@ def testimonial_draft(config: Config, link: str, *, name: str = "", quote: str =
         title = youtube.fetch_video(video_id).title
     except Exception:
         title = ""
-    if not (name and quote):
+    transcript, problem = "", ""
+    if not (name and quote and about):
         transcript, problem = waiting_on_captions(link)
+    if not (name and quote):
         if not transcript and not title:
             raise ValueError(f"I couldn't read that video: {problem or 'no title and no captions'}")
         picked = _pick_testimonial(config, title, transcript)
@@ -11085,8 +11090,63 @@ def testimonial_draft(config: Config, link: str, *, name: str = "", quote: str =
         quote = quote or picked.get("quote", "")
     if not name:
         raise ValueError("I couldn't tell whose interview it is - add `name: Their Name` to the message.")
-    return {"id": video_id, "title": title, "name": " ".join(name.split()),
-            "quote": website.quote_marks(quote)}
+    name = " ".join(name.split())
+    if not about and transcript:
+        try:
+            about = _write_about(config, title, name, transcript)
+        except Exception:
+            import logging
+
+            logging.getLogger("wilbyte.bot").warning("Couldn't write the Full Interviews paragraph", exc_info=True)
+            about = ""
+    return {"id": video_id, "title": title, "name": name,
+            "quote": website.quote_marks(quote), "about": " ".join(str(about or "").split())}
+
+
+#: How the Full Interviews page already describes an interview - the model
+#: for the paragraph RYTE writes for a new one.
+ABOUT_EXAMPLE = (
+    "Emanuel Nazco walks through his entire path in life insurance, starting with the $15,000 "
+    "to $20,000 he lost as a new agent chasing final expense leads he couldn't place. He "
+    "explains what changed when he started qualifying budget properly, moved into veteran and "
+    "mortgage protection leads, and built a three-option presentation that shows clients what "
+    "the money actually does. He covers his dial cadence, his rapport process, instant "
+    "approvals, post-sale follow-up, and how he handles the best-time-to-contact field on fresh "
+    "leads. For any agent who wants a complete look at how a high-premium veteran writer runs his day."
+)
+
+
+def _write_about(config: Config, title: str, name: str, transcript: str) -> str:
+    """The paragraph beside the video on the Full Interviews page."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    tool = {
+        "name": "about",
+        "description": "The paragraph about this interview for the Full Interviews page.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"about": {"type": "string", "description": (
+                "One paragraph, 80 to 110 words, third person, present tense, starting with the "
+                "agent's full name. What they went through and what they explain - specific "
+                "numbers, products and methods only as said in the transcript - ending with who "
+                "should watch it. Use the agent's name and pronouns as the interview gives them; "
+                "if it doesn't make them clear, use their name or they/them. No quotes, no hype "
+                "words, no emojis.")}},
+            "required": ["about"],
+        },
+    }
+    response = client.messages.create(
+        model=config.copy.model, max_tokens=600,
+        system=("You describe full-length interviews with life insurance agents for Agent Lead "
+                "Lab's Full Interviews page. Match this example's length and tone exactly:\n\n"
+                + ABOUT_EXAMPLE + "\n\nOnly facts the transcript gives. Never the host, Arnold Tarpley."),
+        tools=[tool], tool_choice={"type": "tool", "name": "about"},
+        messages=[{"role": "user", "content": f"Agent: {name}\nTitle: {title}\n\nTranscript:\n{(transcript or '')[:60000]}"}],
+    )
+    got = next((one.input for one in response.content if getattr(one, "type", "") == "tool_use"), {}) or {}
+    return " ".join(str(got.get("about") or "").split())
 
 
 def _pick_testimonial(config: Config, title: str, transcript: str) -> dict:
@@ -11166,7 +11226,50 @@ def testimonial_take_down(config: Config, video_id: str) -> str:
         import logging
 
         logging.getLogger("wilbyte.bot").warning("Couldn't check the Success Stories page", exc_info=True)
+    try:
+        if full_page_take_down(config, video_id):
+            said += "\n🗑 Off the Full Interviews page too, if it was there."
+    except Exception:
+        import logging
+
+        logging.getLogger("wilbyte.bot").warning("Couldn't update the Full Interviews page", exc_info=True)
     return said
+
+
+def full_page_list(site) -> dict:
+    """What RYTE keeps for the Full Interviews page - empty to start."""
+    from .. import fullpage
+
+    return fullpage._clean(site.load(slug=fullpage.DATA_SLUG, mark=fullpage.MARK) or fullpage.empty())
+
+
+def _full_page_save(site, data: dict) -> None:
+    from .. import fullpage
+
+    site.save(data, slug=fullpage.DATA_SLUG, title=fullpage.DATA_TITLE, mark=fullpage.MARK, what=fullpage.WHAT)
+
+
+def full_page_add(config: Config, video: dict) -> None:
+    """The interview first on the Full Interviews page."""
+    from .. import fullpage
+
+    with _wordpress(config) as site:
+        _full_page_save(site, fullpage.add(full_page_list(site), {
+            "id": video["id"], "title": video.get("title") or f"{video['name']} - Full Interview",
+            "name": video["name"], "about": video["about"]}))
+
+
+def full_page_take_down(config: Config, video_id: str) -> bool:
+    """The interview off the Full Interviews page, whoever built its row.
+    Whether anything changed."""
+    from .. import fullpage
+
+    with _wordpress(config) as site:
+        held = full_page_list(site)
+        if video_id in held["gone"]:
+            return False
+        _full_page_save(site, fullpage.remove(held, video_id))
+    return True
 
 
 def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
@@ -11383,6 +11486,16 @@ def testimonial_publish(config: Config, video: dict) -> str:
             said += "\n✅ First under **Agent Success Full Interviews** on the Success Stories page too."
     except Exception as exc:
         said += f"\n-# Couldn't put it on the Success Stories page: {_short(exc, 120)}"
+    # And first on the Full Interviews page, which needs its paragraph.
+    if video.get("about"):
+        try:
+            full_page_add(config, video)
+            said += "\n✅ First on the **Full Interviews** page too."
+        except Exception as exc:
+            said += f"\n-# Couldn't put it on the Full Interviews page: {_short(exc, 120)}"
+    else:
+        said += ("\n-# Not on the Full Interviews page: there's no paragraph about it. Send it again "
+                 "with `about: …` after the quote.")
     if started:
         said += (f"\n-# First one: I started from the {len(held.get('videos') or [])} interviews "
                  "already on the page.")

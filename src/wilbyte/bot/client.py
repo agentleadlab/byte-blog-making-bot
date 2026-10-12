@@ -2006,11 +2006,12 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
             "quote: …` — add `name: …` too if the video doesn't say who it is."
         )
         return
-    if not name:
-        await responder.send("🎬 Reading the interview for their name…")
+    about = mentions.testimonial_about(said)
+    if not (name and about):
+        await responder.send("🎬 Reading the interview…")
     try:
         video = await asyncio.to_thread(
-            partial(jobs.testimonial_draft, config, link, name=name, quote=quote))
+            partial(jobs.testimonial_draft, config, link, name=name, quote=quote, about=about))
     except Exception as exc:
         await responder.send(f"⚠ {_readable(exc)}")
         return
@@ -2020,9 +2021,17 @@ async def _website_testimonial(responder: Responder, config: Config, said: str) 
                      f"[{video.get('title') or 'The video'}](https://www.youtube.com/watch?v={video['id']})"),
         colour=discord.Colour.green(),
     )
+    # What goes beside the video on the Full Interviews page - read before Add.
+    card.add_field(
+        name="Full Interviews page",
+        value=(video.get("about") or "⚠ No paragraph - I couldn't read the captions. It won't go "
+               "on the Full Interviews page unless you send it again with `about: …`.")[:1024],
+        inline=False,
+    )
     card.set_image(url=f"https://img.youtube.com/vi/{video['id']}/hqdefault.jpg")
-    card.set_footer(text="Add makes it the featured interview on leadlabcrm.com. Wrong name or "
-                         "quote? Send it again with name: … / quote: … after the link.")
+    card.set_footer(text="Add makes it the featured interview on leadlabcrm.com and the first on the "
+                         "Full Interviews page. Wrong name, quote or paragraph? Send it again with "
+                         "name: … / quote: … / about: … after the link.")
     view = views.ConfirmView(
         requester_id=responder.requester_id,
         timeout=config.discord.approval_timeout_seconds,

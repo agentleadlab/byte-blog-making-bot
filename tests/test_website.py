@@ -149,11 +149,13 @@ def test_a_name_and_quote_given_are_used_as_given(monkeypatch):
 
     monkeypatch.setattr(youtube, "fetch_video", lambda vid: NS(title="How Emanuel Nazco Writes $250 Policies"))
     monkeypatch.setattr(jobs, "_pick_testimonial", lambda *a: pytest.fail("Claude asked for nothing"))
+    monkeypatch.setattr(jobs, "waiting_on_captions", lambda link: pytest.fail("nothing to read for"))
 
     got = jobs.testimonial_draft(CONFIG, "https://youtu.be/U1O8FXthqzQ", name="Emanuel Nazco",
-                                 quote="No miracle lead out there")
+                                 quote="No miracle lead out there", about="Emanuel walks through it.")
     assert got == {"id": "U1O8FXthqzQ", "title": "How Emanuel Nazco Writes $250 Policies",
-                   "name": "Emanuel Nazco", "quote": '"No miracle lead out there"'}
+                   "name": "Emanuel Nazco", "quote": '"No miracle lead out there"',
+                   "about": "Emanuel walks through it."}
 
 
 def test_otherwise_claude_picks_them_from_the_transcript(monkeypatch):
@@ -163,6 +165,7 @@ def test_otherwise_claude_picks_them_from_the_transcript(monkeypatch):
     monkeypatch.setattr(youtube, "fetch_video", lambda vid: NS(title="t"))
     monkeypatch.setattr(jobs, "waiting_on_captions", lambda link: ("the transcript", ""))
     monkeypatch.setattr(jobs, "_pick_testimonial", lambda config, title, text: {"name": "Cole", "quote": "Connect the dots"})
+    monkeypatch.setattr(jobs, "_write_about", lambda config, title, name, text: "Cole explains.")
     got = jobs.testimonial_draft(CONFIG, "https://www.youtube.com/watch?v=Yw8m6eovS1s")
     assert (got["name"], got["quote"]) == ("Cole", '"Connect the dots"')
 
@@ -292,6 +295,8 @@ def test_taking_one_down_after_the_button(site, monkeypatch):
     from wilbyte.bot import client, jobs, views
 
     site.page = {"id": 7, "content": {"raw": website.page_content(_held())}}
+    # This WordPress has one page; the Full Interviews page's own list is tested in test_fullpage.
+    monkeypatch.setattr(jobs, "full_page_take_down", lambda config, video_id: False)
 
     class View:
         confirmed = True
