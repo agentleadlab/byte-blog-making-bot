@@ -288,6 +288,40 @@ def describe(one: Checked) -> str:
     return line
 
 
+def working(one: Checked) -> str:
+    """How the number was arrived at, row by row, so it can be checked
+    against the sheet by eye - "how can i trust him"."""
+    from datetime import timedelta
+
+    counted = one.counted
+    if counted is None:
+        return ""
+    bits = [f"{counted.rows} lead row(s) on “{counted.tab or 'the sheet'}”"]
+    if counted.left_out:
+        bits.append(f"{counted.left_out} test/banner row(s) not counted")
+    got, how = one.counted_how()
+    start = one.agent.start_date
+    if counted.this_order is not None:
+        bits.append(f"counted the {counted.this_order} under “{counted.order_mark}”, "
+                    f"{counted.rows - counted.this_order} above it are earlier orders")
+    elif how.startswith("since") and start is not None and counted.by_day:
+        cutoff = start - timedelta(days=1)
+        dated = sum(counted.by_day.values())
+        before = sum(n for day, n in counted.by_day.items() if day < cutoff)
+        early = sum(n for day, n in counted.by_day.items() if cutoff <= day < start)
+        on_or_after = dated - before - early
+        bits.append(f"left out {before} stamped before {cutoff:%b %-d} (earlier orders)")
+        parts = [f"{on_or_after} stamped {start:%b %-d} or later"]
+        if early:
+            parts.append(f"{early} stamped {cutoff:%b %-d}")
+        if counted.rows - dated:
+            parts.append(f"{counted.rows - dated} with no readable stamp")
+        bits.append(f"counted {got}: " + ", ".join(parts))
+    else:
+        bits.append(f"counted all {got}")
+    return "-# How I counted: " + " · ".join(bits)
+
+
 def key(agent: HubAgent) -> str:
     """Which order this is. Not `fulfilled_at`: that's the row's last save,
     and a later edit would make the same order look new."""

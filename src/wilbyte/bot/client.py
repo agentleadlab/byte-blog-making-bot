@@ -8057,7 +8057,9 @@ async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None
     behind = [one for one in done if one.counter_off()]
     fine = len(done) - len(short) - len(unread) - len(behind)
     shown = done if who.strip() else short + behind + unread
-    lines = [hub.describe(one) for one in shown]
+    # One person asked about: the working too, to hold against the sheet.
+    lines = [hub.describe(one) + (("\n" + hub.working(one)) if who.strip() and hub.working(one) else "")
+             for one in shown]
     if not who.strip():
         lines.append(f"✅ {fine} other(s) match the hub." if shown else f"✅ All {fine} match the hub.")
     for start in range(0, len(lines), 12):

@@ -103,6 +103,8 @@ class Counted:
     #: The rows that carry a date, by the date - empty when the sheet has no
     #: column dating its leads.
     by_day: dict = field(default_factory=dict)
+    #: Rows under the heading that aren't leads: test leads, dispo banners.
+    left_out: int = 0
 
     @property
     def first(self) -> date | None:
@@ -165,10 +167,13 @@ def count_rows(rows: list, *, tab: str = "") -> Counted:
         return Counted(tab=tab)
     top = _heading_row(rows)
     heads = rows[top]
-    body, mark, after = [], "", None
+    body, mark, after, left_out = [], "", None, 0
     for row in rows[top + 1:]:
         filled = [str(cell).strip() for cell in row if str(cell).strip()]
-        if not filled or any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3]):
+        if not filled:
+            continue
+        if any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3]):
+            left_out += 1
             continue
         # A line on its own saying a new order starts here: not a lead, and
         # the leads below it are that order's.
@@ -185,7 +190,8 @@ def count_rows(rows: list, *, tab: str = "") -> Counted:
             when = as_day(row[at]) if at < len(row) else None
             if when is not None:
                 by_day[when] = by_day.get(when, 0) + 1
-    return Counted(rows=len(body), tab=tab, by_day=by_day, this_order=after, order_mark=mark)
+    return Counted(rows=len(body), tab=tab, by_day=by_day, this_order=after, order_mark=mark,
+                   left_out=left_out)
 
 
 @dataclass

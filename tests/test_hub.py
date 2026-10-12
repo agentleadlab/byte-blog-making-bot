@@ -386,3 +386,19 @@ def test_a_lead_without_a_readable_stamp_still_counts():
     one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30", start_date="2026-10-09")),
                       counted=delivery.count_rows(rows))
     assert one.on_sheet == 30 and one.short_by() == 0
+
+
+def test_one_persons_check_shows_its_working():
+    """"how can i trust him" - the count, broken down to check by eye."""
+    rows = [["Name", "Email", "Phone Number", "Lead Opt In Time Stamp"],
+            ["Test Lead", "test@agentleadlab.com", "214-555-0100", ""]]
+    rows += [[f"Old {n}", "o@example.com", "555", "Oct 1, 9:00:00 AM EDT"] for n in range(20)]
+    rows += [[f"New {n}", "n@example.com", "555", "Oct 9, 9:00:00 AM EDT"] for n in range(27)]
+    rows += [["Late", "l@example.com", "555", ""], ["Odd", "d@example.com", "555", "9th"],
+             ["Early", "e@example.com", "555", "Oct 8, 11:50:00 PM EDT"]]
+    one = hub.Checked(agent=hub.read(record(delivered=30, ordered=30, progress="30/30", start_date="2026-10-09")),
+                      counted=delivery.count_rows(rows, tab="Leads"))
+    said = hub.working(one)
+    assert "50 lead row(s) on “Leads”" in said and "1 test/banner row(s) not counted" in said
+    assert "left out 20 stamped before Oct 8" in said
+    assert "counted 30: 27 stamped Oct 9 or later, 1 stamped Oct 8, 2 with no readable stamp" in said
