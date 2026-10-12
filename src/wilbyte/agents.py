@@ -151,6 +151,10 @@ LEAD_TYPE_BLOCK = re.compile(
 
 # What kind of leads. The word that matters, whatever it is dressed in.
 FAMILIES = (
+    # Widows first: "veteran-widows" and "veteran-widow-fex" are the widow
+    # product (the hub's VET_WIDOW, "Text Verified Widow Plus"). Read
+    # first-match they went onto vets, then FEX - "this is widows, not vets".
+    ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
     # SIUL is Spanish IUL, BC is Blue Collar IUL, and a trucker is an IUL
     # too - all three are IUL products on this board, and the checklists say
     # so outright: "OTP Blue Collar IUL", "OTP IUL TRUCKER". So a card saying
@@ -185,10 +189,6 @@ FAMILIES = (
     ),
     ("fex", re.compile(r"\bfex\b|\bfinal\s+expense\b", re.IGNORECASE)),
     ("mtg", re.compile(r"\bmtg\b|\bmortgage\b", re.IGNORECASE)),
-    # Widows ahead of vets: "veteran-widows" is the widow product (the hub's
-    # VET_WIDOW, "Text Verified Widow Plus"), and read first-match it went
-    # onto the vets checklist - "this is widows, not vets".
-    ("widows", re.compile(r"\bwidows?\b", re.IGNORECASE)),
     ("vet", re.compile(r"\bvets?\b|\bveterans?\b", re.IGNORECASE)),
     # Uprise and Phoenix are one product under two names - "PHNX Standard" and
     # "UPRISE STANDARDS" are the same leads - so they reduce to one family and
@@ -1459,8 +1459,30 @@ def checklist_item(url: str, lead_type: str, *, day: str = "") -> str:
     Only on a card that spans days. On Tuesday's card everything goes live on
     the Wednesday, and saying so on every line is noise.
     """
-    said = f"{url} {lead_type}".strip()
+    said = f"{url} {in_team_words(lead_type)}".strip()
     return f"{said} {day}".strip() if day else said
+
+
+#: What the team calls each family on a line.
+TEAM_NAMES = {
+    "iul": "IUL", "mtg": "MTG", "vet": "VETS", "widows": "Widows", "fex": "FEX", "phnx": "Phoenix",
+}
+
+_SPARK_SHAPE = re.compile(r"[a-z]+(?:-[a-z]+)+")
+
+
+def in_team_words(lead_type: str) -> str:
+    """Spark's wording as the team writes it: "high-intent mortgage" is OTP
+    MTG, "Volume iul" is Standard IUL, "veteran-widow-fex" is Widows - "why
+    is it not otp mtg, standard iul and widows???????". Anything else is
+    left exactly as the card said it."""
+    said = " ".join(str(lead_type or "").split())
+    spark = VOLUME.search(said) or HIGH_INTENT.search(said) or _SPARK_SHAPE.fullmatch(said)
+    family = family_of(said) if spark else None
+    if not family or family not in TEAM_NAMES:
+        return said
+    tier = {"standard": "Standard", "plus": "OTP"}.get(volume_or_intent(said) or "", "")
+    return f"{tier} {TEAM_NAMES[family]}".strip()
 
 
 def item_lead_type(name: str) -> str:

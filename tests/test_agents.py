@@ -4770,3 +4770,22 @@ def test_veteran_widows_go_on_the_widows_checklist(said):
     assert agents.family_of(said) == "widows"
     assert agents.match_checklist(said, have) == "OTP Widows"
     assert agents.match_checklist("20 otp vets", have) == "OTP VET Plus"
+
+
+@pytest.mark.parametrize("spark, team, checklist", [
+    ("Volume iul", "Standard IUL", "IUL Standard"),
+    ("high-intent mortgage", "OTP MTG", "OTP MTG Plus"),
+    ("veteran-widow-fex", "Widows", "OTP Widows"),
+    ("Volume mortgage", "Standard MTG", "MTG Standard"),
+])
+def test_sparks_words_go_on_the_line_as_the_team_says_them(spark, team, checklist):
+    """"why is it not otp mtg, standard iul and widows???????\""""
+    have = ["OTP VET Plus", "OTP Widows", "OTP IUL Plus", "IUL Standard", "OTP FEX", "OTP MTG Plus", "MTG Standard"]
+    assert agents.in_team_words(spark) == team
+    assert agents.match_checklist(spark, have) == checklist
+    assert agents.checklist_item("https://trello.com/c/x", spark) == f"https://trello.com/c/x {team}"
+
+
+@pytest.mark.parametrize("said", ["20 otp vets", "PHOENIX PLUS 2.0", "OTP VETS", "30 text verify fresh vets"])
+def test_the_teams_own_words_are_left_alone(said):
+    assert agents.in_team_words(said) == said
