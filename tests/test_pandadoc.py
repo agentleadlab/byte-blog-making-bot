@@ -288,3 +288,36 @@ def test_the_demo_stamp_is_found_in_the_pdf_itself():
         "This document is for demo purposes only and is not intended for legal use."
     )) is True
     assert pandadoc.stamped_demo(_pdf_saying("Lead Generation Services Agreement")) is False
+
+
+def test_too_many_requests_midway_keeps_what_was_read():
+    """"Contract check: PandaDoc says too many requests" every half hour - and
+    the whole pass thrown away each time, so it never got past the first sixty."""
+    from datetime import datetime, timezone
+
+    class Busy(Reader):
+        def details(self, doc_id):
+            if doc_id == "d2":
+                raise pandadoc.PandaDocError("PandaDoc says too many requests - try again in a minute.")
+            return super().details(doc_id)
+
+    reader = Busy(
+        [{"id": "d1", "name": "Basic Contract x Jo Example", "date_modified": "2026-10-01T15:00:00Z"},
+         {"id": "d2", "name": "Basic Contract x Al Example", "date_modified": "2026-10-01T16:00:00Z"}],
+        {"d1": ["jo@example.com"], "d2": ["al@example.com"]},
+    )
+    data = pandadoc.sync("k", now=datetime(2026, 10, 2, tzinfo=timezone.utc), client=reader)
+    assert [one.person for one in pandadoc.contracts(data)] == ["Jo Example"]
+    assert "emails" not in data["docs"]["d2"], "read next time"
+
+
+def test_told_to_slow_down_it_waits_and_asks_again(monkeypatch):
+    import httpx
+
+    replies = iter([httpx.Response(429, headers={"Retry-After": "1"}), httpx.Response(200, json={"ok": True})])
+    from types import SimpleNamespace
+
+    client = pandadoc.PandaDoc.__new__(pandadoc.PandaDoc)
+    client._http = SimpleNamespace(get=lambda url, params=None: next(replies))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert client.get("/documents") == {"ok": True}

@@ -46,10 +46,22 @@ class PandaDoc:
     def get(self, path: str, **params) -> dict:
         import httpx
 
-        try:
-            got = self._http.get(BASE + path, params=params)
-        except httpx.HTTPError as exc:
-            raise PandaDocError(f"Couldn't reach PandaDoc: {exc}") from exc
+        import time
+
+        # "PandaDoc says too many requests" every half hour: told to slow
+        # down, it waits as long as PandaDoc says (a little) and asks again.
+        for pause in (*RATE_PAUSES, None):
+            try:
+                got = self._http.get(BASE + path, params=params)
+            except httpx.HTTPError as exc:
+                raise PandaDocError(f"Couldn't reach PandaDoc: {exc}") from exc
+            if got.status_code != 429 or pause is None:
+                break
+            try:
+                asked = float(got.headers.get("Retry-After") or 0)
+            except ValueError:
+                asked = 0
+            time.sleep(min(max(asked, pause), 30))
         if got.status_code == 401:
             raise PandaDocError(
                 "PandaDoc says the key isn't valid (HTTP 401). Check PANDADOC_API_KEY "
@@ -113,7 +125,14 @@ FIRST_DAYS = 90
 
 #: Documents whose recipients are read in one pass. The first read is a few
 #: hundred; the rest are read on the passes after it rather than all at once.
-DETAILS_PER_PASS = 60
+#: Sixty in a burst was PandaDoc's "too many requests", every pass.
+DETAILS_PER_PASS = 20
+
+#: Seconds between one document's details and the next.
+DETAILS_PAUSE = 1.0
+
+#: Waits before asking again when PandaDoc says slow down.
+RATE_PAUSES = (5.0, 15.0, 30.0)
 
 
 def load(path: Path | None = None) -> dict:
@@ -156,8 +175,18 @@ def sync(key: str, *, now: datetime | None = None, path: Path | None = None,
             if len(got) < 100:
                 break
         waiting = [doc_id for doc_id, one in data["docs"].items() if "emails" not in one]
-        for doc_id in waiting[:DETAILS_PER_PASS]:
-            told = reading.details(doc_id)
+        import time
+
+        for at, doc_id in enumerate(waiting[:DETAILS_PER_PASS]):
+            if at:
+                time.sleep(DETAILS_PAUSE)
+            try:
+                told = reading.details(doc_id)
+            except PandaDocError:
+                # What was read so far is kept; the rest wait for next time.
+                # Failing here used to throw away the whole pass, so it never
+                # got past the same sixty.
+                break
             held = data["docs"][doc_id]
             held["emails"] = sorted({
                 str(one.get("email") or "").casefold()

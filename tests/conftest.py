@@ -35,6 +35,9 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(watchedseen, "SEEN_PATH", tmp_path / "watched-seen.json")
     monkeypatch.setattr(mentionseen, "SEEN_PATH", tmp_path / "mentions-seen.json")
     monkeypatch.setattr(pandadoc, "CONTRACTS_PATH", tmp_path / "pandadoc-contracts.json")
+    # And no real waiting between PandaDoc reads.
+    monkeypatch.setattr(pandadoc, "DETAILS_PAUSE", 0)
+    monkeypatch.setattr(pandadoc, "RATE_PAUSES", (0, 0, 0))
     # Nor a card read by another test, kept as if it were this one's.
     from wilbyte.bot import jobs
 
