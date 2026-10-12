@@ -267,12 +267,12 @@ def _show(data, *, status=200):
         except Exception:
             pytest.skip("no browser here")
         page = browser.new_page()
-        page.route("https://agentleadlab.test/", lambda r: r.fulfill(body=page_html, content_type="text/html"))
+        page.route("https://agentleadlab.test/success_stories", lambda r: r.fulfill(body=page_html, content_type="text/html"))
         page.route("https://leadlabcrm.com/**", lambda r: r.fulfill(
             status=status, body=body if status == 200 else "", content_type="application/json",
             headers={"access-control-allow-origin": "*"},
         ))
-        page.goto("https://agentleadlab.test/")
+        page.goto("https://agentleadlab.test/success_stories")
         page.wait_for_timeout(900)
         titles = page.eval_on_selector_all(".alp-vtitle", "els => els.map(e => e.textContent)")
         page.click(".alp-frame")
@@ -520,3 +520,43 @@ def test_duplicates_are_said_before_the_button(monkeypatch):
 def test_a_section_is_known_past_its_spelling(said, section):
     """Karyn Giles's Segment 1: "“Agent’s Expectation” isn't one of the website sections"."""
     assert sp.section_named(said) == section
+
+
+def test_full_interviews_follow_the_websites_list_newest_first():
+    """"no, this three should be the latest videos" - James, Aidan and
+    Marissa showed while the website's own list had a dozen newer."""
+    from wilbyte import successpage
+
+    data = {"sections": [
+        {"c": "Agent Success Full Interviews", "v": [
+            {"id": "jamesxxxxxx", "t": "20-Year-Old College Student", "w": "James Geway"},
+            {"id": "aidanxxxxxx", "t": "From the Back of a Garbage Truck", "w": "Aidan Abell"},
+            {"id": "keepmexxxxx", "t": "Not on the website list", "w": "Someone"},
+        ]},
+        {"c": "Veteran Training", "v": [{"id": "segmentxxxx", "t": "Veteran Telesales Script", "w": "x"}]},
+    ]}
+    ordered = [
+        {"id": "raymondxxxx", "title": "Burning $10K a Month on Leads", "who": "Raymond", "what": "Raymond"},
+        {"id": "emanuelxxxx", "title": "How Emanuel Writes Veteran Policies", "who": "Emanuel", "what": "Emanuel"},
+        {"id": "aidanxxxxxx", "title": "ignored - keeps its own", "who": "Aidan", "what": "Aidan"},
+        {"id": "dupexxxxxxx", "title": "Veteran Telesales Script", "who": "x", "what": "Dupe"},
+        {"id": "jamesxxxxxx", "title": "ignored", "who": "James", "what": "James"},
+    ]
+    updated, added, left = successpage.follow(data, "Agent Success Full Interviews", ordered)
+    row = updated["sections"][0]["v"]
+    assert [v["id"] for v in row] == ["raymondxxxx", "emanuelxxxx", "aidanxxxxxx", "jamesxxxxxx", "keepmexxxxx"]
+    assert row[2]["t"] == "From the Back of a Garbage Truck"
+    assert [one["what"] for one in added] == ["Raymond", "Emanuel"]
+    assert [one["what"] for one in left] == ["Dupe"]
+    assert data["sections"][0]["v"][0]["id"] == "jamesxxxxxx", "changed the list it was given"
+
+
+def test_sync_full_interviews_is_a_command():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> sync full interviews").action == "fullinterviews"
+
+
+def test_the_snippet_does_nothing_on_other_pages():
+    """It goes in the whole website's code, so it runs on every page."""
+    assert "if (!/success[_-]?stories/i.test(location.pathname)) return;" in LOADER.read_text(encoding="utf-8")

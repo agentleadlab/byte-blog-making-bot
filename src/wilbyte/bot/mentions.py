@@ -799,6 +799,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     post = POST_SEGMENTS.match(text)
     if post:
         return MentionRequest(action="postsegments", brief=post.group(1).strip(" .!?:"))
+    if re.match(r"\s*(?:success\s+)?(?:sync|update|refresh|fix)\s+(?:the\s+)?(?:full\s+)?interviews?\b"
+                r"|\s*(?:success\s+)?(?:full\s+)?interviews?\s+(?:sync|update|refresh)\b", text, re.IGNORECASE):
+        return MentionRequest(action="fullinterviews", brief=text)
     gone = SUCCESS_REMOVE.match(text)
     if gone:
         return MentionRequest(action="successremove", brief=gone.group(1).strip())
@@ -1403,6 +1406,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **contracts** — today's and tomorrow's go-lives, and whether each order has its own signed contract
 > @RYTE **post segments Karyn Giles** — her segments that have a YouTube link, onto the
 > Success Stories page, each first in its section, after a button. **success remove <link>** — take one off
+> @RYTE **sync full interviews** — Agent Success Full Interviews put in the same order as the
+> website's interview list, newest first, after a button. A new **testimonial** goes there by itself
 > @RYTE **fix doc Crystal Clark** — put one old tab of the segments doc into the new
 > layout, after a button. Only if every word survives, YouTube links included
 > @RYTE **invoice of David Pereira** — their paid Payra invoices as a PDF, with every

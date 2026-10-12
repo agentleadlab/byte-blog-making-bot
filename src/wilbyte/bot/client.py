@@ -1590,6 +1590,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _success_remove(responder, config, request.brief or "")
                 return
 
+            if request.action == "fullinterviews":
+                await _full_interviews(responder, config)
+                return
+
             if request.action == "doclayout":
                 await _relayout_doc(responder, config, request.brief or "")
                 return
@@ -2077,6 +2081,36 @@ async def _post_segments(responder: Responder, config: Config, who: str) -> None
         await responder.send(f"⚠ Couldn't update the page: {_readable(exc)}")
         return
     await responder.send(said)
+
+
+async def _full_interviews(responder: Responder, config: Config) -> None:
+    """`@RYTE sync full interviews` - the Success Stories page's full
+    interviews in the website list's order, newest first, after the button."""
+    try:
+        _held, updated, added, left = await asyncio.to_thread(jobs.full_interviews_plan, config)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    from .. import segments, successpage
+
+    row = next((one for one in updated.get("sections") or [] if one.get("c") == segments.FULL_INTERVIEWS), {})
+    top = [f"{at}. **{v.get('t')}**" + (f" — {v.get('w')}" if v.get("w") else "")
+           for at, v in enumerate((row.get("v") or [])[:successpage.SHOWN], start=1)]
+    lines = [f"🎬 **Agent Success Full Interviews** would show, newest first:", *top,
+             f"-# {len(added)} interview(s) added, the rest re-ordered to match the website's list."]
+    lines += [f"-# Left out: {one['what']} — {one['why']}" for one in left[:5]]
+    view = views.ConfirmView(requester_id=responder.requester_id,
+                             timeout=config.discord.approval_timeout_seconds, label="Update the page", emoji="🎬")
+    await responder.send("\n".join(lines), view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    try:
+        await asyncio.to_thread(jobs.full_interviews_save, config, updated)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't update the page: {_readable(exc)}")
+        return
+    await responder.send("✅ Updated. Reload the Success Stories page - it switches over a few seconds after it opens.")
 
 
 async def _success_remove(responder: Responder, config: Config, said: str) -> None:

@@ -146,6 +146,37 @@ def add(data: dict, items: list[dict]) -> tuple[dict, list[dict], list[dict]]:
     return data, went, already
 
 
+def follow(data: dict, section: str, ordered: list[dict]) -> tuple[dict, list[dict], list[dict]]:
+    """The section put in the same order as `ordered` ({id, title, who}),
+    newest first. "no, this three should be the latest videos": Agent
+    Success Full Interviews showed James, Aidan and Marissa while the
+    website's own interview list had a dozen newer. Videos already in the
+    section keep their title; ones on the page under another section, or
+    looking the same as one, are left out; anything in the section that
+    isn't in `ordered` stays, after them. (new list, added, left out)."""
+    data = json.loads(json.dumps(data))
+    row = _section(data, section)
+    if row is None:
+        raise SuccessError(f"There's no “{section}” section on the Success Stories page.")
+    have = {v.get("id"): v for v in row.get("v") or []}
+    elsewhere = {"sections": [one for one in data.get("sections") or [] if one is not row]}
+    placed, added, left = [], [], []
+    for item in ordered:
+        if item["id"] in have:
+            placed.append(have.pop(item["id"]))
+            continue
+        why = duplicate_of(elsewhere, item) or next(
+            (f"looks the same as “{one['t']}”" for one in placed + list(have.values())
+             if similar_titles(one.get("t"), item["title"])), "")
+        if why:
+            left.append({**item, "why": why})
+            continue
+        placed.append({"id": item["id"], "t": item["title"], "w": item["who"]})
+        added.append(item)
+    row["v"] = placed + list(have.values())
+    return data, added, left
+
+
 def remove(data: dict, video: str) -> tuple[dict, list[dict]]:
     """The list without that video, wherever it is. (the new list, what went)."""
     data = json.loads(json.dumps(data))

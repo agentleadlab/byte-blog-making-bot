@@ -11304,6 +11304,47 @@ def success_take_down(config: Config, said: str) -> str:
     )
 
 
+def _youtube_title(video_id: str) -> str:
+    """A video's own title, from YouTube's oEmbed - no key, one small GET."""
+    import httpx
+
+    try:
+        got = httpx.get("https://www.youtube.com/oembed",
+                        params={"url": f"https://youtu.be/{video_id}", "format": "json"}, timeout=15)
+        return str(got.json().get("title") or "") if got.status_code == 200 else ""
+    except Exception:
+        return ""
+
+
+def full_interviews_plan(config: Config) -> tuple[dict, dict, list[dict], list[dict]]:
+    """The Success Stories page's full interviews, put in the order of the
+    website's own interview list - its featured one, then the rest, newest
+    first. (the list, its updated version, what would be added, what's left
+    out and why). Reads only."""
+    from .. import segments, successpage
+
+    with _wordpress(config) as site:
+        interviews = site.load() or {}
+        held, _started = _success_list(site)
+    known = {v.get("id"): v for row in held.get("sections") or [] for v in row.get("v") or []}
+    ordered = []
+    for one in [interviews.get("featured")] + list(interviews.get("videos") or []):
+        if not isinstance(one, dict) or not one.get("id") or any(o["id"] == one["id"] for o in ordered):
+            continue
+        name = str(one.get("name") or "").strip()
+        title = str((known.get(one["id"]) or {}).get("t") or "") or _youtube_title(one["id"]) \
+            or f"{name} — Full Interview"
+        ordered.append({"section": segments.FULL_INTERVIEWS, "id": one["id"], "title": title,
+                        "who": name, "what": name or one["id"]})
+    updated, added, left = successpage.follow(held, segments.FULL_INTERVIEWS, ordered)
+    return held, updated, added, left
+
+
+def full_interviews_save(config: Config, updated: dict) -> None:
+    with _wordpress(config) as site:
+        _success_save(site, updated)
+
+
 def testimonial_publish(config: Config, video: dict) -> str:
     """Put the interview on the site as the featured one. What happened, said."""
     from .. import website
@@ -11317,6 +11358,15 @@ def testimonial_publish(config: Config, video: dict) -> str:
         site.save(updated)
     said = (f"✅ **{video['name']}** is the featured interview on the website now"
             + (f", and **{moved}** moved to the top of the grid" if moved else "") + ".")
+    # And first under Agent Success Full Interviews on the Success Stories
+    # page, which is meant to be the newest interviews too.
+    try:
+        _held, success, added, _left = full_interviews_plan(config)
+        if added:
+            full_interviews_save(config, success)
+            said += "\n✅ First under **Agent Success Full Interviews** on the Success Stories page too."
+    except Exception as exc:
+        said += f"\n-# Couldn't put it on the Success Stories page: {_short(exc, 120)}"
     if started:
         said += (f"\n-# First one: I started from the {len(held.get('videos') or [])} interviews "
                  "already on the page.")
