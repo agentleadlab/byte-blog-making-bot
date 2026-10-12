@@ -11149,8 +11149,24 @@ def testimonial_take_down(config: Config, video_id: str) -> str:
         was_featured = (held.get("featured") or {}).get("id") == video_id
         updated, featured = website.remove(held, video_id)
         site.save(updated)
-    return (f"🗑 **{gone['name']}** is off the website."
+    said = (f"🗑 **{gone['name']}** is off the website."
             + (f" **{featured}** is the featured interview again." if was_featured and featured else ""))
+    # And off the Success Stories page's full interviews, which follow the
+    # website's list - one that's gone from one shouldn't stay on the other.
+    try:
+        from .. import successpage
+
+        with _wordpress(config) as site:
+            success, _started = _success_list(site)
+            left, went = successpage.remove(success, video_id)
+            if went:
+                _success_save(site, left)
+                said += "\n🗑 Off the Success Stories page too."
+    except Exception:
+        import logging
+
+        logging.getLogger("wilbyte.bot").warning("Couldn't check the Success Stories page", exc_info=True)
+    return said
 
 
 def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
