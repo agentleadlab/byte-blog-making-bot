@@ -402,3 +402,44 @@ def test_one_persons_check_shows_its_working():
     assert "50 lead row(s) on “Leads”" in said and "1 test/banner row(s) not counted" in said
     assert "left out 20 stamped before Oct 8" in said
     assert "counted 30: 27 stamped Oct 9 or later, 1 stamped Oct 8, 2 with no readable stamp" in said
+
+
+@pytest.mark.parametrize("said, who", [
+    ("<@1> is Alexander Manchester fulfilled?", "Alexander Manchester"),
+    ("<@1> has Ian Miller been fulfilled", "Ian Miller"),
+    ("<@1> did Tavin Dougher get all his leads?", "Tavin Dougher"),
+    ("<@1> how many leads did Shelby Guest get", "Shelby Guest"),
+])
+def test_asked_the_way_people_ask_its_the_hub_check(said, who):
+    """Nicole's "is Alexander Manchester fulfilled?" went to the chat, which guessed."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse(said)
+    assert asked.action == "hubcheck" and asked.brief == who
+
+
+@pytest.mark.parametrize("said", ["<@1> is the board done?", "<@1> is it fulfilled yet?"])
+def test_not_every_is_it_done_is_about_an_agent(said):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(said).action != "hubcheck"
+
+
+def test_someone_not_fulfilled_yet_is_said_where_they_are(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client
+
+    def agents(secrets, *, status="fulfilled"):
+        return [hub.read(record(name="Matthew Moreno", status="live", progress="12/30", delivered=12))]
+
+    monkeypatch.setattr(hub, "fulfilled_tab", lambda secrets: [])
+    monkeypatch.setattr(hub, "agents", agents)
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    asyncio.run(client._hub_check(Responder(), SimpleNamespace(secrets=None), "Matthew Moreno"))
+    assert "isn't fulfilled yet" in sent[0] and "**live**" in sent[0] and "12/30" in sent[0]

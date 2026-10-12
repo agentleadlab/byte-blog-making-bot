@@ -699,6 +699,16 @@ FAITH_ASKED = re.compile(
 _ABOUT_AGENTS = re.compile(r"\b(?:agents?|clients?)\b", re.IGNORECASE)
 
 
+HUB_QUESTION = re.compile(
+    r"\s*(?:"
+    r"(?:is|was|has|have)\s+(.+?)\s+(?:been\s+)?(?:fulfilled|fulfill?ed)"
+    r"|(?:did|has)\s+(.+?)\s+(?:got|get|gotten|receive[d]?)\s+(?:all\s+)?(?:of\s+)?(?:their|his|her|the)\s+leads"
+    r"|how\s+many\s+leads\s+(?:did|has|have)\s+(.+?)\s+(?:got|get|gotten|receive[d]?)"
+    r")\s*(?:yet|already)?\s*[.?!]*\s*$",
+    re.IGNORECASE,
+)
+
+
 # A question about agents - "where does agent submit their sale", "how do
 # clients pay" - or anything said to be about RingCentral. "agent" is also
 # the word for filing new agents off In Que, and a question about how agents
@@ -811,6 +821,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
                       text, re.IGNORECASE | re.DOTALL)
     if hubbed:
         return MentionRequest(action="hubcheck", brief=hubbed.group(1))
+    # Asked the way people ask: "is Alexander Manchester fulfilled?", "did
+    # Ian Miller get all his leads", "how many leads did Tavin get". Nicole's
+    # question went to the chat, which could only guess.
+    asked = HUB_QUESTION.match(text)
+    who = " ".join(next((one for one in asked.groups() if one), "").split()) if asked else ""
+    # A person's name - a word or four, not "it" or "the board".
+    if who and len(who.split()) <= 4 and not re.match(r"(?:the|it|this|that|my|our|everyone|everybody)\b", who, re.IGNORECASE):
+        return MentionRequest(action="hubcheck", brief=who)
     if re.match(r"\s*restore\s+(?:your\s+|the\s+|my\s+)?(?:state|memory)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="restorestate", brief=text)
     if re.match(r"\s*(?:update|update\s+(?:now|yourself)|restart|pull)\s*[.?!]*\s*$", text, re.IGNORECASE):

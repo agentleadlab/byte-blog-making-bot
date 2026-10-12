@@ -8030,7 +8030,21 @@ async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None
     if who.strip():
         picked = hub.named(found, who)
         if not picked:
-            await responder.send(f"Nobody called **{who.strip()}** is on the hub's Fulfilled tab.")
+            # Not fulfilled - then say where they are, rather than nothing.
+            try:
+                anywhere = hub.named(await asyncio.to_thread(hub.agents, config.secrets, status="all"), who)
+            except hub.HubError:
+                anywhere = []
+            if anywhere:
+                await responder.send(
+                    f"**{who.strip()}** isn't fulfilled yet:\n" + "\n".join(
+                        f"• {one.name} ({one.lead_type or '?'}) — **{one.status or '?'}**, "
+                        f"{one.progress or '?'} sent" + (f", live {one.start_date:%b %-d}" if one.start_date else "")
+                        for one in anywhere[:5]
+                    )
+                )
+            else:
+                await responder.send(f"Nobody called **{who.strip()}** is on the hub at all.")
             return
     else:
         picked = [one for one in found if one.sheet_url][:HUB_CHECK_MOST]
