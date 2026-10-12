@@ -117,6 +117,16 @@ class Counted:
     this_order: int | None = None
     order_mark: str = ""
 
+    def all_but_before(self, day: date | None, *, grace: int = 1) -> int | None:
+        """Every lead except those stamped before `day` (less `grace` days) -
+        or None when nothing is stamped. A lead with no stamp, or one in a
+        shape that can't be read, still counts: counting only the stamped
+        ones called Matthew Moreno's 30 delivered leads 27."""
+        if day is None or not self.by_day:
+            return None
+        cutoff = day - timedelta(days=grace)
+        return self.rows - sum(many for when, many in self.by_day.items() if when < cutoff)
+
     def since(self, day: date | None) -> int | None:
         """Rows dated on or after `day`, or None when nothing is dated -
         a sheet carried over from an earlier order counts only this one."""

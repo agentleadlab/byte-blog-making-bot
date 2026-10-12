@@ -213,7 +213,10 @@ class Checked:
         if counted.this_order is not None:
             section, how = counted.this_order, f"under “{counted.order_mark}”"
         else:
-            section = counted.since(self.agent.start_date)
+            # Leaving out the earlier orders' leads rather than counting this
+            # one's: a stamp missing or unreadable, or a lead sent the night
+            # before going live, is still this order's lead.
+            section = counted.all_but_before(self.agent.start_date)
             how = f"since {self.agent.start_date:%b %-d}" if section is not None else ""
         if section is None:
             return counted.rows, "all of it"
