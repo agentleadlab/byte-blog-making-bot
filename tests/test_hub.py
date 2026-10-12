@@ -443,3 +443,32 @@ def test_someone_not_fulfilled_yet_is_said_where_they_are(monkeypatch):
 
     asyncio.run(client._hub_check(Responder(), SimpleNamespace(secrets=None), "Matthew Moreno"))
     assert "isn't fulfilled yet" in sent[0] and "**live**" in sent[0] and "12/30" in sent[0]
+
+
+def test_go_through_the_fulfilled_tab_in_words_is_the_hub_check():
+    """"go thru fulfilled section on hub and flag those marked as wromg" got
+    the chat saying it couldn't."""
+    from wilbyte.bot import mentions
+
+    asked = mentions.parse("<@1> go thru fulfilled section on hub and flag those marked as wromg")
+    assert asked.action == "hubcheck" and not asked.brief
+
+
+@pytest.mark.parametrize("name", ["📮┃ʜᴜʙ-ᴀɢᴇɴᴛ-ꜰᴜʟꜰɪʟʟᴍᴇɴᴛ", "📮｜𝗁𝗎𝖻-𝖺𝗀𝖾𝗇𝗍-𝖿𝗎𝗅𝖿𝗂𝗅𝗅𝗆𝖾𝗇𝗍"])
+def test_small_capitals_and_styled_letters_are_plain_letters(name):
+    """"New shorts are posted in the board's channel (no #hub-agent-fulfillment found)"."""
+    from wilbyte.bot import client
+
+    assert "hubagentfulfil" in client._plain_letters(name)
+
+
+def test_the_channel_hub_check_is_asked_in_is_where_alerts_go_otherwise(monkeypatch):
+    from wilbyte.bot import client
+
+    monkeypatch.delenv("DISCORD_HUB_CHANNEL_ID", raising=False)
+    there = SimpleNamespace(name="something-else", id=555)
+    bot = SimpleNamespace(guilds=[SimpleNamespace(text_channels=[there])],
+                          get_channel=lambda cid: there if cid == 555 else None)
+    assert client._hub_responder(bot) is None
+    hub.remember_channel(555)
+    assert client._hub_responder(bot).channel is there

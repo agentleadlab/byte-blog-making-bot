@@ -7999,15 +7999,38 @@ def _hub_responder(bot: "WilByteBot"):
         if channel is not None:
             return ChannelResponder(channel)
 
-    def letters(name) -> str:
-        return re.sub(r"[^a-z]", "", unicodedata.normalize("NFKC", str(name or "")).casefold())
-
     for guild in getattr(bot, "guilds", None) or []:
         for channel in getattr(guild, "text_channels", None) or []:
-            if "hubagentfulfil" in letters(getattr(channel, "name", "")):
+            if "hubagentfulfil" in _plain_letters(getattr(channel, "name", "")):
                 return ChannelResponder(channel)
+    # Else wherever `@RYTE hub check` was last asked - that is the channel
+    # somebody reads these in.
+    from .. import hub
+
+    remembered = hub.remembered_channel()
+    channel = bot.get_channel(remembered) if remembered and hasattr(bot, "get_channel") else None
+    if channel is not None:
+        return ChannelResponder(channel)
     log.warning("No #hub-agent-fulfillment found - hub alerts go to the board's channel")
     return None
+
+
+def _plain_letters(name) -> str:
+    """A name's letters a-z, whatever they're written in: "𝒩𝒾𝒸𝑜𝓁𝑒" and
+    "ʜᴜʙ-ᴀɢᴇɴᴛ" (small capitals, which NFKC leaves alone) read as plain
+    letters, emoji and separators dropped."""
+    import unicodedata
+
+    out = []
+    for ch in unicodedata.normalize("NFKC", str(name or "")):
+        if ch.isascii():
+            out.append(ch.casefold())
+            continue
+        named = re.match(r"LATIN (?:SMALL |CAPITAL )?LETTER (?:SMALL CAPITAL )?([A-Z])\b",
+                         unicodedata.name(ch, ""))
+        if named:
+            out.append(named.group(1).casefold())
+    return re.sub(r"[^a-z]", "", "".join(out))
 
 
 #: Sheets read for one `@RYTE hub check` of the whole Fulfilled tab.
@@ -8078,6 +8101,11 @@ async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None
         lines.append(f"✅ {fine} other(s) match the hub." if shown else f"✅ All {fine} match the hub.")
     for start in range(0, len(lines), 12):
         await responder.send("\n".join(lines[start:start + 12]))
+    # Asked here, so here is where these are read - unless a channel is set
+    # or found by name.
+    channel_id = getattr(getattr(responder, "channel", None), "id", None) or getattr(responder, "channel_id", None)
+    if channel_id:
+        hub.remember_channel(channel_id)
     alerts = _hub_responder(bot) if bot is not None else None
     where = f"<#{alerts.channel.id}>" if alerts is not None and getattr(alerts.channel, "id", None) else \
         "the board's channel (no #hub-agent-fulfillment found)"

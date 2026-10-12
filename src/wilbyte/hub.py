@@ -348,6 +348,24 @@ def named(found: list[HubAgent], who: str) -> list[HubAgent]:
 
 
 SEEN_PATH = _state_dir() / "hub-checked.json"
+CHANNEL_PATH = _state_dir() / "hub-channel.json"
+
+
+def remember_channel(channel_id, path: Path | None = None) -> None:
+    """The channel `@RYTE hub check` was last asked in."""
+    where = path or CHANNEL_PATH
+    try:
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(json.dumps({"channel": int(channel_id)}), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def remembered_channel(path: Path | None = None) -> int | None:
+    try:
+        return int(json.loads((path or CHANNEL_PATH).read_text(encoding="utf-8")).get("channel"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
 
 
 def checked(path: Path | None = None) -> dict:

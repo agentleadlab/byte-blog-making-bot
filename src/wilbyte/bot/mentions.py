@@ -821,6 +821,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
                       text, re.IGNORECASE | re.DOTALL)
     if hubbed:
         return MentionRequest(action="hubcheck", brief=hubbed.group(1))
+    # The whole tab, asked for in words: "go thru fulfilled section on hub
+    # and flag those marked as wrong" got the chat saying it couldn't.
+    if re.search(r"\bfulfill?(?:ed|ment)?\b", text, re.IGNORECASE) and re.search(
+        r"\b(?:go\s+(?:thru|through|over)|check|flag|look\s+(?:at|through|thru|over)|review|audit|scan|verify)\b",
+        text, re.IGNORECASE,
+    ) and not HUB_QUESTION.match(text):
+        return MentionRequest(action="hubcheck", brief="")
     # Asked the way people ask: "is Alexander Manchester fulfilled?", "did
     # Ian Miller get all his leads", "how many leads did Tavin get". Nicole's
     # question went to the chat, which could only guess.
