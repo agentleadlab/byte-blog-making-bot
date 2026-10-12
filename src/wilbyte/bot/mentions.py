@@ -1400,7 +1400,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > their own messages, into a folder named for them
 > @RYTE **testimonial https://youtu.be/…** — a full interview for the website's video
 > section, with `quote: …` after the link (and `name: …` if the video doesn't say), then Add.
-> link to set them yourself. **testimonial remove Raymond** — take one off.
+> @RYTE **testimonial remove Raymond** — take one off the website (and Full Interviews), after a button.
 > **website check** — whether I can reach the site
 > @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents
 > @RYTE **contracts** — today's and tomorrow's go-lives, and whether each order has its own signed contract
