@@ -11814,7 +11814,10 @@ def _ryte_card(client, config):
 
     cards = client.board_cards(config.secrets.trello_board_id)
     wanted = setupcheck.CARD_NAME.casefold()
-    card = next((one for one in cards if " ".join(str(one.get("name") or "").split()).casefold() == wanted), None)
+    # The newest, when there's more than one - "Ryte Checklist" remade fresh
+    # leaves the old one on the board. A Trello id starts with when it was made.
+    named = [one for one in cards if " ".join(str(one.get("name") or "").split()).casefold() == wanted]
+    card = max(named, key=lambda one: str(one.get("id") or "")) if named else None
     if card is None:
         raise ValueError(f"There's no “{setupcheck.CARD_NAME}” card on the board - it's where I keep the setups.")
     lists = {str(one.get("name") or "").strip().casefold(): one
@@ -11969,7 +11972,7 @@ def read_team_request(config: Config, *, asker: str, asked: list[str], text: str
         },
     }
     content = [{"type": "text", "text": (
-        f"In {where}, {asker} wrote this, tagging {', '.join(asked) or 'a teammate'}:\n\n{text}"
+        f"In {where}, {asker} wrote this, tagging {', '.join(asked) or 'the whole team (@here or a role)'}:\n\n{text}"
         + ("\n\n(It's been marked as a task - just name it.)" if forced else ""))}]
     for url in images[:3]:
         content.append({"type": "image", "source": {"type": "url", "url": url}})

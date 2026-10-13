@@ -434,7 +434,7 @@ class WilByteBot(discord.Client):
             return
         try:
             who = getattr(payload.member, "display_name", None) or str(payload.user_id)
-            await _team_task_closes(self, str(payload.message_id), payload.user_id, who)
+            await _team_task_closes(self, str(payload.message_id), payload.user_id, who, emoji=payload.emoji)
         except Exception:
             log.exception("Couldn't tick off that request")
 
@@ -8501,7 +8501,10 @@ async def _team_message(bot, message) -> None:
     try:
         await _team_done_said(bot, message)
         people = _tagged_people(bot, message)
-        if not people:
+        # "@here Jack Mahn would like to be on a schedule ..." - asked of the
+        # room, or of a role: a request too, nobody's in particular.
+        to_the_room = bool(getattr(message, "mention_everyone", False) or getattr(message, "role_mentions", None))
+        if not people and not to_the_room:
             return
         text, images = _request_bits(message)
         if len(_TAGGED.sub("", text).strip()) < 3 and not images:
@@ -8568,14 +8571,18 @@ async def _team_done_said(bot, message) -> None:
             await _team_task_closes(bot, task["id"], message.author.id, who, when=message.created_at)
 
 
-async def _team_task_closes(bot, key: str, person_id, who: str, *, when=None) -> bool:
-    """Ticked off, if it's open and this is somebody it was asked of."""
+async def _team_task_closes(bot, key: str, person_id, who: str, *, when=None, emoji=None) -> bool:
+    """Ticked off, if it's open and this is somebody it was asked of - by a
+    reaction (`emoji`) or by saying it's done."""
     from .. import teamtasks
 
     async with _TEAM_LOCK:
         held = await asyncio.to_thread(teamtasks.load)
         task = held.get(str(key))
-        if not task or task.get("done_at") or not teamtasks.closes_it(task, person_id):
+        if not task or task.get("done_at"):
+            return False
+        if not (teamtasks.reaction_closes(task, person_id, emoji) if emoji is not None
+                else teamtasks.closes_it(task, person_id)):
             return False
         task["done_by"] = who
         task["done_at"] = (when or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(timespec="minutes")
@@ -8605,9 +8612,9 @@ async def _team_tasks_catch_up(bot) -> None:
         closed = False
         for reaction in getattr(asked, "reactions", None) or []:
             async for person in reaction.users():
-                if teamtasks.closes_it(task, person.id) and not getattr(person, "bot", False):
+                if teamtasks.reaction_closes(task, person.id, reaction.emoji) and not getattr(person, "bot", False):
                     closed = await _team_task_closes(bot, task["id"], person.id, str(
-                        getattr(person, "display_name", "") or person.name))
+                        getattr(person, "display_name", "") or person.name), emoji=reaction.emoji)
                     break
             if closed:
                 break

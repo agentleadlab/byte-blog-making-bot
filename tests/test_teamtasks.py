@@ -160,7 +160,7 @@ def test_an_emoji_from_nicole_ticks_it_and_from_anybody_else_doesnt(card):
 def test_what_was_missed_while_down_is_caught_up(card, monkeypatch):
     asyncio.run(client._team_message(BOT, faith_asks()))
     asked = faith_asks()
-    asked.reactions = [SimpleNamespace(users=lambda: _gen([ELISA_P]))]
+    asked.reactions = [SimpleNamespace(emoji=SimpleNamespace(name="👍"), users=lambda: _gen([ELISA_P]))]
     later = [message(11, ELISA_P, "done"), message(12, NICOLE_P, "all set ✅")]
 
     class Where:
@@ -181,7 +181,7 @@ def test_what_was_missed_while_down_is_caught_up(card, monkeypatch):
 def test_a_reaction_from_nicole_is_caught_up_too(card):
     asyncio.run(client._team_message(BOT, faith_asks()))
     asked = faith_asks()
-    asked.reactions = [SimpleNamespace(users=lambda: _gen([NICOLE_P]))]
+    asked.reactions = [SimpleNamespace(emoji=SimpleNamespace(name="👍"), users=lambda: _gen([NICOLE_P]))]
 
     class Where:
         async def fetch_message(self, i):
@@ -312,3 +312,43 @@ def test_franklin_is_pinged_in_ryte_the_goat_and_nothing_goes_to_growth(monkeypa
     late = NOW.replace(hour=4)  # 11pm Central
     teamtasks.save({"1": _open(1, 30)})
     assert asyncio.run(client._team_reminders(bot, now=late)) == [] and len(sent) == 1, "pinged at 11pm"
+
+
+# ------------------------------------------------------------- asked of the room
+
+def test_an_at_here_request_is_tracked_and_only_a_check_from_someone_else_closes_it(card):
+    santiago = person(55, "Santiago Villegas")
+    asked = message(70, santiago, "@here Jack Mahn would like to be on a schedule from Monday - Saturday 9am to 10pm est",
+                    channel=ROOM)
+    asked.mention_everyone = True
+    asyncio.run(client._team_message(BOT, asked))
+    assert card.added == ["Michael Greff - set a 10/day cap · the team (asked by Santiago Villegas 10/13)"]
+    assert card.reads[0]["asked"] == []
+
+    assert not asyncio.run(client._team_task_closes(BOT, "70", NICOLE, "Nicole", emoji=SimpleNamespace(name="💙")))
+    assert not asyncio.run(client._team_task_closes(BOT, "70", 55, "Santiago", emoji=SimpleNamespace(name="✅")))
+    assert asyncio.run(client._team_task_closes(BOT, "70", NICOLE, "Nicole", emoji=SimpleNamespace(name="✅")))
+    assert "done by Nicole" in card.ticked[0]
+
+
+def test_someone_tagged_still_closes_it_with_any_emoji(card):
+    asyncio.run(client._team_message(BOT, faith_asks()))
+    assert asyncio.run(client._team_task_closes(BOT, "1", NICOLE, "Nicole", emoji=SimpleNamespace(name="💙")))
+
+
+def test_plain_chat_with_nobody_tagged_isnt_read(card):
+    asyncio.run(client._team_message(BOT, message(71, FAITH_P, "Talked to her. She is fine now", channel=ROOM)))
+    assert card.reads == [] and card.added == []
+
+
+def test_the_newest_ryte_checklist_card_is_the_one(monkeypatch):
+    from tests.test_setupcheck import Board
+
+    board = Board()
+    board.board_cards = lambda board_id, archived=False: [
+        {"id": "5f00000000000000000000aa", "name": "Ryte Checklist"},
+        {"id": "6a0000000000000000000bbb", "name": "Ryte Checklist"}, {"id": "x", "name": "New Agent"}]
+    seen = []
+    board.card_checklists = lambda card_id: seen.append(card_id) or board.lists
+    card, _lists = jobs._ryte_card(board, SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")))
+    assert card["id"] == "6a0000000000000000000bbb" and seen == ["6a0000000000000000000bbb"]

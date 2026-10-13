@@ -65,6 +65,22 @@ def done_name(task: dict) -> str:
     return f"{item_name(task)} — done by {task.get('done_by') or '?'}{when}"
 
 
+#: What a reaction has to be to close a request asked of nobody in
+#: particular (@here, a role): a 💙 on it is somebody seeing it, not doing it.
+CHECKS = ("✅", "☑️", "✔️", "✔", "white_check_mark", "heavy_check_mark", "ballot_box_with_check")
+
+
+def reaction_closes(task: dict, person_id, emoji) -> bool:
+    """Whether this reaction ticks it off: any emoji from somebody it was
+    asked of; a ✅ from anybody but the asker when it was asked of the room."""
+    if not closes_it(task, person_id):
+        return False
+    if task.get("assignees"):
+        return True
+    name = str(getattr(emoji, "name", None) or emoji or "")
+    return name in CHECKS or name.rstrip("\ufe0f") in CHECKS
+
+
 def closes_it(task: dict, person_id: int | str) -> bool:
     """Whether this person finishing it closes it: somebody it was asked of -
     or, when it named nobody, anybody but the one who asked."""
