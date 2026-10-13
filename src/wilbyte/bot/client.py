@@ -376,6 +376,9 @@ class WilByteBot(discord.Client):
             # once Nova's read-only key is in .env.
             if getattr(self.config.secrets, "hub_api_token", None):
                 _also_running(self.loop.create_task(hub_check_loop(self)))
+                # The setups going live, on the Ryte Checklist card.
+                if getattr(self.config.secrets, "trello_key", None):
+                    _also_running(self.loop.create_task(setup_check_pass_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -1638,6 +1641,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "askfaith":
                 await _ask_about_faith(responder, config, request.brief or "")
+                return
+
+            if request.action == "rytechecklist":
+                await _ryte_checklist(bot, responder)
+                return
+
+            if request.action == "hubfields":
+                await _hub_fields(responder, config, request.brief or "")
                 return
 
             if request.action == "sitecode":
@@ -8083,6 +8094,202 @@ async def delivery_check_loop(bot: "WilByteBot") -> None:
 HUB_CHECK_SECONDS = 30 * 60
 
 
+# ------------------------------------------------ the setups, against the hub
+
+#: How often everybody scheduled on the hub is checked again.
+SETUP_CHECK_SECONDS = 30 * 60
+#: When tomorrow's not-ready list goes to Franklin, on the board's clock.
+SETUP_EVENING = (18, 0)
+#: How far back an archived thread is still read.
+SETUP_THREAD_DAYS = 30
+
+
+def _setup_guild(bot, config):
+    """The Growth Team server - DISCORD_SETUP_GUILD_ID, else by its name."""
+    wanted = (getattr(config.secrets, "discord_setup_guild_id", "") or "").strip()
+    if wanted.isdigit():
+        return bot.get_guild(int(wanted))
+    for guild in getattr(bot, "guilds", None) or []:
+        if "growth" in _plain_letters(getattr(guild, "name", "")):
+            return guild
+    return None
+
+
+async def _setup_threads(guild) -> list:
+    """Every thread in the server worth looking in: the open ones, and the
+    ones closed in the last month. Read only."""
+    found = {}
+    try:
+        for one in await guild.active_threads():
+            found[one.id] = one
+    except Exception:
+        log.warning("Couldn't list the open threads", exc_info=True)
+    since = datetime.now(timezone.utc) - timedelta(days=SETUP_THREAD_DAYS)
+    for channel in getattr(guild, "text_channels", None) or []:
+        try:
+            async for one in channel.archived_threads(limit=25):
+                stamp = getattr(one, "archive_timestamp", None)
+                if stamp is not None and stamp < since:
+                    break
+                found.setdefault(one.id, one)
+        except Exception:
+            continue
+    return list(found.values())
+
+
+async def _thread_said(thread) -> list[dict]:
+    """A thread's messages, oldest first, screenshots as links."""
+    said = []
+    async for message in thread.history(limit=80):
+        images = [str(one.url) for one in getattr(message, "attachments", None) or []
+                  if str(getattr(one, "content_type", "") or "").startswith("image/")]
+        said.append({
+            "id": int(message.id),
+            "who": str(getattr(message.author, "display_name", "") or getattr(message.author, "name", "")),
+            "when": message.created_at.isoformat(timespec="minutes"),
+            "text": _all_of_it(message), "images": images,
+        })
+    return list(reversed(said))
+
+
+async def _setup_pass(bot) -> tuple[list, list, list[str]]:
+    """Everybody on their way to going live on the hub, checked against their
+    thread and their payment, and the Ryte Checklist card kept up to date.
+    (results, newly wrong [(title, lines, link)], problems)."""
+    from .. import hub, setupcheck
+
+    config = bot.config
+    today = _today(config)
+    everybody = []
+    for status in setupcheck.COMING:
+        try:
+            everybody += await asyncio.to_thread(hub.agents, config.secrets, status=status)
+        except hub.HubError as exc:
+            if status == setupcheck.COMING[0]:
+                return [], [], [str(exc)]
+    agents = setupcheck.coming_up(everybody, today)
+    problems = []
+    guild = _setup_guild(bot, config)
+    if guild is None:
+        # Every one of them would read as "no thread" - which isn't so.
+        return [], [], ["I'm not in the Growth Team server, so I can't read the threads - "
+                        "or set DISCORD_SETUP_GUILD_ID in .env."]
+    threads = await _setup_threads(guild)
+
+    read = setupcheck.load("read")
+    results = []
+    for agent in agents:
+        mine = setupcheck.threads_for(agent.name, threads)
+        asked = None
+        if mine:
+            said = []
+            for thread in mine[:2]:
+                try:
+                    said += await _thread_said(thread)
+                except Exception:
+                    log.warning("Couldn't read the thread %s", getattr(thread, "name", "?"), exc_info=True)
+            said.sort(key=lambda one: one["when"])
+            hub_now = "|".join(str(part) for part in (
+                agent.lead_type, agent.ordered, agent.daily_cap, ",".join(agent.states),
+                agent.schedule, agent.start_date, agent.status))
+            sig = f"{max((one['id'] for one in said), default=0)}|{hub_now}"
+            key = setupcheck.key_of(agent)
+            held = read.get(key) or {}
+            got = held.get("got") if held.get("sig") == sig else None
+            if got is None and said:
+                try:
+                    got = await asyncio.to_thread(partial(jobs.read_setup_thread, config, agent, said, today=today))
+                    read[key] = {"sig": sig, "got": got}
+                except Exception as exc:
+                    problems.append(f"Couldn't read {agent.name}'s thread: {_readable(exc)}")
+            if got is not None:
+                asked = setupcheck.asked_from(got, thread=str(mine[0].name), link=str(getattr(mine[0], "jump_url", "")))
+        try:
+            paid = await asyncio.to_thread(jobs.paid_for, agent)
+        except Exception:
+            paid = None
+        results.append(setupcheck.check(agent, asked, paid=paid, today=today))
+    await asyncio.to_thread(setupcheck.save, "read", read)
+
+    said_before = await asyncio.to_thread(setupcheck.load, "said")
+    fresh, said_now, trouble = await asyncio.to_thread(
+        partial(jobs.sync_ryte_card, config, results, said_before=said_before))
+    problems += trouble
+    if not trouble:
+        await asyncio.to_thread(setupcheck.save, "said", said_now)
+    return results, fresh, problems
+
+
+def _setup_news(config, fresh) -> str:
+    """Newly wrong, said once - for Franklin."""
+    ping = _unmarked_ping(config)
+    lines = [f"{ping} ⚠ **Setups that don't match** — noted on the Ryte Checklist card:".strip()]
+    for title, wrong, link in fresh:
+        lines.append(f"**{title}**" + (f" · <{link}>" if link else ""))
+        lines += [f"• {line.split(': ', 1)[1]}" for line in wrong]
+    return "\n".join(lines)
+
+
+async def setup_check_pass_loop(bot: "WilByteBot") -> None:
+    """Every half hour: the hub's scheduled agents against their threads and
+    payments, on the Ryte Checklist card - and at six, tomorrow's not-ready
+    ones listed for Franklin, once."""
+    from .. import setupcheck
+
+    await asyncio.sleep(120)
+    while not bot.is_closed():
+        try:
+            results, fresh, problems = await _setup_pass(bot)
+            responder = _hub_responder(bot)
+            if fresh and responder is not None:
+                await responder.send(_setup_news(bot.config, fresh), quiet=True)
+            for one in problems:
+                log.warning("Ryte Checklist: %s", one)
+            now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
+            today = _today(bot.config)
+            said = await asyncio.to_thread(setupcheck.load, "said")
+            if (now.hour, now.minute) >= SETUP_EVENING and said.get("_evening") != today.isoformat() and results:
+                tomorrow = today + timedelta(days=1)
+                late = setupcheck.not_ready(results, tomorrow)
+                if late:
+                    text = (f"🌙 Going live tomorrow ({tomorrow:%a %m/%d}) and not all checked:\n"
+                            + "\n".join(f"• {setupcheck.item_title(one.agent.name, one.agent.lead_type, one.agent.start_date)}"
+                                        f" — {', '.join(f.what for f in one.wrong)}" for one in late))
+                    await asyncio.to_thread(jobs.ryte_card_note, bot.config, text)
+                    if responder is not None:
+                        ping = _unmarked_ping(bot.config)
+                        await responder.send(((ping + " ") if ping else "") + text, quiet=True)
+                said["_evening"] = today.isoformat()
+                await asyncio.to_thread(setupcheck.save, "said", said)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("The setup check failed; trying again next time")
+        await asyncio.sleep(SETUP_CHECK_SECONDS)
+
+
+async def _ryte_checklist(bot, responder: Responder) -> None:
+    """"@Ryte checklist" - the pass, now, and what it found."""
+    from .. import setupcheck
+
+    await responder.send("🔎 Checking everybody scheduled on the hub against their threads and payments…")
+    try:
+        results, fresh, problems = await _setup_pass(bot)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    if not results:
+        await responder.send("\n".join([f"⚠ {one}" for one in problems] or ["Nobody scheduled on the hub right now."]))
+        return
+    lines = [f"📋 **{len(results)} on their way to going live** — the Ryte Checklist card is up to date:"]
+    for one in results:
+        title = setupcheck.item_title(one.agent.name, one.agent.lead_type, one.agent.start_date)
+        lines.append(("✅ " if one.all_good else "⚠ ") + title
+                     + ("" if one.all_good else " — " + "; ".join(f"{f.what}: {f.said}" for f in one.wrong)))
+    lines += [f"⚠ {one}" for one in problems]
+    await responder.send("\n".join(lines)[:3900])
+
+
 async def hub_check_loop(bot: "WilByteBot") -> None:
     """Every order the hub newly marks fulfilled, against the agent's sheet -
     "if they really received the right amount". Each order checked once;
@@ -9025,6 +9232,27 @@ def faith_voice_said(got: dict, draft: str) -> str:
         lines += ["", "**As Faith would send it:**", fence, rewrite.replace(fence, "'''")[:1100], fence]
     lines.append(f"-# Held up to {got.get('examples', 0)} of her replies. Nothing was sent.")
     return "\n".join(lines)[:1995]
+
+
+async def _hub_fields(responder: Responder, config: Config, who: str) -> None:
+    """"@Ryte hub fields Gavin Littledike" - everything the hub gives for
+    them, a line a field. Reads only; emails and phone numbers blanked."""
+    from .. import clearout, hub
+
+    try:
+        everybody = await asyncio.to_thread(hub.agents, config.secrets, status="all")
+    except hub.HubError as exc:
+        await responder.send(f"⚠ {exc}")
+        return
+    found = [one for one in everybody if clearout.name_match(who, one.name) >= 2]
+    if not found:
+        await responder.send(f"Nobody on the hub called “{who}”.")
+        return
+    for one in found[:3]:
+        await responder.send(f"**{one.name}** — {one.lead_type or '?'} · {one.status or '?'}\n"
+                             + "\n".join(hub.fields_of(one)))
+    if len(found) > 3:
+        await responder.send(f"-# and {len(found) - 3} more with that name.")
 
 
 async def _site_code_once(config: Config) -> None:

@@ -475,3 +475,43 @@ def test_the_channel_hub_check_is_asked_in_is_where_alerts_go_otherwise(monkeypa
     assert client._hub_responder(bot) is None
     hub.remember_channel(555)
     assert client._hub_responder(bot).channel is there
+
+
+# ------------------------------------------------ "make sure ryte is not deleting anyone on hub"
+
+
+def test_ryte_only_ever_reads_the_hub():
+    """"Make sure ryte is not deleting anyone on hub or changing states and
+    caps" - nothing in RYTE sends the hub anything but a read."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "wilbyte"
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "hub_api" not in text and "HUB_API" not in text and path.name != "hub.py":
+            continue
+        writes = re.findall(r"\bhttpx\.(?:post|put|patch|delete|request)\b|\.(?:post|put|patch|delete)\(\s*(?:url|DEFAULT_URL)", text)
+        assert not writes, f"{path.name} writes to the hub: {writes}"
+
+
+def test_states_and_hours_are_read_however_the_hub_writes_them():
+    one = hub.read({"name": "Gavin Littledike", "states": "AZ,IL, oh ,SC,TX", "schedule": "24/7"})
+    assert one.states == ("AZ", "IL", "OH", "SC", "TX") and one.schedule == "24/7"
+    two = hub.read({"name": "x", "states": ["TX", "FL"], "delivery_window": {"days": "Mon-Fri", "hours": "9am-12:30pm CST"}})
+    assert two.states == ("TX", "FL") and two.schedule == "days Mon-Fri hours 9am-12:30pm CST"
+    assert hub.read({"name": "x"}).states == () and hub.read({"name": "x"}).schedule == ""
+
+
+def test_hub_fields_blanks_emails_and_phones_but_not_dates():
+    one = hub.read({"name": "x", "email": "pat@example.com", "phone": "(555) 010-0199", "start_date": "2026-10-14"})
+    said = "\n".join(hub.fields_of(one))
+    assert "[email]" in said and "[phone]" in said and "2026-10-14" in said
+    assert "example.com" not in said and "0199" not in said
+
+
+def test_hub_fields_is_a_command():
+    from wilbyte.bot import mentions
+
+    got = mentions.parse("<@1> hub fields Gavin Littledike")
+    assert (got.action, got.brief) == ("hubfields", "Gavin Littledike")

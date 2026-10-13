@@ -254,6 +254,12 @@ class Secrets:
     # order against the agent's sheet. The URL defaults to the hub's own.
     hub_api_url: str | None = None
     hub_api_token: str | None = None
+    #: The Growth Team server, where the team's client threads are. Found by
+    #: its name when this isn't set.
+    discord_setup_guild_id: str | None = None
+    #: Franklin's Trello username, for tagging him on the Ryte Checklist card.
+    #: Found among the board's members when this isn't set.
+    trello_franklin: str | None = None
     # The YouTube channels the interviews go up on, main one first - links,
     # @handles or UC... ids, comma-separated - for finding a segment's video by
     # its exact title.
@@ -435,6 +441,8 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 healthcheck_url=_env("HEALTHCHECK_URL"),
                 hub_api_url=_env("HUB_API_URL"),
                 hub_api_token=_env("HUB_API_TOKEN"),
+                discord_setup_guild_id=_env("DISCORD_SETUP_GUILD_ID"),
+                trello_franklin=_env("TRELLO_FRANKLIN"),
                 youtube_channel_id=_env("YOUTUBE_CHANNEL_ID"),
                 wordpress_url=_env("WORDPRESS_URL"),
                 wordpress_user=_env("WORDPRESS_USER"),

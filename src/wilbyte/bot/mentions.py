@@ -866,6 +866,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="invoice", brief=who_wants_an_invoice(_without_links(text)))
     # "hub check", "hub check Tavin Dougher" - the Distro Hub's fulfilled
     # orders against the sheets. Not "hub.agentleadlab.com/...", a link.
+    if re.match(r"\s*(?:(?:update|check|run|do)\s+(?:the\s+)?)?(?:ryte\s+)?check\s*list\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="rytechecklist", brief=text)
+    fields = re.match(r"\s*hub\s+(?:fields?|raw|record)\s+(?:for\s+|of\s+)?(.+?)\s*[.?!]*\s*$", text, re.IGNORECASE)
+    if fields:
+        return MentionRequest(action="hubfields", brief=fields.group(1))
     hubbed = re.match(r"\s*(?:distro\s+)?hub(?![.\w/])(?:\s+(?:check|fulfilled|status))?\b\s*(?:for\s+)?(.*?)\s*[.?!]*\s*$",
                       text, re.IGNORECASE | re.DOTALL)
     if hubbed:
@@ -1421,6 +1426,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > — or **add on trello**, **remind on trello**, or the card said last:
 > **comment** leads went out late **on monday general**. All the same thing.
 > Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
+> @RYTE **checklist** — everybody scheduled on the hub, held up against their thread in the Growth
+> server and their Payra payment, on the Ryte Checklist card: ticked when it all matches, under
+> Concerns when it doesn't. I do it every half hour, and list tomorrow's not-ready ones at 6pm.
+> **hub fields <name>** — everything the hub has for one client
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > @RYTE **when did Faith go live?** — an agent's launch date, past or future.
 > Also **when is Faith's live date**, or just **Faith live date**. Archived

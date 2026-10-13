@@ -11673,3 +11673,216 @@ def testimonial_publish(config: Config, video: dict) -> str:
         said += (f"\n-# First one: I started from the {len(held.get('videos') or [])} interviews "
                  "already on the page.")
     return said
+
+
+# ------------------------------------------- the setups, against the hub
+
+#: How far back a payment counts as this order's.
+SETUP_PAID_DAYS = 30
+
+
+def read_setup_thread(config: Config, agent, messages: list[dict], *, today) -> dict:
+    """What a client's thread says they bought and how it's set up - read by
+    Claude, screenshots included - and whether the hub's hours fit it.
+    `messages` are {"who", "when", "text", "images"} oldest first."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    lines, images = [], []
+    for one in messages[-60:]:
+        lines.append(f"[{one.get('when', '')}] {one.get('who', '?')}: {one.get('text', '')}")
+        images += list(one.get("images") or [])
+    hub_said = (f"Lead type {agent.lead_type or '?'}; order size {agent.ordered}; daily cap "
+                f"{agent.daily_cap or 0} (0 means the hub paces it); states "
+                f"{', '.join(agent.states) or 'not given'}; hours {agent.schedule or 'not given'}; "
+                f"live date {agent.start_date or 'not given'}; status {agent.status or '?'}.")
+    tool = {
+        "name": "setup",
+        "description": "What the thread says this client bought and how their setup should be.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lead_type": {"type": "string", "description": "The leads bought, as the thread says it ('Text-Verified Veteran', 'Trucker IUL', 'OTP Vets'). Empty if it doesn't say."},
+                "leads": {"type": "integer", "description": "How many leads were bought. 0 if it doesn't say."},
+                "daily_cap": {"type": "integer", "description": "A most-per-day the client asked for. 0 if none was asked."},
+                "states": {"type": "array", "items": {"type": "string"}, "description": "Two-letter state codes asked for. Empty if not said."},
+                "hours": {"type": "string", "description": "When leads should arrive, as asked ('9-12:30pm CST Mon-Fri, no weekends'). Empty if not said."},
+                "start_date": {"type": "string", "description": "The go-live / start date as YYYY-MM-DD, worked out from the message dates for words like 'today' or 'tomorrow'. Empty if not said."},
+                "same_as_before": {"type": "boolean", "description": "Whether it says the setup is the same as their last order."},
+                "hours_match": {"type": "string", "enum": ["yes", "no", "unclear"], "description": "Whether the hub's hours fit the hours asked. 'unclear' when either side doesn't say."},
+                "hours_why": {"type": "string", "description": "When hours_match is 'no': what was asked against what the hub has, one short line."},
+                "live": {"type": "boolean", "description": "Whether somebody said they are live now."},
+            },
+            "required": ["lead_type", "leads", "daily_cap", "states", "hours", "start_date",
+                         "same_as_before", "hours_match", "live"],
+        },
+    }
+    content = [{"type": "text", "text": (
+        f"Today is {today:%Y-%m-%d}. The client is {agent.name}.\n\nThe hub's setup for them: {hub_said}\n\n"
+        "The thread, oldest first:\n" + "\n".join(lines))}]
+    for url in images[:4]:
+        content.append({"type": "image", "source": {"type": "url", "url": url}})
+    try:
+        response = client.messages.create(
+            model=config.copy.model, max_tokens=700,
+            system=("You read Agent Lead Lab's team threads about a client's lead order: what they "
+                    "bought and how the delivery should be set up. Use only what the thread says - "
+                    "messages and screenshots. Later messages override earlier ones. Leave a field "
+                    "empty rather than guess."),
+            tools=[tool], tool_choice={"type": "tool", "name": "setup"},
+            messages=[{"role": "user", "content": content}],
+        )
+    except Exception:
+        if not images:
+            raise
+        # A screenshot Claude couldn't fetch shouldn't cost the whole read.
+        response = client.messages.create(
+            model=config.copy.model, max_tokens=700,
+            system="You read Agent Lead Lab's team threads about a client's lead order. Only what the thread says.",
+            tools=[tool], tool_choice={"type": "tool", "name": "setup"},
+            messages=[{"role": "user", "content": content[:1]}],
+        )
+    return _tool_input(response, "setup")
+
+
+def paid_for(agent, *, now=None) -> bool | None:
+    """Whether Payra has a payment for them in the last month - by the hub's
+    email, else their whole name. None when Payra hasn't been read."""
+    from .. import clearout, payraapi
+
+    data = payraapi.load()
+    if not data.get("invoices"):
+        return None
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=SETUP_PAID_DAYS)
+    email = str((agent.raw or {}).get("email") or "").strip().casefold()
+    for invoice in (data.get("invoices") or {}).values():
+        theirs = (email and str(invoice.get("email") or "").strip().casefold() == email) or \
+            clearout.name_match(agent.name, str(invoice.get("name") or "")) >= 2
+        if not theirs:
+            continue
+        for payment in payraapi.payments_on(data, invoice):
+            if not payraapi._went_through(payment):
+                continue
+            try:
+                when = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+            if when >= since:
+                return True
+    return False
+
+
+def _ryte_card(client, config):
+    """(the Ryte Checklist card, its checklists by name). Found by name on the
+    board; the two checklists RYTE uses are made if missing."""
+    from .. import setupcheck
+
+    cards = client.board_cards(config.secrets.trello_board_id)
+    wanted = setupcheck.CARD_NAME.casefold()
+    card = next((one for one in cards if " ".join(str(one.get("name") or "").split()).casefold() == wanted), None)
+    if card is None:
+        raise ValueError(f"There's no “{setupcheck.CARD_NAME}” card on the board - it's where I keep the setups.")
+    lists = {str(one.get("name") or "").strip().casefold(): one
+             for one in client.card_checklists(str(card["id"]))}
+    for name in (setupcheck.SETUP_LIST, setupcheck.CONCERNS_LIST):
+        if name.casefold() not in lists:
+            made = client.create_checklist(str(card["id"]), name)
+            made.setdefault("checkItems", [])
+            lists[name.casefold()] = made
+    return card, lists
+
+
+def _franklin_tag(client, config) -> str:
+    """"@username" for Franklin on the board, so a comment notifies him."""
+    named = (getattr(config.secrets, "trello_franklin", "") or "").strip().lstrip("@")
+    if named:
+        return f"@{named}"
+    try:
+        for one in client.board_members(config.secrets.trello_board_id):
+            if "franklin" in one.get("fullName", "").casefold() or "franklin" in one.get("username", "").casefold():
+                return f"@{one['username']}"
+    except Exception:
+        pass
+    return ""
+
+
+def sync_ryte_card(config: Config, results: list, *, said_before: dict) -> tuple[list, dict, list[str]]:
+    """The Ryte Checklist card brought up to date with these checks.
+
+    An item a client under Agent Setup - added once, ticked when every check
+    passes and unticked if one stops passing. What's wrong goes under Concerns
+    once, ticked there when it's put right, and a comment tagging Franklin
+    says it the first time. (newly wrong [(title, lines, thread link)], what
+    has been said now, problems)."""
+    from .. import setupcheck
+
+    client = open_trello(config)
+    try:
+        card, lists = _ryte_card(client, config)
+        card_id = str(card["id"])
+        setup = lists[setupcheck.SETUP_LIST.casefold()]
+        concerns = lists[setupcheck.CONCERNS_LIST.casefold()]
+        items = {" ".join(str(one.get("name") or "").split()): one for one in setup.get("checkItems") or []}
+        raised = {" ".join(str(one.get("name") or "").split()): one for one in concerns.get("checkItems") or []}
+        tag = None
+        fresh, said_now = [], dict(said_before)
+        for result in results:
+            agent = result.agent
+            title = setupcheck.item_title(agent.name, agent.lead_type, agent.start_date)
+            stem = title.split(" - ")[0] + " - "
+            item = items.get(title)
+            if item is None:
+                # Same order, a new live date: the item is renamed, not doubled.
+                older = next((one for name, one in items.items() if name.startswith(stem)
+                              and said_before.get(setupcheck.key_of(agent), {}).get("title") == name), None)
+                if older is not None:
+                    client.set_check_item(card_id, str(older["id"]), name=title)
+                    item = older
+                else:
+                    item = client.add_check_item(str(setup["id"]), title)
+                items[title] = item
+            done = str(item.get("state") or "") == "complete"
+            if done != result.all_good:
+                client.set_check_item(card_id, str(item["id"]), done=result.all_good)
+
+            lines = setupcheck.concern_lines(result)
+            for line in lines:
+                if line not in raised:
+                    raised[line] = client.add_check_item(str(concerns["id"]), line)
+            # Put right since: ticked off under Concerns, left there to see.
+            for name, one in raised.items():
+                if name.startswith(title + ":") and name not in lines and str(one.get("state") or "") != "complete":
+                    client.set_check_item(card_id, str(one["id"]), done=True)
+                    one["state"] = "complete"
+
+            key = setupcheck.key_of(agent)
+            before = set(said_before.get(key, {}).get("lines") or [])
+            new = [line for line in lines if line not in before]
+            if new:
+                if tag is None:
+                    tag = _franklin_tag(client, config)
+                link = result.asked.link if result.asked else ""
+                client.add_comment(card_id, "\n".join(
+                    [f"{tag} ⚠ **{title}**".strip()] + [f"• {line.split(': ', 1)[1]}" for line in new]
+                    + ([f"Thread: {link}"] if link else [])))
+                fresh.append((title, new, link))
+            said_now[key] = {"title": title, "lines": lines}
+        return fresh, said_now, []
+    except Exception as exc:
+        return [], said_before, [f"Couldn't update the Ryte Checklist card: {_short(exc, 160)}"]
+    finally:
+        client.close()
+
+
+def ryte_card_note(config: Config, text: str) -> None:
+    """A comment on the Ryte Checklist card tagging Franklin."""
+    client = open_trello(config)
+    try:
+        card, _lists = _ryte_card(client, config)
+        tag = _franklin_tag(client, config)
+        client.add_comment(str(card["id"]), f"{tag} {text}".strip())
+    finally:
+        client.close()

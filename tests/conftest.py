@@ -10,6 +10,9 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     from wilbyte import hub
     monkeypatch.setattr(hub, "SEEN_PATH", tmp_path / "hub-checked.json")
     monkeypatch.setattr(hub, "CHANNEL_PATH", tmp_path / "hub-channel.json")
+    from wilbyte import setupcheck
+    monkeypatch.setattr(setupcheck, "SAID_PATH", tmp_path / "setup-said.json")
+    monkeypatch.setattr(setupcheck, "READ_PATH", tmp_path / "setup-read.json")
     from wilbyte import alive, alreadysaid, delivery, paidsetup, mentionseen, pandadoc, payra, payraapi, keeplist, prefs, quietauto, quietrun, ringtexts, tagreads, usage, watchedseen
 
     monkeypatch.setattr(alreadysaid, "SAID_PATH", tmp_path / "already-said.json")

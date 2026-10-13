@@ -14,6 +14,7 @@ never in anything RYTE says or logs.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -71,6 +72,14 @@ class HubAgent:
     sheet_url: str = ""
     fulfilled_at: datetime | None = None
     updated_at: datetime | None = None
+    #: The states they take leads from, as two-letter codes - empty when the
+    #: hub didn't say.
+    states: tuple = ()
+    #: When the leads may arrive, as the hub writes it - "24/7", "Mon-Fri
+    #: 9am-5pm". Empty when the hub didn't say.
+    schedule: str = ""
+    #: The record as it came, for `@RYTE hub fields`.
+    raw: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 def _int(said) -> int | None:
@@ -101,6 +110,33 @@ def _moment(said) -> datetime | None:
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
+_STATE = re.compile(r"\b[A-Z]{2}\b")
+
+
+def _states(record: dict) -> tuple:
+    """The states, from whichever field holds them: a list, or "AZ,IL,OH"."""
+    for key in ("states", "state_list", "allowed_states", "licensed_states"):
+        said = record.get(key)
+        if isinstance(said, (list, tuple)):
+            said = ",".join(str(one) for one in said)
+        if said:
+            found = _STATE.findall(str(said).upper())
+            if found:
+                return tuple(dict.fromkeys(found))
+    return ()
+
+
+def _schedule(record: dict) -> str:
+    """When leads may arrive, from whichever field says it."""
+    for key in ("schedule", "schedule_label", "delivery_window", "window", "hours", "delivery_hours"):
+        said = record.get(key)
+        if isinstance(said, dict):
+            said = " ".join(f"{k} {v}" for k, v in said.items())
+        if said:
+            return " ".join(str(said).split())
+    return ""
+
+
 def read(record: dict) -> HubAgent:
     """One agent as the API gives it, every field optional."""
     delivered, ordered = _int(record.get("delivered")), _int(record.get("ordered"))
@@ -125,7 +161,24 @@ def read(record: dict) -> HubAgent:
         sheet_url=str(record.get("sheet_url") or "").strip(),
         fulfilled_at=_moment(record.get("fulfilled_at")),
         updated_at=_moment(record.get("updated_at")),
+        states=_states(record), schedule=_schedule(record), raw=dict(record),
     )
+
+
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+
+
+def fields_of(agent: HubAgent) -> list[str]:
+    """What the hub gives for one agent, a line a field - to see what there
+    is to check against. Emails and phone numbers are blanked."""
+    lines = []
+    for key in sorted(agent.raw):
+        said = agent.raw[key]
+        shown = json.dumps(said, default=str) if isinstance(said, (dict, list)) else str(said)
+        shown = _PHONE.sub("[phone]", _EMAIL.sub("[email]", shown))
+        lines.append(f"`{key}`: {shown[:120]}")
+    return lines
 
 
 def _records(body) -> list[dict]:

@@ -384,6 +384,17 @@ class TrelloClient:
         )
 
 
+    def set_check_item(self, card_id: str, item_id: str, *, done: bool | None = None,
+                       name: str | None = None) -> dict:
+        """Tick an item, untick it, or rename it."""
+        params = {}
+        if done is not None:
+            params["state"] = "complete" if done else "incomplete"
+        if name is not None:
+            params["name"] = name
+        return self._request("PUT", f"/cards/{card_id}/checkItem/{item_id}", params=params)
+
+
 # ------------------------------------------------------------------ helpers
 
 
