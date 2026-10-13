@@ -694,3 +694,56 @@ def test_the_teams_screenshots_are_marked_and_shown_first(order):
     _text, images, _thread, notes = asyncio.run(client._order_said(_bot(message), message))
     assert notes == ["Killian Cooper", "[screenshot 1]"]
     assert images[0] == "https://cdn.discordapp.com/shot.png"
+
+
+def test_the_screenshots_are_uploaded_onto_the_card_once_each(monkeypatch):
+    """"add the text and the image as well"."""
+    import httpx
+
+    uploads = []
+
+    class Trello:
+        def attach_file(self, card_id, name, data, mime="image/png"):
+            uploads.append((card_id, name, data, mime))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Trello())
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: SimpleNamespace(
+        content=b"PNG" + url.encode(), headers={"content-type": "image/png"}, raise_for_status=lambda: None))
+    shots = ["https://cdn.discordapp.com/a/1/shot.png?ex=111", "https://cdn.discordapp.com/a/2/notes.jpg?ex=222"]
+    done = jobs.order_card_attach(CONFIG, "c1", shots)
+    assert done == ["https://cdn.discordapp.com/a/1/shot.png", "https://cdn.discordapp.com/a/2/notes.jpg"]
+    assert [(card, name) for card, name, _d, _m in uploads] == [("c1", "shot.png"), ("c1", "notes.jpg")]
+    # Discord's link changes; the picture doesn't - not uploaded twice.
+    again = jobs.order_card_attach(CONFIG, "c1", ["https://cdn.discordapp.com/a/1/shot.png?ex=999"], done=tuple(done))
+    assert again == [] and len(uploads) == 2
+
+
+def test_a_gavelled_order_with_a_screenshot_gets_it_on_the_card(order, monkeypatch):
+    attached = []
+
+    def attaching(config, card_id, urls, done=()):
+        attached.append((card_id, list(urls)))
+        return [jobs.shot_key(one) for one in urls]
+
+    monkeypatch.setattr(jobs, "order_card_attach", attaching)
+    picture = SimpleNamespace(url="https://cdn.discordapp.com/a/1/shot.png?ex=1", content_type="image/png")
+
+    class Thread:
+        id = 900
+        parent = SimpleNamespace(name="new-payment")
+
+        def history(self, **kw):
+            async def gen():
+                yield SimpleNamespace(id=1, content="", embeds=[], attachments=[picture], message_snapshots=[],
+                                      mentions=[], role_mentions=[], channel_mentions=[],
+                                      author=SimpleNamespace(display_name="Kharyl", name="kharyl", bot=False),
+                                      created_at=WHEN)
+            return gen()
+
+    order.kind = "fresh"
+    asyncio.run(client._order_gavelled(_bot(_message(thread=Thread())), GAVEL))
+    assert attached == [("card1", ["https://cdn.discordapp.com/a/1/shot.png?ex=1"])]
+    assert ordercards.load()["900"]["attached"] == ["https://cdn.discordapp.com/a/1/shot.png"]

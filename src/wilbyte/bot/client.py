@@ -8960,6 +8960,9 @@ async def _order_read(bot, message) -> tuple[dict, dict, int | None]:
     text, images, thread_id, notes = await _order_said(bot, message)
     card = await asyncio.to_thread(partial(
         jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes))
+    # The team's screenshots - the first ones in `images`, one a marker.
+    marked = sum(len(re.findall(r"\[screenshot \d+\]", one)) for one in notes)
+    card["shots"] = images[:marked]
     return card, {}, thread_id
 
 
@@ -9166,8 +9169,14 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         if responder is not None:
             await responder.send(f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
         return
+    attached = []
+    if card.get("shots"):
+        try:
+            attached = await asyncio.to_thread(jobs.order_card_attach, bot.config, made["id"], card["shots"])
+        except Exception:
+            log.warning("Couldn't put the screenshots on the card", exc_info=True)
     await _order_note(key, status="made", kind=kind, card_id=made["id"], url=made["url"], name=card["name"],
-                      written=card["desc"], client=card["client"], link=link,
+                      written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
     if responder is not None:
         await responder.send(f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
@@ -9231,6 +9240,17 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     except Exception:
         log.exception("Couldn't update the order card")
         return "failed"
+    if card.get("shots"):
+        try:
+            more = await asyncio.to_thread(partial(jobs.order_card_attach, bot.config, order["card_id"], card["shots"],
+                                                   done=tuple(order.get("attached") or ())))
+        except Exception:
+            log.warning("Couldn't put the new screenshots on the card", exc_info=True)
+            more = []
+        if more:
+            await _order_note(key, attached=list(order.get("attached") or []) + more)
+            if done == "same":
+                done = "screenshots"
     if done == "updated":
         await _order_note(key, written=card["desc"], name=card["name"])
     elif done == "commented":
@@ -9240,6 +9260,7 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
         if responder is not None:
             await responder.send(f"📝 {order.get('name') or 'An order card'} — "
                                  + ("updated from the new notes" if done == "updated" else
+                                    "the new screenshots are on it" if done == "screenshots" else
                                     "the card was edited by hand, so the new notes went in a comment")
                                  + f"\n{order.get('url', '')}", quiet=True)
     return done

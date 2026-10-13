@@ -384,6 +384,12 @@ class TrelloClient:
             params["due"] = due
         return self._request("POST", "/cards", params=params)
 
+    def attach_file(self, card_id: str, name: str, data: bytes, mime: str = "image/png") -> dict:
+        """A file uploaded onto a card - kept by Trello, so it outlives the link
+        it came from."""
+        return self._request("POST", f"/cards/{card_id}/attachments", params={"name": name},
+                             files={"file": (name, data, mime)})
+
     def clear_due(self, card_id: str) -> dict:
         """No due date on the card."""
         return self._request("PUT", f"/cards/{card_id}", params={"due": "null"})

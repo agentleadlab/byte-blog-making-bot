@@ -12209,6 +12209,47 @@ def order_card_make(config: Config, kind: str, card: dict) -> dict:
         client.close()
 
 
+#: The largest screenshot carried onto a card.
+ORDER_SHOT_MOST_BYTES = 10 * 1024 * 1024
+
+
+def shot_key(url: str) -> str:
+    """A Discord picture by where it is, not the expiry Discord tacks on."""
+    return str(url or "").split("?", 1)[0]
+
+
+def order_card_attach(config: Config, card_id: str, urls: list[str], *, done: tuple = ()) -> list[str]:
+    """The team's screenshots uploaded onto the card - "add the text and the
+    image as well". Uploaded, not linked: Discord's links run out. Those in
+    `done` are already there. The keys of the ones attached now."""
+    import logging
+
+    import httpx
+
+    attached = []
+    todo = [url for url in urls if shot_key(url) not in set(done)]
+    if not todo:
+        return attached
+    client = open_trello(config)
+    try:
+        for at, url in enumerate(todo, start=1):
+            try:
+                got = httpx.get(url, timeout=30, follow_redirects=True)
+                got.raise_for_status()
+            except Exception as exc:
+                logging.getLogger("wilbyte.bot").warning("Couldn't fetch a screenshot for the card: %s", exc)
+                continue
+            if len(got.content) > ORDER_SHOT_MOST_BYTES:
+                continue
+            mime = got.headers.get("content-type", "image/png").split(";")[0]
+            name = shot_key(url).rsplit("/", 1)[-1] or f"screenshot-{at}.png"
+            client.attach_file(card_id, name, got.content, mime)
+            attached.append(shot_key(url))
+    finally:
+        client.close()
+    return attached
+
+
 def order_card_update(config: Config, card_id: str, *, written: str, desc: str, name: str = "",
                       commented: tuple = ()) -> tuple[str, list[str]]:
     """New notes onto a card RYTE made. Its description is rewritten only when
