@@ -12169,3 +12169,43 @@ def order_card_update(config: Config, card_id: str, *, written: str, desc: str, 
         return "commented", new
     finally:
         client.close()
+
+
+def hub_task_verdict(config: Config, *, task: str, records: list[str], today) -> dict:
+    """Whether the hub shows a team request done: "set lead schedule to
+    7am-7pm PST" against Abdullah Hatem's hub record. `records` are the hub's
+    fields for every order of theirs, emails and phones already blanked.
+    {"verdict": "done" | "not_done" | "unclear", "why": one line}."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    tool = {
+        "name": "verdict",
+        "description": "Whether the hub's record shows this request done.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": ["done", "not_done", "unclear"], "description": (
+                    "'done' only when a field on the hub plainly shows it - the schedule set to those hours, "
+                    "the states added, the cap changed, the agent set up and scheduled. 'not_done' when the "
+                    "hub plainly shows otherwise, or has no record of them for a setup. 'unclear' when the "
+                    "request is about something the hub doesn't hold (ads, a contract, a message to them).")},
+                "why": {"type": "string", "description": "One short line: the hub field and what it says."},
+            },
+            "required": ["verdict", "why"],
+        },
+    }
+    said = "\n\n".join(f"--- Order {at} ---\n{one}" for at, one in enumerate(records, start=1)) or "(no record on the hub)"
+    response = client.messages.create(
+        model=config.copy.model, max_tokens=300,
+        system=("You check Agent Lead Lab's lead-delivery hub for whether the team did what was asked for a "
+                "client. Read only the hub's fields. Times may be written differently (7am-7pm PST is "
+                "07:00-19:00 America/Los_Angeles); match the meaning, not the wording. Never say done on a guess."),
+        tools=[tool], tool_choice={"type": "tool", "name": "verdict"},
+        messages=[{"role": "user", "content": f"Today is {today:%Y-%m-%d}.\n\nAsked of the team: {task}\n\nThe hub:\n{said}"}],
+    )
+    got = _tool_input(response, "verdict")
+    verdict = str(got.get("verdict") or "").casefold()
+    return {"verdict": verdict if verdict in ("done", "not_done", "unclear") else "unclear",
+            "why": " ".join(str(got.get("why") or "").split())[:200]}

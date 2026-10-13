@@ -910,6 +910,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="ordertemplates", brief=text)
     if re.match(r"\s*(?:track|watch|add)\s+(?:this\s+)?(?:<)?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+", text, re.IGNORECASE):
         return MentionRequest(action="teamtrack", brief=text)
+    if re.match(r"\s*(?:hub\s+(?:tasks?|requests?|concerns?)|check\s+(?:the\s+)?(?:tasks?|requests?|concerns?|checklist)\s+(?:on|against|in)\s+(?:the\s+)?hub|check\s+(?:the\s+)?hub\s+(?:for|on)\s+(?:the\s+)?(?:tasks?|requests?|concerns?|checklist))\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="hubtasks", brief=text)
     if re.match(r"\s*(?:(?:the|open|what(?:'s| is)?)\s+)*(?:team\s+(?:tasks?|requests?)|open\s+(?:tasks?|requests?))(?:\s+open)?\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="teamtasks", brief=text)
     fields = re.match(r"\s*hub\s+(?:fields?|raw|record)\s+(?:for\s+|of\s+)?(.+?)\s*[.?!]*\s*$", text, re.IGNORECASE)
@@ -1484,6 +1486,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > template <link>** — the card each is copied from; **order templates** shows them.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
+> **hub tasks** — every open request on the card checked on the hub (reading only); done there, ticked.
 > **hub fields <name>** — everything the hub has for one client
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > @RYTE **when did Faith go live?** — an agent's launch date, past or future.

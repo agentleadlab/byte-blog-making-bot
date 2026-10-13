@@ -352,3 +352,56 @@ def test_the_newest_ryte_checklist_card_is_the_one(monkeypatch):
     board.card_checklists = lambda card_id: seen.append(card_id) or board.lists
     card, _lists = jobs._ryte_card(board, SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")))
     assert card["id"] == "6a0000000000000000000bbb" and seen == ["6a0000000000000000000bbb"]
+
+
+# ------------------------------------------------------------- on the hub
+
+def test_open_requests_are_checked_on_the_hub_and_ticked_when_its_done_there(card, monkeypatch):
+    """"can you check hub to read and see if this was setup on hub"."""
+    from wilbyte import hub
+
+    teamtasks.save({
+        "1": {"id": "1", "title": "Abdullah Hatem - set lead schedule to 7am-7pm PST", "item_id": "i1",
+              "assignees": [{"id": "22", "name": "Nicole"}], "asker": "Faith", "made": NOW.isoformat()},
+        "2": {"id": "2", "title": "Marcelino Jabr - set delivery hours 8AM-8PM Central, Mon-Fri", "item_id": "i2",
+              "assignees": [{"id": "22", "name": "Nicole"}], "asker": "Kharyl", "made": NOW.isoformat()},
+        "3": {"id": "3", "title": "Team huddle", "assignees": [], "asker": "Tre", "made": NOW.isoformat()},
+    })
+    agents = [hub.HubAgent(id="a", name="Abdullah Hatem", status="live", raw={"schedule": "07:00-19:00 PT"}),
+              hub.HubAgent(id="b", name="Marcelino Jabr", status="scheduled", raw={"schedule": "24/7"})]
+    monkeypatch.setattr(hub, "agents", lambda secrets, status="fulfilled": agents)
+    asked = []
+
+    def judging(config, *, task, records, today):
+        asked.append((task, records))
+        if "Abdullah" in task:
+            return {"verdict": "done", "why": "schedule is 07:00-19:00 PT"}
+        return {"verdict": "not_done", "why": "schedule is still 24/7"}
+
+    monkeypatch.setattr(jobs, "hub_task_verdict", judging)
+    monkeypatch.setattr(client, "_today", lambda config: NOW.date())
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(hub_api_token="t")))
+    checked = asyncio.run(client._team_tasks_on_hub(bot))
+    assert [(task["id"], verdict["verdict"]) for task, verdict in checked] == [("1", "done"), ("2", "not_done")]
+    assert "`schedule`: 07:00-19:00 PT" in asked[0][1][0], "the hub record wasn't what was judged"
+    assert len(card.ticked) == 1 and card.ticked[0].endswith("done by the hub " + card.ticked[0].split("done by the hub ")[1])
+    held = teamtasks.load()
+    assert held["1"]["done_by"] == "the hub" and not held["2"].get("done_at")
+    assert held["2"]["hub_why"] == "schedule is still 24/7"
+
+    # Nothing changed on the hub: not asked again. Changed: asked.
+    asyncio.run(client._team_tasks_on_hub(bot))
+    assert len(asked) == 2
+    agents[1].raw["schedule"] = "Mon-Fri 08:00-20:00 CT"
+    asyncio.run(client._team_tasks_on_hub(bot))
+    assert len(asked) == 3
+
+
+def test_no_hub_key_no_check(card):
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(hub_api_token="")))
+    assert asyncio.run(client._team_tasks_on_hub(bot)) == []
+
+
+@pytest.mark.parametrize("said", ["<@1> hub tasks", "<@1> check the hub for the tasks", "<@1> check tasks on the hub"])
+def test_hub_tasks_command(said):
+    assert mentions.parse(said).action == "hubtasks"

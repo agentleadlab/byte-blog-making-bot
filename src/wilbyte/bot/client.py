@@ -1756,6 +1756,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _team_track(bot, responder, request.brief, getattr(message, "author", None))
                 return
 
+            if request.action == "hubtasks":
+                await _team_hub_check(bot, responder)
+                return
+
             if request.action == "teamtasks":
                 await _team_list(responder)
                 return
@@ -8679,6 +8683,92 @@ async def _team_reminders(bot, *, now: datetime | None = None) -> list[dict]:
     return due
 
 
+def _client_of(title: str) -> str:
+    """"Abdullah Hatem - set lead schedule to 7am-7pm PST" -> "Abdullah Hatem";
+    "" when the title doesn't start with a client."""
+    parts = re.split(r"\s+[-–—:]\s+", str(title or ""), maxsplit=1)
+    return parts[0].strip() if len(parts) == 2 else ""
+
+
+async def _team_tasks_on_hub(bot, *, every: bool = False) -> list[tuple[dict, dict]]:
+    """Each open request held up against the client's record on the hub -
+    read only - and ticked off when the hub shows it done. Asked again only
+    when their hub record has changed, unless `every`. [(task, verdict)]."""
+    import hashlib
+
+    from .. import clearout, hub, teamtasks
+
+    if not getattr(bot.config.secrets, "hub_api_token", None):
+        return []
+    everybody = await asyncio.to_thread(hub.agents, bot.config.secrets, status="all")
+    today = _today(bot.config)
+    out = []
+    for task in teamtasks.open_ones(await asyncio.to_thread(teamtasks.load)):
+        name = _client_of(task.get("title", ""))
+        if len(clearout.words_of(name)) < 2:
+            continue
+        theirs = [one for one in everybody if clearout.name_match(name, one.name) >= 2]
+        records = [f"{one.name} · {one.lead_type or '?'} · {one.status or '?'}\n" + "\n".join(hub.fields_of(one))
+                   for one in theirs]
+        sig = hashlib.sha1("\n".join(records).encode()).hexdigest()[:16]
+        if not every and task.get("hub_sig") == sig:
+            continue
+        try:
+            verdict = await asyncio.to_thread(partial(
+                jobs.hub_task_verdict, bot.config, task=task.get("title", ""), records=records, today=today))
+        except Exception:
+            log.warning("Couldn't check %s on the hub", name, exc_info=True)
+            continue
+        async with _TEAM_LOCK:
+            held = await asyncio.to_thread(teamtasks.load)
+            if task["id"] in held:
+                held[task["id"]].update(hub_sig=sig, hub_verdict=verdict["verdict"], hub_why=verdict["why"])
+                await asyncio.to_thread(teamtasks.save, held)
+        if verdict["verdict"] == "done":
+            await _team_task_done_on_hub(bot, task["id"], verdict["why"])
+        out.append((task, verdict))
+    return out
+
+
+async def _team_task_done_on_hub(bot, key: str, why: str) -> None:
+    """Ticked off because the hub shows it done - said so on the item."""
+    from .. import teamtasks
+
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        task = held.get(str(key))
+        if not task or task.get("done_at"):
+            return
+        task["done_by"] = "the hub"
+        task["done_at"] = datetime.now(timezone.utc).isoformat(timespec="minutes")
+        await asyncio.to_thread(jobs.team_task_done, bot.config, task)
+        await asyncio.to_thread(teamtasks.save, held)
+    log.info("Team request done on the hub: %s (%s)", teamtasks.item_name(task), why)
+
+
+async def _team_hub_check(bot, responder: Responder) -> None:
+    """"@Ryte hub tasks" - every open request checked on the hub, now."""
+    from .. import hub, teamtasks
+
+    if not teamtasks.open_ones(teamtasks.load()):
+        await responder.send("Nothing asked of the team is open. ✅")
+        return
+    await responder.send("🔎 Checking each open request on the hub (reading only)…")
+    try:
+        checked = await _team_tasks_on_hub(bot, every=True)
+    except hub.HubError as exc:
+        await responder.send(f"⚠ {exc}")
+        return
+    if not checked:
+        await responder.send("None of the open requests name a client I can look up on the hub.")
+        return
+    marks = {"done": "✅", "not_done": "⏳", "unclear": "❔"}
+    lines = [f"**{len(checked)} checked on the hub** — ✅ done there (ticked on the card), ⏳ not yet, ❔ not something the hub shows:"]
+    for task, verdict in checked:
+        lines.append(f"{marks[verdict['verdict']]} {task.get('title', '')} — {verdict['why']}")
+    await responder.send("\n".join(lines)[:3900])
+
+
 async def team_tasks_loop(bot: "WilByteBot") -> None:
     """Every half hour: what was done while nobody was looking ticked off,
     Franklin pinged about what's still open, and at six the day's open ones
@@ -8689,6 +8779,10 @@ async def team_tasks_loop(bot: "WilByteBot") -> None:
     while not bot.is_closed():
         try:
             await _team_tasks_catch_up(bot)
+            try:
+                await _team_tasks_on_hub(bot)
+            except Exception:
+                log.warning("Couldn't check the open requests on the hub", exc_info=True)
             await _team_reminders(bot)
             now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
             today = _today(bot.config).isoformat()
