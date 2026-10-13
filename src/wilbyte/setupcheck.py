@@ -268,6 +268,12 @@ def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: 
     return Result(agent=agent, asked=asked, findings=found)
 
 
+def concern_kind(line: str) -> str:
+    """"Gavin Littledike (FEX) - 10/14 - Wednesday: Thread" - which order and
+    which check, whatever the wording after it."""
+    return " ".join(str(line or "").split(" — ", 1)[0].split())
+
+
 def concern_lines(result: Result) -> list[str]:
     """What's wrong, a line each, for the Concerns checklist."""
     title = item_title(result.agent.name, result.agent.lead_type, result.agent.start_date)

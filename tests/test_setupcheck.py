@@ -534,3 +534,20 @@ def test_only_threads_made_since_the_move_to_discord_by_a_person_count(monkeypat
     bot.guilds[0].threads = [old, suki, new]
     asyncio.run(client._setup_pass(bot))
     assert [texts for _n, texts, _i in calls] == [["new order"]]
+
+
+def test_the_same_problem_reworded_is_the_line_renamed_and_not_said_again(monkeypatch):
+    board = Board()
+    _fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(), None, paid=True, today=TODAY)])
+    assert len(board.comments) == 1
+    off = setupcheck.asked_from({"this_order": False, "thread_about": "their 09/24 OTP Vet order"})
+    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(), off, paid=True, today=TODAY)], said)
+    assert fresh == [] and len(board.comments) == 1, "a reworded concern pinged Franklin again"
+    [(line, state)] = board.names("concerns").items()
+    assert "doesn't mention this order" in line and state == "incomplete"
+
+    # A new kind of problem is news.
+    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(daily_cap=0), asked(), paid=False, today=TODAY)], said)
+    assert len(board.comments) == 2 and {f.split(": ")[0] for f in fresh[0][1]} == {
+        "Gavin Littledike (FEX) - 10/14 - Wednesday"}
+    assert board.names("concerns")[line] == "complete", "the thread is found now: put right"

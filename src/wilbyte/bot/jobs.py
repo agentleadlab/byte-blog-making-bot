@@ -11882,7 +11882,20 @@ def sync_ryte_card(config: Config, results: list, *, said_before: dict) -> tuple
 
             lines = setupcheck.concern_lines(result)
             for line in lines:
-                if line not in raised:
+                if line in raised:
+                    continue
+                # The same problem said differently - "no thread" becoming
+                # "doesn't mention this order" - is that line reworded, not
+                # one ticked as put right and another added.
+                kind = setupcheck.concern_kind(line)
+                same = next((name for name, one in raised.items()
+                             if setupcheck.concern_kind(name) == kind and name not in lines
+                             and str(one.get("state") or "") != "complete"), None)
+                if same is not None:
+                    item = raised.pop(same)
+                    client.set_check_item(card_id, str(item["id"]), name=line)
+                    raised[line] = item
+                else:
                     raised[line] = client.add_check_item(str(concerns["id"]), line)
             # Put right since: ticked off under Concerns, left there to see.
             for name, one in raised.items():
@@ -11891,8 +11904,9 @@ def sync_ryte_card(config: Config, results: list, *, said_before: dict) -> tuple
                     one["state"] = "complete"
 
             key = setupcheck.key_of(agent)
-            before = set(said_before.get(key, {}).get("lines") or [])
-            new = [line for line in lines if line not in before]
+            # Said once a kind: a reworded one isn't news.
+            before = {setupcheck.concern_kind(line) for line in said_before.get(key, {}).get("lines") or []}
+            new = [line for line in lines if setupcheck.concern_kind(line) not in before]
             if new:
                 if tag is None:
                     tag = _franklin_tag(client, config)
