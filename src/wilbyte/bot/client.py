@@ -420,8 +420,11 @@ class WilByteBot(discord.Client):
         from .. import ordercards
 
         if ordercards.is_gavel(payload.emoji):
+            log.info("Gavel on message %s by %s", payload.message_id, payload.user_id)
             if ordercards.may_gavel(payload.user_id, self.config):
                 _also_running(self.loop.create_task(_order_gavelled(self, payload)))
+            else:
+                _also_running(self.loop.create_task(_order_gavel_refused(self, payload)))
             return
         if not TEAM_TASKS_ON:
             return
@@ -1729,6 +1732,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
             if request.action == "ordertemplate":
                 kind, _, link = (request.brief or "").partition(" ")
                 await _order_template_set(responder, kind, link, config)
+                return
+
+            if request.action == "orderlink":
+                await _order_from_link(bot, responder, request.brief or "", getattr(message, "author", None))
+                return
+
+            if request.action == "ordercheck":
+                await _order_check(bot, responder)
                 return
 
             if request.action == "ordertemplates":
@@ -8814,13 +8825,45 @@ def _order_preview(card: dict) -> str:
     return "\n".join(lines)
 
 
+def _order_responder(bot):
+    """Where orders are said in Ryte The Goat: the board's channel, else
+    #hub-agent-fulfillment."""
+    responder = _board_responder(bot) or _hub_responder(bot)
+    if responder is None:
+        log.error("No board channel and no #hub-agent-fulfillment to say orders in")
+    return responder
+
+
+async def _order_gavel_refused(bot, payload) -> None:
+    """A gavel from somebody whose gavel doesn't make cards - said, so it
+    isn't a mystery why nothing happened. Once per message."""
+    from .. import ordercards
+
+    key = f"refused:{payload.message_id}:{payload.user_id}"
+    if key in _ORDER_ACTIVE:
+        return
+    _ORDER_ACTIVE.add(key)
+    who = getattr(payload.member, "display_name", None) or str(payload.user_id)
+    responder = _order_responder(bot)
+    if responder is None:
+        return
+    allowed = ordercards.gavellers(bot.config)
+    link = f"https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id}"
+    await responder.send(
+        f"🔨 {who} put the gavel on an order, but only "
+        + (", ".join(f"<@{one}>" for one in allowed) if allowed else "nobody (DISCORD_NOTIFY_USER_ID isn't set)")
+        + f"'s gavel makes cards — nothing made.\n<{link}>\n"
+        f"-# To let them: ORDER_GAVEL_USER_IDS={','.join(allowed + [str(payload.user_id)])} in .env. "
+        f"Or `@Ryte order <message link>` makes it now.", quiet=True)
+
+
 async def _order_gavelled(bot, payload) -> None:
     """🔨 on an order: the card, made - aged straight away, fresh on the
     Create button. Everything said in Ryte The Goat, nothing in Growth."""
     from .. import ordercards
 
     key = str(payload.message_id)
-    responder = _board_responder(bot)
+    responder = _order_responder(bot)
     async with _ORDER_LOCK:
         held = await asyncio.to_thread(ordercards.load)
         if (held.get(key) or {}).get("status") == "made" or key in _ORDER_ACTIVE:
@@ -8953,13 +8996,76 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     elif done == "commented":
         await _order_note(key, commented=list(order.get("commented") or []) + said)
     if done != "same":
-        responder = _board_responder(bot)
+        responder = _order_responder(bot)
         if responder is not None:
             await responder.send(f"📝 {order.get('name') or 'An order card'} — "
                                  + ("updated from the new notes" if done == "updated" else
                                     "the card was edited by hand, so the new notes went in a comment")
                                  + f"\n{order.get('url', '')}", quiet=True)
     return done
+
+
+async def _order_from_link(bot, responder: Responder, said: str, author) -> None:
+    """"@Ryte order <message link>" - the gavel, by asking: for an order
+    gavelled while RYTE was down, or to try it on one."""
+    from .. import ordercards
+
+    found = _MESSAGE_LINK.search(said or "")
+    if not found:
+        await responder.send("Send the order's link: right-click the payment post → **Copy Message Link**, "
+                             "then `@Ryte order <link>`.")
+        return
+    if not ordercards.may_gavel(getattr(author, "id", ""), bot.config):
+        await responder.send("Only the gavel's owner can make order cards — see `@Ryte order check`.")
+        return
+    guild_id, channel_id, message_id = (int(one) for one in found.groups())
+    if (ordercards.load().get(str(message_id)) or {}).get("status") == "made":
+        made = ordercards.load()[str(message_id)]
+        await responder.send(f"That one's card is already made — {made.get('url', '')}")
+        return
+    await responder.send("🔨 On it — the card goes where gavelled orders go.")
+    await _order_gavelled(bot, SimpleNamespace(message_id=message_id, channel_id=channel_id,
+                                               user_id=author.id, guild_id=guild_id, member=author))
+
+
+async def _order_check(bot, responder: Responder) -> None:
+    """"@Ryte order check" - everything the gavel needs, looked at."""
+    from .. import ordercards
+
+    lines = ["🔨 **Order cards — the gavel's setup**"]
+    allowed = ordercards.gavellers(bot.config)
+    lines.append(("✅ Gavel counts from " + ", ".join(f"<@{one}>" for one in allowed)) if allowed else
+                 "❌ Nobody's gavel counts — set DISCORD_NOTIFY_USER_ID (yours) or ORDER_GAVEL_USER_IDS in .env.")
+    responder_there = _order_responder(bot)
+    channel = getattr(responder_there, "channel", None)
+    lines.append(f"✅ Said in #{getattr(channel, 'name', '?')}" if responder_there is not None else
+                 "❌ No board channel to say orders in — DISCORD_BOARD_CHANNEL_ID.")
+    examples = await _order_examples(bot.config)
+    for kind in ("fresh", "aged"):
+        example = examples.get(kind)
+        lines.append(f"✅ {ordercards.KINDS[kind]} example: {example['name']} — {example['url']}" if example else
+                     f"❌ No {ordercards.KINDS[kind]} example card — `@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <link>`.")
+    try:
+        lists = await asyncio.to_thread(_order_board_lists, bot.config)
+        for kind in ("fresh", "aged"):
+            wanted = (bot.config.secrets.order_fresh_list if kind == "fresh" else bot.config.secrets.order_aged_list) or ""
+            where = ordercards.list_for(kind, lists, wanted=wanted)
+            lines.append(f"✅ {ordercards.KINDS[kind]} cards go in **{where['name']}**" if where else
+                         f"❌ No list for {ordercards.KINDS[kind]} cards" + (f" called “{wanted}”" if wanted else ""))
+    except Exception as exc:
+        lines.append(f"❌ Couldn't read the board's lists: {_readable(exc)}")
+    held = ordercards.load()
+    made = [one for one in held.values() if isinstance(one, dict) and one.get("status") == "made"]
+    lines.append(f"-# {len(made)} order card(s) made so far.")
+    await responder.send("\n".join(lines)[:1900])
+
+
+def _order_board_lists(config) -> list:
+    client = jobs.open_trello(config)
+    try:
+        return client.board_lists(config.secrets.trello_board_id)
+    finally:
+        client.close()
 
 
 async def _order_template_set(responder: Responder, kind: str, link: str, config) -> None:

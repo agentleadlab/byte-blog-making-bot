@@ -896,6 +896,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if template:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
+    if re.match(r"\s*(?:order|gavel|make\s+(?:the\s+)?card)\s+(?:for\s+)?<?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+", text, re.IGNORECASE):
+        return MentionRequest(action="orderlink", brief=text)
+    if re.match(r"\s*(?:order|gavel)s?\s+(?:check|status|setup|test)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="ordercheck", brief=text)
     if re.match(r"\s*(?:order\s+)?(?:card\s+)?templates?\s*[.?!]*\s*$|\s*order\s+(?:cards?|examples?)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="ordertemplates", brief=text)
     if re.match(r"\s*(?:track|watch|add)\s+(?:this\s+)?(?:<)?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+", text, re.IGNORECASE):
@@ -1472,6 +1476,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > aged leads straight into Aged Leads Order Done, a new agent into the Queue after a Create
 > button. New notes in its thread update the card. **new agent template <link>** / **aged
 > template <link>** — the card each is copied from; **order templates** shows them.
+> **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **hub fields <name>** — everything the hub has for one client
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > @RYTE **when did Faith go live?** — an agent's launch date, past or future.

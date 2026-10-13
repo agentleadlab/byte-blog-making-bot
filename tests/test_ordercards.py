@@ -335,3 +335,60 @@ def test_a_stripe_link_however_its_asked_is_answered_in_growth(said, monkeypatch
 ])
 def test_other_links_and_order_notes_arent_payment_links(said):
     assert mentions.parse(said).action != "payment"
+
+
+# ------------------------------------------------------------- nothing happened?
+
+def test_the_gavellers_are_read_whatever_the_ids_look_like():
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_notify_user_id="<@111111111>", order_gavel_user_ids=""))
+    assert ordercards.gavellers(config) == ["111111111"] and ordercards.may_gavel(111111111, config)
+
+
+def test_a_gavel_that_doesnt_count_is_said_once(order):
+    payload = SimpleNamespace(message_id=900, channel_id=700, guild_id=1, user_id=KHARYL,
+                              member=SimpleNamespace(display_name="Kharyl"))
+    bot = _bot(_message())
+    asyncio.run(client._order_gavel_refused(bot, payload))
+    asyncio.run(client._order_gavel_refused(bot, payload))
+    [(said, _view)] = order.responder.sent
+    assert "Kharyl put the gavel on an order" in said and f"<@{FRANKLIN}>" in said and "nothing made" in said
+    assert "ORDER_GAVEL_USER_IDS=11,22" in said and order.made == []
+    client._ORDER_ACTIVE.clear()
+
+
+def test_order_by_link_does_what_the_gavel_does(order):
+    message = _message(thread=_notes("25 aged MTG"))
+    bot = _bot(message)
+    me = SimpleNamespace(id=FRANKLIN, display_name="Franklin")
+    asyncio.run(client._order_from_link(bot, order.responder, "order https://discord.com/channels/1/700/900", me))
+    assert order.made and order.made[0][0] == "aged"
+    asyncio.run(client._order_from_link(bot, order.responder, "order https://discord.com/channels/1/700/900", me))
+    assert len(order.made) == 1 and "already made" in order.responder.sent[-1][0]
+    them = SimpleNamespace(id=KHARYL)
+    asyncio.run(client._order_from_link(bot, order.responder, "order https://discord.com/channels/1/700/901", them))
+    assert "Only the gavel's owner" in order.responder.sent[-1][0]
+
+
+def test_order_check_says_whats_missing(order, monkeypatch):
+    def none(config, kind):
+        if kind == "aged":
+            raise ValueError("unset")
+        return {"id": "T", "name": "New Agent - Jane Doe", "desc": "", "url": "https://trello.com/c/Hl06MPly"}
+
+    monkeypatch.setattr(jobs, "order_template", none)
+    monkeypatch.setattr(client, "_order_board_lists", lambda config: [{"id": "q", "name": "In Que"}])
+    order.responder.channel = SimpleNamespace(name="trello-manager")
+    asyncio.run(client._order_check(_bot(_message()), order.responder))
+    said = order.responder.sent[-1][0]
+    assert f"✅ Gavel counts from <@{FRANKLIN}>" in said and "✅ Said in #trello-manager" in said
+    assert "✅ New Agent example: New Agent - Jane Doe" in said and "❌ No Aged Leads example card" in said
+    assert "✅ New Agent cards go in **In Que**" in said and "❌ No list for Aged Leads cards" in said
+
+
+@pytest.mark.parametrize("said, action", [
+    ("<@1> order https://discord.com/channels/1/2/3", "orderlink"),
+    ("<@1> make card <https://discord.com/channels/1/2/3>", "orderlink"),
+    ("<@1> order check", "ordercheck"), ("<@1> gavel check", "ordercheck"),
+])
+def test_order_commands(said, action):
+    assert mentions.parse(said).action == action

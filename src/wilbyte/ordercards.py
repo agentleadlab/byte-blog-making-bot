@@ -53,10 +53,16 @@ def card_id_of(link: str) -> str:
 def may_gavel(person_id, config) -> bool:
     """Franklin, or whoever ORDER_GAVEL_USER_IDS names. A stray reaction from
     anybody else makes nothing - an aged card is made straight off it."""
-    named = [one.strip() for one in str(getattr(config.secrets, "order_gavel_user_ids", "") or "").split(",") if one.strip()]
-    if not named and getattr(config.secrets, "discord_notify_user_id", None):
-        named = [str(config.secrets.discord_notify_user_id)]
-    return str(person_id) in named
+    return str(person_id) in gavellers(config)
+
+
+def gavellers(config) -> list[str]:
+    """The Discord ids whose gavel counts - digits only, so "<@123>" in .env
+    is 123."""
+    named = re.findall(r"\d+", str(getattr(config.secrets, "order_gavel_user_ids", "") or ""))
+    if not named:
+        named = re.findall(r"\d+", str(getattr(config.secrets, "discord_notify_user_id", "") or ""))
+    return named
 
 
 def letters(name: str) -> str:
