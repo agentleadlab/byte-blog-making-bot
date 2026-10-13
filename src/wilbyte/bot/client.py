@@ -1543,6 +1543,15 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 if keeping:
                     await _quiet_keep(bot, responder, config, keeping.group(1).casefold(), keeping.group(2))
                     return
+                if re.search(r"\b(?:retry|again|redo|reset|forget)\b", brief, re.IGNORECASE):
+                    from .. import quietauto
+
+                    many = await asyncio.to_thread(quietauto.forget)
+                    await responder.send(
+                        f"🔄 The {many} channel(s) I'd left for you are back in the list - "
+                        "`@RYTE quiet auto` goes through them again." if many
+                        else "Nothing was being left for you - every quiet channel is already in the list.")
+                    return
                 is_auto = re.search(r"\bauto(?:matic(?:ally)?)?\b", brief, re.IGNORECASE)
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
                     if is_auto:

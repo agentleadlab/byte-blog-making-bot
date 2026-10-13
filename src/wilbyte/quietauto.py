@@ -64,3 +64,13 @@ def left_for_a_person(channel_ids, now: datetime, path: Path | None = None) -> N
     keep.update({str(one): until for one in channel_ids})
     held["leave"] = keep
     save(held, path)
+
+
+def forget(path: Path | None = None) -> int:
+    """Every channel left for a person offered again - `@RYTE quiet retry`,
+    for after the reason they were left has been put right. How many."""
+    held = load(path)
+    many = len(held.get("leave") or {})
+    held["leave"] = {}
+    save(held, path)
+    return many

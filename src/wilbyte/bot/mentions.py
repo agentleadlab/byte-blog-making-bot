@@ -1386,7 +1386,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **blacklist Juliana Hernandez** — tag a client blacklisted in GHL
 > after a chargeback. Shows every contact that matches before anything is
 > written, and never tags on a name it only half-matched
-> @RYTE **quiet auto** — just the next 10 quiet channels, the same way as **quiet**
+> @RYTE **quiet auto** — just the next 10 quiet channels, the same way as **quiet**. **quiet retry**
+> offers the ones I left for you again, instead of waiting the week
 > @RYTE **delivered Jay Rodriguez** — proof of delivery: what their card says they
 > ordered against the leads on their sheet, with the line a dispute needs. **delivered**
 > on its own lists every order a week or more live that's short. I also say so on my own

@@ -4555,3 +4555,16 @@ def test_there_is_no_hourly_run_any_more():
 
     assert not hasattr(client, "quiet_auto_loop")
     assert "quiet_auto_loop" not in open(client.__file__, encoding="utf-8").read()
+
+
+def test_quiet_retry_offers_the_held_ones_again(tmp_path):
+    from datetime import datetime, timezone
+
+    from wilbyte import quietauto
+
+    where = tmp_path / "quiet-auto.json"
+    now = datetime(2026, 10, 13, tzinfo=timezone.utc)
+    quietauto.left_for_a_person(["11", "12"], now, path=where)
+    assert quietauto.leave_alone(now, quietauto.load(where)) == {"11", "12"}
+    assert quietauto.forget(where) == 2
+    assert quietauto.leave_alone(now, quietauto.load(where)) == set()
