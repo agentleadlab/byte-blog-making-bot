@@ -588,3 +588,24 @@ def test_order_check_with_aged_off(order, monkeypatch):
 
 def test_aged_orders_are_off_by_default():
     assert client.AGED_ORDERS_ON is False
+
+
+def test_taking_the_gavel_off_and_putting_it_back_makes_a_fresh_card(order):
+    """"can i try again, i removed the emoji and will it do again?"."""
+    order.kind = "fresh"
+    message = _message()
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert len(order.made) == 1
+    asyncio.run(client._order_ungavelled(_bot(message), GAVEL))
+    assert "900" not in ordercards.load()
+    assert "put it back and I'll make a fresh card" in order.responder.sent[-1][0]
+    assert "https://trello.com/c/new1" in order.responder.sent[-1][0]
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert len(order.made) == 2
+
+
+def test_taking_off_a_gavel_that_made_nothing_says_nothing(order):
+    before = len(order.responder.sent)
+    asyncio.run(client._order_ungavelled(_bot(_message()), GAVEL))
+    assert len(order.responder.sent) == before

@@ -414,6 +414,18 @@ class WilByteBot(discord.Client):
         if self.gone_since is None:
             self.gone_since = datetime.now(timezone.utc)
 
+    async def on_raw_reaction_remove(self, payload) -> None:
+        """The gavel taken off an order by somebody whose gavel counts: its
+        card forgotten, so the next gavel makes a fresh one."""
+        from .. import ordercards
+
+        if not ordercards.is_gavel(payload.emoji) or not ordercards.may_gavel(payload.user_id, self.config):
+            return
+        try:
+            await _order_ungavelled(self, payload)
+        except Exception:
+            log.exception("Couldn't forget that order")
+
     async def on_raw_reaction_add(self, payload) -> None:
         """An emoji on a request in the Growth server, from the one it was
         asked of: done."""
@@ -9001,6 +9013,26 @@ def _order_responder(bot):
     if responder is None:
         log.error("No board channel and no #hub-agent-fulfillment to say orders in")
     return responder
+
+
+async def _order_ungavelled(bot, payload) -> None:
+    """"i removed the emoji and will it do again?" - yes: the order's card is
+    forgotten (the card itself stays on the board), and gavelling it again
+    makes a new one."""
+    from .. import ordercards
+
+    key = str(payload.message_id)
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        order = held.pop(key, None)
+        if not order:
+            return
+        await asyncio.to_thread(ordercards.save, held)
+    responder = _order_responder(bot)
+    if responder is not None and order.get("status") == "made":
+        await responder.send(f"🔨 Gavel taken off **{order.get('client') or order.get('name') or 'that order'}** — "
+                             f"put it back and I'll make a fresh card. The one I made stays as it is: "
+                             f"{order.get('url', '')}", quiet=True)
 
 
 async def _order_gavel_refused(bot, payload) -> None:
