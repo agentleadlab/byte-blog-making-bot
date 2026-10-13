@@ -401,3 +401,37 @@ def test_the_pass_never_writes_to_the_hub(monkeypatch):
                                   "<@1> check list"])
 def test_checklist_is_a_command(said):
     assert mentions.parse(said).action == "rytechecklist"
+
+
+def test_closed_threads_are_found_public_private_and_in_forums_but_not_old_ones():
+    now = datetime.now(timezone.utc)
+
+    def closed(name, days):
+        return SimpleNamespace(id=hash(name), name=name, archive_timestamp=now - timedelta(days=days))
+
+    class Listing:
+        def __init__(self, public=(), private=()):
+            self.public, self.private = public, private
+
+        def archived_threads(self, *, private=False, limit=50):
+            async def gen():
+                for one in (self.private if private else self.public):
+                    yield one
+            return gen()
+
+    class Forum:
+        def archived_threads(self, *, limit=50):
+            async def gen():
+                yield closed("Edward Conway - Trucker IUL", 2)
+            return gen()
+
+    class Server:
+        text_channels = [Listing(public=[closed("Gavin Littledike", 3), closed("Old One", 45)],
+                                 private=[closed("Madison McGill", 1)])]
+        forums = [Forum()]
+
+        async def active_threads(self):
+            return [SimpleNamespace(id=1, name="Lauren Huddleston")]
+
+    names = {one.name for one in asyncio.run(client._setup_threads(Server()))}
+    assert names == {"Lauren Huddleston", "Gavin Littledike", "Madison McGill", "Edward Conway - Trucker IUL"}

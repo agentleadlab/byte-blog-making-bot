@@ -8117,7 +8117,8 @@ def _setup_guild(bot, config):
 
 async def _setup_threads(guild) -> list:
     """Every thread in the server worth looking in: the open ones, and the
-    ones closed in the last month. Read only."""
+    ones closed in the last month - public and private, in text channels and
+    forums (RYTE is an admin there, so it sees them all). Read only."""
     found = {}
     try:
         for one in await guild.active_threads():
@@ -8125,9 +8126,15 @@ async def _setup_threads(guild) -> list:
     except Exception:
         log.warning("Couldn't list the open threads", exc_info=True)
     since = datetime.now(timezone.utc) - timedelta(days=SETUP_THREAD_DAYS)
+    closed = []
     for channel in getattr(guild, "text_channels", None) or []:
+        closed.append(lambda c=channel: c.archived_threads(limit=50))
+        closed.append(lambda c=channel: c.archived_threads(private=True, limit=50))
+    for channel in getattr(guild, "forums", None) or []:
+        closed.append(lambda c=channel: c.archived_threads(limit=50))
+    for listing in closed:
         try:
-            async for one in channel.archived_threads(limit=25):
+            async for one in listing():
                 stamp = getattr(one, "archive_timestamp", None)
                 if stamp is not None and stamp < since:
                     break
