@@ -8129,6 +8129,8 @@ HUB_CHECK_SECONDS = 30 * 60
 SETUP_CHECK_SECONDS = 30 * 60
 #: When tomorrow's not-ready list goes to Franklin, on the board's clock.
 SETUP_EVENING = (18, 0)
+#: Bumped when the thread reader changes, so every thread is read again.
+SETUP_READ_VERSION = 2
 #: How far back an archived thread is still read.
 SETUP_THREAD_DAYS = 30
 
@@ -8235,7 +8237,7 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
             hub_now = "|".join(str(part) for part in (
                 agent.lead_type, agent.ordered, agent.daily_cap, ",".join(agent.states),
                 agent.schedule, agent.start_date, agent.status))
-            sig = f"{max((one['id'] for one in said), default=0)}|{hub_now}"
+            sig = f"{SETUP_READ_VERSION}|{max((one['id'] for one in said), default=0)}|{hub_now}"
             key = setupcheck.key_of(agent)
             held = read.get(key) or {}
             got = held.get("got") if held.get("sig") == sig else None

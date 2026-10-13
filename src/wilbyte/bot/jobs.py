@@ -11713,13 +11713,18 @@ def read_setup_thread(config: Config, agent, messages: list[dict], *, today) -> 
                 "hours_match": {"type": "string", "enum": ["yes", "no", "unclear"], "description": "Whether the hub's hours fit the hours asked. 'unclear' when either side doesn't say."},
                 "hours_why": {"type": "string", "description": "When hours_match is 'no': what was asked against what the hub has, one short line."},
                 "live": {"type": "boolean", "description": "Whether somebody said they are live now."},
+                "this_order": {"type": "boolean", "description": (
+                    "Whether anything in the thread is about THIS order - the one the hub has, by its lead "
+                    "type and live date. False when the thread only talks about their other or earlier "
+                    "orders; then leave every other field empty.")},
             },
-            "required": ["lead_type", "leads", "daily_cap", "states", "hours", "start_date",
+            "required": ["this_order", "lead_type", "leads", "daily_cap", "states", "hours", "start_date",
                          "same_as_before", "hours_match", "live"],
         },
     }
     content = [{"type": "text", "text": (
-        f"Today is {today:%Y-%m-%d}. The client is {agent.name}.\n\nThe hub's setup for them: {hub_said}\n\n"
+        f"Today is {today:%Y-%m-%d}. The client is {agent.name}.\n\nThe order being checked - the hub's "
+        f"setup for it: {hub_said}\n\n"
         "The thread, oldest first:\n" + "\n".join(lines))}]
     for url in images[:4]:
         content.append({"type": "image", "source": {"type": "url", "url": url}})
@@ -11728,8 +11733,11 @@ def read_setup_thread(config: Config, agent, messages: list[dict], *, today) -> 
             model=config.copy.model, max_tokens=700,
             system=("You read Agent Lead Lab's team threads about a client's lead order: what they "
                     "bought and how the delivery should be set up. Use only what the thread says - "
-                    "messages and screenshots. Later messages override earlier ones. Leave a field "
-                    "empty rather than guess."),
+                    "messages and screenshots. A client's thread often holds several orders - earlier "
+                    "ones, or two bought together (Final Expense and Mortgage). Read ONLY what's about "
+                    "the order the hub has: its lead type and live date. Never fill a field from another "
+                    "order. Later messages about this order override earlier ones. Leave a field empty "
+                    "rather than guess."),
             tools=[tool], tool_choice={"type": "tool", "name": "setup"},
             messages=[{"role": "user", "content": content}],
         )
@@ -11774,21 +11782,25 @@ def paid_for(agent, *, now=None, zelle=None) -> bool | None:
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=SETUP_PAID_DAYS)
     email = str((agent.raw or {}).get("email") or "").strip().casefold()
+    payments = []
     for invoice in (data.get("invoices") or {}).values():
         theirs = (email and str(invoice.get("email") or "").strip().casefold() == email) or \
             clearout.name_match(agent.name, str(invoice.get("name") or "")) >= 2
-        if not theirs:
+        if theirs:
+            payments += payraapi.payments_on(data, invoice)
+    # A charge with no invoice behind it, under their name.
+    payments += [one for one in (data.get("payments") or {}).values()
+                 if clearout.name_match(agent.name, str(one.get("customer") or "")) >= 2]
+    for payment in payments:
+        if not payraapi._went_through(payment):
             continue
-        for payment in payraapi.payments_on(data, invoice):
-            if not payraapi._went_through(payment):
-                continue
-            try:
-                when = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
-            if when >= since:
-                return True
+        try:
+            when = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+        if when >= since:
+            return True
     return False
 
 

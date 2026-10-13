@@ -97,13 +97,19 @@ class Asked:
     live: bool = False
     thread: str = ""
     link: str = ""
+    #: False when their thread only talks about their other orders.
+    this_order: bool = True
 
 
 _STATE = re.compile(r"\b[A-Z]{2}\b")
 
 
 def asked_from(got: dict, *, thread: str = "", link: str = "") -> Asked:
-    """The thread reader's answer, tidied."""
+    """The thread reader's answer, tidied. A thread that isn't about this
+    order says nothing about it - an earlier order's 25 OTP Vet leads from
+    09/24 aren't what this one should be."""
+    if got.get("this_order") is False:
+        return Asked(thread=thread, link=link, this_order=False)
     def number(said):
         try:
             value = int(str(said).strip())
@@ -216,6 +222,8 @@ def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: 
         f"no payment in {'Payra or Zelle' if zelle else 'Payra'} under their name" if paid is False else "Payra not read")))
     if asked is None:
         found.append(Finding("Thread", False, "no thread for them in the Growth server"))
+    elif not asked.this_order:
+        found.append(Finding("Thread", False, f"their thread doesn't mention this order ({agent.lead_type or 'this lead type'})"))
     else:
         found.append(Finding("Thread", True, asked.thread))
 

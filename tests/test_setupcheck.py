@@ -472,3 +472,23 @@ def test_not_paid_says_where_it_looked():
 def test_threads_command():
     assert mentions.parse("<@1> threads Gavin Littledike").action == "setupthreads"
     assert mentions.parse("<@1> threads Gavin Littledike").brief == "Gavin Littledike"
+
+
+def test_a_thread_about_their_other_order_isnt_held_against_this_one():
+    """Gavin's thread has his 09/24 OTP Vet order; the hub's Mortgage order
+    for 10/14 isn't wrong for not being that."""
+    got = setupcheck.asked_from({"this_order": False, "lead_type": "OTP Vet", "leads": 25, "daily_cap": 8,
+                                 "states": ["DC", "FL"], "start_date": "2026-09-24"}, thread="Gavin Littledike")
+    assert got.lead_type == "" and got.leads is None and got.start is None
+    result = setupcheck.check(agent(lead_type="MTG_PLUS"), got, paid=True, today=TODAY)
+    assert wrong_of(result) == {"Thread": "their thread doesn't mention this order (MTG_PLUS)"}
+
+
+def test_a_payment_with_no_invoice_under_their_name_is_paid(monkeypatch):
+    from wilbyte import payraapi
+
+    now = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(payraapi, "load", lambda *a, **k: {"invoices": {"x": {"id": "x", "name": "Somebody Else"}},
+        "payments": {"p": {"id": "p", "customer": "Gavin Littledike", "status": "succeeded",
+                           "paid_on": (now - timedelta(days=2)).isoformat()}}})
+    assert jobs.paid_for(agent(raw={}), now=now) is True
