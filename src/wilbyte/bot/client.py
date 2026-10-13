@@ -1626,6 +1626,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _ask_about_faith(responder, config, request.brief or "")
                 return
 
+            if request.action == "faithvoice":
+                await _faith_voice(responder, config, message, request.brief or "")
+                return
+
             if request.action == "whenlive":
                 await _when_live(responder, config, request.brief or "")
                 return
@@ -8875,6 +8879,63 @@ async def _respond_like_faith(
             said="", drafted=drafted, card=known.get("card"),
         ),
     )
+
+
+#: How the verdict is said.
+_VOICE_VERDICT = {"yes": "✅ Yes — that sounds like Faith.",
+                  "close": "🟡 Close — a few things she'd do differently.",
+                  "no": "🔴 Not really — it doesn't read like her."}
+
+
+async def _faith_voice(responder: Responder, config: Config, message, draft: str) -> None:
+    """"@Ryte does this sound like faith?" with a reply under it - held up to
+    her real texts, and given back in her voice. Nothing is sent."""
+    from .. import ringcentral, ringtexts, smsreplies
+
+    if not draft.strip():
+        # Asked as a reply to the draft itself.
+        replied = getattr(getattr(message, "reference", None), "resolved", None)
+        draft = str(getattr(replied, "content", "") or "").strip()
+    if not draft.strip():
+        await responder.send("Put the reply under the question: `@Ryte does this sound like Faith?` "
+                             "then your message — or ask it as a reply to the message.")
+        return
+    problems: list[str] = []
+    if ringcentral.configured(config.secrets):
+        data, problems = await asyncio.to_thread(jobs.ring_catch_up, config)
+    else:
+        data = await asyncio.to_thread(ringtexts.load)
+    done = smsreplies.give_reasons(
+        smsreplies.exchanges(jobs.ring_texts(config, data)), data.get("reasons") or {},
+    )
+    if not done:
+        await responder.send("I haven't read any of Faith's replies yet, so I can't tell what she sounds like"
+                             + (f" — {problems[0]}" if problems else "."))
+        return
+    try:
+        got = await asyncio.to_thread(partial(
+            jobs.faith_voice_check, config, draft, done,
+            playbook=str((data.get("playbook") or {}).get("text") or ""),
+            learned=smsreplies.rules_from(list(data.get("lessons") or [])),
+        ))
+    except Exception as exc:
+        await responder.send(f"Couldn't check that: {_readable(exc)}")
+        return
+    await responder.send(faith_voice_said(got, draft))
+
+
+def faith_voice_said(got: dict, draft: str) -> str:
+    """The check, as one Discord message: the verdict, what's off, anything
+    her replies say differently, and the reply in her voice to copy."""
+    lines = [_VOICE_VERDICT.get(got.get("verdict"), _VOICE_VERDICT["close"])]
+    lines += [f"• {one[:220]}" for one in got.get("differences") or []]
+    lines += [f"⚠ Her replies say otherwise: {one[:300]}" for one in got.get("facts") or []]
+    rewrite = str(got.get("rewrite") or "").strip()
+    if rewrite and (got.get("verdict") != "yes" or rewrite != draft.strip()):
+        fence = "`" * 3
+        lines += ["", "**As Faith would send it:**", fence, rewrite.replace(fence, "'''")[:1100], fence]
+    lines.append(f"-# Held up to {got.get('examples', 0)} of her replies. Nothing was sent.")
+    return "\n".join(lines)[:1995]
 
 
 async def _ask_about_faith(responder: Responder, config: Config, question: str) -> None:

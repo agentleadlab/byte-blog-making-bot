@@ -789,6 +789,32 @@ def _responder_switch(text: str) -> str | None:
     return None
 
 
+# "does this sound like faith?" with a draft under it - Franklin's own reply,
+# checked against how Faith actually writes. It went to the ad writer: a long
+# message with a question on top looked like a brief.
+FAITH_VOICE = re.compile(
+    r"^\s*(?:hey\s+|ryte,?\s+)?(?:"
+    r"(?:does|do|would|will)\s+(?:this|that|it|my\s+(?:reply|text|message|draft))\s+(?:sound|read)\s+(?:like|as\s+if)\s+(?:faith|it\s+was\s+faith|faith\s+wrote\s+it)"
+    r"|(?:is|was)\s+(?:this|that|it)\s+(?:how|what)\s+faith\s+(?:would\s+)?(?:say|says|write|writes|text|texts|send|sends|reply|replies|answer|answers)(?:\s+it)?"
+    r"|would\s+faith\s+(?:say|write|text|send|reply\s+with|answer\s+with)\s+(?:this|that|it)(?:\s+like\s+(?:this|that))?"
+    r"|how\s+would\s+faith\s+(?:say|write|text|send|word|put)\s+(?:this|that|it)"
+    r"|(?:make|rewrite|reword|redo|fix)\s+(?:this|that|it|my\s+(?:reply|text|message|draft))\s+(?:to\s+)?(?:sound\s+)?(?:like|as|in)\s+faith(?:'s|s)?(?:\s+(?:voice|style|words))?"
+    r"|in\s+faith(?:'s|s)\s+(?:voice|style|words)"
+    r"|faith\s+(?:voice|tone)\s+check|sound\s+like\s+faith"
+    r")\s*[?.!:,-]*\s*",
+    re.IGNORECASE,
+)
+
+
+def faith_voice_draft(text: str) -> str | None:
+    """The draft to check when the message asks whether it sounds like Faith
+    - "" when the question came with nothing under it - else None."""
+    found = FAITH_VOICE.match(str(text or ""))
+    if not found:
+        return None
+    return str(text)[found.end():].strip()
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -804,6 +830,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     switch = _responder_switch(text)
     if switch is not None:
         return MentionRequest(action="responder", brief=switch)
+    voice = faith_voice_draft(text)
+    if voice is not None:
+        return MentionRequest(action="faithvoice", brief=voice)
     if asks_about_faith(_without_links(text)):
         return MentionRequest(action="askfaith", brief=text)
     # Looking back over the clear-outs already done, and redrawing one
@@ -1397,6 +1426,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > her card. Also **Faith's sheet**. The newest one when a setup was redone
 > @RYTE **respond** + a screenshot of a RingCentral thread — Faith's reply to
 > it, drafted for you and never sent. Or paste the agent's words after it
+> @RYTE **does this sound like Faith?** with your reply under it — what's off next to how she
+> actually writes, and the same reply in her voice. Nothing is sent
 > @RYTE **what does Faith send when agents ask where to submit a sale?** —
 > how she answers anything, from her RingCentral texts: her words, and the
 > links she sends counted. Also **how does Faith handle refund requests**

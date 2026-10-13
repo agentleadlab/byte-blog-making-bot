@@ -10646,6 +10646,94 @@ def faith_answers(config: Config, done: list, question: str) -> dict:
     return {"answer": answer, "matched": matched, "links": links, "terms": terms}
 
 
+# ------------------------------------------- "does this sound like Faith?"
+
+
+def faith_voice_check(config: Config, draft: str, done: list, *, playbook: str = "",
+                      learned: list = ()) -> dict:
+    """Franklin's own reply, held up to how Faith writes.
+
+    {"verdict", "differences", "rewrite", "facts", "examples"}. Her
+    exchanges most like this one are the yardstick - for what she says about
+    it as much as how - with a few of her newest for how she writes now. The
+    rewrite keeps Franklin's facts; one her replies say otherwise about is
+    named in "facts", not quietly changed. Nothing is sent.
+    """
+    from anthropic import Anthropic
+
+    from .. import smsreplies
+
+    draft = str(draft or "").strip()
+    if not draft:
+        raise ValueError("Put the reply under the question: `@Ryte does this sound like Faith?` "
+                         "then your message.")
+    examples = smsreplies.closest(list(done), draft, most=6, recent=4)
+    if not examples:
+        raise ValueError("I have none of Faith's replies to compare with yet.")
+    shown = "\n\n".join(
+        f"EXAMPLE {at}\nAgent: {one.asked}\nFaith: {one.answered}"
+        for at, one in enumerate(examples, start=1)
+    )
+    sections = []
+    if playbook:
+        sections.append(f"FAITH'S PLAYBOOK - how she handles agents, from her own replies:\n\n{playbook}")
+    if learned:
+        sections.append("STANDING RULES FROM HER CORRECTIONS:\n" + "\n".join(f"- {one}" for one in learned))
+    tool = {
+        "name": "voice_check",
+        "description": "How close the draft is to how Faith writes, and the draft in her voice.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": ["yes", "close", "no"],
+                            "description": "yes: she could have sent it as is. close: small changes. no: it reads like someone else."},
+                "differences": {"type": "array", "items": {"type": "string"}, "description": (
+                    "What is unlike her, most noticeable first, each short and concrete - greeting, "
+                    "length, wording she never uses, wording she always uses, punctuation, emoji, "
+                    "what she would add or leave out. Point at her examples. Empty when nothing is off.")},
+                "rewrite": {"type": "string", "description": (
+                    "The same reply as Faith would send it - same facts and the same ask, her "
+                    "words and shape. Only facts from the draft or plainly her standing habit.")},
+                "facts": {"type": "array", "items": {"type": "string"}, "description": (
+                    "Anything the draft says that her replies say differently - a timeline, a "
+                    "payment rule, a link, a policy - quoting what she says. Empty when none. "
+                    "Never facts from anywhere else.")},
+            },
+            "required": ["verdict", "differences", "rewrite", "facts"],
+        },
+    }
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    response = client.messages.create(
+        model=config.copy.model, max_tokens=1200,
+        system=(
+            "Franklin, the general manager of Agent Lead Lab, wrote a text to an insurance agent "
+            "and wants to know whether it sounds like Faith, who normally answers them. Compare it "
+            "with her real replies: how she writes - length, greeting, sign-off, capitals, "
+            "punctuation, emoji, how warm or brief - and what she says about the same thing. Be "
+            "honest and specific, and don't nitpick: if it already sounds like her, say so. Nothing "
+            "here is sent; Franklin decides."
+        ),
+        tools=[tool], tool_choice={"type": "tool", "name": "voice_check"},
+        messages=[{"role": "user", "content": (
+            ("\n\n---\n".join(sections) + "\n\n---\n" if sections else "")
+            + f"Faith's replies most like this one, and her newest:\n\n{shown}\n\n---\n"
+            f"Franklin's draft:\n{draft}"
+        )}],
+    )
+    got = _tool_input(response, "voice_check")
+    rewrite = str(got.get("rewrite") or "").strip()
+    if not rewrite:
+        raise ValueError("The check came back empty.")
+    return {
+        "verdict": str(got.get("verdict") or "close"),
+        "differences": [str(one) for one in got.get("differences") or [] if str(one).strip()][:6],
+        "rewrite": rewrite,
+        "facts": [str(one) for one in got.get("facts") or [] if str(one).strip()][:4],
+        "examples": len(examples),
+    }
+
+
 # -------------------------------------------- unticked cards on top of Done
 
 #: Cards floated per pass, at most. The first pass can find weeks of them.

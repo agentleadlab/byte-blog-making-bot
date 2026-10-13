@@ -60,6 +60,7 @@ JOBS = {
     "testimonial_draft": "Website testimonials",
     "_pick_testimonial": "Website testimonials",
     "_write_about": "Website testimonials",
+    "faith_voice_check": "Asking how Faith answers",
 }
 
 #: ...and by the module, where one module is one job.
