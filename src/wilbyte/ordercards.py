@@ -8,8 +8,9 @@ When the order is ready, Franklin reacts with :leadlab_hammertime: and RYTE
 makes the card, so the board's automations run from there:
 
 - aged leads: made straight away, in Aged Leads Order Done;
-- a fresh agent: shown first in Ryte The Goat, made on the Create button, in
-  the Queue.
+- a fresh agent: made straight away too, in the Queue ("it creates the card
+  automatically") - FRESH_ASKS_FIRST in the client puts the Create button
+  back.
 
 Each card is a copy of an example card - its checklists, labels and members
 - with the title and description written in that card's own format from the

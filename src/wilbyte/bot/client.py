@@ -8856,6 +8856,10 @@ ORDER_NOTES_SETTLE_SECONDS = 120
 _ORDER_PENDING: dict = {}
 #: How long the Create button on a fresh order waits.
 ORDER_ASK_SECONDS = 24 * 60 * 60
+#: Whether a new agent's card waits for the Create button. "i want it that
+#: when ryte saw that emoji, it creates the card automatically" - off: the
+#: gavel is the go-ahead for both kinds.
+FRESH_ASKS_FIRST = False
 #: Orders being read or waiting on their button right now - a second gavel
 #: meanwhile isn't a second card. Not kept over a restart, where the button
 #: is gone anyway: gavelling it again asks again.
@@ -9074,7 +9078,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                                  f"`@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <trello link>`, then gavel it again.\n<{link}>")
         return
 
-    if kind == "fresh":
+    if kind == "fresh" and FRESH_ASKS_FIRST:
         if responder is None:
             await _order_forget(key)
             return

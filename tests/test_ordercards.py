@@ -221,7 +221,20 @@ def test_aged_is_made_straight_away_and_said_in_ryte_the_goat(order):
     assert len(order.made) == 1, "a second gavel made a second card"
 
 
-def test_fresh_waits_for_the_button_and_reads_the_notes_again(order):
+def test_fresh_is_made_straight_away_too(order):
+    """"i want it that when ryte saw that emoji, it creates the card automatically"."""
+    assert client.FRESH_ASKS_FIRST is False
+    order.kind = "fresh"
+    message = _message("New Payment | Payra\nNAME: Gregory Stevens\nPRODUCT: Text-Verified Trucker IUL")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 1", "TPL-fresh")]
+    [(said, view)] = order.responder.sent
+    assert "New Agent card made" in said and "In Que" in said and view is None
+    assert ordercards.load()["900"]["status"] == "made"
+
+
+def test_with_the_button_back_fresh_waits_for_it_and_reads_the_notes_again(order, monkeypatch):
+    monkeypatch.setattr(client, "FRESH_ASKS_FIRST", True)
     order.kind = "fresh"
     message = _message("New Payment | Payra\nNAME: Fabian Ubilla\nPRODUCT: VET")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
@@ -232,7 +245,8 @@ def test_fresh_waits_for_the_button_and_reads_the_notes_again(order):
     assert "New Agent card made" in done
 
 
-def test_fresh_left_alone_makes_nothing_and_can_be_gavelled_again(order):
+def test_fresh_left_alone_makes_nothing_and_can_be_gavelled_again(order, monkeypatch):
+    monkeypatch.setattr(client, "FRESH_ASKS_FIRST", True)
     order.kind, order.pressed = "fresh", False
     message = _message()
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
