@@ -11886,3 +11886,95 @@ def ryte_card_note(config: Config, text: str) -> None:
         client.add_comment(str(card["id"]), f"{tag} {text}".strip())
     finally:
         client.close()
+
+
+# ------------------------------------------- what the team asks each other
+
+def read_team_request(config: Config, *, asker: str, asked: list[str], text: str,
+                      images: list[str], where: str, forced: bool = False) -> dict:
+    """Whether a message in the Growth server asks the people it tags to do a
+    piece of work, and the work in a line. {"task": bool, "title": str}.
+    `forced` is Franklin saying "track this": it's a task, just name it."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    tool = {
+        "name": "request",
+        "description": "Whether this is a job for the people tagged, and what the job is.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "boolean", "description": (
+                    "True when it asks the tagged people to do something that will be finished at some "
+                    "point - set a cap, change a schedule, add states, send something, fix a setup. False "
+                    "for chat, thanks, announcements, FYIs, questions that only need an answer, and "
+                    "meeting reminders.")},
+                "title": {"type": "string", "description": (
+                    "The job in under 12 words, the client's name first when there is one: "
+                    "'Michael Greff - set a 10/day cap', 'Lauren Huddleston - add TX to states'. "
+                    "Read the screenshots for what's being asked.")},
+            },
+            "required": ["task", "title"],
+        },
+    }
+    content = [{"type": "text", "text": (
+        f"In {where}, {asker} wrote this, tagging {', '.join(asked) or 'a teammate'}:\n\n{text}"
+        + ("\n\n(It's been marked as a task - just name it.)" if forced else ""))}]
+    for url in images[:3]:
+        content.append({"type": "image", "source": {"type": "url", "url": url}})
+    system = ("You read Agent Lead Lab's team chat - a lead-generation company: clients buy leads, "
+              "the team sets up their delivery (caps, states, hours) on the hub. Say whether a message "
+              "hands somebody a job, and name the job.")
+    try:
+        response = client.messages.create(model=config.copy.model, max_tokens=200, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "request"},
+                                          messages=[{"role": "user", "content": content}])
+    except Exception:
+        if not images:
+            raise
+        response = client.messages.create(model=config.copy.model, max_tokens=200, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "request"},
+                                          messages=[{"role": "user", "content": content[:1]}])
+    got = _tool_input(response, "request")
+    title = " ".join(str(got.get("title") or "").split())[:120]
+    return {"task": bool(got.get("task")) or forced, "title": title or "Team request"}
+
+
+def _tasks_list(client, config):
+    """(card id, the General Tasks checklist) - made if it isn't there."""
+    from .. import teamtasks
+
+    card, _lists = _ryte_card(client, config)
+    for one in client.card_checklists(str(card["id"])):
+        if str(one.get("name") or "").strip().casefold() == teamtasks.TASKS_LIST.casefold():
+            return str(card["id"]), one
+    return str(card["id"]), client.create_checklist(str(card["id"]), teamtasks.TASKS_LIST)
+
+
+def team_task_add(config: Config, task: dict) -> str:
+    """The request as an item under General Tasks. Its item id."""
+    from .. import teamtasks
+
+    client = open_trello(config)
+    try:
+        _card_id, tasks = _tasks_list(client, config)
+        item = client.add_check_item(str(tasks["id"]), teamtasks.item_name(task))
+        return str(item["id"])
+    finally:
+        client.close()
+
+
+def team_task_done(config: Config, task: dict) -> None:
+    """Ticked, with who did it and when. Only ever an item RYTE added."""
+    from .. import teamtasks
+
+    if not task.get("item_id"):
+        return
+    client = open_trello(config)
+    try:
+        card, _lists = _ryte_card(client, config)
+        client.set_check_item(str(card["id"]), str(task["item_id"]), done=True,
+                              name=teamtasks.done_name(task))
+    finally:
+        client.close()

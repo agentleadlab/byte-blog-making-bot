@@ -410,12 +410,29 @@ class WilByteBot(discord.Client):
         if self.gone_since is None:
             self.gone_since = datetime.now(timezone.utc)
 
+    async def on_raw_reaction_add(self, payload) -> None:
+        """An emoji on a request in the Growth server, from the one it was
+        asked of: done."""
+        if self.user is not None and payload.user_id == self.user.id:
+            return
+        if not _in_setup_guild(self, self.get_guild(payload.guild_id) if payload.guild_id else None):
+            return
+        try:
+            who = getattr(payload.member, "display_name", None) or str(payload.user_id)
+            await _team_task_closes(self, str(payload.message_id), payload.user_id, who)
+        except Exception:
+            log.exception("Couldn't tick off that request")
+
     async def on_message(self, message: discord.Message) -> None:
         if self.user is not None and message.author.id == self.user.id:
             return
         if is_direct_mention(message, self.user):
             await answer_mention(self, message)
             return
+        # The Growth server: somebody asking a teammate to do something, or
+        # saying it's done. Read only - nothing is said there.
+        if not getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None)):
+            _also_running(self.loop.create_task(_team_message(self, message)))
         # Franklin replying to a suggestion or a lesson: that is him saying
         # what RYTE got wrong, and the best teacher there is.
         if _is_ring_reply(message):
@@ -1641,6 +1658,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "askfaith":
                 await _ask_about_faith(responder, config, request.brief or "")
+                return
+
+            if request.action == "teamtrack":
+                await _team_track(bot, responder, request.brief, getattr(message, "author", None))
+                return
+
+            if request.action == "teamtasks":
+                await _team_list(responder)
                 return
 
             if request.action == "rytechecklist":
@@ -8237,6 +8262,231 @@ def _setup_news(config, fresh) -> str:
     return "\n".join(lines)
 
 
+# ------------------------------------------------ what the team asks each other
+
+#: One at a time: two quick messages mustn't both add or both tick.
+_TEAM_LOCK = asyncio.Lock()
+_TAGGED = re.compile(r"<@!?(\d+)>")
+_MESSAGE_LINK = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
+
+
+def _in_setup_guild(bot, guild) -> bool:
+    if guild is None:
+        return False
+    try:
+        mine = _setup_guild(bot, bot.config)
+    except Exception:
+        return False
+    return mine is not None and getattr(mine, "id", None) == getattr(guild, "id", None)
+
+
+def _request_bits(message) -> tuple[str, list[str]]:
+    """What a message says and shows - what was forwarded in it too."""
+    text = [_all_of_it(message)]
+    images = [str(one.url) for one in getattr(message, "attachments", None) or []
+              if str(getattr(one, "content_type", "") or "").startswith("image/")]
+    for snap in getattr(message, "message_snapshots", None) or []:
+        said = _all_of_it(snap)
+        if said:
+            text.append("(forwarded) " + said)
+        images += [str(one.url) for one in getattr(snap, "attachments", None) or []
+                   if str(getattr(one, "content_type", "") or "").startswith("image/")]
+    return "\n".join(one for one in text if one.strip()), images
+
+
+def _tagged_people(bot, message) -> list[dict]:
+    """The people typed into the message - not a reply's ping, not RYTE, not
+    the one asking, not a bot."""
+    typed = set(_TAGGED.findall(str(getattr(message, "content", "") or "")))
+    me = str(getattr(getattr(bot, "user", None), "id", ""))
+    found = []
+    for one in getattr(message, "mentions", None) or []:
+        key = str(one.id)
+        if key in typed and key != me and key != str(message.author.id) and not getattr(one, "bot", False):
+            found.append({"id": key, "name": str(getattr(one, "display_name", "") or getattr(one, "name", ""))})
+    return found
+
+
+def _where_said(channel) -> str:
+    parent = getattr(channel, "parent", None)
+    name = f"the “{getattr(channel, 'name', '')}” thread" if parent is not None else f"#{getattr(channel, 'name', '')}"
+    return name + (f" under #{parent.name}" if parent is not None else "")
+
+
+async def _team_message(bot, message) -> None:
+    """One message in the Growth server: a job for somebody, or a job done."""
+    from .. import teamtasks
+
+    try:
+        await _team_done_said(bot, message)
+        people = _tagged_people(bot, message)
+        if not people:
+            return
+        text, images = _request_bits(message)
+        if len(_TAGGED.sub("", text).strip()) < 3 and not images:
+            return
+        await _team_task_from(bot, message, people, text, images)
+    except Exception:
+        log.exception("Couldn't read that message for a team request")
+
+
+async def _team_task_from(bot, message, people, text, images, *, forced=False) -> dict | None:
+    """The request on the card, if it is one. The task, or None."""
+    from .. import teamtasks
+
+    key = str(message.id)
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        if key in held:
+            return held[key]
+    asker = str(getattr(message.author, "display_name", "") or getattr(message.author, "name", ""))
+    got = await asyncio.to_thread(partial(
+        jobs.read_team_request, bot.config, asker=asker, asked=[one["name"] for one in people],
+        text=text, images=images, where=_where_said(message.channel), forced=forced))
+    if not got["task"]:
+        return None
+    task = {
+        "id": key, "channel_id": str(message.channel.id), "in_thread": getattr(message.channel, "parent", None) is not None,
+        "link": str(getattr(message, "jump_url", "") or ""), "asker": asker, "asker_id": str(message.author.id),
+        "assignees": people, "title": got["title"],
+        "made": message.created_at.astimezone(timezone.utc).isoformat(timespec="minutes"),
+    }
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        if key in held:
+            return held[key]
+        task["item_id"] = await asyncio.to_thread(jobs.team_task_add, bot.config, task)
+        held[key] = task
+        await asyncio.to_thread(teamtasks.save, held)
+    log.info("Team request on the card: %s", teamtasks.item_name(task))
+    return task
+
+
+def _says_done_to(task, message) -> bool:
+    """A message from somebody it was asked of, saying it's done - anywhere in
+    its own thread; in a busy channel only as a reply to the request."""
+    from .. import teamtasks
+
+    if not teamtasks.closes_it(task, message.author.id):
+        return False
+    if not teamtasks.said_done(_all_of_it(message)):
+        return False
+    if task.get("in_thread"):
+        return True
+    replied = getattr(getattr(message, "reference", None), "message_id", None)
+    return str(replied) == str(task["id"])
+
+
+async def _team_done_said(bot, message) -> None:
+    from .. import teamtasks
+
+    held = await asyncio.to_thread(teamtasks.load)
+    for task in teamtasks.in_place(held, message.channel.id):
+        if _says_done_to(task, message):
+            who = str(getattr(message.author, "display_name", "") or getattr(message.author, "name", ""))
+            await _team_task_closes(bot, task["id"], message.author.id, who, when=message.created_at)
+
+
+async def _team_task_closes(bot, key: str, person_id, who: str, *, when=None) -> bool:
+    """Ticked off, if it's open and this is somebody it was asked of."""
+    from .. import teamtasks
+
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        task = held.get(str(key))
+        if not task or task.get("done_at") or not teamtasks.closes_it(task, person_id):
+            return False
+        task["done_by"] = who
+        task["done_at"] = (when or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(timespec="minutes")
+        await asyncio.to_thread(jobs.team_task_done, bot.config, task)
+        await asyncio.to_thread(teamtasks.save, held)
+    log.info("Team request done: %s", teamtasks.item_name(task))
+    return True
+
+
+async def _team_tasks_catch_up(bot) -> None:
+    """What was missed while RYTE was down: an emoji on a request, or a "done"
+    after it. And done ones from over a month ago forgotten."""
+    from .. import teamtasks
+
+    held = await asyncio.to_thread(teamtasks.load)
+    for task in teamtasks.open_ones(held):
+        channel = bot.get_channel(int(task["channel_id"]))
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(int(task["channel_id"]))
+            except Exception:
+                continue
+        try:
+            asked = await channel.fetch_message(int(task["id"]))
+        except Exception:
+            continue
+        closed = False
+        for reaction in getattr(asked, "reactions", None) or []:
+            async for person in reaction.users():
+                if teamtasks.closes_it(task, person.id) and not getattr(person, "bot", False):
+                    closed = await _team_task_closes(bot, task["id"], person.id, str(
+                        getattr(person, "display_name", "") or person.name))
+                    break
+            if closed:
+                break
+        if closed:
+            continue
+        async for later in channel.history(after=asked, limit=100, oldest_first=True):
+            if _says_done_to(task, later):
+                await _team_task_closes(bot, task["id"], later.author.id, str(
+                    getattr(later.author, "display_name", "") or later.author.name), when=later.created_at)
+                break
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        await asyncio.to_thread(teamtasks.save, teamtasks.tidy(held, datetime.now(timezone.utc)))
+
+
+async def _team_track(bot, responder: Responder, said: str, author) -> None:
+    """"@Ryte track <message link>" - that message on the card as a job."""
+    from .. import teamtasks
+
+    found = _MESSAGE_LINK.search(said or "")
+    if not found:
+        await responder.send("Send me the message's link: right-click it → **Copy Message Link**, then "
+                             "`@Ryte track <link>`.")
+        return
+    _guild, channel_id, message_id = (int(one) for one in found.groups())
+    try:
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+        message = await channel.fetch_message(message_id)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't open that message: {_readable(exc)}")
+        return
+    text, images = _request_bits(message)
+    people = _tagged_people(bot, message)
+    try:
+        task = await _team_task_from(bot, message, people, text, images, forced=True)
+    except Exception as exc:
+        await responder.send(f"⚠ {_readable(exc)}")
+        return
+    if task.get("done_at"):
+        await responder.send(f"Already done: {teamtasks.done_name(task)}")
+        return
+    who = ", ".join(one["name"] for one in people) or "anybody but the one who asked"
+    await responder.send(f"📌 On the Ryte Checklist under **{teamtasks.TASKS_LIST}**: {teamtasks.item_name(task)}\n"
+                         f"-# Ticked when {who} reacts to it or says it's done.")
+
+
+async def _team_list(responder: Responder) -> None:
+    """"@Ryte team tasks" - what's still open."""
+    from .. import teamtasks
+
+    held = await asyncio.to_thread(teamtasks.load)
+    open_now = teamtasks.open_ones(held)
+    if not open_now:
+        await responder.send("Nothing asked of the team is open. ✅")
+        return
+    await responder.send("\n".join([f"🕓 **{len(open_now)} asked of the team, not done yet:**"] + [
+        f"• {teamtasks.item_name(one)}" + (f" · <{one['link']}>" if one.get("link") else "")
+        for one in open_now])[:3900])
+
+
 async def setup_check_pass_loop(bot: "WilByteBot") -> None:
     """Every half hour: the hub's scheduled agents against their threads and
     payments, on the Ryte Checklist card - and at six, tomorrow's not-ready
@@ -8255,13 +8505,27 @@ async def setup_check_pass_loop(bot: "WilByteBot") -> None:
             now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
             today = _today(bot.config)
             said = await asyncio.to_thread(setupcheck.load, "said")
-            if (now.hour, now.minute) >= SETUP_EVENING and said.get("_evening") != today.isoformat() and results:
+            try:
+                await _team_tasks_catch_up(bot)
+            except Exception:
+                log.exception("Couldn't catch up on the team's requests")
+            if (now.hour, now.minute) >= SETUP_EVENING and said.get("_evening") != today.isoformat():
+                from .. import teamtasks
+
                 tomorrow = today + timedelta(days=1)
                 late = setupcheck.not_ready(results, tomorrow)
+                waiting_on = teamtasks.overdue(await asyncio.to_thread(teamtasks.load), datetime.now(timezone.utc))
+                parts = []
                 if late:
-                    text = (f"🌙 Going live tomorrow ({tomorrow:%a %m/%d}) and not all checked:\n"
-                            + "\n".join(f"• {setupcheck.item_title(one.agent.name, one.agent.lead_type, one.agent.start_date)}"
-                                        f" — {', '.join(f.what for f in one.wrong)}" for one in late))
+                    parts.append(f"🌙 Going live tomorrow ({tomorrow:%a %m/%d}) and not all checked:\n"
+                                 + "\n".join(f"• {setupcheck.item_title(one.agent.name, one.agent.lead_type, one.agent.start_date)}"
+                                             f" — {', '.join(f.what for f in one.wrong)}" for one in late))
+                if waiting_on:
+                    parts.append("🕓 Asked of the team and not done yet:\n"
+                                 + "\n".join(f"• {teamtasks.item_name(one)}" + (f" · <{one['link']}>" if one.get("link") else "")
+                                             for one in waiting_on))
+                if parts:
+                    text = "\n\n".join(parts)
                     await asyncio.to_thread(jobs.ryte_card_note, bot.config, text)
                     if responder is not None:
                         ping = _unmarked_ping(bot.config)
