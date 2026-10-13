@@ -847,3 +847,84 @@ def test_the_gavel_is_answered_at_once_and_that_message_becomes_the_card(order):
     [(first, _v)] = order.responder.sent
     assert first.startswith("🔨 Making the card for this order…")
     assert len(edits) == 1 and "New Agent card made" in edits[0] and "https://trello.com/c/new1" in edits[0]
+
+
+# ------------------------------------------------------------- backfill and the live list
+
+def _payment(i, name):
+    message = _message(f"New Payment | Payra\nNAME: {name}\nPRODUCT: VET")
+    message.id, message.jump_url = i, f"https://discord.com/channels/1/700/{i}"
+    return message
+
+
+def test_backfill_makes_only_whats_missing_on_one_button(order, monkeypatch):
+    """"not all agent was added as card today? can we backfill it"."""
+    posts = [_payment(1, "Bram Gutierrez"), _payment(2, "Bram Gutierrez"), _payment(3, "Killian Cooper"),
+             _payment(4, "Gregory Stevens"), _payment(5, "Ayden Escarrega")]
+    ordercards.save({"4": {"status": "made"}})
+    names = {1: "Bram Gutierrez", 2: "Bram Gutierrez", 3: "Killian Cooper", 5: "Ayden Escarrega"}
+
+    async def reading(bot, message, **kw):
+        who = names[message.id]
+        kind = "aged" if who == "Ayden Escarrega" else "fresh"
+        return ({"kind": kind, "client": who, "name": f"New Agent - {who}", "desc": "d", "shots": [],
+                 "fields": {"package": "VET", "leads": "20", "launch": "Tuesday, October 13"},
+                 "launch_iso": "2026-10-13"}, {}, None)
+
+    async def payments(bot, day):
+        return posts
+
+    monkeypatch.setattr(client, "_order_read", reading)
+    monkeypatch.setattr(client, "_payments_on", payments)
+    monkeypatch.setattr(jobs, "new_agent_cards", lambda config: [
+        {"name": "NEW AGENT - Killian Cooper", "url": "https://trello.com/c/kc"}])
+    asyncio.run(client._order_backfill(_bot(posts[0]), order.responder, SimpleNamespace(id=FRANKLIN)))
+    listed = [text for text, view in order.responder.sent if view is not None][0]
+    assert "1 new agent(s) paid today with no card" in listed and "Bram Gutierrez" in listed
+    assert "Killian Cooper — already has a card: https://trello.com/c/kc" in listed
+    assert "Bram Gutierrez — a second payment today; one card" in listed
+    assert "Ayden" not in listed and "Gregory" not in listed
+    assert [one[1] for one in order.made] == ["New Agent - Bram Gutierrez"]
+    assert ordercards.load()["1"]["status"] == "made" and ordercards.load()["1"]["launch_iso"] == "2026-10-13"
+
+
+def test_backfill_is_franklins(order):
+    asyncio.run(client._order_backfill(_bot(_message()), order.responder, SimpleNamespace(id=KHARYL)))
+    assert "Only somebody whose gavel counts" in order.responder.sent[-1][0]
+
+
+def test_the_live_list_today_and_tomorrow_with_lead_type_and_states(order, monkeypatch):
+    """"give me the list of name going live today and tomorrow with their lead type and states"."""
+    from wilbyte import hub
+
+    today = date(2026, 10, 13)
+    agents = [hub.HubAgent(id="a", name="Killian Cooper", lead_type="VET", start_date=today,
+                           states=("AL", "AZ", "GA")),
+              hub.HubAgent(id="b", name="Gregory Stevens", lead_type="TRUCKER_IUL", start_date=today),
+              hub.HubAgent(id="c", name="Wesley Zurschmit", lead_type="TRUCKER_IUL", start_date=date(2026, 10, 14)),
+              hub.HubAgent(id="d", name="Old Agent", lead_type="FEX", start_date=date(2026, 10, 1))]
+    monkeypatch.setattr(hub, "agents", lambda secrets, status="fulfilled": agents)
+    ordercards.save({
+        "1": {"status": "made", "client": "Gregory Stevens", "fields": {"states": "TX, AL, CA"}, "launch_iso": "2026-10-13"},
+        "2": {"status": "made", "client": "Corban Tidwell", "url": "https://trello.com/c/ct",
+              "fields": {"states": "all states except NY and FL", "package": "Phx Standard 350"}, "launch_iso": "2026-10-14"},
+    })
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(hub_api_token="t"),
+                                                 schedule=SimpleNamespace(timezone="America/New_York")))
+    asyncio.run(client._live_list(bot, order.responder))
+    said = order.responder.sent[-1][0]
+    assert "**Today — Tue 10/13** (2)" in said and "**Tomorrow — Wed 10/14** (2)" in said
+    assert "**Killian Cooper** — VET · AL, AZ, GA" in said
+    assert "**Gregory Stevens** — TRUCKER_IUL · TX, AL, CA" in said, "states from the card when the hub has none"
+    assert "**Wesley Zurschmit** — TRUCKER_IUL · states not given" in said
+    assert "⚠ **Corban Tidwell** — Phx Standard 350 · all states except NY and FL · *not on the hub yet*" in said
+    assert "Old Agent" not in said
+
+
+@pytest.mark.parametrize("said, action", [
+    ("<@1> backfill orders", "orderbackfill"), ("<@1> backfill", "backfill"),
+    ("<@1> going live today and tomorrow", "livelist"), ("<@1> live list", "livelist"),
+    ("<@1> who goes live tomorrow", "golive"),
+])
+def test_backfill_and_live_list_commands(said, action):
+    assert mentions.parse(said).action == action

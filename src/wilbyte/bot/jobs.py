@@ -12157,6 +12157,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "What each screenshot the team posted in the notes says - '[screenshot 1]' is the first image "
             "shown, '[screenshot 2]' the second - written out as text, one entry each, in order. Keep the "
             "details: names, states, numbers, dates, hours. Empty when there are none.")},
+        "launch_iso": {"type": "string", "description": "The launch date as YYYY-MM-DD, or empty."},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
@@ -12195,7 +12196,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     fields = order_fields(got, notes)
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
     client_name = fields["name"]
-    return {"kind": kind, "client": client_name, "fields": fields,
+    launch_iso = str(got.get("launch_iso") or "")[:10]
+    if not re.match(r"\d{4}-\d{2}-\d{2}$", launch_iso):
+        launch_iso = ""
+    return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso,
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields), "due": "",
             "missing": [label for key, label in ORDER_FIELDS if key != "notes" and not fields[key]]}
@@ -12332,3 +12336,27 @@ def hub_task_verdict(config: Config, *, task: str, records: list[str], today) ->
     verdict = str(got.get("verdict") or "").casefold()
     return {"verdict": verdict if verdict in ("done", "not_done", "unclear") else "unclear",
             "why": " ".join(str(got.get("why") or "").split())[:200]}
+
+
+
+def new_agent_cards(config: Config) -> list[dict]:
+    """The board's open New Agent cards - {"name", "url"} - for not making a
+    card for somebody who has one, by hand or not."""
+    client = open_trello(config)
+    try:
+        cards = client.board_cards(config.secrets.trello_board_id)
+    finally:
+        client.close()
+    return [{"name": str(one.get("name") or ""), "url": str(one.get("shortUrl") or one.get("url") or "")}
+            for one in cards if re.match(r"\s*new\s*agent\b", str(one.get("name") or ""), re.IGNORECASE)]
+
+
+def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
+    """Their New Agent card, by their whole name in its title."""
+    from .. import clearout
+
+    for one in cards:
+        title = re.sub(r"^\s*new\s*agent\s*[-–—:]*\s*", "", one["name"], flags=re.IGNORECASE)
+        if clearout.name_match(name, title) >= 2:
+            return one
+    return None

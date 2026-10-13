@@ -1756,6 +1756,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _gavel_allow(bot, responder, message, allowed=request.action == "gavelallow")
                 return
 
+            if request.action == "orderbackfill":
+                await _order_backfill(bot, responder, getattr(message, "author", None))
+                return
+
+            if request.action == "livelist":
+                await _live_list(bot, responder)
+                return
+
             if request.action == "ordercheck":
                 await _order_check(bot, responder)
                 return
@@ -9197,6 +9205,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't put the screenshots on the card", exc_info=True)
     await _order_note(key, status="made", kind=kind, card_id=made["id"], url=made["url"], name=card["name"],
+                      fields=card.get("fields") or {}, launch_iso=card.get("launch_iso") or "",
                       made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
@@ -9402,6 +9411,170 @@ def _order_board_lists(config) -> list:
         return client.board_lists(config.secrets.trello_board_id)
     finally:
         client.close()
+
+
+def _orders_channel(guild):
+    """#new-payment - where the payments are posted, a thread under each."""
+    for channel in getattr(guild, "text_channels", None) or []:
+        if "newpayment" in _plain_letters(getattr(channel, "name", "")):
+            return channel
+    return None
+
+
+async def _payments_on(bot, day: date) -> list:
+    """The day's Payra posts in #new-payment, oldest first."""
+    guild = _setup_guild(bot, bot.config)
+    channel = _orders_channel(guild) if guild is not None else None
+    if channel is None:
+        return []
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    start = datetime(day.year, day.month, day.day, tzinfo=zone).astimezone(timezone.utc)
+    found = []
+    async for one in channel.history(after=start, before=start + timedelta(days=1), limit=400, oldest_first=True):
+        text = _all_of_it(one)
+        if getattr(one.author, "bot", False) and "new payment" in text.casefold() and "name:" in text.casefold():
+            found.append(one)
+    return found
+
+
+async def _order_backfill(bot, responder: Responder, author) -> None:
+    """"remember not all agent was added as card today? can we backfill it" -
+    today's new agent orders that have no card, read like a gavel and made
+    on one button."""
+    from .. import clearout, ordercards
+
+    if not ordercards.may_gavel(getattr(author, "id", ""), bot.config):
+        await responder.send("Only somebody whose gavel counts can make order cards.")
+        return
+    today = _today(bot.config)
+    await responder.send("🔨 Reading today's payments in #new-payment…")
+    posts = await _payments_on(bot, today)
+    if not posts:
+        await responder.send("No payments in #new-payment today - or I can't find that channel.")
+        return
+    held = await asyncio.to_thread(ordercards.load)
+    posts = [one for one in posts if (held.get(str(one.id)) or {}).get("status") != "made"]
+    gate = asyncio.Semaphore(4)
+
+    async def reading(one):
+        async with gate:
+            try:
+                card, _e, thread_id = await _order_read(bot, one)
+                return one, card, thread_id, None
+            except Exception as exc:
+                return one, None, None, exc
+
+    read = await asyncio.gather(*(reading(one) for one in posts))
+    try:
+        on_board = await asyncio.to_thread(jobs.new_agent_cards, bot.config)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read the board: {_readable(exc)}")
+        return
+    todo, skipped, seen = [], [], []
+    for one, card, thread_id, problem in read:
+        if card is None:
+            skipped.append(f"⚠ couldn't read <{one.jump_url}>: {_readable(problem)}")
+            continue
+        who = card["client"] or "?"
+        if card["kind"] == "aged":
+            continue
+        has = jobs.has_new_agent_card(who, on_board)
+        if has:
+            skipped.append(f"{who} — already has a card: {has['url']}")
+            continue
+        if any(clearout.name_match(who, other) >= 2 for other in seen):
+            skipped.append(f"{who} — a second payment today; one card")
+            continue
+        seen.append(who)
+        todo.append((one, card, thread_id))
+    if not todo:
+        await responder.send("✅ Every new agent paid today has a card."
+                             + ("\n" + "\n".join(f"-# {line}" for line in skipped[:15]) if skipped else ""))
+        return
+    lines = [f"🔨 **{len(todo)} new agent(s) paid today with no card** — they'd go in the Queue:"]
+    for _one, card, _t in todo:
+        fields = card["fields"]
+        lines.append(f"• **{card['client']}** — {fields.get('package') or '?'} · {fields.get('leads') or '?'} · "
+                     f"launch {fields.get('launch') or '?'}")
+    lines += [f"-# {line}" for line in skipped[:15]]
+    view = views.ConfirmView(requester_id=getattr(author, "id", None), timeout=60 * 60,
+                             label=f"Create {len(todo)} card(s)", emoji="🔨")
+    await responder.send("\n".join(lines)[:1900], view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    made_lines = []
+    for one, card, thread_id in todo:
+        key = str(one.id)
+        try:
+            made = await asyncio.to_thread(jobs.order_card_make, bot.config, "fresh", card)
+            attached = []
+            if card.get("shots"):
+                try:
+                    attached = await asyncio.to_thread(jobs.order_card_attach, bot.config, made["id"], card["shots"])
+                except Exception:
+                    log.warning("Couldn't put the screenshots on the card", exc_info=True)
+            await _order_note(key, status="made", kind="fresh", card_id=made["id"], url=made["url"], name=card["name"],
+                              fields=card.get("fields") or {}, launch_iso=card.get("launch_iso") or "",
+                              made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                              written=card["desc"], client=card["client"], link=str(one.jump_url), attached=attached,
+                              thread_id=str(thread_id or ""), message_channel_id=str(one.channel.id))
+            made_lines.append(f"✅ {card['name']} — {made['url']}")
+        except Exception as exc:
+            made_lines.append(f"⚠ {card['client']}: {_readable(exc)}")
+    await responder.send("\n".join(made_lines)[:1900])
+
+
+async def _live_list(bot, responder: Responder) -> None:
+    """"give me the list of name going live today and tomorrow with their
+    lead type and states" - the hub's dates and lead types; states from the
+    hub, else the order's card; orders whose thread says so and that aren't
+    on the hub yet, marked."""
+    from .. import clearout, hub, ordercards
+
+    today = _today(bot.config)
+    days = (today, today + timedelta(days=1))
+    agents, problem = [], ""
+    if getattr(bot.config.secrets, "hub_api_token", None):
+        try:
+            agents = await asyncio.to_thread(hub.agents, bot.config.secrets, status="all")
+        except hub.HubError as exc:
+            problem = str(exc)
+    orders = [one for one in (await asyncio.to_thread(ordercards.load)).values()
+              if isinstance(one, dict) and one.get("status") == "made"]
+
+    def order_of(name):
+        return next((one for one in orders if clearout.name_match(name, one.get("client", "")) >= 2), None)
+
+    def states_line(said):
+        said = str(said or "").strip()
+        codes = re.findall(r"\b[A-Z]{2}\b", said)
+        if len(codes) > 8:
+            return f"{', '.join(codes[:8])}… ({len(codes)} states)"
+        return said or "states not given"
+
+    lines = []
+    for day, label in zip(days, ("Today", "Tomorrow")):
+        rows = []
+        for agent in sorted((one for one in agents if one.start_date == day), key=lambda one: one.name):
+            order = order_of(agent.name)
+            states = ", ".join(agent.states) if agent.states else ((order or {}).get("fields") or {}).get("states", "")
+            rows.append(f"• **{agent.name}** — {agent.lead_type or '?'} · {states_line(states)}")
+        for order in orders:
+            if order.get("launch_iso") != day.isoformat():
+                continue
+            if any(clearout.name_match(order.get("client", ""), one.name) >= 2 for one in agents):
+                continue
+            fields = order.get("fields") or {}
+            rows.append(f"• ⚠ **{order.get('client')}** — {fields.get('package') or '?'} · "
+                        f"{states_line(fields.get('states'))} · *not on the hub yet* · {order.get('url', '')}")
+        lines.append(f"**{label} — {day:%a %m/%d}** ({len(rows)})")
+        lines += rows or ["• nobody"]
+    lines.append("-# Dates and lead types from the hub; states from the hub, else the order's card. "
+                 "⚠ = on a card, not on the hub.")
+    if problem:
+        lines.append(f"-# ⚠ Couldn't read the hub: {problem}")
+    await responder.send("\n".join(lines)[:3900])
 
 
 async def _order_template_set(responder: Responder, kind: str, link: str, config) -> None:

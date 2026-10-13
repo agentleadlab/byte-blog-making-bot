@@ -904,6 +904,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="gavelallow", brief=text)
     if re.match(r"\s*gavel\s+(?:remove|stop|disallow|revoke)\b", text, re.IGNORECASE):
         return MentionRequest(action="gavelremove", brief=text)
+    if re.match(r"\s*backfill\s+(?:the\s+)?(?:orders?|cards?|new\s*agents?)\b", text, re.IGNORECASE):
+        return MentionRequest(action="orderbackfill", brief=text)
+    if (re.match(r"\s*(?:live|going\s+live)\s+list\s*[.?!]*\s*$", text, re.IGNORECASE)
+            or (re.search(r"\b(?:going|goes|go)\s+live\b", text, re.IGNORECASE)
+                and re.search(r"\btoday\b", text, re.IGNORECASE) and re.search(r"\btomorrow\b", text, re.IGNORECASE))
+            or re.match(r"\s*(?:who(?:'s| is)?\s+)?going\s+live\s*[.?!]*\s*$", text, re.IGNORECASE)):
+        return MentionRequest(action="livelist", brief=text)
     if re.match(r"\s*(?:order|gavel)s?\s+(?:check|status|setup|test)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="ordercheck", brief=text)
     if re.match(r"\s*(?:order\s+)?(?:card\s+)?templates?\s*[.?!]*\s*$|\s*order\s+(?:cards?|examples?)\s*[.?!]*\s*$", text, re.IGNORECASE):
@@ -1486,6 +1493,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > its thread update the card.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
+> **backfill orders** — today's new agents paid with no card, made on one button.
+> **going live today and tomorrow** (or **live list**) — names, lead type and states.
 > **hub tasks** — every open request on the card checked on the hub (reading only); done there, ticked.
 > **hub fields <name>** — everything the hub has for one client
 > @RYTE **trello setups** — agents set up on leads they didn't order
