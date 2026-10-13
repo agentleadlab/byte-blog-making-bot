@@ -3667,17 +3667,21 @@ async def _clear_out(
             # Fox's FEX channel was collected with his vets sheet off the card.
             titled = await asyncio.to_thread(jobs.sheet_titles, config, [from_card, own])
             fits = clearout.sheet_for_channel(plan.channel.name, titled)
+            # Both kept - "or just save both sheet". The one that is this
+            # channel's leads goes first; the other has a row of its own, so
+            # whichever turns out to be the one wanted, it's there.
             if fits == own:
-                plan.sheet, plan.from_channel = own, True
-                plan.notes.append(
+                plan.sheet, plan.from_channel, plan.also_sheets = own, True, [from_card]
+                plan.told.append(
                     f"Their Trello card has a different sheet ({titled.get(from_card) or from_card}) "
-                    f"— keeping the channel's, “{titled.get(own)}”, because that's this "
-                    "channel's leads."
+                    f"— keeping both: the channel's, “{titled.get(own)}”, is this channel's "
+                    "leads; the card's goes in a row of its own."
                 )
             else:
-                plan.notes.append(
-                    f"Their channel has a different sheet: {own} — keeping the one "
-                    "on their Trello card."
+                plan.also_sheets = [own]
+                plan.told.append(
+                    f"Their channel has a different sheet ({titled.get(own) or own}) — keeping "
+                    "both: the card's first, the channel's in a row of its own."
                 )
     elif own:
         plan.sheet, plan.from_channel, trouble = own, True, []
@@ -3687,11 +3691,25 @@ async def _clear_out(
     if auto:
         # Two more a person would think of before deleting on their own -
         # "MAKE SURE RYTE DONT MAKE MISTAKE HERE".
-        theirs = clearout.their_channels(plan.channel, channels)
-        if len(theirs) > 1:
-            held.append(f"they have {len(theirs)} channels ("
-                        + ", ".join(f"#{one.name}" for one in theirs)
-                        + ") — which one goes is yours to say")
+        # Another channel of theirs is only a reason to stop when it is still
+        # in use: all of them quiet, each goes on its own with its own sheet.
+        # "cant it know?" - Thomas Cordier's quiet IUL channel was held for a
+        # VET one just as quiet.
+        others = [one for one in clearout.their_channels(plan.channel, channels)
+                  if one.channel_id != plan.channel.channel_id]
+        if others:
+            quiet_since = datetime.now(timezone.utc) - timedelta(days=clearout.how_far_back(""))
+            busy = []
+            for one in others:
+                when, _used = _last_used(guild.get_channel(int(one.channel_id)))
+                if when is None or when > quiet_since:
+                    busy.append(one)
+            if busy:
+                held.append(
+                    "their other channel" + ("s " if len(busy) > 1 else " ")
+                    + ", ".join(f"#{one.name}" for one in busy)
+                    + (" are" if len(busy) > 1 else " is") + " still in use — whether this one "
+                    "goes is yours to say")
         ordering, said = await asyncio.to_thread(jobs.recent_order, config, plan.channel.name)
         if not ordering:
             held.append(said)

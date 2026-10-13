@@ -144,8 +144,16 @@ class Plan:
     #: id as well as the channel's, and the one place that knows both is where
     #: the channel was found.
     guild_id: str = ""
-    #: Worth saying, not in the way: a different sheet on their Trello card.
+    #: Worth saying, and in the way of a clear-out RYTE does on its own: a
+    #: name that doesn't fit, anything a person should look at first.
     notes: list = field(default_factory=list)
+    #: Worth saying and nothing more - both sheets kept when the card and the
+    #: channel each had one. Never holds a channel back.
+    told: list = field(default_factory=list)
+    #: Other sheets kept with this one - "or just save both sheet". The
+    #: card's, when the channel's own is the one that is this channel's leads,
+    #: or the other way round. Each gets a row of its own.
+    also_sheets: list = field(default_factory=list)
     #: Whether the sheet link came out of the channel rather than off a Trello
     #: card. Worth saying: it means the link is about to be deleted along with
     #: the channel, and the row in ALL CLIENTS is the only place it will live.
@@ -236,7 +244,47 @@ def same_person(channel_name: str, agent: str) -> bool:
     if set(theirs) <= set(card):
         return True
     return (len(theirs) > 1 and theirs[-1] in card
-            and any(one[:1] == theirs[0][:1] for one in card if one != theirs[-1]))
+            and any(same_first_name(one, theirs[0]) for one in card if one != theirs[-1]))
+
+
+#: First names that are one person - the ones a shared start doesn't catch.
+_SAME_NAMES = (
+    {"mike", "michael", "mick", "mikey"}, {"jim", "jimmy", "james", "jamie"},
+    {"bob", "bobby", "rob", "robbie", "robert", "bert"}, {"bill", "billy", "will", "willie", "william", "liam"},
+    {"tony", "anthony", "antonio"}, {"joe", "joey", "joseph", "jose"}, {"dave", "davey", "david"},
+    {"tom", "tommy", "thomas"}, {"andy", "drew", "andrew"}, {"liz", "beth", "lizzy", "betty", "elizabeth"},
+    {"rick", "ricky", "rich", "richie", "dick", "richard"}, {"ted", "teddy", "ed", "eddie", "edward"},
+    {"larry", "lawrence", "laurence"}, {"jerry", "gerald", "gerry"}, {"peggy", "maggie", "meg", "margaret"},
+    {"becky", "becca", "rebecca"}, {"sally", "sarah", "sara"}, {"jack", "john", "johnny", "jon"},
+    {"hank", "henry"}, {"chuck", "charlie", "charles"}, {"mandy", "amanda"}, {"sandy", "sandra"},
+    {"cindy", "cynthia"}, {"jenny", "jen", "jennifer"}, {"kate", "katie", "kathy", "katherine", "catherine"},
+    {"chris", "christopher", "christian", "christina", "christine"}, {"steve", "steven", "stephen"},
+    {"jake", "jacob"}, {"zach", "zack", "zachary"}, {"nate", "nathan", "nathaniel"}, {"greg", "gregory"},
+    {"josh", "joshua"}, {"matt", "matthew"}, {"nick", "nicholas"}, {"alex", "alexander", "alexandra", "alexis"},
+    {"sam", "samuel", "samantha"}, {"ben", "benjamin", "benny"}, {"dan", "danny", "daniel"},
+    {"pat", "patrick", "patricia", "patty"}, {"tim", "timmy", "timothy"}, {"ken", "kenny", "kenneth"},
+    {"ron", "ronnie", "ronald"}, {"don", "donnie", "donald"}, {"jeff", "jeffrey", "geoff"},
+)
+
+
+def same_first_name(one: str, other: str) -> bool:
+    """Whether two first names could be one person: the same, one the start
+    of the other ("Chris", "Christopher"), sharing their first three letters,
+    or a known short form ("Mike", "Michael"). Not merely the same initial -
+    "Haroon Anwari" was held for an order card of "Hailey Anwari". A
+    three-letter name keeps the old rule: "Jay" could be Jason."""
+    one, other = str(one or "").casefold(), str(other or "").casefold()
+    if not one or not other:
+        return False
+    if one == other or one.startswith(other) or other.startswith(one):
+        return True
+    if len(one) >= 3 and len(other) >= 3 and one[:3] == other[:3]:
+        return True
+    # A three-letter name is usually somebody's short one - "Jay" for Jason -
+    # so for those the initial is still enough.
+    if min(len(one), len(other)) <= 3 and one[:1] == other[:1]:
+        return True
+    return any(one in names and other in names for names in _SAME_NAMES)
 
 
 def their_channels(one: Channel, channels) -> list:
@@ -837,6 +885,7 @@ def describe(plan: Plan) -> str:
         lines.append(f"• Last message — {plan.channel.last_active:%d %b %Y}")
     if plan.sheet:
         lines.append(f"• Sheet — {plan.sheet}")
+        lines += [f"• Also kept — {one}" for one in plan.also_sheets]
     else:
         lines.append(
             "• Sheet — **none found**, not on the board and not in the channel"
@@ -846,7 +895,7 @@ def describe(plan: Plan) -> str:
         else "• Member — **not in the server**, so there is nobody to ban"
     )
     lines += [f"⚠ {one}" for one in plan.problems]
-    lines += [f"-# {one}" for one in plan.notes]
+    lines += [f"-# {one}" for one in plan.notes + plan.told]
     # Under the list rather than inside it, and on a line of its own: "-#" is
     # Discord's small text only at the start of one, and in the middle of the
     # sheet line it rendered as the two characters.

@@ -6022,9 +6022,14 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
                     client.rows(sheet_id, f"'{tab}'!1:1") or [[]]
                 )[0]
             ]
+            # A row for each sheet kept - "or just save both sheet".
+            from dataclasses import replace
+
             where = client.append(
                 sheet_id, tab,
-                [clearout.row_for(plan, when=when, headings=headings)],
+                [clearout.row_for(plan, when=when, headings=headings)]
+                + [clearout.row_for(replace(plan, sheet=other, also_sheets=[]), when=when, headings=headings)
+                   for other in getattr(plan, "also_sheets", []) or []],
             )
             # A row appended under a heading row arrives wearing the heading's
             # clothes - bold and centred - and the sheet link wraps to six
@@ -6135,7 +6140,14 @@ def row_check(config: Config, plan) -> tuple[bool, str, bool]:
     if plan.sheet and not any(clearout.same_sheet(str(row.get("sheet") or ""), plan.sheet) for row in mine):
         return False, (f"Ryte Collection's row for #{plan.channel.name} has a different sheet "
                        "from the one kept"), False
-    return True, f"Ryte Collection has #{plan.channel.name}'s row" + (" with its sheet" if plan.sheet else ""), False
+    also = list(getattr(plan, "also_sheets", []) or [])
+    lost = [one for one in also
+            if not any(clearout.same_sheet(str(row.get("sheet") or ""), one) for row in mine)]
+    if lost:
+        return False, (f"Ryte Collection has no row for #{plan.channel.name} with its other sheet "
+                       f"({lost[0]})"), False
+    return True, (f"Ryte Collection has #{plan.channel.name}'s row" + (" with its sheet" if plan.sheet else "")
+                  + (f", and its other sheet{'s' if len(also) > 1 else ''}" if also else "")), False
 
 
 def sheet_check(config: Config, plan) -> tuple[bool, str]:
@@ -6153,6 +6165,15 @@ def sheet_check(config: Config, plan) -> tuple[bool, str]:
     if wanted and kinds and not (wanted & kinds):
         return False, (f"The sheet kept is “{title}”, which isn't this channel's leads "
                        f"({', '.join(sorted(wanted))})")
+    # The other sheet kept with it has only to open - it is the card's, and
+    # can be another order's leads.
+    also = list(getattr(plan, "also_sheets", []) or [])
+    if also:
+        opened = sheet_titles(config, also)
+        shut = [one for one in also if not opened.get(one)]
+        if shut:
+            return False, f"The other sheet kept wouldn't open: {shut[0]}"
+        return True, f"The sheet opens: “{title}”, and the other kept: " + ", ".join(f"“{opened[one]}”" for one in also)
     return True, f"The sheet opens: “{title}”"
 
 

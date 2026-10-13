@@ -1259,7 +1259,7 @@ def test_the_small_note_is_on_a_line_of_its_own():
     assert any(line.startswith("-#") for line in said.splitlines())
 
 
-def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, link="x"):
+def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, link="x", also=(), every=None):
     """One `collect_client`, with Sheets stubbed. Returns (tab, rows, problems)."""
     from wilbyte import gsheets
     from wilbyte.bot import jobs
@@ -1284,6 +1284,8 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
 
         def append(self, sheet_id, tab, rows):
             written.append((tab, rows[0]))
+            if every is not None:
+                every.extend(rows)
             return f"'{tab}'!A2:D2"
 
         def restyle(self, sheet_id, tab_id, first, last, *, bold, wrap=""):
@@ -1298,9 +1300,17 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
 
     tab, problems = jobs.collect_client(
         NS(secrets=NS(clients_sheet_link=link)),
-        _plan(sheet="https://sheet"), when=datetime(2026, 9, 15),
+        _plan(sheet="https://sheet", also_sheets=list(also)), when=datetime(2026, 9, 15),
     )
     return tab, written, problems, styled
+
+
+def test_both_sheets_kept_are_a_row_each(monkeypatch):
+    """"or just save both sheet"."""
+    every = []
+    _collecting(monkeypatch, titles=["Ryte Collection"], also=["https://other"], every=every)
+    assert len(every) == 2
+    assert "https://sheet" in every[0] and "https://other" in every[1]
 
 
 def test_it_writes_to_the_ryte_tab_not_whichever_one_the_link_had_open(monkeypatch):
@@ -3843,7 +3853,8 @@ def test_a_fex_channel_keeps_its_fex_sheet_over_the_cards_other_order(monkeypatc
     )
 
     assert rows[0][1] == channel_sheet
-    assert any("keeping the channel's" in one for one in said)
+    # "or just save both sheet" - the card's is kept too, in a row of its own.
+    assert any("keeping both" in one and f"• Also kept — {card_sheet}" in one for one in said)
 
 
 
@@ -4355,7 +4366,23 @@ def test_on_its_own_somebody_with_two_channels_is_left_for_you(monkeypatch):
         name="Keith Harper", twin=True, target="<#12>",
     )
     assert guild.twin.deleted is False and first.deleted is False and buttons == []
-    assert "they have 2 channels" in said[-1]
+    assert "their other channel #keith-harper-iul is still in use" in said[-1]
+
+
+def test_on_its_own_two_quiet_channels_each_go(monkeypatch):
+    """"cant it know?" - Thomas Cordier's quiet IUL channel was held because
+    his VET one existed, though it was just as quiet."""
+    import discord
+    from datetime import datetime, timezone
+
+    long_ago = discord.utils.time_snowflake(datetime(2025, 1, 1, tzinfo=timezone.utc))
+    monkeypatch.setattr(Channel, "last_message_id", long_ago, raising=False)
+    guild, first, said, buttons = _closing(
+        monkeypatch, says=[None, None], auto=True, called="keith-harper-iul",
+        name="Keith Harper", twin=True, target="<#12>",
+        checks=[(True, "Quiet: 60 days"), (True, "Row is there")],
+    )
+    assert guild.twin.deleted is True and first.deleted is False
 
 
 def test_by_hand_two_channels_is_still_your_call(monkeypatch):
@@ -4380,13 +4407,47 @@ def test_on_its_own_a_client_still_ordering_is_left_for_you(monkeypatch, orderin
 @pytest.mark.parametrize("card, same", [
     ("Jay Rodriguez", True),
     ("Jay Rodriguez OTP VET", True),
-    ("Jason Rodriguez", True),       # same surname and initial: held, to be safe
+    ("Jason Rodriguez", True),       # "Jay" is short for Jason: held, to be safe
     ("Jay Rodrigues", False),
     ("Maria Rodriguez", False),
     ("Jay Smith", False),
 ])
 def test_same_person_errs_towards_holding(card, same):
     assert clearout.same_person("jay_rodriguez-vet", card) is same
+
+
+@pytest.mark.parametrize("channel, card, same", [
+    ("haroon_anwari-vet", "AGED LEAD - Hailey Anwari", False),   # held Haroon for Hailey's orders
+    ("mike_smith-vet", "Michael Smith", True),
+    ("chris_lee-iul", "Christopher Lee", True),
+    ("kate_doe-fex", "Katherine Doe", True),
+    ("tom_ray-vet", "Thomas Ray", True),
+])
+def test_a_shared_initial_alone_is_not_the_same_person(channel, card, same):
+    assert clearout.same_person(channel, card) is same
+
+
+def test_both_sheets_get_a_row_and_both_are_checked(monkeypatch):
+    """"or just save both sheet"."""
+    from wilbyte.bot import jobs
+
+    plan = clearout.Plan(name="Thomas Cordier", channel=clearout.Channel(channel_id="1", name="thomas_cordier-iul"),
+                         sheet="https://docs.google.com/spreadsheets/d/" + "i" * 30,
+                         also_sheets=["https://docs.google.com/spreadsheets/d/" + "v" * 30])
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: ([
+        {"channel": "thomas_cordier-iul", "sheet": plan.sheet}], []))
+    ok, said, missing = jobs.row_check(None, plan)
+    assert not ok and not missing and "other sheet" in said
+    monkeypatch.setattr(jobs, "cleared_out", lambda config: ([
+        {"channel": "thomas_cordier-iul", "sheet": plan.sheet},
+        {"channel": "thomas_cordier-iul", "sheet": plan.also_sheets[0]}], []))
+    assert jobs.row_check(None, plan)[0] is True
+    monkeypatch.setattr(jobs, "sheet_titles", lambda config, links: {
+        plan.sheet: "Thomas_Cordier - OTP IUL", plan.also_sheets[0]: "Thomas_Cordier - OTP VET"})
+    ok, said = jobs.sheet_check(None, plan)
+    assert ok and "Thomas_Cordier - OTP VET" in said
+    monkeypatch.setattr(jobs, "sheet_titles", lambda config, links: {plan.sheet: "Thomas_Cordier - OTP IUL"})
+    assert jobs.sheet_check(None, plan) == (False, f"The other sheet kept wouldn't open: {plan.also_sheets[0]}")
 
 
 def test_a_channel_with_only_a_first_name_still_finds_their_order():
