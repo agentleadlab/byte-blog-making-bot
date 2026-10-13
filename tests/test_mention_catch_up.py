@@ -284,7 +284,7 @@ def test_an_at_ryte_is_answered_as_spoken_to(monkeypatch):
 
     seen = []
 
-    async def handle(bot, message):
+    async def handle(bot, message, **kw):
         seen.append(mirror._SPOKEN_TO.get())
 
     monkeypatch.setattr(client, "handle_mention", handle)

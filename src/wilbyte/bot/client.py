@@ -464,6 +464,10 @@ class WilByteBot(discord.Client):
             return
         if is_sop_channel(message, self.config):
             await handle_sop_post(self, message)
+            return
+        # Ryte The Goat: no tag needed. Only there.
+        if talks_to_ryte(message, self.config, self.user):
+            await answer_mention(self, message, untagged=True)
 
 
 #: How recently somebody has to have tagged RYTE for a restart to be said.
@@ -519,8 +523,9 @@ async def _chat(responder: Responder, config: Config, message) -> None:
     await responder.send(said[:1900], quiet=True)
 
 
-async def answer_mention(bot: "WilByteBot", message) -> None:
-    """Answer one @RYTE, and write down that it was answered."""
+async def answer_mention(bot: "WilByteBot", message, *, untagged: bool = False) -> None:
+    """Answer one @RYTE, and write down that it was answered. `untagged`: a
+    message in Ryte The Goat, answered without the tag."""
     _LAST_TAGGED[:] = [(datetime.now(timezone.utc), getattr(message, "channel", None))]
     said = getattr(message, "id", None)
     try:
@@ -535,7 +540,7 @@ async def answer_mention(bot: "WilByteBot", message) -> None:
     try:
         # Spoken to: the answer goes where it was asked, Growth server or not.
         with mirror.answering():
-            await handle_mention(bot, message)
+            await handle_mention(bot, message, untagged=untagged)
     except Exception:
         log.exception("That mention broke something")
         try:
@@ -788,6 +793,40 @@ def is_watched(message, config: Config) -> bool:
     """
     watched = config.secrets.discord_watch_channel_ids
     return bool(watched) and str(getattr(message, "channel", None) and message.channel.id) in watched
+
+
+def _talk_guild(guild, config: Config) -> bool:
+    """Whether this is Ryte The Goat - DISCORD_TALK_GUILD_ID, else by name."""
+    if guild is None:
+        return False
+    wanted = (getattr(config.secrets, "discord_talk_guild_id", "") or "").strip()
+    if wanted.isdigit():
+        return str(getattr(guild, "id", "")) == wanted
+    return "rytethegoat" in _plain_letters(getattr(guild, "name", ""))
+
+
+def talks_to_ryte(message, config: Config, bot_user) -> bool:
+    """"on ryte the goat, can ryte automatically respond even when no
+    tagging? just on that server". A person's message there is for RYTE -
+    unless it's for somebody else: tagging another person, @everyone or a
+    role, or a reply to somebody who isn't RYTE. Everywhere else, a tag."""
+    if bot_user is None or getattr(message.author, "bot", False):
+        return False
+    if not _talk_guild(getattr(message, "guild", None), config):
+        return False
+    content = str(getattr(message, "content", "") or "")
+    if not content.strip() and not getattr(message, "attachments", None):
+        return False
+    if getattr(message, "mention_everyone", False) or getattr(message, "role_mentions", None):
+        return False
+    typed = set(re.findall(r"<@!?(\d+)>", content))
+    if typed - {str(bot_user.id)}:
+        return False
+    ref = getattr(message, "reference", None)
+    replied = getattr(ref, "resolved", None) if ref is not None else None
+    if replied is not None and getattr(getattr(replied, "author", None), "id", None) not in (None, bot_user.id):
+        return False
+    return True
 
 
 def is_sop_channel(message, config: Config) -> bool:
@@ -1256,7 +1295,7 @@ async def _stop_typing(showing) -> None:
         log.debug("Couldn't stop the typing indicator", exc_info=True)
 
 
-async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
+async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged: bool = False) -> None:
     config = bot.config
 
     # A watched channel is read-only, always. Not "unless the allowlist is
@@ -1278,7 +1317,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
         # in it. "RYTE isn't enabled in this channel" is still chatter, and it
         # would be posted in front of them. Where the refusal is about the
         # person rather than the place, say so: they are somewhere RYTE speaks.
-        if config.secrets.discord_channel_ids and "channel" in reason:
+        if untagged or (config.secrets.discord_channel_ids and "channel" in reason):
+            # Nobody asked RYTE by name: not answering isn't worth a word.
             log.info("Ignoring a mention in channel %s", message.channel.id)
             return
         await message.reply(reason, mention_author=False)
