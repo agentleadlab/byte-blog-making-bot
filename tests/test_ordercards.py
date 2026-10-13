@@ -234,6 +234,11 @@ def order(monkeypatch):
     return held
 
 
+def _said(order):
+    """What Ryte said, less the "Making the card…" that comes first."""
+    return [one for one in order.responder.sent if not str(one[0] or "").startswith("🔨 Making the card")]
+
+
 def _bot(message):
     return SimpleNamespace(config=CONFIG, get_channel=lambda i: message.channel, loop=asyncio.get_event_loop_policy())
 
@@ -247,7 +252,7 @@ def test_aged_is_made_straight_away_and_said_in_ryte_the_goat(order):
     assert order.made == [("aged", "aged - Cole Petersen", "Name: Cole Petersen\nread 1", "new")]
     [read] = order.reads
     assert "NAME: Cole Petersen" in read and "Kharyl: 25 aged MTG, states AZ TX" in read and "launch tomorrow" in read
-    [(said, view)] = order.responder.sent
+    [(said, view)] = _said(order)
     assert "Aged Leads card made" in said and "https://trello.com/c/new1" in said and view is None
     held = ordercards.load()["900"]
     assert held["status"] == "made" and held["card_id"] == "card1" and held["thread_id"] == "900"
@@ -263,7 +268,7 @@ def test_fresh_is_made_straight_away_too(order):
     message = _message("New Payment | Payra\nNAME: Gregory Stevens\nPRODUCT: Text-Verified Trucker IUL")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
     assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 1", "new")]
-    [(said, view)] = order.responder.sent
+    [(said, view)] = _said(order)
     assert "New Agent card made" in said and "In Que" in said and view is None
     assert ordercards.load()["900"]["status"] == "made"
 
@@ -273,7 +278,7 @@ def test_with_the_button_back_fresh_waits_for_it_and_reads_the_notes_again(order
     order.kind = "fresh"
     message = _message("New Payment | Payra\nNAME: Fabian Ubilla\nPRODUCT: VET")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    (asked, view), (done, _v) = order.responder.sent
+    (asked, view), (done, _v) = _said(order)
     assert "New Agent card" in asked and "Queue" in asked and view.kw["requester_id"] == FRANKLIN
     assert len(order.reads) == 2, "the order wasn't read again after the button"
     assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 2", "new")]
@@ -399,7 +404,7 @@ def test_a_gavel_that_doesnt_count_is_said_once(order):
     bot = _bot(_message())
     asyncio.run(client._order_gavel_refused(bot, payload))
     asyncio.run(client._order_gavel_refused(bot, payload))
-    [(said, _view)] = order.responder.sent
+    [(said, _view)] = _said(order)
     assert "Kharyl put the gavel on an order" in said and f"<@{FRANKLIN}>" in said and "nothing made" in said
     assert "`@Ryte gavel allow 22`" in said and order.made == []
     client._ORDER_ACTIVE.clear()
@@ -570,7 +575,7 @@ def test_aged_orders_are_off_for_now_and_left_alone_said_so(order, monkeypatch):
     monkeypatch.setattr(client, "AGED_ORDERS_ON", False)
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert order.made == [] and "900" not in ordercards.load()
-    [(said, _view)] = order.responder.sent
+    [(said, _view)] = _said(order)
     assert "aged leads — those aren't made into cards for now" in said
 
     order.kind = "fresh"
@@ -789,3 +794,56 @@ def test_notes_after_the_card_drop_the_chatter_and_keep_the_schedule(order):
     assert notes == ["FEARLESS\nLIVE TODAY OCT 13", "Monday-Friday: 8:00am - 10:00pm EST"]
     _t, _i, _th, everything = asyncio.run(client._order_said(_bot(message), message))
     assert len(everything) == 4, "before the card, every note is the order"
+
+
+
+# ------------------------------------------------------------- quick
+
+def test_orders_are_read_with_the_fast_model_and_the_main_one_if_that_fails(monkeypatch):
+    """"it should not take too long for it to add and create the card"."""
+    import sys
+    import types
+
+    asked = []
+
+    class Messages:
+        def create(self, *, model, **kw):
+            asked.append(model)
+            if model == jobs.ORDER_MODEL and len(asked) == 1 and fail:
+                raise RuntimeError("model not available")
+            return "reply"
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = Messages()
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {"kind": "fresh", "name": "Bram Gutierrez"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    fail = False
+    card = jobs.read_order(config, text="NAME: Bram Gutierrez", images=[], today=date(2026, 10, 13))
+    assert asked == [jobs.ORDER_MODEL] and card["name"] == "New Agent - Bram Gutierrez"
+    asked.clear()
+    fail = True
+    jobs.read_order(config, text="NAME: Bram Gutierrez", images=[], today=date(2026, 10, 13))
+    assert asked == [jobs.ORDER_MODEL, "claude-opus-5-5"]
+
+
+def test_the_gavel_is_answered_at_once_and_that_message_becomes_the_card(order):
+    edits = []
+
+    class Sent:
+        async def edit(self, content=None, **kw):
+            edits.append(content)
+
+    async def send(text=None, **kw):
+        order.responder.sent.append((text, kw.get("view")))
+        return Sent()
+
+    order.responder.send = send
+    order.kind = "fresh"
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    [(first, _v)] = order.responder.sent
+    assert first.startswith("🔨 Making the card for this order…")
+    assert len(edits) == 1 and "New Agent card made" in edits[0] and "https://trello.com/c/new1" in edits[0]

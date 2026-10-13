@@ -8866,6 +8866,8 @@ _ORDER_LOCK = asyncio.Lock()
 ORDER_NOTES_SETTLE_SECONDS = 120
 #: {order: the update waiting for the notes to settle}.
 _ORDER_PENDING: dict = {}
+#: {order: the "Making the card…" message, to turn into the card's link}.
+_ORDER_ACKS: dict = {}
 #: How long the Create button on a fresh order waits.
 ORDER_ASK_SECONDS = 24 * 60 * 60
 #: Whether a new agent's card waits for the Create button. "i want it that
@@ -8997,7 +8999,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
     unless its card is made or it was left. The messages done."""
     from .. import ordercards
 
-    await asyncio.sleep(30)
+    await asyncio.sleep(5)
     guild = _setup_guild(bot, bot.config)
     if guild is None:
         return []
@@ -9008,6 +9010,9 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
         places += list(await guild.active_threads())
     except Exception:
         log.warning("Couldn't list the open threads for gavels", exc_info=True)
+    # The busiest first - #new-payment, where the gavels are, isn't kept
+    # waiting behind a hundred quiet channels.
+    places.sort(key=lambda one: int(getattr(one, "last_message_id", None) or 0), reverse=True)
     done = []
     for place in places:
         last = getattr(place, "last_message_id", None)
@@ -9120,11 +9125,22 @@ async def _order_gavelled(bot, payload) -> None:
                 log.exception("...and couldn't say so")
     finally:
         _ORDER_ACTIVE.discard(key)
+        _ORDER_ACKS.pop(key, None)
 
 
 async def _order_make(bot, payload, key: str, responder) -> None:
     from .. import ordercards
 
+    link = f"https://discord.com/channels/{getattr(payload, 'guild_id', '')}/{payload.channel_id}/{payload.message_id}"
+    # Said at once, so a gavel is never followed by nothing while the order is
+    # read - and turned into the card's link when it's made.
+    ack = None
+    if responder is not None:
+        try:
+            ack = await responder.send(f"🔨 Making the card for this order… <{link}>", quiet=True)
+        except Exception:
+            ack = None
+    _ORDER_ACKS[key] = ack
     try:
         channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
         message = await channel.fetch_message(payload.message_id)
@@ -9185,9 +9201,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                       written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
     if responder is not None:
-        await responder.send(f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
-                             + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
-                                f"posted in the thread." if card.get("missing") else ""), quiet=True)
+        said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
+                   f"posted in the thread." if card.get("missing") else ""))
+        ack = _ORDER_ACKS.pop(key, None)
+        try:
+            if ack is None or not hasattr(ack, "edit"):
+                raise LookupError
+            await ack.edit(content=said)
+        except Exception:
+            await responder.send(said, quiet=True)
 
 
 async def _order_note(key: str, **fields) -> None:

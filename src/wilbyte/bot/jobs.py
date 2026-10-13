@@ -12057,6 +12057,11 @@ def order_template(config: Config, kind: str) -> dict:
             "desc": str(card.get("desc") or ""), "url": str(card.get("shortUrl") or link)}
 
 
+#: The model that reads an order - fast: "it should not take too long ...
+#: as long as the emoji pop ups ... it should create the card". Picking eight
+#: fields out of a payment and a few notes doesn't need the writer's model.
+ORDER_MODEL = "claude-haiku-5-5"
+
 #: A new agent's card description, field by field - "Do this template".
 ORDER_FIELDS = (
     ("name", "Name"),
@@ -12166,16 +12171,26 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     system = ("You read Agent Lead Lab's orders, as posted in Discord, for the Trello card the team works from. "
               "Use only what the payment and the notes say, screenshots included; later notes override earlier "
               "ones. Leave a field empty rather than guess.")
-    try:
-        response = client.messages.create(model=config.copy.model, max_tokens=800, system=system,
-                                          tools=[tool], tool_choice={"type": "tool", "name": "order"},
-                                          messages=[{"role": "user", "content": content}])
-    except Exception:
+    import logging
+    import os
+
+    def asking(model, said):
+        return client.messages.create(model=model, max_tokens=900, system=system, tools=[tool],
+                                      tool_choice={"type": "tool", "name": "order"},
+                                      messages=[{"role": "user", "content": said}])
+
+    response = None
+    for model in dict.fromkeys((os.getenv("ORDER_MODEL") or ORDER_MODEL, config.copy.model)):
+        try:
+            response = asking(model, content)
+            break
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning("Reading the order with %s failed", model, exc_info=True)
+    if response is None:
         if not images:
-            raise
-        response = client.messages.create(model=config.copy.model, max_tokens=800, system=system,
-                                          tools=[tool], tool_choice={"type": "tool", "name": "order"},
-                                          messages=[{"role": "user", "content": content[:1]}])
+            raise RuntimeError("Couldn't read the order - Claude didn't answer.")
+        # A screenshot Claude couldn't fetch shouldn't cost the whole read.
+        response = asking(config.copy.model, content[:1])
     got = _tool_input(response, "order")
     fields = order_fields(got, notes)
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
