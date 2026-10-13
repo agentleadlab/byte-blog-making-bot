@@ -3611,6 +3611,12 @@ async def _clear_out(
 
     from .. import keeplist
 
+    if auto and not keeplist.readable():
+        # A keep list that can't be read only protects the names it started
+        # with - everybody added since by `quiet keep` would be fair game. The
+        # ten-at-a-time run refused to start; the full run went on regardless.
+        await responder.send("⚠ I couldn't read the keep list, so I'm not clearing anything out on my own.")
+        return "trouble"
     if keeplist.kept(found[0].channel_id, found[0].name):
         await responder.send(
             f"🔒 **#{found[0].name}** is on the keep list, so I don't clear it out. "
@@ -4368,6 +4374,9 @@ async def _quiet_channels(
         # list with its dropdown is `@RYTE quiet list`, for doing one by hand.
         from .. import quietauto
 
+        if not keeplist.readable():
+            await responder.send("⚠ I couldn't read the keep list, so I'm not clearing anything out on my own.")
+            return
         waiting = quietauto.leave_alone(datetime.now(timezone.utc))
         targets = clearout.one_by_one([one for one in quiet if one.channel_id not in waiting])
         if not targets:

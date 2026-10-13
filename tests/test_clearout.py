@@ -4307,6 +4307,17 @@ def test_a_keep_list_that_cant_be_read_still_keeps_mujeeb():
     assert keeplist.kept("1", MUJEEB[1])
 
 
+def test_on_its_own_nothing_goes_while_the_keep_list_cant_be_read(monkeypatch):
+    """The ten-at-a-time run refused to start without it; the full run went
+    on, protecting only the names the list started with."""
+    from wilbyte import keeplist
+
+    keeplist.KEEP_PATH.write_text("{not json", encoding="utf-8")
+    guild, channel, said, buttons = _closing(monkeypatch, says=[None, None], auto=True)
+    assert channel.deleted is False and buttons == []
+    assert said[-1] == "⚠ I couldn't read the keep list, so I'm not clearing anything out on my own."
+
+
 @pytest.mark.parametrize("auto", [False, True])
 def test_a_kept_channel_is_never_cleared_out(monkeypatch, auto):
     guild, channel, said, buttons = _closing(
