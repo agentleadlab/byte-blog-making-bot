@@ -4033,6 +4033,12 @@ async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
     wrong = []
     for row in rows:
         who = row.get("channel") or row.get("name")
+        # Only the clear-outs done under the old rule. Run over every row, it
+        # flagged 69 of 100 - today's three among them, which were matched
+        # word for word and never used anybody's messages but their own.
+        done = clearout.collected_on(row.get("when"))
+        if done is not None and done > clearout.NAMES_MATCHED_SINCE:
+            continue
         was = clearout.old_member(guild.members, who)
         right = _member_called(guild, who)
         if was is not None and (right is None or was.id != right.id):
@@ -4040,14 +4046,20 @@ async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
     if not wrong:
         await responder.send(
             f"✅ Checked all {len(rows)} clear-outs in Ryte Collection — every one "
-            "matched the right person, or nobody."
+            "matched the right person, or nobody. Everything cleared after "
+            f"{clearout.NAMES_MATCHED_SINCE:%d %b %Y} was matched name for name."
         )
         return
-    lines = [f"⚠ **{len(wrong)} of {len(rows)} clear-outs used somebody else's messages:**"]
+    lines = [f"⚠ **{len(wrong)} of {len(rows)} clear-outs may have used somebody else's messages** — "
+             f"the ones done by {clearout.NAMES_MATCHED_SINCE:%d %b %Y}, before names had to match "
+             "in full. Everything since then is fine:"]
     for row, was, right in wrong:
         who = row.get("channel") or row.get("name")
+        on_the_day = clearout.collected_on(row.get("when")) == clearout.NAMES_MATCHED_SINCE
         lines.append(
-            f"• **{who}** ({row.get('when') or '?'}) — ring-da-bell picture is "
+            f"• **{who}** ({row.get('when') or '?'}"
+            + (", the day it was fixed — look before deleting anything" if on_the_day else "")
+            + ") — ring-da-bell picture is "
             f"**{getattr(was, 'display_name', was)}**'s, in the Drive folder "
             f"“{clearout.their_folder(clearout.Plan(name=who, member_name=str(was)))}”. "
             + (f"Should be **{right.display_name}** → `@RYTE redo bell {who}`"

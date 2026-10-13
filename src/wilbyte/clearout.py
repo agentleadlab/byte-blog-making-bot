@@ -29,7 +29,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 #: How much of the conversation the picture keeps. Franklin screenshots "a
 #: portion" - enough to show the channel was worked rather than the whole of
@@ -526,6 +526,28 @@ def seen_in(messages, member_id) -> bool:
         or wanted in {str(tag) for tag in getattr(one, "mentions", ()) or ()}
         for one in messages or []
     )
+
+
+#: The day clear-outs started matching a member by their whole name. Before
+#: it, a member called "D" was taken for Dylan Rankin; from the day after,
+#: nothing cleared out could have used somebody else's messages.
+NAMES_MATCHED_SINCE = date(2026, 9, 25)
+
+
+def collected_on(said) -> date | None:
+    """The day in a Ryte Collection row - "25/09/2026", as the tab writes it,
+    or 2026-09-25. None when it can't be read."""
+    text = str(said or "").strip()
+    found = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    try:
+        if found:
+            return date(int(found.group(1)), int(found.group(2)), int(found.group(3)))
+        found = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+        if found:
+            return date(int(found.group(3)), int(found.group(2)), int(found.group(1)))
+    except ValueError:
+        return None
+    return None
 
 
 def old_member(members, name: str):

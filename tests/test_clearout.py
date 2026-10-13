@@ -3624,7 +3624,7 @@ def test_the_clear_outs_that_used_somebody_elses_messages_are_listed(monkeypatch
     asyncio.run(client._check_clearouts(None, here, None))
 
     text = said[0]
-    assert "2 of 3 clear-outs" in text
+    assert "2 of 3 clear-outs may have used" in text
     assert "**dylan_rankin-vet**" in text and "Should be **Dylan Rankin**" in text
     assert "`@RYTE redo bell dylan_rankin-vet`" in text
     assert "**demetrios_brooks-fex**" in text and "nothing to redraw" in text
@@ -3644,6 +3644,37 @@ def test_all_matched_right_is_said(monkeypatch):
     asyncio.run(client._check_clearouts(None, here, None))
 
     assert said[0].startswith("✅ Checked all 1 clear-outs")
+
+
+def test_clear_outs_since_names_had_to_match_are_never_listed(monkeypatch):
+    """69 of 100 were flagged - today's among them - by running the old rule
+    over clear-outs that never used it."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "dylan_rankin-vet", "channel": "dylan_rankin-vet", "when": "13/10/2026"},
+            {"name": "demetrios_brooks-fex", "channel": "demetrios_brooks-fex", "when": "2026-09-26"},
+            {"name": "dmer_browne-iul", "channel": "dmer_browne-iul", "when": "24/09/2026"},
+            {"name": "dylan_rankin-vet", "channel": "dylan_rankin-vet", "when": "25/09/2026"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("D", "d_1234"), ("Dylan Rankin", "dylanr"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    assert "2 of 4 clear-outs may have used" in said[0]
+    assert "(13/10/2026" not in said[0] and "demetrios" not in said[0]
+    assert "**dmer_browne-iul** (24/09/2026)" in said[0]
+    assert "(25/09/2026, the day it was fixed" in said[0]
+
+
+@pytest.mark.parametrize("said, day", [
+    ("25/09/2026", (2026, 9, 25)), ("2026-10-13", (2026, 10, 13)), ("5/10/2026", (2026, 10, 5)),
+    ("x", None), ("", None), ("31/02/2026", None),
+])
+def test_the_day_in_a_row_is_read_either_way(said, day):
+    from datetime import date
+
+    assert clearout.collected_on(said) == (date(*day) if day else None)
 
 
 def test_redrawing_uses_only_their_own_messages(monkeypatch):
