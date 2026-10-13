@@ -4599,3 +4599,19 @@ def test_quiet_retry_offers_the_held_ones_again(tmp_path):
     assert quietauto.leave_alone(now, quietauto.load(where)) == {"11", "12"}
     assert quietauto.forget(where) == 2
     assert quietauto.leave_alone(now, quietauto.load(where)) == set()
+
+
+def test_a_clear_out_that_took_them_by_their_whole_name_is_not_listed(monkeypatch):
+    """Zenobia Henderson's own picture was listed for deleting: two members
+    with her name meant nobody came back as the one, and that read as wrong."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    rows = [{"name": "zenobia_henderson-iul", "channel": "zenobia_henderson-iul", "when": "25/09/2026"}]
+    _guild, here, said = _goat(monkeypatch, rows, ("Zenobia Henderson", "zenobiahenderson"),
+                               ("Zenobia Henderson", "zenobia2"))
+
+    asyncio.run(client._check_clearouts(None, here, None))
+
+    assert said[0].startswith("✅")

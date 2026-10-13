@@ -4041,6 +4041,12 @@ async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
             continue
         was = clearout.old_member(guild.members, who)
         right = _member_called(guild, who)
+        # Whoever the old rule took, if their whole name is the client's,
+        # it was the client - two members with one name is why nobody came
+        # back as "right", not a sign the picture is somebody else's.
+        # Zenobia Henderson's own picture was listed for deleting.
+        if was is not None and right is None and _was_them(was, who):
+            continue
         if was is not None and (right is None or was.id != right.id):
             wrong.append((row, was, right))
     if not wrong:
@@ -4076,6 +4082,15 @@ async def _check_clearouts(bot, responder: Responder, config: Config) -> None:
     )
     # Split across messages by the responder when it runs long.
     await responder.send("\n".join(lines))
+
+
+def _was_them(member, channel: str) -> bool:
+    """Whether a member's own name is the channel's person, in full."""
+    from .. import clearout
+
+    return any(clearout.name_match(channel, called) >= 2 for called in (
+        getattr(member, "display_name", ""), getattr(member, "global_name", "") or "",
+        getattr(member, "name", "")))
 
 
 def _corrected(called: str) -> str:
