@@ -8920,11 +8920,9 @@ async def _order_examples(config) -> dict:
 
 async def _order_read(bot, message) -> tuple[dict, dict, int | None]:
     text, images, thread_id = await _order_said(bot, message)
-    examples = await _order_examples(bot.config)
     card = await asyncio.to_thread(partial(
-        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config),
-        examples={kind: one for kind, one in examples.items() if one}))
-    return card, examples, thread_id
+        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config)))
+    return card, {}, thread_id
 
 
 def _order_preview(card: dict) -> str:
@@ -9078,14 +9076,6 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await responder.send(f"🔨 {card['client'] or 'That order'} is aged leads — those aren't made into cards "
                                  f"for now, so I've left it.\n<{link}>", quiet=True)
         return
-    template = examples.get(kind)
-    if template is None:
-        await _order_forget(key)
-        if responder is not None:
-            await responder.send(f"🔨 ⚠ **{card['client'] or 'That order'}** reads as {ordercards.KINDS[kind]}, but there's "
-                                 f"no example {ordercards.KINDS[kind]} card to copy - "
-                                 f"`@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <trello link>`, then gavel it again.\n<{link}>")
-        return
 
     if kind == "fresh" and FRESH_ASKS_FIRST:
         if responder is None:
@@ -9112,7 +9102,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
     try:
-        made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card, template)
+        made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card)
     except Exception as exc:
         await _order_forget(key)
         if responder is not None:
@@ -9273,14 +9263,11 @@ async def _order_check(bot, responder: Responder) -> None:
     channel = getattr(responder_there, "channel", None)
     lines.append(f"✅ Said in #{getattr(channel, 'name', '?')}" if responder_there is not None else
                  "❌ No board channel to say orders in — DISCORD_BOARD_CHANNEL_ID.")
-    examples = await _order_examples(bot.config)
     kinds = ("fresh", "aged") if AGED_ORDERS_ON else ("fresh",)
     if not AGED_ORDERS_ON:
         lines.append("⏸ Aged Leads orders: off for now — gavelled ones are left alone.")
-    for kind in kinds:
-        example = examples.get(kind)
-        lines.append(f"✅ {ordercards.KINDS[kind]} example: {example['name']} — {example['url']}" if example else
-                     f"❌ No {ordercards.KINDS[kind]} example card — `@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <link>`.")
+    lines.append("✅ Each card is new, no due date, described as: "
+                 + " · ".join(label for _key, label in jobs.ORDER_FIELDS))
     try:
         lists = await asyncio.to_thread(_order_board_lists, bot.config)
         for kind in kinds:

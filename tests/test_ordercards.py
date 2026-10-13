@@ -95,6 +95,10 @@ class Board:
     def set_check_item(self, card_id, item_id, *, done=None, name=None):
         self.unticked.append((card_id, item_id, done))
 
+    def create_card(self, list_id, name, *, position="top"):
+        self.made.append(dict(list=list_id, name=name))
+        return {"id": f"c{len(self.made)}", "shortUrl": f"https://trello.com/c/new{len(self.made)}"}
+
     def card_full(self, card_id):
         return {"id": f"id-{card_id}", "name": "New Agent - Jane Doe 25 VET", "desc": "Name:\nStates:", "shortUrl": card_id}
 
@@ -115,29 +119,29 @@ class Board:
         pass
 
 
-def test_a_card_is_a_copy_of_the_example_in_its_list_with_the_due_date(monkeypatch):
+def test_a_new_card_in_its_list_with_franklins_layout_and_no_due_date(monkeypatch):
+    """"no need to put the duedate that way it wont be red ... also create a
+    new card not copy ... Do this template"."""
     board = Board()
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
-    made = jobs.order_card_make(CONFIG, "aged", {"name": "Aged - Cole Petersen", "desc": "Name: Cole", "due": "2026-10-14"},
-                                {"id": "TPL"})
-    assert made == {"id": "c1", "url": "https://trello.com/c/new1", "list": "Aged Leads Order Done"}
-    assert board.made == [dict(list="a", source="TPL", name="Aged - Cole Petersen", desc="Name: Cole",
-                               due="2026-10-14T17:00:00.000Z")]
-    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Fabian", "desc": "", "due": "soon"}, {"id": "TPL"})
-    assert board.made[1]["list"] == "q" and board.made[1]["due"] is None
+    fields = {"name": "Gregory Stevens", "email": "gregory@example.com", "phone": "(555) 010-0027",
+              "states": "TX, AL, CA", "package": "Text-Verified Trucker IUL (OTP)", "leads": "20",
+              "launch": "Tuesday, October 13", "notes": ""}
+    desc = jobs.order_desc(fields)
+    assert desc == ("Name: Gregory Stevens\nEmail: gregory@example.com\nPhone Number: (555) 010-0027\n"
+                    "States: TX, AL, CA\nLead Type/Package Selected: Text-Verified Trucker IUL (OTP)\n"
+                    "Number of Leads Requested: 20\nLaunch Date: Tuesday, October 13\nAdditional Notes:")
+    made = jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Gregory Stevens", "desc": desc, "due": "2026-10-13"})
+    assert made == {"id": "c1", "url": "https://trello.com/c/new1", "list": "In Que"}
+    assert board.made == [dict(list="q", name="New Agent - Gregory Stevens")], "copied, not made new"
+    assert board.descs == [desc]
+    assert board.ticks == [] and board.cleared == [] and board.unticked == []
 
 
-def test_a_card_copied_from_a_finished_one_starts_unfinished(monkeypatch):
-    """"but why is it checked" - Wesley's card was done, Gregory's isn't."""
-    board = Board()
-    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
-    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Gregory Stevens", "desc": "x", "due": "2026-10-13"},
-                         {"id": "TPL"})
-    assert board.ticks == [("c1", False)]
-    assert board.unticked == [("c1", "i1", False)], "a checklist item ticked on Wesley's card stayed ticked"
-    assert board.cleared == [], "the launch date was taken off"
-    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Fabian", "desc": "", "due": ""}, {"id": "TPL"})
-    assert board.cleared == ["c2"], "Wesley's date was left on a card with no launch date"
+def test_every_label_is_there_even_when_the_order_doesnt_say():
+    assert jobs.order_desc({"name": "Gregory Stevens"}).splitlines() == [
+        "Name: Gregory Stevens", "Email:", "Phone Number:", "States:", "Lead Type/Package Selected:",
+        "Number of Leads Requested:", "Launch Date:", "Additional Notes:"]
 
 
 def test_new_notes_rewrite_rytes_description_but_only_comment_on_one_edited_by_hand(monkeypatch):
@@ -200,14 +204,14 @@ def order(monkeypatch):
     """A gavelled order: what Claude makes of it, the board, Ryte The Goat."""
     held = SimpleNamespace(reads=[], made=[], responder=Responder(), kind="aged", pressed=True)
 
-    def reading(config, *, text, images, today, examples):
+    def reading(config, *, text, images, today):
         held.reads.append(text)
         return {"kind": held.kind, "client": "Cole Petersen", "name": f"{held.kind} - Cole Petersen",
                 "desc": f"Name: Cole Petersen\nread {len(held.reads)}", "due": "2026-10-14",
                 "missing": ["States"]}
 
-    def making(config, kind, card, template):
-        held.made.append((kind, card["name"], card["desc"], template["id"]))
+    def making(config, kind, card):
+        held.made.append((kind, card["name"], card["desc"], "new"))
         return {"id": "card1", "url": "https://trello.com/c/new1",
                 "list": "Aged Leads Order Done" if kind == "aged" else "In Que"}
 
@@ -239,7 +243,7 @@ GAVEL = SimpleNamespace(message_id=900, channel_id=700, user_id=FRANKLIN)
 def test_aged_is_made_straight_away_and_said_in_ryte_the_goat(order):
     message = _message(thread=_notes("25 aged MTG, states AZ TX", "launch tomorrow"))
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    assert order.made == [("aged", "aged - Cole Petersen", "Name: Cole Petersen\nread 1", "TPL-aged")]
+    assert order.made == [("aged", "aged - Cole Petersen", "Name: Cole Petersen\nread 1", "new")]
     [read] = order.reads
     assert "NAME: Cole Petersen" in read and "Kharyl: 25 aged MTG, states AZ TX" in read and "launch tomorrow" in read
     [(said, view)] = order.responder.sent
@@ -257,7 +261,7 @@ def test_fresh_is_made_straight_away_too(order):
     order.kind = "fresh"
     message = _message("New Payment | Payra\nNAME: Gregory Stevens\nPRODUCT: Text-Verified Trucker IUL")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 1", "TPL-fresh")]
+    assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 1", "new")]
     [(said, view)] = order.responder.sent
     assert "New Agent card made" in said and "In Que" in said and view is None
     assert ordercards.load()["900"]["status"] == "made"
@@ -271,7 +275,7 @@ def test_with_the_button_back_fresh_waits_for_it_and_reads_the_notes_again(order
     (asked, view), (done, _v) = order.responder.sent
     assert "New Agent card" in asked and "Queue" in asked and view.kw["requester_id"] == FRANKLIN
     assert len(order.reads) == 2, "the order wasn't read again after the button"
-    assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 2", "TPL-fresh")]
+    assert order.made == [("fresh", "fresh - Cole Petersen", "Name: Cole Petersen\nread 2", "new")]
     assert "New Agent card made" in done
 
 
@@ -286,14 +290,14 @@ def test_fresh_left_alone_makes_nothing_and_can_be_gavelled_again(order, monkeyp
     assert len(order.made) == 1
 
 
-def test_no_example_card_says_so_and_makes_nothing(order, monkeypatch):
+def test_no_example_card_is_needed(order, monkeypatch):
     def none(config, kind):
-        raise ValueError("no example")
+        raise AssertionError("an example card was read")
 
     monkeypatch.setattr(jobs, "order_template", none)
+    order.kind = "fresh"
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
-    assert order.made == [] and "no example Aged Leads card" in order.responder.sent[0][0]
-    assert "900" not in ordercards.load()
+    assert [one[0] for one in order.made] == ["fresh"]
 
 
 def test_a_note_after_the_card_updates_it(order, monkeypatch):
@@ -425,7 +429,7 @@ def test_order_check_says_whats_missing(order, monkeypatch):
     asyncio.run(client._order_check(_bot(_message()), order.responder))
     said = order.responder.sent[-1][0]
     assert f"✅ Gavel counts from <@{FRANKLIN}>" in said and "✅ Said in #trello-manager" in said
-    assert "✅ New Agent example: New Agent - Jane Doe" in said and "❌ No Aged Leads example card" in said
+    assert "✅ Each card is new, no due date, described as: Name · Email · Phone Number" in said
     assert "✅ New Agent cards go in **In Que**" in said and "❌ No list for Aged Leads cards" in said
 
 

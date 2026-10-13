@@ -12057,74 +12057,87 @@ def order_template(config: Config, kind: str) -> dict:
             "desc": str(card.get("desc") or ""), "url": str(card.get("shortUrl") or link)}
 
 
-def read_order(config: Config, *, text: str, images: list[str], today, examples: dict) -> dict:
-    """An order as posted in Discord, read by Claude and written up as the
-    card it should be. `examples` are the example cards by kind ({"fresh":
-    {"name", "desc"}, "aged": ...}). {"kind": "fresh"|"aged", "client",
-    "name", "desc", "due" (YYYY-MM-DD or ""), "missing": [...]}."""
+#: A new agent's card description, field by field - "Do this template".
+ORDER_FIELDS = (
+    ("name", "Name"),
+    ("email", "Email"),
+    ("phone", "Phone Number"),
+    ("states", "States"),
+    ("package", "Lead Type/Package Selected"),
+    ("leads", "Number of Leads Requested"),
+    ("launch", "Launch Date"),
+    ("notes", "Additional Notes"),
+)
+
+
+def order_desc(fields: dict) -> str:
+    """The description in Franklin's layout - every label there, blank after
+    it when the order doesn't say."""
+    return "\n".join(f"{label}: {' '.join(str(fields.get(key) or '').split())}".rstrip()
+                      for key, label in ORDER_FIELDS)
+
+
+def read_order(config: Config, *, text: str, images: list[str], today) -> dict:
+    """An order as posted in Discord - the payment and the team's notes -
+    read by Claude into the card's fields. {"kind": "fresh"|"aged", "client",
+    "fields", "name", "desc", "missing": [labels not given]}."""
     from anthropic import Anthropic
 
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
-    shown = []
-    for kind, example in examples.items():
-        if example:
-            shown.append(f"=== Example {('New Agent (fresh leads)' if kind == 'fresh' else 'Aged Leads')} card ===\n"
-                         f"TITLE: {example.get('name', '')}\nDESCRIPTION:\n{example.get('desc', '')}")
-    tool = {
-        "name": "card",
-        "description": "The Trello card this order should be.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "kind": {"type": "string", "enum": ["fresh", "aged"], "description": (
-                    "'aged' for aged leads (the product says Aged Leads, or the notes say aged); "
-                    "'fresh' for a new agent's fresh leads - VET, OTP, FEX, MTG, IUL and the rest.")},
-                "client": {"type": "string", "description": "The client's full name."},
-                "name": {"type": "string", "description": (
-                    "The card's title, in exactly the example card's pattern for this kind, with this "
-                    "order's details in place of the example's.")},
-                "desc": {"type": "string", "description": (
-                    "The card's description, in exactly the example card's layout - the same labels, "
-                    "order, markdown and line breaks - filled from this order. Anything the order doesn't "
-                    "say is left blank after its label, never guessed and never copied from the example.")},
-                "due": {"type": "string", "description": "The launch / go-live date as YYYY-MM-DD, or empty."},
-                "missing": {"type": "array", "items": {"type": "string"}, "description": (
-                    "The example's fields this order doesn't give yet, e.g. 'States', 'Launch date'.")},
-            },
-            "required": ["kind", "client", "name", "desc", "due", "missing"],
-        },
+    properties = {
+        "kind": {"type": "string", "enum": ["fresh", "aged"], "description": (
+            "'aged' for aged leads (the product says Aged Leads, or the notes say aged); 'fresh' for a new "
+            "agent's leads - VET, OTP, FEX, MTG, IUL, Trucker and the rest.")},
+        "name": {"type": "string", "description": "The client's full name."},
+        "email": {"type": "string", "description": "Their email."},
+        "phone": {"type": "string", "description": "Their phone number, as written."},
+        "states": {"type": "string", "description": "The states, as two-letter codes separated by commas: 'TX, AL, CA'."},
+        "package": {"type": "string", "description": (
+            "The lead type / package bought, e.g. 'Text-Verified Trucker IUL (OTP)'. The notes win over the "
+            "payment's product line when they're more exact.")},
+        "leads": {"type": "string", "description": "How many leads, just the number: '20'."},
+        "launch": {"type": "string", "description": (
+            "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
+            "when the note was written.")},
+        "notes": {"type": "string", "description": (
+            "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
+            "before, who to tell. Short. Empty if nothing.")},
     }
+    tool = {"name": "order", "description": "The order's details for its Trello card.",
+            "input_schema": {"type": "object", "properties": properties, "required": list(properties)}}
     content = [{"type": "text", "text": (
-        f"Today is {today:%Y-%m-%d}.\n\n" + "\n\n".join(shown)
-        + "\n\n=== The order, as posted in Discord - the payment, then the team's notes, oldest first ===\n"
-        + text)}]
+        f"Today is {today:%A, %B %d, %Y}.\n\nThe order, as posted in Discord - the payment, then the team's "
+        f"notes, oldest first:\n{text}")}]
     for url in images[:4]:
         content.append({"type": "image", "source": {"type": "url", "url": url}})
-    system = ("You turn Agent Lead Lab's orders, as posted in Discord, into the Trello card the team uses. "
-              "Clients buy leads - fresh (a new agent's setup) or aged. Use only what the order and its notes "
-              "say, screenshots included; later notes override earlier ones. Copy the example card's format "
-              "exactly and its content never.")
+    system = ("You read Agent Lead Lab's orders, as posted in Discord, for the Trello card the team works from. "
+              "Use only what the payment and the notes say, screenshots included; later notes override earlier "
+              "ones. Leave a field empty rather than guess.")
     try:
-        response = client.messages.create(model=config.copy.model, max_tokens=1500, system=system,
-                                          tools=[tool], tool_choice={"type": "tool", "name": "card"},
+        response = client.messages.create(model=config.copy.model, max_tokens=800, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "order"},
                                           messages=[{"role": "user", "content": content}])
     except Exception:
         if not images:
             raise
-        response = client.messages.create(model=config.copy.model, max_tokens=1500, system=system,
-                                          tools=[tool], tool_choice={"type": "tool", "name": "card"},
+        response = client.messages.create(model=config.copy.model, max_tokens=800, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "order"},
                                           messages=[{"role": "user", "content": content[:1]}])
-    got = _tool_input(response, "card")
+    got = _tool_input(response, "order")
+    fields = {key: " ".join(str(got.get(key) or "").split()) for key, _label in ORDER_FIELDS}
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
-    return {"kind": kind, "client": " ".join(str(got.get("client") or "").split()),
-            "name": " ".join(str(got.get("name") or "").split())[:250], "desc": str(got.get("desc") or "").strip(),
-            "due": str(got.get("due") or "")[:10], "missing": [str(one) for one in got.get("missing") or []]}
+    client_name = fields["name"]
+    return {"kind": kind, "client": client_name, "fields": fields,
+            "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
+            "desc": order_desc(fields), "due": "",
+            "missing": [label for key, label in ORDER_FIELDS if key != "notes" and not fields[key]]}
 
 
-def order_card_make(config: Config, kind: str, card: dict, template: dict) -> dict:
-    """The card, made: a copy of the example card in its list, with this
-    order's title, description and due date. {"id", "url", "list"}."""
+def order_card_make(config: Config, kind: str, card: dict) -> dict:
+    """The card, made new - "create a new card not copy" - in its list, with
+    the order's title and description. No due date: "that way it wont be
+    red". {"id", "url", "list"}."""
     from .. import ordercards
 
     client = open_trello(config)
@@ -12134,19 +12147,10 @@ def order_card_make(config: Config, kind: str, card: dict, template: dict) -> di
         if where is None:
             raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
                              + (f" called “{wanted}”" if wanted else "") + ".")
-        due = f"{card['due']}T17:00:00.000Z" if re.match(r"\d{4}-\d{2}-\d{2}$", card.get("due") or "") else None
-        made = client.copy_card(str(where["id"]), template["id"], name=card["name"], desc=card["desc"], due=due)
+        made = client.create_card(str(where["id"]), card["name"])
         card_id = str(made.get("id") or "")
-        # A copy of a finished card is finished too - "but why is it checked".
-        # Wesley's card was done; Gregory's has only just started. Its tick
-        # and every checklist item start unticked, and no date of Wesley's.
-        client.tick_card(card_id, done=False)
-        if not due:
-            client.clear_due(card_id)
-        for checklist in client.card_checklists(card_id):
-            for item in checklist.get("checkItems") or []:
-                if str(item.get("state") or "") == "complete":
-                    client.set_check_item(card_id, str(item["id"]), done=False)
+        if card.get("desc"):
+            client.set_description(card_id, card["desc"])
         return {"id": card_id, "url": str(made.get("shortUrl") or made.get("url") or ""),
                 "list": str(where.get("name") or "")}
     finally:
