@@ -747,3 +747,45 @@ def test_a_gavelled_order_with_a_screenshot_gets_it_on_the_card(order, monkeypat
     asyncio.run(client._order_gavelled(_bot(_message(thread=Thread())), GAVEL))
     assert attached == [("card1", ["https://cdn.discordapp.com/a/1/shot.png?ex=1"])]
     assert ordercards.load()["900"]["attached"] == ["https://cdn.discordapp.com/a/1/shot.png"]
+
+
+# ------------------------------------------------------------- after the card
+
+@pytest.mark.parametrize("said, chatter", [
+    ("setup done", True), ("@Kharyl @Nicole setup done", True), ("signed @Nicole", True), ("ok thanks", True),
+    ("FEARLESS", True),
+    ("Monday-Friday: 8:00am - 10:00pm EST\n\nSaturday 8am-8pm EST\n\nSunday 1:00pm - 5:00pm EST", False),
+    ("[screenshot 2]", False), ("add TX and FL to his states please", False),
+])
+def test_status_chatter_after_the_card_is_kept_off_it(said, chatter):
+    assert ordercards.is_chatter(said) is chatter
+
+
+def test_a_capital_letter_isnt_a_new_line():
+    """"Email: killian32cooper@gmail.com" commented as new on Killian Cooper's card."""
+    assert ordercards.changed_lines("Email: Killian32cooper@gmail.com", "Email: killian32cooper@gmail.com") == []
+
+
+def test_notes_after_the_card_drop_the_chatter_and_keep_the_schedule(order):
+    late = datetime(2026, 10, 13, 23, 30, tzinfo=timezone.utc)
+
+    class Thread:
+        id = 900
+        parent = SimpleNamespace(name="new-payment")
+
+        def history(self, **kw):
+            async def gen():
+                for at, (text, when) in enumerate([("FEARLESS\nLIVE TODAY OCT 13", WHEN), ("setup done", late),
+                                                   ("signed", late), ("Monday-Friday: 8:00am - 10:00pm EST", late)]):
+                    yield SimpleNamespace(id=at, content=text, embeds=[], attachments=[], message_snapshots=[],
+                                          mentions=[], role_mentions=[], channel_mentions=[],
+                                          author=SimpleNamespace(display_name="Kharyl", name="kharyl", bot=False),
+                                          created_at=when)
+            return gen()
+
+    message = _message(thread=Thread())
+    made = datetime(2026, 10, 13, 23, 0, tzinfo=timezone.utc)
+    _t, _i, _th, notes = asyncio.run(client._order_said(_bot(message), message, since=made))
+    assert notes == ["FEARLESS\nLIVE TODAY OCT 13", "Monday-Friday: 8:00am - 10:00pm EST"]
+    _t, _i, _th, everything = asyncio.run(client._order_said(_bot(message), message))
+    assert len(everything) == 4, "before the card, every note is the order"

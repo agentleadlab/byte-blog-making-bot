@@ -101,9 +101,31 @@ def list_for(kind: str, lists: list[dict], *, wanted: str = "") -> dict | None:
 def changed_lines(before: str, after: str) -> list[str]:
     """The description's lines that are new or different - for a comment when
     somebody has edited the card by hand and RYTE mustn't write over them."""
-    had = {" ".join(line.split()) for line in str(before or "").splitlines()}
+    had = {_line_key(line) for line in str(before or "").splitlines()}
     return [line for line in str(after or "").splitlines()
-            if line.strip() and " ".join(line.split()) not in had]
+            if line.strip() and _line_key(line) not in had]
+
+
+def _line_key(line: str) -> str:
+    """A line as compared: "Killian32cooper@gmail.com" is
+    "killian32cooper@gmail.com" - case and spacing aren't news."""
+    return " ".join(str(line or "").split()).casefold()
+
+
+_STATUS = re.compile(r"\b(?:done|signed|live|scheduled|sent|ok(?:ay)?|thanks?|thank you|ty|got it|on it|"
+                     r"will do|noted|perfect|great|good|yes|yep|confirmed|ready|set|all set)\b", re.IGNORECASE)
+
+
+def is_chatter(text: str) -> bool:
+    """A status line, not an order detail - "setup done", "signed @Nicole",
+    "ok thanks". Kept off a card made already: "Monday-Friday 8:00am -
+    10:00pm EST" isn't this, a schedule has numbers in it."""
+    said = re.sub(r"@\S+|<[@#][!&]?\d+>|\[screenshot \d+\]", " ", str(text or ""))
+    said = re.sub(r"[^\w\s']", " ", said)
+    words = said.split()
+    if "[screenshot" in str(text or "") or re.search(r"\d", said):
+        return False
+    return len(words) <= 2 or (len(words) <= 6 and bool(_STATUS.search(said)))
 
 
 def same_text(one: str, two: str) -> bool:

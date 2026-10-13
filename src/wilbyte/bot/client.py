@@ -8887,10 +8887,12 @@ def _said_line(message) -> str:
     return f"[{message.created_at:%m/%d %I:%M%p}] {who}: {text}"
 
 
-async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[str]]:
+async def _order_said(bot, message, *, since: datetime | None = None) -> tuple[str, list[str], int | None, list[str]]:
     """The order: the gavelled message - forwards and screenshots too - and
     every note in its thread. (text, images, the thread's id or None, the
     team's own notes in the thread as they wrote them)."""
+    from .. import ordercards
+
     lines, images, notes = [], [], []
     # The team's screenshots first, numbered as they're marked in the notes -
     # "[screenshot 1]" is the first picture Claude is shown.
@@ -8926,7 +8928,10 @@ async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[st
                     note_images.append(picture)
                     marks.append(f"[screenshot {len(note_images)}]")
                 written = "\n".join(part for part in (_named_tags(one, said).strip(), *marks) if part)
-                if written:
+                # After the card was made, "setup done" and "signed @Nicole"
+                # are the team talking, not the order.
+                after = since is not None and getattr(one, "created_at", None) is not None and one.created_at > since
+                if written and not (after and ordercards.is_chatter(written)):
                     notes.append(written)
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
@@ -8956,8 +8961,8 @@ async def _order_examples(config) -> dict:
     return found
 
 
-async def _order_read(bot, message) -> tuple[dict, dict, int | None]:
-    text, images, thread_id, notes = await _order_said(bot, message)
+async def _order_read(bot, message, *, since: datetime | None = None) -> tuple[dict, dict, int | None]:
+    text, images, thread_id, notes = await _order_said(bot, message, since=since)
     card = await asyncio.to_thread(partial(
         jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes))
     # The team's screenshots - the first ones in `images`, one a marker.
@@ -9176,6 +9181,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't put the screenshots on the card", exc_info=True)
     await _order_note(key, status="made", kind=kind, card_id=made["id"], url=made["url"], name=card["name"],
+                      made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
     if responder is not None:
@@ -9233,7 +9239,12 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     try:
         channel = bot.get_channel(int(order["message_channel_id"])) or await bot.fetch_channel(int(order["message_channel_id"]))
         message = await channel.fetch_message(int(key))
-        card, _examples, _thread = await _order_read(bot, message)
+        since = None
+        try:
+            since = datetime.fromisoformat(order["made_at"]) if order.get("made_at") else None
+        except ValueError:
+            since = None
+        card, _examples, _thread = await _order_read(bot, message, since=since)
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))
