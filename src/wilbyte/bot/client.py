@@ -379,6 +379,8 @@ class WilByteBot(discord.Client):
                 # The setups going live, on the Ryte Checklist card.
                 if getattr(self.config.secrets, "trello_key", None) and not CHECKLIST_PAUSED:
                     _also_running(self.loop.create_task(setup_check_pass_loop(self)))
+            if getattr(self.config.secrets, "trello_key", None) and TEAM_TASKS_ON:
+                _also_running(self.loop.create_task(team_tasks_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -421,7 +423,7 @@ class WilByteBot(discord.Client):
             if ordercards.may_gavel(payload.user_id, self.config):
                 _also_running(self.loop.create_task(_order_gavelled(self, payload)))
             return
-        if CHECKLIST_PAUSED:
+        if not TEAM_TASKS_ON:
             return
         if not _in_setup_guild(self, self.get_guild(payload.guild_id) if payload.guild_id else None):
             return
@@ -449,7 +451,7 @@ class WilByteBot(discord.Client):
             _order_note_posted(self, message)
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
-        if (not CHECKLIST_PAUSED and not getattr(message.author, "bot", False)
+        if (TEAM_TASKS_ON and not getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None))):
             _also_running(self.loop.create_task(_team_message(self, message)))
         # Franklin replying to a suggestion or a lesson: that is him saying
@@ -1719,7 +1721,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _ask_about_faith(responder, config, request.brief or "")
                 return
 
-            if CHECKLIST_PAUSED and request.action in ("teamtrack", "teamtasks", "setupthreads", "rytechecklist"):
+            if CHECKLIST_PAUSED and request.action in ("setupthreads", "rytechecklist"):
                 await responder.send("⏸ The Ryte Checklist is paused — the team's back on Trello for setups. "
                                      "Nothing's been deleted; it's ready to switch back on.")
                 return
@@ -8205,6 +8207,20 @@ HUB_CHECK_SECONDS = 30 * 60
 #: card, what RYTE remembers, and the code are all as they were. False turns
 #: it back on.
 CHECKLIST_PAUSED = True
+#: The team's agent-related requests in the Growth server - "@Nicole greff"
+#: - on the Ryte Checklist under Concerns, ticked when done, and Franklin
+#: pinged in Ryte The Goat about the ones still open: "just ping me on our
+#: own server that way ill remind them". On while the setup check is paused.
+TEAM_TASKS_ON = True
+#: Open this long, and Franklin is pinged about it - once, then once more
+#: the next day.
+TEAM_REMIND_AFTER = timedelta(hours=4)
+TEAM_REMIND_AGAIN = timedelta(hours=20)
+TEAM_REMINDERS_MOST = 2
+#: The hours Franklin is pinged in, on the board's clock.
+TEAM_REMIND_HOURS = (9, 18)
+#: How often open requests are looked at again.
+TEAM_TASKS_EVERY_SECONDS = 30 * 60
 
 #: How often everybody scheduled on the hub is checked again.
 CHECKLIST_EVERY_SECONDS = 30 * 60
@@ -8588,6 +8604,83 @@ async def _team_tasks_catch_up(bot) -> None:
     async with _TEAM_LOCK:
         held = await asyncio.to_thread(teamtasks.load)
         await asyncio.to_thread(teamtasks.save, teamtasks.tidy(held, datetime.now(timezone.utc)))
+
+
+def _team_reminder_due(task: dict, now: datetime) -> bool:
+    """Open long enough, not pinged too often or too lately."""
+    def when(said):
+        try:
+            got = datetime.fromisoformat(str(said))
+        except (TypeError, ValueError):
+            return None
+        return got if got.tzinfo else got.replace(tzinfo=timezone.utc)
+
+    made = when(task.get("made"))
+    if made is None or now - made < TEAM_REMIND_AFTER:
+        return False
+    pinged = [one for one in (when(said) for said in task.get("reminded") or []) if one is not None]
+    if len(pinged) >= TEAM_REMINDERS_MOST:
+        return False
+    return not pinged or now - max(pinged) >= TEAM_REMIND_AGAIN
+
+
+async def _team_reminders(bot, *, now: datetime | None = None) -> list[dict]:
+    """Franklin pinged in Ryte The Goat about requests still open - he
+    reminds the team. Nothing is said in the Growth server. The ones pinged."""
+    from .. import teamtasks
+
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(ZoneInfo(bot.config.schedule.timezone))
+    if not (TEAM_REMIND_HOURS[0] <= local.hour < TEAM_REMIND_HOURS[1]):
+        return []
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        due = [one for one in teamtasks.open_ones(held) if _team_reminder_due(one, now)]
+        if not due:
+            return []
+        for one in due:
+            held[one["id"]].setdefault("reminded", []).append(now.isoformat(timespec="minutes"))
+        await asyncio.to_thread(teamtasks.save, held)
+    responder = _hub_responder(bot) or _board_responder(bot)
+    if responder is None:
+        return due
+    ping = _unmarked_ping(bot.config)
+    lines = [f"{ping} 🕓 **Still open with the team** — worth a nudge:".strip()]
+    for one in due:
+        again = len(one.get("reminded") or []) > 1
+        lines.append(f"• {teamtasks.item_name(one)}" + (" · *second reminder*" if again else "")
+                     + (f" · <{one['link']}>" if one.get("link") else ""))
+    lines.append("-# Ticked on the Ryte Checklist once they react to it or say it's done.")
+    await responder.send("\n".join(lines)[:1900], quiet=True)
+    return due
+
+
+async def team_tasks_loop(bot: "WilByteBot") -> None:
+    """Every half hour: what was done while nobody was looking ticked off,
+    Franklin pinged about what's still open, and at six the day's open ones
+    on the card for him."""
+    from .. import teamtasks
+
+    await asyncio.sleep(90)
+    while not bot.is_closed():
+        try:
+            await _team_tasks_catch_up(bot)
+            await _team_reminders(bot)
+            now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
+            today = _today(bot.config).isoformat()
+            if (now.hour, now.minute) >= SETUP_EVENING and teamtasks.said_today() != today:
+                open_now = teamtasks.open_ones(await asyncio.to_thread(teamtasks.load))
+                if open_now:
+                    text = "🌙 Asked of the team and not done yet:\n" + "\n".join(
+                        f"• {teamtasks.item_name(one)}" + (f" · <{one['link']}>" if one.get("link") else "")
+                        for one in open_now)
+                    await asyncio.to_thread(jobs.ryte_card_note, bot.config, text)
+                await asyncio.to_thread(teamtasks.said_on, today)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("The team requests check failed; trying again next time")
+        await asyncio.sleep(TEAM_TASKS_EVERY_SECONDS)
 
 
 async def _team_track(bot, responder: Responder, said: str, author) -> None:

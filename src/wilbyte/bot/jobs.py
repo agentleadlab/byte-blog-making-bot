@@ -11956,12 +11956,16 @@ def read_team_request(config: Config, *, asker: str, asked: list[str], text: str
                     "point - set a cap, change a schedule, add states, send something, fix a setup. False "
                     "for chat, thanks, announcements, FYIs, questions that only need an answer, and "
                     "meeting reminders.")},
+                "about_agent": {"type": "boolean", "description": (
+                    "True when the job is about a client agent and their leads - their setup, cap, states, "
+                    "schedule, sheet, replacements, launch, payment, pause, a message to them. False for "
+                    "the team's own work: marketing, content, ads, videos, hiring, tools, admin.")},
                 "title": {"type": "string", "description": (
                     "The job in under 12 words, the client's name first when there is one: "
                     "'Michael Greff - set a 10/day cap', 'Lauren Huddleston - add TX to states'. "
                     "Read the screenshots for what's being asked.")},
             },
-            "required": ["task", "title"],
+            "required": ["task", "about_agent", "title"],
         },
     }
     content = [{"type": "text", "text": (
@@ -11984,11 +11988,14 @@ def read_team_request(config: Config, *, asker: str, asked: list[str], text: str
                                           messages=[{"role": "user", "content": content[:1]}])
     got = _tool_input(response, "request")
     title = " ".join(str(got.get("title") or "").split())[:120]
-    return {"task": bool(got.get("task")) or forced, "title": title or "Team request"}
+    # "as long as its agents related": the team's own work isn't tracked.
+    return {"task": (bool(got.get("task")) and bool(got.get("about_agent"))) or forced,
+            "title": title or "Team request"}
 
 
 def _tasks_list(client, config):
-    """(card id, the General Tasks checklist) - made if it isn't there."""
+    """(card id, the checklist team requests go on - Concerns) - made if it
+    isn't there."""
     from .. import teamtasks
 
     card, _lists = _ryte_card(client, config)
@@ -11999,7 +12006,7 @@ def _tasks_list(client, config):
 
 
 def team_task_add(config: Config, task: dict) -> str:
-    """The request as an item under General Tasks. Its item id."""
+    """The request as an item on the Ryte Checklist, under Concerns. Its item id."""
     from .. import teamtasks
 
     client = open_trello(config)

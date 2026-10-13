@@ -1443,8 +1443,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **checklist** — everybody scheduled on the hub, held up against Nova's “setup is done” in
 > #new-agent-setup, their thread if there is one, and their payment, on the Ryte Checklist card: ticked when it all matches, under
 > Concerns when it doesn't. I do it every half hour, and list tomorrow's not-ready ones at 6pm.
-> When somebody in the Growth server tags a teammate with a job, it goes under General Tasks
-> on the card, ticked when they react to it or say it's done. **track <message link>** adds one
+> When somebody in the Growth server tags a teammate with an agent's job, it goes under Concerns
+> on the card, ticked when they react to it or say it's done; still open after 4 hours, I ping
+> Franklin here. **track <message link>** adds one
 > I missed; **team tasks** lists what's still open. **threads <name>** — the threads I take as
 > somebody's. Paid is Payra, and Zelle once it's posted in #new-payment.
 > 🔨 **Orders** — Franklin's :leadlab_hammertime: on an order in Discord makes its Trello card:

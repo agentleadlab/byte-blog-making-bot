@@ -3,8 +3,10 @@
 "add this on our card's checklist right and ryte will be on the look out once
 nicole added a emoji or say this is done". Faith tags Nicole in the Growth
 server - "@Nicole greff", Michael Greff's texts forwarded, 10/day max - and
-that is a job for Nicole. RYTE puts it under General Tasks on the card, and
-ticks it when Nicole reacts to the request or says it's done.
+that is a job for Nicole. RYTE puts it under Concerns Needs to Be Addressed
+on the card - agent work only, not the team's own - and ticks it when Nicole
+reacts to the request or says it's done. Still open after a while, Franklin
+is pinged in Ryte The Goat and reminds them himself.
 
 Only the person asked can close it: an emoji from anybody else is somebody
 agreeing, not the job being done. RYTE never posts or reacts in the Growth
@@ -16,8 +18,9 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
-#: The card's checklist these go on.
-TASKS_LIST = "General Tasks"
+#: The card's checklist these go on - "add them on the ryte checklist on
+#: concerns needs to be addressed".
+TASKS_LIST = "Concerns Needs to Be Addressed"
 #: Open this long, and it's in the 6pm list.
 OPEN_TOO_LONG = timedelta(hours=4)
 #: Closed this long ago, and it's forgotten - the card keeps the record.
@@ -97,6 +100,9 @@ def tidy(held: dict, now: datetime) -> dict:
     """Done ones from over a month ago dropped."""
     kept = {}
     for key, one in held.items():
+        if not isinstance(one, dict):
+            kept[key] = one
+            continue
         try:
             done = datetime.fromisoformat(one["done_at"]) if one.get("done_at") else None
         except (ValueError, TypeError):
@@ -138,3 +144,26 @@ def save(held: dict) -> None:
     spare = where.with_suffix(".tmp")
     spare.write_text(json.dumps(held, indent=1, default=str), encoding="utf-8")
     spare.replace(where)
+
+
+#: The day the 6pm list last went on the card.
+SAID_PATH = None
+
+
+def _said_where():
+    from .state import _state_dir
+
+    return SAID_PATH or (_state_dir() / "team-tasks-evening.txt")
+
+
+def said_today() -> str:
+    try:
+        return _said_where().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def said_on(day: str) -> None:
+    where = _said_where()
+    where.parent.mkdir(parents=True, exist_ok=True)
+    where.write_text(day, encoding="utf-8")

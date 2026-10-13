@@ -203,11 +203,11 @@ def _gen(items):
 
 # ------------------------------------------------------------- the card
 
-def test_on_the_card_under_general_tasks_and_ticked_only_by_its_own_id(monkeypatch):
+def test_on_the_card_under_concerns_and_ticked_only_by_its_own_id(monkeypatch):
     from tests.test_setupcheck import Board
 
     board = Board()
-    board._list("general")["checkItems"].append({"id": "g1", "name": "Call Payra", "state": "incomplete"})
+    board._list("concerns")["checkItems"].append({"id": "g1", "name": "Call Payra", "state": "incomplete"})
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
     config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b", trello_franklin=""))
     task = {"title": "Michael Greff - set a 10/day cap", "assignees": [{"id": "1", "name": "Nicole"}],
@@ -215,7 +215,8 @@ def test_on_the_card_under_general_tasks_and_ticked_only_by_its_own_id(monkeypat
     task["item_id"] = jobs.team_task_add(config, task)
     task.update(done_by="Nicole", done_at="2026-10-13T20:05+00:00")
     jobs.team_task_done(config, task)
-    assert board.names("general") == {
+    assert board.names("general") == {}
+    assert board.names("concerns") == {
         "Call Payra": "incomplete",
         "Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13) — done by Nicole 10/13 8:05pm": "complete",
     }
@@ -251,20 +252,63 @@ async def _done(value):
     return value
 
 
-# ------------------------------------------------------------- paused
+# ------------------------------------------------------------- paused, and not
 
-def test_paused_while_the_team_is_back_on_trello():
-    """"pause but dont delete"."""
-    assert client.CHECKLIST_PAUSED is True
+def test_the_setup_check_is_paused_and_team_requests_are_on():
+    """"pause but dont delete" - then "as well as the reminders/task on
+    trello on threads, ryte should be on the look out on them"."""
+    assert client.CHECKLIST_PAUSED is True and client.TEAM_TASKS_ON is True
     # The Trello wrong-leads check keeps its own ten minutes.
     assert client.SETUP_CHECK_SECONDS == 600 and client.CHECKLIST_EVERY_SECONDS == 30 * 60
+    assert teamtasks.TASKS_LIST == "Concerns Needs to Be Addressed"
 
 
-def test_paused_nothing_in_the_growth_server_is_read_and_the_commands_say_so(monkeypatch):
+def test_the_gates():
     import inspect
 
-    source = inspect.getsource(client.WilByteBot.on_message)
-    assert "not CHECKLIST_PAUSED" in source
-    assert "if CHECKLIST_PAUSED:" in inspect.getsource(client.WilByteBot.on_raw_reaction_add)
+    assert "TEAM_TASKS_ON and" in inspect.getsource(client.WilByteBot.on_message)
+    assert "if not TEAM_TASKS_ON:" in inspect.getsource(client.WilByteBot.on_raw_reaction_add)
     started = inspect.getsource(client.WilByteBot.on_ready)
-    assert "not CHECKLIST_PAUSED" in started and "setup_check_pass_loop" in started
+    assert "not CHECKLIST_PAUSED" in started and "team_tasks_loop" in started
+
+
+# ------------------------------------------------------------- reminders
+
+def _open(i, hours_ago, *reminded):
+    return {"id": str(i), "title": f"Client {i} - set a cap", "assignees": [{"id": "1", "name": "Nicole"}],
+            "asker": "Faith", "made": (NOW - timedelta(hours=hours_ago)).isoformat(), "link": f"https://d/{i}",
+            "reminded": [(NOW - timedelta(hours=h)).isoformat() for h in reminded]}
+
+
+def test_a_reminder_is_due_after_four_hours_then_once_more_a_day_on():
+    assert not client._team_reminder_due(_open(1, 3), NOW)
+    assert client._team_reminder_due(_open(1, 5), NOW)
+    assert not client._team_reminder_due(_open(1, 30, 10), NOW)
+    assert client._team_reminder_due(_open(1, 30, 21), NOW)
+    assert not client._team_reminder_due(_open(1, 60, 40, 21), NOW), "pinged twice already"
+
+
+def test_franklin_is_pinged_in_ryte_the_goat_and_nothing_goes_to_growth(monkeypatch):
+    sent = []
+
+    class Goat:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    # A board on Central time: 19:34 UTC is 2:34pm there, in working hours.
+    teamtasks.save({"1": _open(1, 5), "2": _open(2, 1), "3": {**_open(3, 9), "done_at": NOW.isoformat()}})
+    monkeypatch.setattr(client, "_hub_responder", lambda bot: Goat())
+    monkeypatch.setattr(client, "_unmarked_ping", lambda config: "<@11>")
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/Chicago")))
+    due = asyncio.run(client._team_reminders(bot, now=NOW))
+    assert [one["id"] for one in due] == ["1"]
+    [text] = sent
+    assert text.startswith("<@11> 🕓 **Still open with the team**") and "Client 1 - set a cap" in text
+    assert "Client 2" not in text and "Client 3" not in text
+    assert len(teamtasks.load()["1"]["reminded"]) == 1
+
+    asyncio.run(client._team_reminders(bot, now=NOW + timedelta(minutes=30)))
+    assert len(sent) == 1, "pinged again half an hour later"
+    late = NOW.replace(hour=4)  # 11pm Central
+    teamtasks.save({"1": _open(1, 30)})
+    assert asyncio.run(client._team_reminders(bot, now=late)) == [] and len(sent) == 1, "pinged at 11pm"
