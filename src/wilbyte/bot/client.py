@@ -8860,6 +8860,9 @@ ORDER_ASK_SECONDS = 24 * 60 * 60
 #: when ryte saw that emoji, it creates the card automatically" - off: the
 #: gavel is the go-ahead for both kinds.
 FRESH_ASKS_FIRST = False
+#: "actually focus on new agent setup for now, not aged leads" - an aged
+#: order gavelled is left alone, said so. True turns them back on.
+AGED_ORDERS_ON = False
 #: Orders being read or waiting on their button right now - a second gavel
 #: meanwhile isn't a second card. Not kept over a restart, where the button
 #: is gone anyway: gavelling it again asks again.
@@ -9069,6 +9072,12 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)}")
         return
     kind, link = card["kind"], str(getattr(message, "jump_url", "") or "")
+    if kind == "aged" and not AGED_ORDERS_ON:
+        await _order_forget(key)
+        if responder is not None:
+            await responder.send(f"🔨 {card['client'] or 'That order'} is aged leads — those aren't made into cards "
+                                 f"for now, so I've left it.\n<{link}>", quiet=True)
+        return
     template = examples.get(kind)
     if template is None:
         await _order_forget(key)
@@ -9265,13 +9274,16 @@ async def _order_check(bot, responder: Responder) -> None:
     lines.append(f"✅ Said in #{getattr(channel, 'name', '?')}" if responder_there is not None else
                  "❌ No board channel to say orders in — DISCORD_BOARD_CHANNEL_ID.")
     examples = await _order_examples(bot.config)
-    for kind in ("fresh", "aged"):
+    kinds = ("fresh", "aged") if AGED_ORDERS_ON else ("fresh",)
+    if not AGED_ORDERS_ON:
+        lines.append("⏸ Aged Leads orders: off for now — gavelled ones are left alone.")
+    for kind in kinds:
         example = examples.get(kind)
         lines.append(f"✅ {ordercards.KINDS[kind]} example: {example['name']} — {example['url']}" if example else
                      f"❌ No {ordercards.KINDS[kind]} example card — `@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <link>`.")
     try:
         lists = await asyncio.to_thread(_order_board_lists, bot.config)
-        for kind in ("fresh", "aged"):
+        for kind in kinds:
             wanted = (bot.config.secrets.order_fresh_list if kind == "fresh" else bot.config.secrets.order_aged_list) or ""
             where = ordercards.list_for(kind, lists, wanted=wanted)
             lines.append(f"✅ {ordercards.KINDS[kind]} cards go in **{where['name']}**" if where else

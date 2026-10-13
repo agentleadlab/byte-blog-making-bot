@@ -196,6 +196,8 @@ def order(monkeypatch):
     monkeypatch.setattr(client, "_board_responder", lambda bot: held.responder)
     monkeypatch.setattr(client, "_today", lambda config: date(2026, 10, 13))
     monkeypatch.setattr(client.views, "ConfirmView", Confirm)
+    # The aged machinery is kept, switched off - tested on.
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", True)
     return held
 
 
@@ -527,3 +529,30 @@ def test_only_someone_whose_gavel_counts_can_change_who_else(order):
 ])
 def test_gavel_commands(said, action):
     assert mentions.parse(said).action == action
+
+
+
+def test_aged_orders_are_off_for_now_and_left_alone_said_so(order, monkeypatch):
+    """"actually focus on new agent setup for now, not aged leads"."""
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", False)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.made == [] and "900" not in ordercards.load()
+    [(said, _view)] = order.responder.sent
+    assert "aged leads — those aren't made into cards for now" in said
+
+    order.kind = "fresh"
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert [one[0] for one in order.made] == ["fresh"]
+
+
+def test_order_check_with_aged_off(order, monkeypatch):
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", False)
+    monkeypatch.setattr(client, "_order_board_lists", lambda config: [{"id": "q", "name": "In Que"}])
+    order.responder.channel = SimpleNamespace(name="trello-manager")
+    asyncio.run(client._order_check(_bot(_message()), order.responder))
+    said = order.responder.sent[-1][0]
+    assert "⏸ Aged Leads orders: off for now" in said and "❌" not in said
+
+
+def test_aged_orders_are_off_by_default():
+    assert client.AGED_ORDERS_ON is False

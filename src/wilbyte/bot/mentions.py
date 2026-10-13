@@ -1481,8 +1481,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > I missed; **team tasks** lists what's still open. **threads <name>** — the threads I take as
 > somebody's. Paid is Payra, and Zelle once it's posted in #new-payment.
 > 🔨 **Orders** — Franklin's :leadlab_hammertime: on an order in Discord makes its Trello card:
-> aged leads into Aged Leads Order Done, a new agent into the Queue - straight away. New notes
-> in its thread update the card. **new agent template <link>** / **aged
+> a new agent's card into the Queue, straight away (aged leads are off for now). New notes in
+> its thread update the card. **new agent template <link>** / **aged
 > template <link>** — the card each is copied from; **order templates** shows them.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
