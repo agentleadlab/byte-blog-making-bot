@@ -165,6 +165,14 @@ STEP_LISTS = {
 # `walks_today`; they share a destination and differ only in what they carry.
 DONE_STEPS = ("to_done", LATE_DONE)
 
+# The end of a day, caught up the next morning when RYTE missed it - in the
+# order they run. "why didnt ryte move these": restarted over ten o'clock, the
+# Ads and Lead Order cards sat in Quality Check all the next day, because the
+# catch-up only ever looked at today. The carry skips anything already on the
+# next card and the move takes only cards dated that day or before, so running
+# them late does what running them on time would have.
+OVERNIGHT_CATCH_UP = ("rollover", "to_done", LATE_ROLLOVER, LATE_DONE)
+
 # Steps that must not be caught up hours after their time. Nothing needs it
 # now that the late pair runs at ten on the same day; kept because the rule is
 # what stopped a two-in-the-morning step running at dusk, and the next step

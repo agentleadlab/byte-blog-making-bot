@@ -7437,3 +7437,53 @@ def test_still_down_with_nothing_to_go_on_is_an_error(monkeypatch):
     blink = OSError("[Errno 8] nodename nor servname provided")
     with pytest.raises(OSError):
         _members(monkeypatch, [blink, blink, blink])
+
+
+# ------------- "why didnt ryte move these": last night's 10pm, caught up
+
+
+def test_last_nights_end_of_day_is_caught_up_the_next_morning(monkeypatch):
+    """Restarted over ten o'clock: Ads and Lead Order were neither carried nor
+    moved into Done, and the catch-up only knew today."""
+    import asyncio
+    from datetime import date, datetime
+    from types import SimpleNamespace as NS
+
+    from wilbyte import boardclock, dailyops
+    from wilbyte.bot import client, jobs
+
+    yesterday, today = date(2026, 10, 12), date(2026, 10, 13)
+    clock = {"rollover": "2026-10-12", "to_done": "2026-10-12"}
+    ran = []
+    monkeypatch.setattr(boardclock, "load", lambda path=None: dict(clock))
+    monkeypatch.setattr(boardclock, "mark", lambda step, day, path=None: clock.__setitem__(step, day.isoformat()))
+    monkeypatch.setattr(client, "_today", lambda cfg: today)
+    monkeypatch.setattr(jobs, "run_rollover", lambda config, day=None, only=None: ran.append(("carry", day, only)) or (4, [], []))
+    monkeypatch.setattr(jobs, "walk_board", lambda config, step, day=None: ran.append((step, day)) or (2, []))
+    monkeypatch.setattr(jobs, "weekend_order_card", lambda cfg: ("", []))
+    said = []
+
+    class Responder:
+        async def send(self, content=None, **kw):
+            said.append(content)
+
+    monkeypatch.setattr(client, "_board_responder", lambda bot: Responder())
+
+    class Morning(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 13, 5, 30, tzinfo=tz)
+
+    monkeypatch.setattr(client, "datetime", Morning)
+    bot = NS(config=NS(schedule=NS(timezone="America/Chicago"), secrets=NS()))
+    asyncio.run(client._board_steps(bot))
+
+    assert ran == [("carry", yesterday, dailyops.LATE_KINDS), (dailyops.LATE_DONE, yesterday)], \
+        "only what was missed, for last night's cards, carry first"
+    assert clock[dailyops.LATE_ROLLOVER] == clock[dailyops.LATE_DONE] == "2026-10-12"
+    assert said[0].startswith("⏰ Catching up 10/12's end of day, which I missed:")
+    assert "carried 4 unfinished Ads and Lead Order item(s)" in said[0]
+
+    ran.clear()
+    asyncio.run(client._board_steps(bot))
+    assert ran == [], "and only once"

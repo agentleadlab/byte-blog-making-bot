@@ -1941,6 +1941,17 @@ async def _board_steps(bot: "WilByteBot") -> None:
 
     config = bot.config
     today = _today(config)
+    # Last night's end of day, if RYTE missed it. Restarted over ten o'clock,
+    # the Ads and Lead Order carry and move into Done never happened, and the
+    # catch-up below only knows today - so the two cards sat in Quality Check
+    # the next morning. Each of these is safe to run late: the carry skips
+    # whatever is already on the next card, and the move into Done takes only
+    # cards dated that day or before.
+    yesterday = today - timedelta(days=1)
+    missed = await asyncio.to_thread(boardclock.done_on, yesterday)
+    for step in dailyops.OVERNIGHT_CATCH_UP:
+        if step not in missed:
+            await _board_step(bot, step, yesterday, day=yesterday)
     due = dailyops.steps_due(
         datetime.now(ZoneInfo(config.schedule.timezone)),
         await asyncio.to_thread(boardclock.done_on, today),
@@ -5273,8 +5284,11 @@ async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None
     await responder.send(said_back)
 
 
-async def _board_step(bot: "WilByteBot", step: str, today) -> None:
-    """Do one step and say what happened, then never do it again today."""
+async def _board_step(bot: "WilByteBot", step: str, today, *, day=None) -> None:
+    """Do one step and say what happened, then never do it again today.
+
+    `day` is the board day the step works on when it isn't today's - last
+    night's end of day, caught up the morning after."""
     from .. import boardclock, dailyops
 
     responder = _board_responder(bot)
@@ -5330,8 +5344,9 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
         elif step in ("rollover", dailyops.LATE_ROLLOVER):
             late = step == dailyops.LATE_ROLLOVER
             # Both run on the same day now - half eight for General and Ops,
-            # ten for Ads and Lead Order - so both read today's cards.
-            when = None
+            # ten for Ads and Lead Order - so both read today's cards, or the
+            # day being caught up.
+            when = day
             kinds = dailyops.LATE_KINDS if late else dailyops.EVENING_KINDS
             moved, problems, flagged = await asyncio.to_thread(
                 partial(jobs.run_rollover, bot.config, day=when, only=kinds)
@@ -5349,14 +5364,14 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
         elif step == dailyops.LATE_DONE:
             # Ten o'clock, same day: the cards being finished are today's.
             moved, problems = await asyncio.to_thread(
-                partial(jobs.walk_board, bot.config, step)
+                partial(jobs.walk_board, bot.config, step, day=day)
             )
             note = (
                 f"📋 {dailyops.said_at(step)} — moved {moved} card(s) "
                 f"{dailyops.STEP_NAMES[step]}."
             ) if moved else ""
         else:
-            moved, problems = await asyncio.to_thread(jobs.walk_board, bot.config, step)
+            moved, problems = await asyncio.to_thread(partial(jobs.walk_board, bot.config, step, day=day))
             # Nothing to move is not news either. Somebody already did it by
             # hand, which is the usual reason.
             note = (
@@ -5391,6 +5406,8 @@ async def _board_step(bot: "WilByteBot", step: str, today) -> None:
 
     if problems:
         note = (note + "\n⚠ " + "\n⚠ ".join(problems)).lstrip("\n")
+    if day is not None and note:
+        note = f"⏰ Catching up {day:%m/%d}'s end of day, which I missed:\n{note}"
     # Each branch leaves both empty when its step had nothing to say. A line
     # every morning reporting that nothing happened is a line nobody reads.
     if responder and (note or card):
