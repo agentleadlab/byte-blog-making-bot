@@ -12093,7 +12093,16 @@ def order_fields(got: dict, notes: list[str] = ()) -> dict:
     if _AD_SPEND.search(fields["package"]) and not re.search(r"\d", fields["leads"]):
         fields["leads"] = NO_CAP
     if notes:
-        fields["notes"] = "\n".join(str(one).strip() for one in notes if str(one).strip())
+        said = "\n".join(str(one).strip() for one in notes if str(one).strip())
+        # "they sometimes add screenshot as additional notes" - each one as
+        # what it says, where it was posted.
+        shots = [" ".join(str(one or "").split()) for one in got.get("screenshots") or []]
+
+        def written(found):
+            at = int(found.group(1)) - 1
+            return f"📷 {shots[at]}" if at < len(shots) and shots[at] else "📷 (screenshot)"
+
+        fields["notes"] = re.sub(r"\[screenshot (\d+)\]", written, said)
     return fields
 
 
@@ -12139,6 +12148,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         "launch": {"type": "string", "description": (
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
             "when the note was written.")},
+        "screenshots": {"type": "array", "items": {"type": "string"}, "description": (
+            "What each screenshot the team posted in the notes says - '[screenshot 1]' is the first image "
+            "shown, '[screenshot 2]' the second - written out as text, one entry each, in order. Keep the "
+            "details: names, states, numbers, dates, hours. Empty when there are none.")},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
@@ -12148,7 +12161,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     content = [{"type": "text", "text": (
         f"Today is {today:%A, %B %d, %Y}.\n\nThe order, as posted in Discord - the payment, then the team's "
         f"notes, oldest first:\n{text}")}]
-    for url in images[:4]:
+    for url in images[:6]:
         content.append({"type": "image", "source": {"type": "url", "url": url}})
     system = ("You read Agent Lead Lab's orders, as posted in Discord, for the Trello card the team works from. "
               "Use only what the payment and the notes say, screenshots included; later notes override earlier "

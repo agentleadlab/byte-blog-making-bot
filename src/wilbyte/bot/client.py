@@ -8892,6 +8892,9 @@ async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[st
     every note in its thread. (text, images, the thread's id or None, the
     team's own notes in the thread as they wrote them)."""
     lines, images, notes = [], [], []
+    # The team's screenshots first, numbered as they're marked in the notes -
+    # "[screenshot 1]" is the first picture Claude is shown.
+    note_images = []
     channel = message.channel
     thread = None
     if getattr(channel, "parent", None) is not None:
@@ -8915,12 +8918,19 @@ async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[st
                     continue
                 lines.append(_said_line(one))
                 said, pictures = _request_bits(one)
-                images += pictures
-                if not getattr(one.author, "bot", False) and said.strip():
-                    notes.append(_named_tags(one, said).strip())
+                if getattr(one.author, "bot", False):
+                    images += pictures
+                    continue
+                marks = []
+                for picture in pictures:
+                    note_images.append(picture)
+                    marks.append(f"[screenshot {len(note_images)}]")
+                written = "\n".join(part for part in (_named_tags(one, said).strip(), *marks) if part)
+                if written:
+                    notes.append(written)
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
-    return "\n".join(lines), images, (int(thread.id) if thread is not None else None), notes
+    return "\n".join(lines), note_images + images, (int(thread.id) if thread is not None else None), notes
 
 
 def _named_tags(message, text: str) -> str:

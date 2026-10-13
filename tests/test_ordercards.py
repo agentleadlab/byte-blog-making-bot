@@ -659,3 +659,38 @@ def test_a_tag_in_the_teams_notes_is_a_name_on_the_card():
 
 def test_no_notes_no_gap():
     assert jobs.order_desc({"name": "Killian Cooper"}).endswith("Additional Notes:")
+
+
+# ------------------------------------------------------------- screenshots
+
+def test_a_screenshot_in_the_thread_is_written_out_in_the_notes():
+    """"they sometimes add screenshot as additional notes, can ryte read that"."""
+    notes = ["Fresh Vets- 20x leads", "[screenshot 1]", "LIVE TODAY OCT 13\n[screenshot 2]"]
+    got = {"screenshots": ["Dean Nevarez · States: CA, AZ, TX · 25 OTP VET · Launch Monday Oct 12", ""]}
+    fields = jobs.order_fields(got, notes)
+    assert fields["notes"] == ("Fresh Vets- 20x leads\n"
+                               "📷 Dean Nevarez · States: CA, AZ, TX · 25 OTP VET · Launch Monday Oct 12\n"
+                               "LIVE TODAY OCT 13\n📷 (screenshot)")
+    assert jobs.order_fields({}, ["[screenshot 1]"])["notes"] == "📷 (screenshot)", "unread, but not dropped"
+
+
+def test_the_teams_screenshots_are_marked_and_shown_first(order):
+    picture = SimpleNamespace(url="https://cdn.discordapp.com/shot.png", content_type="image/png")
+
+    class Thread:
+        id = 900
+        parent = SimpleNamespace(name="new-payment")
+
+        def history(self, **kw):
+            async def gen():
+                for at, (text, files) in enumerate([("Killian Cooper", []), ("", [picture])]):
+                    yield SimpleNamespace(id=at, content=text, embeds=[], attachments=files, message_snapshots=[],
+                                          mentions=[], role_mentions=[], channel_mentions=[],
+                                          author=SimpleNamespace(display_name="Kharyl", name="kharyl", bot=False),
+                                          created_at=WHEN)
+            return gen()
+
+    message = _message(thread=Thread())
+    _text, images, _thread, notes = asyncio.run(client._order_said(_bot(message), message))
+    assert notes == ["Killian Cooper", "[screenshot 1]"]
+    assert images[0] == "https://cdn.discordapp.com/shot.png"
