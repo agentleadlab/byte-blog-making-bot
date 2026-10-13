@@ -5198,6 +5198,9 @@ def contract_check(config: Config, *, today=None, sync: bool = True) -> tuple[li
         if not rules.is_agent_card(title) or made is None or made < since:
             continue
         desc = str(card.get("desc") or "")
+        # "no spark dont need contracts" - a Spark buyer signs nothing.
+        if rules.from_spark(desc):
+            continue
         orders.append(matching.Order(
             card_id=str(card.get("id") or ""), name=rules.agent_name(title),
             email=matching.card_email(desc), made=made,

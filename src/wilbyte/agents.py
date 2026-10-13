@@ -1468,6 +1468,16 @@ TEAM_NAMES = {
     "iul": "IUL", "mtg": "MTG", "vet": "VETS", "widows": "Widows", "fex": "FEX", "phnx": "Phoenix",
 }
 
+#: What a card Spark made says about itself: "A buyer just purchased on
+#: Spark. Fulfill this order from your Spark vendor ...".
+_FROM_SPARK = re.compile(r"\bpurchased\s+(?:on|through|via)\s+spark\b|\bspark\s+vendor\b", re.IGNORECASE)
+
+
+def from_spark(desc: str) -> bool:
+    """Whether a card is a Spark order - which has no contract to sign."""
+    return bool(_FROM_SPARK.search(str(desc or "")))
+
+
 _SPARK_SHAPE = re.compile(r"[a-z]+(?:-[a-z]+)+")
 
 

@@ -179,6 +179,9 @@ def test_only_orders_going_live_today_or_tomorrow_are_checked(monkeypatch):
         card("Later Person", "MON, OCT 12"),
         card("Gone Person", "FRI, OCT 2", closed=True),
         card("Old Person", "FRI, OCT 2", days_ago=90),
+        # "no spark dont need contracts"
+        {**card("Spark Buyer", "FRI, OCT 2"), "desc": "veteran-final-expense — 25 leads · one-time pack\n"
+         "A buyer just purchased on Spark. Fulfill this order from your Spark vendor\nLIVE FRI, OCT 2"},
     ]
 
     class Board:
