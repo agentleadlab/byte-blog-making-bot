@@ -12024,3 +12024,138 @@ def team_task_done(config: Config, task: dict) -> None:
                               name=teamtasks.done_name(task))
     finally:
         client.close()
+
+
+# ------------------------------------------- orders made into cards
+
+def order_template(config: Config, kind: str) -> dict:
+    """The example card for this kind of order: {"id", "name", "desc", "url"}.
+    Raises when there isn't one set or it can't be read."""
+    from .. import ordercards
+
+    link = ordercards.templates().get(kind) or ""
+    card_id = ordercards.card_id_of(link)
+    if not card_id:
+        raise ValueError(f"There's no example {ordercards.KINDS[kind]} card set - "
+                         f"`@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <trello link>`.")
+    client = open_trello(config)
+    try:
+        card = client.card_full(card_id)
+    finally:
+        client.close()
+    return {"id": str(card.get("id") or card_id), "name": str(card.get("name") or ""),
+            "desc": str(card.get("desc") or ""), "url": str(card.get("shortUrl") or link)}
+
+
+def read_order(config: Config, *, text: str, images: list[str], today, examples: dict) -> dict:
+    """An order as posted in Discord, read by Claude and written up as the
+    card it should be. `examples` are the example cards by kind ({"fresh":
+    {"name", "desc"}, "aged": ...}). {"kind": "fresh"|"aged", "client",
+    "name", "desc", "due" (YYYY-MM-DD or ""), "missing": [...]}."""
+    from anthropic import Anthropic
+
+    config.secrets.require("anthropic_api_key")
+    client = Anthropic(api_key=config.secrets.anthropic_api_key)
+    shown = []
+    for kind, example in examples.items():
+        if example:
+            shown.append(f"=== Example {('New Agent (fresh leads)' if kind == 'fresh' else 'Aged Leads')} card ===\n"
+                         f"TITLE: {example.get('name', '')}\nDESCRIPTION:\n{example.get('desc', '')}")
+    tool = {
+        "name": "card",
+        "description": "The Trello card this order should be.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["fresh", "aged"], "description": (
+                    "'aged' for aged leads (the product says Aged Leads, or the notes say aged); "
+                    "'fresh' for a new agent's fresh leads - VET, OTP, FEX, MTG, IUL and the rest.")},
+                "client": {"type": "string", "description": "The client's full name."},
+                "name": {"type": "string", "description": (
+                    "The card's title, in exactly the example card's pattern for this kind, with this "
+                    "order's details in place of the example's.")},
+                "desc": {"type": "string", "description": (
+                    "The card's description, in exactly the example card's layout - the same labels, "
+                    "order, markdown and line breaks - filled from this order. Anything the order doesn't "
+                    "say is left blank after its label, never guessed and never copied from the example.")},
+                "due": {"type": "string", "description": "The launch / go-live date as YYYY-MM-DD, or empty."},
+                "missing": {"type": "array", "items": {"type": "string"}, "description": (
+                    "The example's fields this order doesn't give yet, e.g. 'States', 'Launch date'.")},
+            },
+            "required": ["kind", "client", "name", "desc", "due", "missing"],
+        },
+    }
+    content = [{"type": "text", "text": (
+        f"Today is {today:%Y-%m-%d}.\n\n" + "\n\n".join(shown)
+        + "\n\n=== The order, as posted in Discord - the payment, then the team's notes, oldest first ===\n"
+        + text)}]
+    for url in images[:4]:
+        content.append({"type": "image", "source": {"type": "url", "url": url}})
+    system = ("You turn Agent Lead Lab's orders, as posted in Discord, into the Trello card the team uses. "
+              "Clients buy leads - fresh (a new agent's setup) or aged. Use only what the order and its notes "
+              "say, screenshots included; later notes override earlier ones. Copy the example card's format "
+              "exactly and its content never.")
+    try:
+        response = client.messages.create(model=config.copy.model, max_tokens=1500, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "card"},
+                                          messages=[{"role": "user", "content": content}])
+    except Exception:
+        if not images:
+            raise
+        response = client.messages.create(model=config.copy.model, max_tokens=1500, system=system,
+                                          tools=[tool], tool_choice={"type": "tool", "name": "card"},
+                                          messages=[{"role": "user", "content": content[:1]}])
+    got = _tool_input(response, "card")
+    kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
+    return {"kind": kind, "client": " ".join(str(got.get("client") or "").split()),
+            "name": " ".join(str(got.get("name") or "").split())[:250], "desc": str(got.get("desc") or "").strip(),
+            "due": str(got.get("due") or "")[:10], "missing": [str(one) for one in got.get("missing") or []]}
+
+
+def order_card_make(config: Config, kind: str, card: dict, template: dict) -> dict:
+    """The card, made: a copy of the example card in its list, with this
+    order's title, description and due date. {"id", "url", "list"}."""
+    from .. import ordercards
+
+    client = open_trello(config)
+    try:
+        wanted = (config.secrets.order_fresh_list if kind == "fresh" else config.secrets.order_aged_list) or ""
+        where = ordercards.list_for(kind, client.board_lists(config.secrets.trello_board_id), wanted=wanted)
+        if where is None:
+            raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
+                             + (f" called “{wanted}”" if wanted else "") + ".")
+        due = f"{card['due']}T17:00:00.000Z" if re.match(r"\d{4}-\d{2}-\d{2}$", card.get("due") or "") else None
+        made = client.copy_card(str(where["id"]), template["id"], name=card["name"], desc=card["desc"], due=due)
+        return {"id": str(made.get("id") or ""), "url": str(made.get("shortUrl") or made.get("url") or ""),
+                "list": str(where.get("name") or "")}
+    finally:
+        client.close()
+
+
+def order_card_update(config: Config, card_id: str, *, written: str, desc: str, name: str = "",
+                      commented: tuple = ()) -> tuple[str, list[str]]:
+    """New notes onto a card RYTE made. Its description is rewritten only when
+    it's still what RYTE wrote; when somebody has edited it by hand, what's
+    new goes in a comment instead - each line once. ("updated" / "commented"
+    / "same", the lines commented)."""
+    from .. import ordercards
+
+    client = open_trello(config)
+    try:
+        now = client.card_detail(card_id)
+        if ordercards.same_text(now.get("desc", ""), desc):
+            return "same", []
+        if ordercards.same_text(now.get("desc", ""), written):
+            client.set_description(card_id, desc)
+            if name and not ordercards.same_text(now.get("name", ""), name):
+                client.rename_card(card_id, name)
+            return "updated", []
+        before = {" ".join(line.split()) for line in commented}
+        new = [line for line in ordercards.changed_lines(now.get("desc", ""), desc)
+               if " ".join(line.split()) not in before]
+        if not new:
+            return "same", []
+        client.add_comment(card_id, "📝 New in Discord since this card was made:\n" + "\n".join(new))
+        return "commented", new
+    finally:
+        client.close()

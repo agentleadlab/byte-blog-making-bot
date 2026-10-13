@@ -415,6 +415,12 @@ class WilByteBot(discord.Client):
         asked of: done."""
         if self.user is not None and payload.user_id == self.user.id:
             return
+        from .. import ordercards
+
+        if ordercards.is_gavel(payload.emoji):
+            if ordercards.may_gavel(payload.user_id, self.config):
+                _also_running(self.loop.create_task(_order_gavelled(self, payload)))
+            return
         if CHECKLIST_PAUSED:
             return
         if not _in_setup_guild(self, self.get_guild(payload.guild_id) if payload.guild_id else None):
@@ -429,8 +435,18 @@ class WilByteBot(discord.Client):
         if self.user is not None and message.author.id == self.user.id:
             return
         if is_direct_mention(message, self.user):
+            # In the Growth server a tag with no command in it is somebody
+            # pointing RYTE at an order - the gavel does the rest, and RYTE
+            # has nothing to say there.
+            if _in_setup_guild(self, getattr(message, "guild", None)) and mentions.parse(
+                    message.content or "").action == "help":
+                if not getattr(message.author, "bot", False):
+                    _order_note_posted(self, message)
+                return
             await answer_mention(self, message)
             return
+        if not getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None)):
+            _order_note_posted(self, message)
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
         if (not CHECKLIST_PAUSED and not getattr(message.author, "bot", False)
@@ -1706,6 +1722,15 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
             if CHECKLIST_PAUSED and request.action in ("teamtrack", "teamtasks", "setupthreads", "rytechecklist"):
                 await responder.send("⏸ The Ryte Checklist is paused — the team's back on Trello for setups. "
                                      "Nothing's been deleted; it's ready to switch back on.")
+                return
+
+            if request.action == "ordertemplate":
+                kind, _, link = (request.brief or "").partition(" ")
+                await _order_template_set(responder, kind, link, config)
+                return
+
+            if request.action == "ordertemplates":
+                await _order_templates_said(responder)
                 return
 
             if request.action == "teamtrack":
@@ -8608,6 +8633,266 @@ async def _team_list(responder: Responder) -> None:
     await responder.send("\n".join([f"🕓 **{len(open_now)} asked of the team, not done yet:**"] + [
         f"• {teamtasks.item_name(one)}" + (f" · <{one['link']}>" if one.get("link") else "")
         for one in open_now])[:3900])
+
+
+# ------------------------------------------------ orders made into cards
+
+#: One gavel at a time: a double-click mustn't make two cards.
+_ORDER_LOCK = asyncio.Lock()
+#: Notes come in bursts. A card is updated this long after the last one.
+ORDER_NOTES_SETTLE_SECONDS = 120
+#: {order: the update waiting for the notes to settle}.
+_ORDER_PENDING: dict = {}
+#: How long the Create button on a fresh order waits.
+ORDER_ASK_SECONDS = 24 * 60 * 60
+#: Orders being read or waiting on their button right now - a second gavel
+#: meanwhile isn't a second card. Not kept over a restart, where the button
+#: is gone anyway: gavelling it again asks again.
+_ORDER_ACTIVE: set = set()
+
+
+def _said_line(message) -> str:
+    who = str(getattr(message.author, "display_name", "") or getattr(message.author, "name", ""))
+    text, _images = _request_bits(message)
+    return f"[{message.created_at:%m/%d %I:%M%p}] {who}: {text}"
+
+
+async def _order_said(bot, message) -> tuple[str, list[str], int | None]:
+    """The order: the gavelled message - forwards and screenshots too - and
+    every note in its thread. (text, images, the thread's id or None)."""
+    lines, images = [], []
+    channel = message.channel
+    thread = None
+    if getattr(channel, "parent", None) is not None:
+        # Gavelled inside the thread: the post it hangs off, then the thread.
+        thread = channel
+        try:
+            starter = await channel.parent.fetch_message(channel.id)
+            lines.append(_said_line(starter))
+            images += _request_bits(starter)[1]
+        except Exception:
+            pass
+    else:
+        lines.append(_said_line(message))
+        images += _request_bits(message)[1]
+        guild = getattr(message, "guild", None)
+        thread = getattr(message, "thread", None) or (guild.get_thread(message.id) if guild is not None else None)
+    if thread is not None:
+        try:
+            async for one in thread.history(limit=100, oldest_first=True):
+                if getattr(one.author, "bot", False) and not getattr(one, "embeds", None):
+                    continue
+                lines.append(_said_line(one))
+                images += _request_bits(one)[1]
+        except Exception:
+            log.warning("Couldn't read the order's thread", exc_info=True)
+    return "\n".join(lines), images, (int(thread.id) if thread is not None else None)
+
+
+async def _order_examples(config) -> dict:
+    found = {}
+    for kind in ("fresh", "aged"):
+        try:
+            found[kind] = await asyncio.to_thread(jobs.order_template, config, kind)
+        except Exception as exc:
+            found[kind] = None
+            log.info("No %s example card: %s", kind, exc)
+    return found
+
+
+async def _order_read(bot, message) -> tuple[dict, dict, int | None]:
+    text, images, thread_id = await _order_said(bot, message)
+    examples = await _order_examples(bot.config)
+    card = await asyncio.to_thread(partial(
+        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config),
+        examples={kind: one for kind, one in examples.items() if one}))
+    return card, examples, thread_id
+
+
+def _order_preview(card: dict) -> str:
+    from .. import ordercards
+
+    lines = [f"**{card['name']}**"]
+    if card.get("due"):
+        lines.append(f"Due: {card['due']}")
+    lines.append("```\n" + (card["desc"] or "(no description)")[:1400] + "\n```")
+    if card.get("missing"):
+        lines.append("-# Not in the order yet: " + ", ".join(card["missing"][:8]))
+    return "\n".join(lines)
+
+
+async def _order_gavelled(bot, payload) -> None:
+    """🔨 on an order: the card, made - aged straight away, fresh on the
+    Create button. Everything said in Ryte The Goat, nothing in Growth."""
+    from .. import ordercards
+
+    key = str(payload.message_id)
+    responder = _board_responder(bot)
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        if (held.get(key) or {}).get("status") == "made" or key in _ORDER_ACTIVE:
+            return
+        _ORDER_ACTIVE.add(key)
+        held[key] = {"status": "reading", "channel_id": str(payload.channel_id), "by": str(payload.user_id)}
+        await asyncio.to_thread(ordercards.save, held)
+    try:
+        await _order_make(bot, payload, key, responder)
+    finally:
+        _ORDER_ACTIVE.discard(key)
+
+
+async def _order_make(bot, payload, key: str, responder) -> None:
+    from .. import ordercards
+
+    try:
+        channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+        card, examples, thread_id = await _order_read(bot, message)
+    except Exception as exc:
+        log.exception("Couldn't read the gavelled order")
+        await _order_forget(key)
+        if responder is not None:
+            await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)}")
+        return
+    kind, link = card["kind"], str(getattr(message, "jump_url", "") or "")
+    template = examples.get(kind)
+    if template is None:
+        await _order_forget(key)
+        if responder is not None:
+            await responder.send(f"🔨 ⚠ **{card['client'] or 'That order'}** reads as {ordercards.KINDS[kind]}, but there's "
+                                 f"no example {ordercards.KINDS[kind]} card to copy - "
+                                 f"`@Ryte {'new agent' if kind == 'fresh' else 'aged'} template <trello link>`, then gavel it again.\n<{link}>")
+        return
+
+    if kind == "fresh":
+        if responder is None:
+            await _order_forget(key)
+            return
+        view = views.ConfirmView(requester_id=int(payload.user_id), timeout=ORDER_ASK_SECONDS,
+                                 label="Create card", emoji="🔨")
+        asking = await responder.send(f"🔨 **New Agent card** for {card['client'] or 'this order'} — goes in the Queue. "
+                                      f"<{link}>\n" + _order_preview(card), view=view)
+        await _order_note(key, status="asked")
+        await view.wait()
+        if not view.confirmed:
+            await _order_forget(key)
+            return
+        # Read again: notes may have come in while it waited.
+        try:
+            card, examples, thread_id = await _order_read(bot, message)
+            card["kind"] = "fresh"
+        except Exception:
+            log.warning("Couldn't read the order again; making it as shown", exc_info=True)
+    try:
+        made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card, template)
+    except Exception as exc:
+        await _order_forget(key)
+        if responder is not None:
+            await responder.send(f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
+        return
+    await _order_note(key, status="made", kind=kind, card_id=made["id"], url=made["url"], name=card["name"],
+                      written=card["desc"], client=card["client"], link=link,
+                      thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
+    if responder is not None:
+        await responder.send(f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                             + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
+                                f"posted in the thread." if card.get("missing") else ""), quiet=True)
+
+
+async def _order_note(key: str, **fields) -> None:
+    from .. import ordercards
+
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        held.setdefault(key, {}).update(fields)
+        await asyncio.to_thread(ordercards.save, held)
+
+
+async def _order_forget(key: str) -> None:
+    """Not made: gavelling it again starts over."""
+    from .. import ordercards
+
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        if (held.get(key) or {}).get("status") != "made":
+            held.pop(key, None)
+            await asyncio.to_thread(ordercards.save, held)
+
+
+def _order_note_posted(bot, message) -> None:
+    """A note in a made order's thread: its card updated once they settle."""
+    from .. import ordercards
+
+    try:
+        held = ordercards.load()
+    except Exception:
+        return
+    where = str(getattr(message.channel, "id", ""))
+    for key, order in held.items():
+        if order.get("status") == "made" and where and where == order.get("thread_id"):
+            waiting = _ORDER_PENDING.pop(key, None)
+            if waiting is not None:
+                waiting.cancel()
+            _ORDER_PENDING[key] = bot.loop.create_task(_order_refresh(bot, key))
+
+
+async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
+    """The card brought up to date with the order's notes."""
+    from .. import ordercards
+
+    await asyncio.sleep(ORDER_NOTES_SETTLE_SECONDS if settle is None else settle)
+    _ORDER_PENDING.pop(key, None)
+    order = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if order.get("status") != "made":
+        return "gone"
+    try:
+        channel = bot.get_channel(int(order["message_channel_id"])) or await bot.fetch_channel(int(order["message_channel_id"]))
+        message = await channel.fetch_message(int(key))
+        card, _examples, _thread = await _order_read(bot, message)
+        done, said = await asyncio.to_thread(partial(
+            jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
+            desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))
+    except Exception:
+        log.exception("Couldn't update the order card")
+        return "failed"
+    if done == "updated":
+        await _order_note(key, written=card["desc"], name=card["name"])
+    elif done == "commented":
+        await _order_note(key, commented=list(order.get("commented") or []) + said)
+    if done != "same":
+        responder = _board_responder(bot)
+        if responder is not None:
+            await responder.send(f"📝 {order.get('name') or 'An order card'} — "
+                                 + ("updated from the new notes" if done == "updated" else
+                                    "the card was edited by hand, so the new notes went in a comment")
+                                 + f"\n{order.get('url', '')}", quiet=True)
+    return done
+
+
+async def _order_template_set(responder: Responder, kind: str, link: str, config) -> None:
+    """"@Ryte new agent template <link>" / "aged template <link>"."""
+    from .. import ordercards
+
+    if not ordercards.card_id_of(link):
+        await responder.send("Send the Trello card's link: `@Ryte new agent template https://trello.com/c/…`")
+        return
+    await asyncio.to_thread(ordercards.set_template, kind, link.strip("<> "))
+    try:
+        example = await asyncio.to_thread(jobs.order_template, config, kind)
+    except Exception as exc:
+        await responder.send(f"Saved, but I couldn't open it: {_readable(exc)}")
+        return
+    await responder.send(f"✅ {ordercards.KINDS[kind]} cards will be made like **{example['name']}** — "
+                         f"its checklists, labels and members, and its description's layout.\n{example['url']}")
+
+
+async def _order_templates_said(responder: Responder) -> None:
+    from .. import ordercards
+
+    held = await asyncio.to_thread(ordercards.templates)
+    await responder.send("🔨 Order cards are copied from:\n" + "\n".join(
+        f"• {ordercards.KINDS[kind]}: " + (held[kind] or "not set") for kind in ("fresh", "aged"))
+        + "\n-# Change one with `@Ryte new agent template <link>` or `@Ryte aged template <link>`.")
 
 
 async def setup_check_pass_loop(bot: "WilByteBot") -> None:

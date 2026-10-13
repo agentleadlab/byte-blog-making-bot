@@ -262,6 +262,12 @@ class Secrets:
     #: The server RYTE answers in without being tagged - Ryte The Goat. Found
     #: by its name when this isn't set.
     discord_talk_guild_id: str | None = None
+    #: Who can drop the gavel on an order (Discord ids, commas). Franklin -
+    #: DISCORD_NOTIFY_USER_ID - when this isn't set.
+    order_gavel_user_ids: str | None = None
+    #: The lists order cards go in, when not the Queue / Aged Leads Order Done.
+    order_fresh_list: str | None = None
+    order_aged_list: str | None = None
     #: Franklin's Trello username, for tagging him on the Ryte Checklist card.
     #: Found among the board's members when this isn't set.
     trello_franklin: str | None = None
@@ -449,6 +455,9 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 hub_api_token=_env("HUB_API_TOKEN"),
                 discord_setup_guild_id=_env("DISCORD_SETUP_GUILD_ID"),
                 discord_talk_guild_id=_env("DISCORD_TALK_GUILD_ID"),
+                order_gavel_user_ids=_env("ORDER_GAVEL_USER_IDS"),
+                order_fresh_list=_env("ORDER_FRESH_LIST"),
+                order_aged_list=_env("ORDER_AGED_LIST"),
                 trello_franklin=_env("TRELLO_FRANKLIN"),
                 youtube_channel_id=_env("YOUTUBE_CHANNEL_ID"),
                 wordpress_url=_env("WORDPRESS_URL"),

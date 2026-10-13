@@ -364,6 +364,26 @@ class TrelloClient:
             "POST", "/cards", params={"idList": list_id, "name": name, "pos": position}
         )
 
+    def card_full(self, card_id: str) -> dict:
+        """A card with what copying it as a pattern needs: its title,
+        description, list, labels and due date."""
+        return self._request(
+            "GET", f"/cards/{card_id}",
+            params={"fields": "name,desc,idList,idLabels,idMembers,due,shortUrl,url"},
+        )
+
+    def copy_card(self, list_id: str, source_id: str, *, name: str, desc: str,
+                  due: str | None = None, position: str = "top",
+                  keep: str = "checklists,labels,members,customFields,stickers") -> dict:
+        """A new card made from another one - its checklists, labels and
+        members carried over - with its own title, description and due date.
+        The source card is only read."""
+        params = {"idList": list_id, "idCardSource": source_id, "keepFromSource": keep,
+                  "name": name, "desc": desc, "pos": position}
+        if due:
+            params["due"] = due
+        return self._request("POST", "/cards", params=params)
+
     def rename_card(self, card_id: str, name: str) -> dict:
         """Retitle a card, leaving everything else on it alone."""
         return self._request("PUT", f"/cards/{card_id}", params={"name": name})
