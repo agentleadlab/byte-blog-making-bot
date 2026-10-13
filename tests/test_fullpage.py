@@ -195,7 +195,10 @@ GHL_PAGE = ('<div id="row-title" class="c-row"><h1>Full Interviews</h1></div><di
             '<script>setTimeout(function(){ document.getElementById("stack").innerHTML = %s; }, 200);</script>')
 
 
-def _show(data, *, status=200, path="/training/agent-success-full-interviews"):
+SNIPPET = Path(__file__).resolve().parents[1] / "website" / "training-pages-snippet.html"
+
+
+def _show(data, *, status=200, path="/training/agent-success-full-interviews", snippet=False):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -203,8 +206,13 @@ def _show(data, *, status=200, path="/training/agent-success-full-interviews"):
     rows = (_row("e", "U1O8FXthqzQ", "Emanuel's story", "Emanuel Nazco", "Emanuel walks through it.")
             + _row("j", "nxsWmQrPq-Q", "Jonny's story", "Jonathan Shinn", "Jonny explains.")
             + _row("r", "9Ul9Fv3Jxzs", "Raymond's story", "Raymond", "Raymond breaks it down."))
-    page_html = GHL_PAGE % json.dumps(rows) + LOADER.read_text(encoding="utf-8")
+    page_html = GHL_PAGE % json.dumps(rows) + (SNIPPET if snippet else LOADER).read_text(encoding="utf-8")
     body = json.dumps([{"content": {"rendered": "<p>LLFULL-" + json.dumps(data).encode().hex() + "</p>"}}])
+    from wilbyte import sitecode
+
+    # The script as RYTE keeps it on WordPress - what the snippet loads.
+    code = json.dumps([{"content": {"rendered": "<p>This page holds...</p>\n<p>" + website.encode(
+        {"js": sitecode.code("training-pages")}, mark=sitecode.MARK) + "</p>"}}])
     with sync_playwright() as p:
         kw = {"executable_path": "/opt/pw-browsers/chromium"} if os.path.exists("/opt/pw-browsers/chromium") else {}
         try:
@@ -215,8 +223,8 @@ def _show(data, *, status=200, path="/training/agent-success-full-interviews"):
         asked = []
         page.route("https://agentleadlab.test/**", lambda r: r.fulfill(body=page_html, content_type="text/html"))
         page.route("https://leadlabcrm.com/**", lambda r: asked.append(1) or r.fulfill(
-            status=status, body=body if status == 200 else "", content_type="application/json",
-            headers={"access-control-allow-origin": "*"}))
+            status=status, body=(code if "ll-code-" in r.request.url else body) if status == 200 else "",
+            content_type="application/json", headers={"access-control-allow-origin": "*"}))
         page.route("https://img.youtube.com/**", lambda r: r.fulfill(status=404))
         page.goto("https://agentleadlab.test" + path)
         page.wait_for_timeout(1800)
@@ -352,3 +360,37 @@ def test_posting_segments_puts_them_on_their_training_pages(wp, monkeypatch):
     said = jobs.success_take_down(CONFIG, "https://youtu.be/4JSaDVPFbTc")
     assert "Off its training page too" in said
     assert fullpage.page(_full(wp), "Aged Leads") == {"rows": [], "gone": ["4JSaDVPFbTc"]}
+
+
+# ------------------------------------------------ the script kept on leadlabcrm.com
+
+def test_the_snippet_loads_the_script_ryte_keeps_on_the_site():
+    """Pasted into GHL, the whole script came out cut three times running."""
+    assert len(SNIPPET.read_text(encoding="utf-8")) < 1200
+    data = fullpage.add(None, {"id": "NEW00000000", "title": "Pat's veteran clip", "name": "Pat Tester",
+                               "about": "Pat explains the veteran intro."}, "Veteran Training")
+    shown, _lines, playing, _asked = _show(data, path="/training/veteran-protection", snippet=True)
+    assert [one[0] for one in shown] == ["Pat's veteran clip", "Emanuel's story", "Jonny's story", "Raymond's story"]
+    assert playing.startswith("https://www.youtube-nocookie.com/embed/NEW00000000")
+
+
+def test_the_snippet_does_nothing_off_the_training_pages():
+    _shown, _lines, _playing, asked = _show({"rows": [], "gone": []}, path="/success_stories", snippet=True)
+    assert asked == []
+
+
+def test_the_script_is_put_on_the_site_only_when_it_changed(wp):
+    from wilbyte import sitecode
+    from wilbyte.bot import jobs
+
+    assert jobs.site_code_publish(CONFIG) == ["✅ Put the current training-pages script on the site."]
+    kept = website.decoded(wp.pages["ll-code-training-pages"]["content"]["raw"], mark=sitecode.MARK)
+    assert kept == {"js": sitecode.code("training-pages")} and kept["js"].startswith("(function(){")
+    assert jobs.site_code_publish(CONFIG) == ["✅ The training-pages script on the site is the current one."]
+
+
+@pytest.mark.parametrize("said", ["site code", "update site code", "publish the page scripts", "Site code."])
+def test_asking_for_it(said):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> " + said).action == "sitecode"

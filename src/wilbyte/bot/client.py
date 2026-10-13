@@ -279,6 +279,11 @@ class WilByteBot(discord.Client):
         # loops would race each other for the same posts.
         if self.publisher_task is None or self.publisher_task.done():
             self.publisher_task = self.loop.create_task(publisher_loop(self))
+        # The page scripts the GHL pages load from leadlabcrm.com, kept the
+        # same as the copies here - so an update reaches every page by itself.
+        if getattr(self.config.secrets, "wordpress_app_password", None) and not getattr(self, "site_code_sent", False):
+            self.site_code_sent = True
+            self.loop.create_task(_site_code_once(self.config))
         if self.updater_task is None or self.updater_task.done():
             self.updater_task = self.loop.create_task(updater_loop(self))
         # Videos announced before YouTube had finished captioning them. Also
@@ -1624,6 +1629,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
 
             if request.action == "askfaith":
                 await _ask_about_faith(responder, config, request.brief or "")
+                return
+
+            if request.action == "sitecode":
+                await _site_code(responder, config)
                 return
 
             if request.action == "faithvoice":
@@ -8936,6 +8945,24 @@ def faith_voice_said(got: dict, draft: str) -> str:
         lines += ["", "**As Faith would send it:**", fence, rewrite.replace(fence, "'''")[:1100], fence]
     lines.append(f"-# Held up to {got.get('examples', 0)} of her replies. Nothing was sent.")
     return "\n".join(lines)[:1995]
+
+
+async def _site_code_once(config: Config) -> None:
+    try:
+        for line in await asyncio.to_thread(jobs.site_code_publish, config):
+            log.info("Site code: %s", line)
+    except Exception:
+        log.warning("Couldn't put the page scripts on the site", exc_info=True)
+
+
+async def _site_code(responder: Responder, config: Config) -> None:
+    """"@Ryte site code" - the page scripts on leadlabcrm.com, brought up to date now."""
+    try:
+        lines = await asyncio.to_thread(jobs.site_code_publish, config)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't update the page scripts: {_readable(exc)}")
+        return
+    await responder.send("\n".join(lines) or "No page scripts to keep.")
 
 
 async def _ask_about_faith(responder: Responder, config: Config, question: str) -> None:

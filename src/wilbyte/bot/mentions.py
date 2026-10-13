@@ -858,6 +858,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     site = TESTIMONIAL.match(text)
     if site:
         return MentionRequest(action="testimonial", brief=site.group(1).strip())
+    if re.match(r"\s*(?:(?:update|publish|push|check)\s+(?:the\s+)?)?(?:site|page)\s+(?:code|scripts?)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="sitecode", brief=text)
     if re.match(r"\s*(?:website|wordpress)\s+(?:check|test|status)\b", text, re.IGNORECASE):
         return MentionRequest(action="websitecheck", brief=text)
     if INVOICE_PLAINLY.match(_without_links(text)):
@@ -1448,7 +1450,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > section and the Full Interviews page, with `quote: …` after the link (and `name: …` if the
 > video doesn't say, `about: …` to write its Full Interviews paragraph yourself), then Add.
 > @RYTE **testimonial remove Raymond** — take one off the website (and Full Interviews), after a button.
-> **website check** — whether I can reach the site
+> **website check** — whether I can reach the site. **site code** — the page scripts the GHL
+> training pages load from leadlabcrm.com, brought up to date (I do it myself whenever I start)
 > @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents
 > @RYTE **contracts** — today's and tomorrow's go-lives, and whether each order has its own signed contract
 > @RYTE **post segments Karyn Giles** — her segments that have a YouTube link, onto the

@@ -11337,6 +11337,25 @@ def _full_page_save(site, data: dict) -> None:
     site.save(data, slug=fullpage.DATA_SLUG, title=fullpage.DATA_TITLE, mark=fullpage.MARK, what=fullpage.WHAT)
 
 
+def site_code_publish(config: Config) -> list[str]:
+    """Each page script RYTE keeps on leadlabcrm.com brought up to date with
+    its copy here - written only when it changed. A line each."""
+    from .. import sitecode
+
+    lines = []
+    with _wordpress(config) as site:
+        for name in sitecode.SCRIPTS:
+            js = sitecode.code(name)
+            held = site.load(slug=sitecode.slug(name), mark=sitecode.MARK) or {}
+            if held.get("js") == js:
+                lines.append(f"✅ The {name} script on the site is the current one.")
+                continue
+            site.save({"js": js}, slug=sitecode.slug(name), title=f"Page script: {name} (RYTE)",
+                      mark=sitecode.MARK, what=f"the {name} page script")
+            lines.append(f"✅ Put the current {name} script on the site.")
+    return lines
+
+
 def full_page_add(config: Config, video: dict) -> None:
     """The interview first on the Full Interviews page."""
     from .. import fullpage

