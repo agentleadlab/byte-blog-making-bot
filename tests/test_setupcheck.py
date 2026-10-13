@@ -313,6 +313,8 @@ class Thread:
     def __init__(self, name, messages):
         self.name, self.jump_url, self._messages = name, "https://discord.com/t/1", messages
         self.id = hash(name)
+        self.created_at = datetime(2026, 10, 12, 18, tzinfo=timezone.utc)
+        self.owner_id = None
 
     def history(self, limit=80):
         async def gen():
@@ -403,8 +405,9 @@ def test_checklist_is_a_command(said):
     assert mentions.parse(said).action == "rytechecklist"
 
 
-def test_closed_threads_are_found_public_private_and_in_forums_but_not_old_ones():
+def test_closed_threads_are_found_public_private_and_in_forums_but_not_old_ones(monkeypatch):
     now = datetime.now(timezone.utc)
+    monkeypatch.setattr(client, "_setup_since", lambda today=None: now - timedelta(days=30))
 
     def closed(name, days):
         return SimpleNamespace(id=hash(name), name=name, archive_timestamp=now - timedelta(days=days))
@@ -510,3 +513,24 @@ def test_the_newest_threads_are_read_and_an_off_order_thread_says_what_its_about
     asyncio.run(client._setup_pass(bot))
     [(_name, texts, _images)] = calls
     assert "new order" in texts and "old 0" not in texts
+
+
+def test_only_threads_made_since_the_move_to_discord_by_a_person_count(monkeypatch):
+    """"old thread, make sure ryte just take care of new ones" - Suki's 9/21
+    text-inbox thread "Gavin · +1 507 514 1945" isn't Gavin's order."""
+    when = datetime(2026, 10, 12, 15, tzinfo=timezone.utc)
+    bot, board, calls = _pass(monkeypatch, agents=[agent()], threads=[], reads={"Gavin Littledike": {"lead_type": "FEX"}})
+    old = Thread("Gavin Littledike", [Message(1, "old talk", when)])
+    old.created_at = datetime(2026, 9, 21, 13, tzinfo=timezone.utc)
+    suki = Thread("Gavin Littledike · +1 507 514 1945", [Message(2, "texts", when)])
+    suki.owner_id = 7
+    bot.guilds[0].threads = [old, suki]
+    bot.guilds[0].get_member = lambda i: SimpleNamespace(bot=i == 7)
+    results, _fresh, _problems = asyncio.run(client._setup_pass(bot))
+    assert calls == [] and wrong_of(results[0])["Thread"] == "no thread for them in the Growth server"
+
+    new = Thread("Gavin Littledike - FEX", [Message(3, "new order", when)])
+    new.owner_id = 8
+    bot.guilds[0].threads = [old, suki, new]
+    asyncio.run(client._setup_pass(bot))
+    assert [texts for _n, texts, _i in calls] == [["new order"]]

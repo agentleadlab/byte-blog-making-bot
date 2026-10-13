@@ -8130,9 +8130,50 @@ SETUP_CHECK_SECONDS = 30 * 60
 #: When tomorrow's not-ready list goes to Franklin, on the board's clock.
 SETUP_EVENING = (18, 0)
 #: Bumped when the thread reader changes, so every thread is read again.
-SETUP_READ_VERSION = 3
+SETUP_READ_VERSION = 4
 #: How far back an archived thread is still read.
 SETUP_THREAD_DAYS = 30
+#: The day the team moved order updates from Trello cards to Discord
+#: threads. "new orders, new threads" - a thread from before it is an old
+#: order's, or a text-inbox one, and nothing to check a new order against.
+SETUP_MOVED_ON = date(2026, 10, 12)
+
+
+def _setup_since(today: date | None = None) -> datetime:
+    """The oldest a thread can be and still be a current order's: made since
+    the move to Discord, and within the last month."""
+    today = today or datetime.now(timezone.utc).date()
+    day = max(SETUP_MOVED_ON, today - timedelta(days=SETUP_THREAD_DAYS))
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+def _started_by_a_person(guild, thread) -> bool:
+    """Not a bot's thread: Suki's text-inbox threads ("Gavin · +1 507 ...")
+    are texts, not an order. Unknown owner counts as a person."""
+    owner = getattr(thread, "owner_id", None)
+    if owner is None or guild is None or not hasattr(guild, "get_member"):
+        return True
+    member = guild.get_member(int(owner))
+    return not getattr(member, "bot", False)
+
+
+def _order_threads(guild, threads, *, today: date | None = None) -> list:
+    """The threads and channels that can be a new order's: made since the move
+    to Discord, by a person."""
+    since = _setup_since(today)
+    kept = []
+    for one in threads:
+        made = getattr(one, "created_at", None)
+        if made is None and getattr(one, "id", None):
+            try:
+                made = discord.utils.snowflake_time(int(one.id))
+            except Exception:
+                made = None
+        if made is not None and made < since:
+            continue
+        if _started_by_a_person(guild, one):
+            kept.append(one)
+    return kept
 
 
 def _setup_guild(bot, config):
@@ -8156,7 +8197,7 @@ async def _setup_threads(guild) -> list:
             found[one.id] = one
     except Exception:
         log.warning("Couldn't list the open threads", exc_info=True)
-    since = datetime.now(timezone.utc) - timedelta(days=SETUP_THREAD_DAYS)
+    since = _setup_since()
     closed = []
     for channel in getattr(guild, "text_channels", None) or []:
         closed.append(lambda c=channel: c.archived_threads(limit=50))
@@ -8215,6 +8256,7 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
     threads = await _setup_threads(guild)
     # A client with a channel of their own rather than a thread.
     threads += [one for one in getattr(guild, "text_channels", None) or []]
+    threads = _order_threads(guild, threads, today=today)
     zelle_where = _zelle_channel(bot)
     zelle = await _zelle_posts(zelle_where) if zelle_where is not None else None
     _SETUP_SEEN.clear()
@@ -8592,7 +8634,9 @@ async def _setup_threads_for(bot, responder: Responder, name: str) -> None:
     if guild is None:
         await responder.send("I can't see the Growth Team server - set DISCORD_SETUP_GUILD_ID in .env.")
         return
-    threads = await _setup_threads(guild) + list(getattr(guild, "text_channels", None) or [])
+    everything = await _setup_threads(guild) + list(getattr(guild, "text_channels", None) or [])
+    threads = _order_threads(guild, everything, today=_today(bot.config))
+    older = [one for one in setupcheck.threads_for(name, everything) if one not in threads]
     mine = sorted(setupcheck.threads_for(name, threads),
                   key=lambda one: int(getattr(one, "last_message_id", None) or one.id), reverse=True)
     near = [one for one in setupcheck.near_threads(name, threads, most=8)
@@ -8603,6 +8647,9 @@ async def _setup_threads_for(bot, responder: Responder, name: str) -> None:
         "No thread I take as theirs."]
     if len(mine) > 3:
         lines.append("-# ✅ the three with the newest messages are read; ▫️ older ones aren't.")
+    if older:
+        lines.append(f"-# Left out — from before the move to Discord ({SETUP_MOVED_ON:%m/%d}) or started by a bot: "
+                     + "; ".join(f"“{one.name}”" for one in older[:5]))
     if near:
         lines.append("Close, but not taken as theirs: " + "; ".join(f"“{one}”" for one in near))
         lines.append("-# A thread is theirs when its title has their whole name, or their first name "
