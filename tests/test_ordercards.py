@@ -409,3 +409,66 @@ def test_anything_that_breaks_is_said_and_nothing_is_made(order, monkeypatch):
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert "Something broke making that order's card: Discord hiccup" in order.responder.sent[-1][0]
     assert "900" not in ordercards.load()
+
+
+def test_gavels_dropped_while_ryte_was_down_are_found_anywhere(order, monkeypatch):
+    """"he has to search everywhere where he can see his dedicated emoji"."""
+    now = datetime(2026, 10, 13, 23, 0, tzinfo=timezone.utc)
+    gavel = SimpleNamespace(name="leadlab_hammertime")
+
+    def reaction(*people):
+        async def users():
+            for one in people:
+                yield one
+        return SimpleNamespace(emoji=gavel, users=users)
+
+    def posted(i, *reactions, channel_id=700):
+        message = _message()
+        message.id, message.reactions = i, list(reactions)
+        message.channel = SimpleNamespace(id=channel_id, parent=None, name="anywhere", fetch_message=None)
+        return message
+
+    franklin, kharyl = SimpleNamespace(id=FRANKLIN), SimpleNamespace(id=KHARYL)
+    by_place = {
+        700: [posted(901, reaction(franklin)), posted(902), posted(903, reaction(kharyl))],
+        701: [posted(904, reaction(franklin), channel_id=701)],
+    }
+
+    class Place:
+        def __init__(self, i, last):
+            self.id, self.last_message_id = i, last
+
+        def history(self, **kw):
+            async def gen():
+                for one in by_place.get(self.id, []):
+                    yield one
+            return gen()
+
+    recent = int(((now.timestamp() - 3600) * 1000 - 1420070400000)) << 22
+    old = int(((now.timestamp() - 3 * 86400) * 1000 - 1420070400000)) << 22
+    guild = SimpleNamespace(id=1, text_channels=[Place(700, recent), Place(701, old)])
+
+    async def threads():
+        return []
+
+    guild.active_threads = threads
+    ordercards.save({"999": {"status": "made"}})
+    gavelled = []
+
+    async def gavelling(bot, payload):
+        gavelled.append((payload.message_id, payload.user_id))
+
+    monkeypatch.setattr(client, "_order_gavelled", gavelling)
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: guild)
+
+    async def no_wait(_s):
+        return None
+
+    monkeypatch.setattr(client.asyncio, "sleep", no_wait)
+    done = asyncio.run(client._catch_up_gavels(_bot(_message()), now=now))
+    assert gavelled == [(901, FRANKLIN)] and done == ["901"]
+
+    ordercards.save({"901": {"status": "made"}})
+    gavelled.clear()
+    asyncio.run(client._catch_up_gavels(_bot(_message()), now=now))
+    assert gavelled == [], "a made card was gavelled again"

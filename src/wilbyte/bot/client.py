@@ -369,6 +369,8 @@ class WilByteBot(discord.Client):
             self.offered_the_run = True
             _also_running(self.loop.create_task(_offer_the_run(self)))
             _also_running(self.loop.create_task(_catch_up_payra(self)))
+            # Gavels dropped while RYTE was down.
+            _also_running(self.loop.create_task(_catch_up_gavels(self)))
             # The down alarm: say how long RYTE was gone, then check in
             # every five minutes for as long as it's up.
             _also_running(self.loop.create_task(alive_loop(self)))
@@ -8825,6 +8827,63 @@ def _order_preview(card: dict) -> str:
     return "\n".join(lines)
 
 
+#: How far back a start looks for gavels it missed.
+GAVEL_CATCH_UP = timedelta(hours=24)
+#: "now i just want him to take care those going forward" - nothing gavelled
+#: before the gavel went live (6pm Eastern, 10/13) is caught up.
+GAVELS_FROM = datetime(2026, 10, 13, 22, 0, tzinfo=timezone.utc)
+
+
+async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
+    """Gavels dropped while RYTE was down - an update, the Mac asleep - found
+    by looking through the Growth server's last day: every channel and thread
+    with anything said in it since. Each one is done as if just dropped,
+    unless its card is made or it was left. The messages done."""
+    from .. import ordercards
+
+    await asyncio.sleep(30)
+    guild = _setup_guild(bot, bot.config)
+    if guild is None:
+        return []
+    now = now or datetime.now(timezone.utc)
+    since = max(now - GAVEL_CATCH_UP, GAVELS_FROM)
+    places = list(getattr(guild, "text_channels", None) or [])
+    try:
+        places += list(await guild.active_threads())
+    except Exception:
+        log.warning("Couldn't list the open threads for gavels", exc_info=True)
+    done = []
+    for place in places:
+        last = getattr(place, "last_message_id", None)
+        if last is None:
+            continue
+        try:
+            if discord.utils.snowflake_time(int(last)) < since:
+                continue
+        except Exception:
+            pass
+        try:
+            async for message in place.history(after=since, limit=300):
+                for reaction in getattr(message, "reactions", None) or []:
+                    if not ordercards.is_gavel(reaction.emoji):
+                        continue
+                    held = (await asyncio.to_thread(ordercards.load)).get(str(message.id)) or {}
+                    if held.get("status") in ("made", "left") or str(message.id) in _ORDER_ACTIVE:
+                        break
+                    async for person in reaction.users():
+                        if ordercards.may_gavel(person.id, bot.config):
+                            log.info("Catching up a gavel on %s", message.id)
+                            done.append(str(message.id))
+                            await _order_gavelled(bot, SimpleNamespace(
+                                message_id=message.id, channel_id=place.id, user_id=person.id,
+                                guild_id=guild.id, member=person))
+                            break
+                    break
+        except Exception:
+            continue
+    return done
+
+
 def _order_responder(bot):
     """Where orders are said in Ryte The Goat: the board's channel, else
     #hub-agent-fulfillment."""
@@ -8921,7 +8980,12 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         await _order_note(key, status="asked")
         await view.wait()
         if not view.confirmed:
-            await _order_forget(key)
+            if getattr(view, "answered", False):
+                # "Leave it": not asked again by the catch-up after a restart.
+                # A fresh gavel on it still asks.
+                await _order_note(key, status="left")
+            else:
+                await _order_forget(key)
             return
         # Read again: notes may have come in while it waited.
         try:
