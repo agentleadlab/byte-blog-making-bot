@@ -9559,17 +9559,20 @@ async def _live_list(bot, responder: Responder) -> None:
         for agent in sorted((one for one in agents if one.start_date == day), key=lambda one: one.name):
             order = order_of(agent.name)
             states = ", ".join(agent.states) if agent.states else ((order or {}).get("fields") or {}).get("states", "")
-            rows.append(f"• **{agent.name}** — {agent.lead_type or '?'} · {states_line(states)}")
+            rows.append(f"• **{agent.name}** — {day:%a %m/%d} · {agent.lead_type or '?'} · {states_line(states)}")
         for order in orders:
             if order.get("launch_iso") != day.isoformat():
                 continue
             if any(clearout.name_match(order.get("client", ""), one.name) >= 2 for one in agents):
                 continue
             fields = order.get("fields") or {}
-            rows.append(f"• ⚠ **{order.get('client')}** — {fields.get('package') or '?'} · "
+            rows.append(f"• ⚠ **{order.get('client')}** — {day:%a %m/%d} · {fields.get('package') or '?'} · "
                         f"{states_line(fields.get('states'))} · *not on the hub yet* · {order.get('url', '')}")
-        lines.append(f"**{label} — {day:%a %m/%d}** ({len(rows)})")
+        if lines:
+            lines.append("")
+        lines.append(f"__**{label.upper()} — {day:%A, %B %d}**__ ({len(rows)})")
         lines += rows or ["• nobody"]
+    lines.append("")
     lines.append("-# Dates and lead types from the hub; states from the hub, else the order's card. "
                  "⚠ = on a card, not on the hub.")
     if problem:

@@ -913,11 +913,13 @@ def test_the_live_list_today_and_tomorrow_with_lead_type_and_states(order, monke
                                                  schedule=SimpleNamespace(timezone="America/New_York")))
     asyncio.run(client._live_list(bot, order.responder))
     said = order.responder.sent[-1][0]
-    assert "**Today — Tue 10/13** (2)" in said and "**Tomorrow — Wed 10/14** (2)" in said
-    assert "**Killian Cooper** — VET · AL, AZ, GA" in said
-    assert "**Gregory Stevens** — TRUCKER_IUL · TX, AL, CA" in said, "states from the card when the hub has none"
-    assert "**Wesley Zurschmit** — TRUCKER_IUL · states not given" in said
-    assert "⚠ **Corban Tidwell** — Phx Standard 350 · all states except NY and FL · *not on the hub yet*" in said
+    """"add their date or atleast separate them for those going live today and tomorrow"."""
+    assert "__**TODAY — Tuesday, October 13**__ (2)" in said and "__**TOMORROW — Wednesday, October 14**__ (2)" in said
+    assert said.index("TODAY") < said.index("Killian") < said.index("TOMORROW") < said.index("Wesley")
+    assert "**Killian Cooper** — Tue 10/13 · VET · AL, AZ, GA" in said
+    assert "**Gregory Stevens** — Tue 10/13 · TRUCKER_IUL · TX, AL, CA" in said, "states from the card when the hub has none"
+    assert "**Wesley Zurschmit** — Wed 10/14 · TRUCKER_IUL · states not given" in said
+    assert "⚠ **Corban Tidwell** — Wed 10/14 · Phx Standard 350 · all states except NY and FL · *not on the hub yet*" in said
     assert "Old Agent" not in said
 
 
