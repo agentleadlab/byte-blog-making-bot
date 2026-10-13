@@ -12104,8 +12104,11 @@ def order_desc(fields: dict) -> str:
     lines = []
     for key, label in ORDER_FIELDS:
         value = str(fields.get(key) or "").strip()
-        if key == "notes" and "\n" in value:
-            lines.append(f"{label}:\n{value}")
+        if key == "notes" and value:
+            # "add space from additional notes to the pasted notes" - Trello
+            # folds blank lines into one, so the gap is lines holding only a
+            # no-break space.
+            lines.append(f"{label}:\n\n\u00a0\n\n\u00a0\n\n{value}")
         else:
             lines.append(f"{label}: {' '.join(value.split())}".rstrip())
     return "\n".join(lines)

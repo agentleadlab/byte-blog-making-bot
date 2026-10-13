@@ -8917,10 +8917,22 @@ async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[st
                 said, pictures = _request_bits(one)
                 images += pictures
                 if not getattr(one.author, "bot", False) and said.strip():
-                    notes.append(said.strip())
+                    notes.append(_named_tags(one, said).strip())
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
     return "\n".join(lines), images, (int(thread.id) if thread is not None else None), notes
+
+
+def _named_tags(message, text: str) -> str:
+    """Discord's tags as names - "<@757873984934117396>" is "@Nicole" on a
+    Trello card, where the raw tag shows as a number."""
+    names = {str(one.id): str(getattr(one, "display_name", "") or getattr(one, "name", ""))
+             for one in getattr(message, "mentions", None) or []}
+    roles = {str(one.id): str(getattr(one, "name", "")) for one in getattr(message, "role_mentions", None) or []}
+    channels = {str(one.id): str(getattr(one, "name", "")) for one in getattr(message, "channel_mentions", None) or []}
+    said = re.sub(r"<@!?(\d+)>", lambda m: "@" + (names.get(m.group(1)) or "someone"), str(text or ""))
+    said = re.sub(r"<@&(\d+)>", lambda m: "@" + (roles.get(m.group(1)) or "a role"), said)
+    return re.sub(r"<#(\d+)>", lambda m: "#" + (channels.get(m.group(1)) or "a channel"), said)
 
 
 async def _order_examples(config) -> dict:

@@ -634,7 +634,7 @@ def test_additional_notes_are_the_teams_own_words_from_the_thread():
                                 "notes": "UPRISE. Contact info updated in notes"}, [said])
     assert fields["notes"] == said
     desc = jobs.order_desc(fields)
-    assert desc.endswith("Additional Notes:\n" + said)
+    assert desc.endswith("Additional Notes:\n\n\u00a0\n\n\u00a0\n\n" + said), "no gap before the team's notes"
     assert "Number of Leads Requested: No cap (ad spend)" in desc
     assert jobs.order_fields({"notes": "Same setup as last time"})["notes"] == "Same setup as last time"
 
@@ -646,3 +646,16 @@ def test_the_teams_notes_are_gathered_from_the_thread_and_not_the_bots(order):
     assert "New Payment | Payra" in text and thread_id == 900
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
     assert order.notes == notes
+
+
+
+def test_a_tag_in_the_teams_notes_is_a_name_on_the_card():
+    """"@757873984934117396 >" on Killian Cooper's card."""
+    message = SimpleNamespace(mentions=[SimpleNamespace(id=757873984934117396, display_name="Nicole")],
+                              role_mentions=[SimpleNamespace(id=5, name="Client Advisors")], channel_mentions=[])
+    assert client._named_tags(message, "LIVE TODAY OCT 13\n<@757873984934117396> <@&5> <@!9>") == \
+        "LIVE TODAY OCT 13\n@Nicole @Client Advisors @someone"
+
+
+def test_no_notes_no_gap():
+    assert jobs.order_desc({"name": "Killian Cooper"}).endswith("Additional Notes:")
