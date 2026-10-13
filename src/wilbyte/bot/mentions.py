@@ -514,6 +514,26 @@ def _asks_for_a_card(lowered: str) -> bool:
     )
 
 
+_LINK_KIND = re.compile(r"\b(?:stripe|klarna|payment|pay|checkout)\s*links?\b", re.IGNORECASE)
+
+
+def asks_for_a_payment_link(text: str) -> bool:
+    """A payment link asked for the way people ask - "can you make a stripe
+    link for 25 VET leads $1125", "make a link 30 trucker iul 1350" - not
+    only with "payment" first. Saying which kind of link is enough; a plain
+    "link" needs a package and an amount with it. Nothing is made before the
+    confirm either way, so a wrong guess is a question, never a quote."""
+    from .. import products
+
+    said = str(text or "")
+    if re.search(r"https?://", said):
+        return False
+    if _LINK_KIND.search(said):
+        return True
+    return bool(re.search(r"\blinks?\b", said, re.IGNORECASE) and re.search(r"\$\s*\d|\b\d{3,}\b", said)
+                and products.find(said) is not None)
+
+
 def _opens_with(text: str, words: tuple[str, ...]) -> bool:
     first = re.match(r"\s*([a-zA-Z]+)", text)
     return bool(first) and first.group(1).lower() in words
@@ -1095,7 +1115,7 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if _opens_with(text, HOST_WORDS):
         return MentionRequest(action="host", brief=_strip_word(text, HOST_WORDS))
 
-    if _opens_with(text, PAYMENT_WORDS):
+    if _opens_with(text, PAYMENT_WORDS) or asks_for_a_payment_link(text):
         # The whole line is kept: the amount and the package are both in it.
         return MentionRequest(action="payment", brief=text)
 

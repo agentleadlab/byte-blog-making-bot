@@ -302,3 +302,36 @@ def test_a_second_gavel_while_the_first_waits_on_its_button_is_ignored(order):
     finally:
         client._ORDER_ACTIVE.discard("900")
     assert order.responder.sent == [] and order.made == []
+
+
+@pytest.mark.parametrize("said", [
+    "<@1> payment link $621 for 40 basic spanish leads",
+    "<@1> can you make a stripe link for 25 VET leads $1125",
+    "<@1> can I get a klarna link for Cole, 25 OTP vets, $1,125",
+    "<@1> make a link 30 trucker iul 1350",
+])
+def test_a_stripe_link_however_its_asked_is_answered_in_growth(said, monkeypatch):
+    """"make sure ryte this respond there for the stripe links" - a tag with
+    no command in the Growth server is ignored now, so a link asked for in
+    plain words has to read as one."""
+    assert mentions.parse(said).action == "payment"
+    answered = []
+
+    async def answer(bot, message, **kw):
+        answered.append(message.content)
+
+    monkeypatch.setattr(client, "answer_mention", answer)
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, guild: True)
+    monkeypatch.setattr(client, "is_direct_mention", lambda message, user: True)
+    me = SimpleNamespace(id=RYTE)
+    message = SimpleNamespace(content=said, guild="growth", author=SimpleNamespace(id=KHARYL, bot=False),
+                              channel=SimpleNamespace(id=1))
+    asyncio.run(client.WilByteBot.on_message(SimpleNamespace(user=me, config=CONFIG, loop=None), message))
+    assert answered == [said]
+
+
+@pytest.mark.parametrize("said", [
+    "<@1> send me the link to the sheet", "<@1> Cole Petersen 25 aged MTG", "<@1> what's the link for zoom",
+])
+def test_other_links_and_order_notes_arent_payment_links(said):
+    assert mentions.parse(said).action != "payment"
