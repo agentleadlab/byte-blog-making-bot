@@ -249,3 +249,22 @@ def test_track_puts_a_missed_one_on_the_card(card):
 
 async def _done(value):
     return value
+
+
+# ------------------------------------------------------------- paused
+
+def test_paused_while_the_team_is_back_on_trello():
+    """"pause but dont delete"."""
+    assert client.CHECKLIST_PAUSED is True
+    # The Trello wrong-leads check keeps its own ten minutes.
+    assert client.SETUP_CHECK_SECONDS == 600 and client.CHECKLIST_EVERY_SECONDS == 30 * 60
+
+
+def test_paused_nothing_in_the_growth_server_is_read_and_the_commands_say_so(monkeypatch):
+    import inspect
+
+    source = inspect.getsource(client.WilByteBot.on_message)
+    assert "not CHECKLIST_PAUSED" in source
+    assert "if CHECKLIST_PAUSED:" in inspect.getsource(client.WilByteBot.on_raw_reaction_add)
+    started = inspect.getsource(client.WilByteBot.on_ready)
+    assert "not CHECKLIST_PAUSED" in started and "setup_check_pass_loop" in started

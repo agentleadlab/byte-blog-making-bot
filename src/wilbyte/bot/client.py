@@ -377,7 +377,7 @@ class WilByteBot(discord.Client):
             if getattr(self.config.secrets, "hub_api_token", None):
                 _also_running(self.loop.create_task(hub_check_loop(self)))
                 # The setups going live, on the Ryte Checklist card.
-                if getattr(self.config.secrets, "trello_key", None):
+                if getattr(self.config.secrets, "trello_key", None) and not CHECKLIST_PAUSED:
                     _also_running(self.loop.create_task(setup_check_pass_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
@@ -415,6 +415,8 @@ class WilByteBot(discord.Client):
         asked of: done."""
         if self.user is not None and payload.user_id == self.user.id:
             return
+        if CHECKLIST_PAUSED:
+            return
         if not _in_setup_guild(self, self.get_guild(payload.guild_id) if payload.guild_id else None):
             return
         try:
@@ -431,7 +433,8 @@ class WilByteBot(discord.Client):
             return
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
-        if not getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None)):
+        if (not CHECKLIST_PAUSED and not getattr(message.author, "bot", False)
+                and _in_setup_guild(self, getattr(message, "guild", None))):
             _also_running(self.loop.create_task(_team_message(self, message)))
         # Franklin replying to a suggestion or a lesson: that is him saying
         # what RYTE got wrong, and the best teacher there is.
@@ -1698,6 +1701,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
             if request.action == "askfaith":
                 await _ask_about_faith(responder, config, request.brief or "")
+                return
+
+            if CHECKLIST_PAUSED and request.action in ("teamtrack", "teamtasks", "setupthreads", "rytechecklist"):
+                await responder.send("⏸ The Ryte Checklist is paused — the team's back on Trello for setups. "
+                                     "Nothing's been deleted; it's ready to switch back on.")
                 return
 
             if request.action == "teamtrack":
@@ -8165,8 +8173,16 @@ HUB_CHECK_SECONDS = 30 * 60
 
 # ------------------------------------------------ the setups, against the hub
 
+#: "we're going back to trello instead, so pause this ... pause but dont
+#: delete". The Discord side of setups - the half-hourly check against the
+#: hub, the 6pm list, team requests in the Growth server going on the Ryte
+#: Checklist card - all of it off while this is True. Nothing is deleted: the
+#: card, what RYTE remembers, and the code are all as they were. False turns
+#: it back on.
+CHECKLIST_PAUSED = True
+
 #: How often everybody scheduled on the hub is checked again.
-SETUP_CHECK_SECONDS = 30 * 60
+CHECKLIST_EVERY_SECONDS = 30 * 60
 #: When tomorrow's not-ready list goes to Franklin, on the board's clock.
 SETUP_EVENING = (18, 0)
 #: Bumped when the thread reader changes, so every thread is read again.
@@ -8643,7 +8659,7 @@ async def setup_check_pass_loop(bot: "WilByteBot") -> None:
             raise
         except Exception:
             log.exception("The setup check failed; trying again next time")
-        await asyncio.sleep(SETUP_CHECK_SECONDS)
+        await asyncio.sleep(CHECKLIST_EVERY_SECONDS)
 
 
 async def _ryte_checklist(bot, responder: Responder) -> None:
