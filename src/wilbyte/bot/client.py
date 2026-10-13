@@ -8887,10 +8887,11 @@ def _said_line(message) -> str:
     return f"[{message.created_at:%m/%d %I:%M%p}] {who}: {text}"
 
 
-async def _order_said(bot, message) -> tuple[str, list[str], int | None]:
+async def _order_said(bot, message) -> tuple[str, list[str], int | None, list[str]]:
     """The order: the gavelled message - forwards and screenshots too - and
-    every note in its thread. (text, images, the thread's id or None)."""
-    lines, images = [], []
+    every note in its thread. (text, images, the thread's id or None, the
+    team's own notes in the thread as they wrote them)."""
+    lines, images, notes = [], [], []
     channel = message.channel
     thread = None
     if getattr(channel, "parent", None) is not None:
@@ -8913,10 +8914,13 @@ async def _order_said(bot, message) -> tuple[str, list[str], int | None]:
                 if getattr(one.author, "bot", False) and not getattr(one, "embeds", None):
                     continue
                 lines.append(_said_line(one))
-                images += _request_bits(one)[1]
+                said, pictures = _request_bits(one)
+                images += pictures
+                if not getattr(one.author, "bot", False) and said.strip():
+                    notes.append(said.strip())
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
-    return "\n".join(lines), images, (int(thread.id) if thread is not None else None)
+    return "\n".join(lines), images, (int(thread.id) if thread is not None else None), notes
 
 
 async def _order_examples(config) -> dict:
@@ -8931,9 +8935,9 @@ async def _order_examples(config) -> dict:
 
 
 async def _order_read(bot, message) -> tuple[dict, dict, int | None]:
-    text, images, thread_id = await _order_said(bot, message)
+    text, images, thread_id, notes = await _order_said(bot, message)
     card = await asyncio.to_thread(partial(
-        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config)))
+        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes))
     return card, {}, thread_id
 
 

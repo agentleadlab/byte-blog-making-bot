@@ -204,8 +204,9 @@ def order(monkeypatch):
     """A gavelled order: what Claude makes of it, the board, Ryte The Goat."""
     held = SimpleNamespace(reads=[], made=[], responder=Responder(), kind="aged", pressed=True)
 
-    def reading(config, *, text, images, today):
+    def reading(config, *, text, images, today, notes=()):
         held.reads.append(text)
+        held.notes = list(notes)
         return {"kind": held.kind, "client": "Cole Petersen", "name": f"{held.kind} - Cole Petersen",
                 "desc": f"Name: Cole Petersen\nread {len(held.reads)}", "due": "2026-10-14",
                 "missing": ["States"]}
@@ -609,3 +610,39 @@ def test_taking_off_a_gavel_that_made_nothing_says_nothing(order):
     before = len(order.responder.sent)
     asyncio.run(client._order_ungavelled(_bot(_message()), GAVEL))
     assert len(order.responder.sent) == before
+
+
+
+# ------------------------------------------------------------- Corban Tidwell
+
+def test_an_ad_spend_package_has_no_cap_and_nothing_says_unknown():
+    """"it doesnt have nymber of leads because its ads spend - that means no cap"."""
+    got = {"name": "Corban Tidwell", "email": "corban@example.com", "phone": "3605550153",
+           "states": "all states except NY and FL", "package": "Phx Standard 350", "leads": "<UNKNOWN>",
+           "launch": "Friday, October 16", "notes": "UPRISE. Contact info updated"}
+    fields = jobs.order_fields(got)
+    assert fields["leads"] == "No cap (ad spend)"
+    assert jobs.order_fields({**got, "package": "Text-Verified Trucker IUL", "leads": "unknown"})["leads"] == ""
+    assert jobs.order_fields({**got, "package": "Phx Standard 350", "leads": "350"})["leads"] == "350"
+    assert jobs.order_fields({**got, "email": "N/A"})["email"] == ""
+
+
+def test_additional_notes_are_the_teams_own_words_from_the_thread():
+    """"the thread message replied from the team should be added on the additional notes"."""
+    said = "Phx Standard 350 all states except NY and FL\n\ncorban.tidwell@example.com\n3605550153\n\nUPRISE, LIVE DATE FRI OCT 16"
+    fields = jobs.order_fields({"name": "Corban Tidwell", "package": "Phx Standard 350",
+                                "notes": "UPRISE. Contact info updated in notes"}, [said])
+    assert fields["notes"] == said
+    desc = jobs.order_desc(fields)
+    assert desc.endswith("Additional Notes:\n" + said)
+    assert "Number of Leads Requested: No cap (ad spend)" in desc
+    assert jobs.order_fields({"notes": "Same setup as last time"})["notes"] == "Same setup as last time"
+
+
+def test_the_teams_notes_are_gathered_from_the_thread_and_not_the_bots(order):
+    message = _message(thread=_notes("Phx Standard 350 all states except NY and FL", "UPRISE, LIVE DATE FRI OCT 16"))
+    text, images, thread_id, notes = asyncio.run(client._order_said(_bot(message), message))
+    assert notes == ["Phx Standard 350 all states except NY and FL", "UPRISE, LIVE DATE FRI OCT 16"]
+    assert "New Payment | Payra" in text and thread_id == 900
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert order.notes == notes

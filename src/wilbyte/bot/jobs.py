@@ -12070,14 +12070,48 @@ ORDER_FIELDS = (
 )
 
 
+#: What a field says when it says nothing - "Number of Leads Requested:
+#: <UNKNOWN>" is blank.
+_SAYS_NOTHING = {"unknown", "<unknown>", "n/a", "na", "none", "not provided", "not specified", "not given",
+                 "not stated", "not mentioned", "-", "--", "?", "null"}
+
+#: Packages bought as ad spend - "Phx Standard 350" - with no lead count and
+#: no cap: "it doesnt have nymber of leads because its ads spend".
+_AD_SPEND = re.compile(r"\b(?:phx|phoenix)\b|\bad\s*spend\b", re.IGNORECASE)
+NO_CAP = "No cap (ad spend)"
+
+
+def order_fields(got: dict, notes: list[str] = ()) -> dict:
+    """Claude's reading of an order, tidied: nothing that only says it doesn't
+    know, an ad-spend package's lead count as no cap, and Additional Notes as
+    the team wrote them in the thread - "the thread message replied from the
+    team should be added on the additional notes"."""
+    fields = {}
+    for key, _label in ORDER_FIELDS:
+        value = " ".join(str(got.get(key) or "").split())
+        fields[key] = "" if value.casefold().strip(" .") in _SAYS_NOTHING else value
+    if _AD_SPEND.search(fields["package"]) and not re.search(r"\d", fields["leads"]):
+        fields["leads"] = NO_CAP
+    if notes:
+        fields["notes"] = "\n".join(str(one).strip() for one in notes if str(one).strip())
+    return fields
+
+
 def order_desc(fields: dict) -> str:
     """The description in Franklin's layout - every label there, blank after
-    it when the order doesn't say."""
-    return "\n".join(f"{label}: {' '.join(str(fields.get(key) or '').split())}".rstrip()
-                      for key, label in ORDER_FIELDS)
+    it when the order doesn't say. Additional Notes last, line by line as the
+    team wrote them."""
+    lines = []
+    for key, label in ORDER_FIELDS:
+        value = str(fields.get(key) or "").strip()
+        if key == "notes" and "\n" in value:
+            lines.append(f"{label}:\n{value}")
+        else:
+            lines.append(f"{label}: {' '.join(value.split())}".rstrip())
+    return "\n".join(lines)
 
 
-def read_order(config: Config, *, text: str, images: list[str], today) -> dict:
+def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = ()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -
     read by Claude into the card's fields. {"kind": "fresh"|"aged", "client",
     "fields", "name", "desc", "missing": [labels not given]}."""
@@ -12096,7 +12130,9 @@ def read_order(config: Config, *, text: str, images: list[str], today) -> dict:
         "package": {"type": "string", "description": (
             "The lead type / package bought, e.g. 'Text-Verified Trucker IUL (OTP)'. The notes win over the "
             "payment's product line when they're more exact.")},
-        "leads": {"type": "string", "description": "How many leads, just the number: '20'."},
+        "leads": {"type": "string", "description": (
+            "How many leads, just the number: '20'. Ad-spend packages (Phoenix / 'Phx Standard 350' and the "
+            "like) buy ad spend, not a lead count: put 'No cap (ad spend)'. Empty if it isn't said.")},
         "launch": {"type": "string", "description": (
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
             "when the note was written.")},
@@ -12125,7 +12161,7 @@ def read_order(config: Config, *, text: str, images: list[str], today) -> dict:
                                           tools=[tool], tool_choice={"type": "tool", "name": "order"},
                                           messages=[{"role": "user", "content": content[:1]}])
     got = _tool_input(response, "order")
-    fields = {key: " ".join(str(got.get(key) or "").split()) for key, _label in ORDER_FIELDS}
+    fields = order_fields(got, notes)
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
     client_name = fields["name"]
     return {"kind": kind, "client": client_name, "fields": fields,
