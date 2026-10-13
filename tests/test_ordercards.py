@@ -352,7 +352,7 @@ def test_a_gavel_that_doesnt_count_is_said_once(order):
     asyncio.run(client._order_gavel_refused(bot, payload))
     [(said, _view)] = order.responder.sent
     assert "Kharyl put the gavel on an order" in said and f"<@{FRANKLIN}>" in said and "nothing made" in said
-    assert "ORDER_GAVEL_USER_IDS=11,22" in said and order.made == []
+    assert "`@Ryte gavel allow 22`" in said and order.made == []
     client._ORDER_ACTIVE.clear()
 
 
@@ -472,3 +472,44 @@ def test_gavels_dropped_while_ryte_was_down_are_found_anywhere(order, monkeypatc
     gavelled.clear()
     asyncio.run(client._catch_up_gavels(_bot(_message()), now=now))
     assert gavelled == [], "a made card was gavelled again"
+
+
+# ------------------------------------------------------------- whose gavel
+
+def _asked(text, *, author=FRANKLIN, mentions=()):
+    return SimpleNamespace(content=text, author=SimpleNamespace(id=author), mentions=list(mentions))
+
+
+def test_franklin_lets_kharyl_gavel_by_tag_id_or_name(order, monkeypatch):
+    bot = SimpleNamespace(config=CONFIG, user=SimpleNamespace(id=RYTE))
+    kharyl = SimpleNamespace(id=KHARYL, display_name="Kharyl")
+    asyncio.run(client._gavel_allow(bot, order.responder, _asked(f"<@{RYTE}> gavel allow <@{KHARYL}>",
+                                                                  mentions=[SimpleNamespace(id=RYTE), kharyl]), allowed=True))
+    assert ordercards.may_gavel(KHARYL, CONFIG) and "Kharyl's gavel makes cards now" in order.responder.sent[-1][0]
+    asyncio.run(client._gavel_allow(bot, order.responder, _asked("gavel remove <@22>", mentions=[kharyl]), allowed=False))
+    assert not ordercards.may_gavel(KHARYL, CONFIG) and ordercards.may_gavel(FRANKLIN, CONFIG)
+
+    asyncio.run(client._gavel_allow(bot, order.responder, _asked("gavel allow 1478905541001613444"), allowed=True))
+    assert ordercards.may_gavel(1478905541001613444, CONFIG)
+
+    growth = SimpleNamespace(get_member_named=lambda name: None,
+                             members=[SimpleNamespace(id=44, display_name="𝓜𝓪𝓻𝓲𝓼𝓼𝓪 M")])
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: growth)
+    asyncio.run(client._gavel_allow(bot, order.responder, _asked(f"<@{RYTE}> gavel allow Marissa"), allowed=True))
+    assert ordercards.may_gavel(44, CONFIG)
+
+
+def test_only_someone_whose_gavel_counts_can_change_who_else(order):
+    bot = SimpleNamespace(config=CONFIG, user=SimpleNamespace(id=RYTE))
+    asyncio.run(client._gavel_allow(bot, order.responder, _asked("gavel allow <@22>", author=KHARYL,
+                                                                  mentions=[SimpleNamespace(id=KHARYL)]), allowed=True))
+    assert not ordercards.may_gavel(KHARYL, CONFIG) and "Only somebody" in order.responder.sent[-1][0]
+
+
+@pytest.mark.parametrize("said, action", [
+    ("<@1> gavel allow <@22>", "gavelallow"), ("<@1> gavel allow 1478905541001613444", "gavelallow"),
+    ("<@1> let <@22> gavel", "gavelallow"), ("<@1> gavel remove <@22>", "gavelremove"),
+    ("<@1> gavel check", "ordercheck"), ("<@1> let me know", "help"),
+])
+def test_gavel_commands(said, action):
+    assert mentions.parse(said).action == action

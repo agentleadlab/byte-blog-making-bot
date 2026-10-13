@@ -19,6 +19,7 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     from wilbyte import ordercards
     monkeypatch.setattr(ordercards, "PATH", tmp_path / "order-cards.json")
     monkeypatch.setattr(ordercards, "TEMPLATES_PATH", tmp_path / "order-templates.json")
+    monkeypatch.setattr(ordercards, "GAVELLERS_PATH", tmp_path / "order-gavellers.json")
     from wilbyte import alive, alreadysaid, delivery, paidsetup, mentionseen, pandadoc, payra, payraapi, keeplist, prefs, quietauto, quietrun, ringtexts, tagreads, usage, watchedseen
 
     monkeypatch.setattr(alreadysaid, "SAID_PATH", tmp_path / "already-said.json")

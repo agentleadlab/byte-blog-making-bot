@@ -1740,6 +1740,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_from_link(bot, responder, request.brief or "", getattr(message, "author", None))
                 return
 
+            if request.action in ("gavelallow", "gavelremove"):
+                await _gavel_allow(bot, responder, message, allowed=request.action == "gavelallow")
+                return
+
             if request.action == "ordercheck":
                 await _order_check(bot, responder)
                 return
@@ -8912,8 +8916,8 @@ async def _order_gavel_refused(bot, payload) -> None:
         f"🔨 {who} put the gavel on an order, but only "
         + (", ".join(f"<@{one}>" for one in allowed) if allowed else "nobody (DISCORD_NOTIFY_USER_ID isn't set)")
         + f"'s gavel makes cards — nothing made.\n<{link}>\n"
-        f"-# To let them: ORDER_GAVEL_USER_IDS={','.join(allowed + [str(payload.user_id)])} in .env. "
-        f"Or `@Ryte order <message link>` makes it now.", quiet=True)
+        f"-# To let them: `@Ryte gavel allow {payload.user_id}`. Or `@Ryte order <message link>` makes this one now.",
+        quiet=True)
 
 
 async def _order_gavelled(bot, payload) -> None:
@@ -9100,6 +9104,47 @@ async def _order_from_link(bot, responder: Responder, said: str, author) -> None
     await responder.send("🔨 On it — the card goes where gavelled orders go.")
     await _order_gavelled(bot, SimpleNamespace(message_id=message_id, channel_id=channel_id,
                                                user_id=author.id, guild_id=guild_id, member=author))
+
+
+async def _gavel_allow(bot, responder: Responder, message, *, allowed: bool) -> None:
+    """"@Ryte gavel allow @Kharyl" / "gavel remove @Kharyl" - only somebody
+    whose own gavel counts can change who else's does."""
+    from .. import ordercards
+
+    author = getattr(message, "author", None)
+    if not ordercards.may_gavel(getattr(author, "id", ""), bot.config):
+        await responder.send("Only somebody whose gavel already counts can change that.")
+        return
+    me = str(getattr(bot.user, "id", ""))
+    people = [one for one in getattr(message, "mentions", None) or [] if str(one.id) != me]
+    said = str(getattr(message, "content", "") or "")
+    # Somebody who isn't in this server can't be tagged here: their id (RYTE
+    # gives it when their gavel doesn't count), or their name in Growth.
+    for one in re.findall(r"(?<![<@!\d])(\d{15,21})(?!\d)", said):
+        if one != me and one not in {str(p.id) for p in people}:
+            people.append(SimpleNamespace(id=int(one), display_name=f"<@{one}>"))
+    if not people:
+        named = re.sub(r"<@[!&]?\d+>", " ", said)
+        named = re.sub(r"(?i)^\s*(?:gavel\s+(?:allow|add|let|remove|stop|disallow|revoke)|let)\b|\bgavel\b", " ", named.strip())
+        named = " ".join(named.split()).strip(" .!?")
+        guild = _setup_guild(bot, bot.config)
+        found = guild.get_member_named(named) if (guild is not None and named and hasattr(guild, "get_member_named")) else None
+        if found is None and guild is not None and named:
+            wanted = _plain_letters(named)
+            found = next((one for one in getattr(guild, "members", None) or []
+                          if wanted and _plain_letters(getattr(one, "display_name", "")).startswith(wanted)), None)
+        if found is not None:
+            people.append(found)
+    if not people:
+        await responder.send("Who? `@Ryte gavel allow @Kharyl` - or their id, which I give when their gavel "
+                             "doesn't count.")
+        return
+    for one in people:
+        await asyncio.to_thread(ordercards.allow_gaveller, one.id, allowed=allowed)
+    names = ", ".join(getattr(one, "display_name", None) or str(one.id) for one in people)
+    now = ", ".join(f"<@{one}>" for one in ordercards.gavellers(bot.config))
+    await responder.send((f"🔨 {names}'s gavel makes cards now." if allowed else f"🔨 {names}'s gavel doesn't count any more.")
+                         + f"\n-# Counts: {now or 'nobody'}", quiet=True)
 
 
 async def _order_check(bot, responder: Responder) -> None:

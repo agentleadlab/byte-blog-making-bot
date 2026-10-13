@@ -57,12 +57,30 @@ def may_gavel(person_id, config) -> bool:
 
 
 def gavellers(config) -> list[str]:
-    """The Discord ids whose gavel counts - digits only, so "<@123>" in .env
-    is 123."""
+    """The Discord ids whose gavel counts: ORDER_GAVEL_USER_IDS, else Franklin
+    (DISCORD_NOTIFY_USER_ID) - and whoever he's let gavel with "@Ryte gavel
+    allow @Kharyl". Digits only, so "<@123>" in .env is 123."""
     named = re.findall(r"\d+", str(getattr(config.secrets, "order_gavel_user_ids", "") or ""))
     if not named:
         named = re.findall(r"\d+", str(getattr(config.secrets, "discord_notify_user_id", "") or ""))
+    for one in _load(_where("order-gavellers.json", GAVELLERS_PATH)).get("allowed") or []:
+        if str(one) not in named:
+            named.append(str(one))
     return named
+
+
+GAVELLERS_PATH = None
+
+
+def allow_gaveller(person_id, *, allowed: bool = True) -> None:
+    """Let somebody's gavel count, or stop it counting."""
+    where = _where("order-gavellers.json", GAVELLERS_PATH)
+    held = _load(where)
+    ids = [str(one) for one in held.get("allowed") or [] if str(one) != str(person_id)]
+    if allowed:
+        ids.append(str(person_id))
+    held["allowed"] = ids
+    _save(where, held)
 
 
 def letters(name: str) -> str:
