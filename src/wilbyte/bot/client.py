@@ -8819,7 +8819,7 @@ def _order_preview(card: dict) -> str:
     lines = [f"**{card['name']}**"]
     if card.get("due"):
         lines.append(f"Due: {card['due']}")
-    lines.append("```\n" + (card["desc"] or "(no description)")[:1400] + "\n```")
+    lines.append("```\n" + (card["desc"] or "(no description)")[:1200] + "\n```")
     if card.get("missing"):
         lines.append("-# Not in the order yet: " + ", ".join(card["missing"][:8]))
     return "\n".join(lines)
@@ -8873,6 +8873,16 @@ async def _order_gavelled(bot, payload) -> None:
         await asyncio.to_thread(ordercards.save, held)
     try:
         await _order_make(bot, payload, key, responder)
+    except Exception as exc:
+        # Anything not already said: said, so a gavel never just does nothing.
+        log.exception("The gavelled order broke")
+        await _order_forget(key)
+        if responder is not None:
+            try:
+                await responder.send(f"🔨 ⚠ Something broke making that order's card: {_readable(exc)}\n"
+                                     f"-# Nothing was made. `@Ryte order <message link>` tries again.")
+            except Exception:
+                log.exception("...and couldn't say so")
     finally:
         _ORDER_ACTIVE.discard(key)
 
@@ -8906,8 +8916,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             return
         view = views.ConfirmView(requester_id=int(payload.user_id), timeout=ORDER_ASK_SECONDS,
                                  label="Create card", emoji="🔨")
-        asking = await responder.send(f"🔨 **New Agent card** for {card['client'] or 'this order'} — goes in the Queue. "
-                                      f"<{link}>\n" + _order_preview(card), view=view)
+        asking = await responder.send((f"🔨 **New Agent card** for {card['client'] or 'this order'} — goes in the Queue. "
+                                       f"<{link}>\n" + _order_preview(card))[:1950], view=view)
         await _order_note(key, status="asked")
         await view.wait()
         if not view.confirmed:

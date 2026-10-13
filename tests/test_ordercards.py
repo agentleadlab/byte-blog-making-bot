@@ -392,3 +392,20 @@ def test_order_check_says_whats_missing(order, monkeypatch):
 ])
 def test_order_commands(said, action):
     assert mentions.parse(said).action == action
+
+
+def test_anything_that_breaks_is_said_and_nothing_is_made(order, monkeypatch):
+    def broken(config, kind, card, template):
+        raise RuntimeError("Trello said no")
+
+    monkeypatch.setattr(jobs, "order_card_make", broken)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert "Couldn't make the card" in order.responder.sent[-1][0]
+
+    async def boom(*a, **k):
+        raise RuntimeError("Discord hiccup")
+
+    monkeypatch.setattr(client, "_order_make", boom)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert "Something broke making that order's card: Discord hiccup" in order.responder.sent[-1][0]
+    assert "900" not in ordercards.load()
