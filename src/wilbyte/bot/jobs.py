@@ -12136,7 +12136,18 @@ def order_card_make(config: Config, kind: str, card: dict, template: dict) -> di
                              + (f" called “{wanted}”" if wanted else "") + ".")
         due = f"{card['due']}T17:00:00.000Z" if re.match(r"\d{4}-\d{2}-\d{2}$", card.get("due") or "") else None
         made = client.copy_card(str(where["id"]), template["id"], name=card["name"], desc=card["desc"], due=due)
-        return {"id": str(made.get("id") or ""), "url": str(made.get("shortUrl") or made.get("url") or ""),
+        card_id = str(made.get("id") or "")
+        # A copy of a finished card is finished too - "but why is it checked".
+        # Wesley's card was done; Gregory's has only just started. Its tick
+        # and every checklist item start unticked, and no date of Wesley's.
+        client.tick_card(card_id, done=False)
+        if not due:
+            client.clear_due(card_id)
+        for checklist in client.card_checklists(card_id):
+            for item in checklist.get("checkItems") or []:
+                if str(item.get("state") or "") == "complete":
+                    client.set_check_item(card_id, str(item["id"]), done=False)
+        return {"id": card_id, "url": str(made.get("shortUrl") or made.get("url") or ""),
                 "list": str(where.get("name") or "")}
     finally:
         client.close()

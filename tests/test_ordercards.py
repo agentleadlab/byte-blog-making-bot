@@ -71,6 +71,7 @@ def test_commands(said, action, brief):
 class Board:
     def __init__(self, desc=""):
         self.made, self.comments, self.descs, self.names = [], [], [], []
+        self.ticks, self.cleared, self.unticked = [], [], []
         self.desc = desc
 
     def board_lists(self, board_id):
@@ -79,6 +80,20 @@ class Board:
     def copy_card(self, list_id, source_id, *, name, desc, due=None, **kw):
         self.made.append(dict(list=list_id, source=source_id, name=name, desc=desc, due=due))
         return {"id": f"c{len(self.made)}", "shortUrl": f"https://trello.com/c/new{len(self.made)}"}
+
+    def tick_card(self, card_id, *, done=True):
+        self.ticks.append((card_id, done))
+
+    def clear_due(self, card_id):
+        self.cleared.append(card_id)
+
+    def card_checklists(self, card_id):
+        return [{"id": "cl", "name": "Setup", "checkItems": [
+            {"id": "i1", "name": "Sheet made", "state": "complete"},
+            {"id": "i2", "name": "Scheduled", "state": "incomplete"}]}]
+
+    def set_check_item(self, card_id, item_id, *, done=None, name=None):
+        self.unticked.append((card_id, item_id, done))
 
     def card_full(self, card_id):
         return {"id": f"id-{card_id}", "name": "New Agent - Jane Doe 25 VET", "desc": "Name:\nStates:", "shortUrl": card_id}
@@ -110,6 +125,19 @@ def test_a_card_is_a_copy_of_the_example_in_its_list_with_the_due_date(monkeypat
                                due="2026-10-14T17:00:00.000Z")]
     jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Fabian", "desc": "", "due": "soon"}, {"id": "TPL"})
     assert board.made[1]["list"] == "q" and board.made[1]["due"] is None
+
+
+def test_a_card_copied_from_a_finished_one_starts_unfinished(monkeypatch):
+    """"but why is it checked" - Wesley's card was done, Gregory's isn't."""
+    board = Board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Gregory Stevens", "desc": "x", "due": "2026-10-13"},
+                         {"id": "TPL"})
+    assert board.ticks == [("c1", False)]
+    assert board.unticked == [("c1", "i1", False)], "a checklist item ticked on Wesley's card stayed ticked"
+    assert board.cleared == [], "the launch date was taken off"
+    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Fabian", "desc": "", "due": ""}, {"id": "TPL"})
+    assert board.cleared == ["c2"], "Wesley's date was left on a card with no launch date"
 
 
 def test_new_notes_rewrite_rytes_description_but_only_comment_on_one_edited_by_hand(monkeypatch):

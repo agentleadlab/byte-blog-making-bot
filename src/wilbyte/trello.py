@@ -384,6 +384,10 @@ class TrelloClient:
             params["due"] = due
         return self._request("POST", "/cards", params=params)
 
+    def clear_due(self, card_id: str) -> dict:
+        """No due date on the card."""
+        return self._request("PUT", f"/cards/{card_id}", params={"due": "null"})
+
     def rename_card(self, card_id: str, name: str) -> dict:
         """Retitle a card, leaving everything else on it alone."""
         return self._request("PUT", f"/cards/{card_id}", params={"name": name})
