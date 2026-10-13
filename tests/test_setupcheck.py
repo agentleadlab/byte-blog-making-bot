@@ -109,9 +109,14 @@ def test_the_wrong_product_and_hours_and_date_are_said():
     assert wrong["Hours"] == "asked 9-12 CST, the hub has 24/7"
 
 
-def test_not_paid_and_no_thread_are_concerns_but_unread_payra_isnt():
+def said_of(result, what):
+    return next(one.said for one in result.findings if one.what == what)
+
+
+def test_not_paid_is_a_concern_no_thread_isnt_and_unread_payra_isnt():
     result = setupcheck.check(agent(), None, paid=False, today=TODAY)
-    assert set(wrong_of(result)) == {"Paid", "Thread"}
+    assert set(wrong_of(result)) == {"Paid"}
+    assert said_of(result, "Thread") == "no thread for them in the Growth server"
     result = setupcheck.check(agent(), asked(), paid=None, today=TODAY)
     assert result.all_good
 
@@ -140,7 +145,7 @@ def test_tomorrows_not_ready():
     tomorrow = TODAY + timedelta(days=1)
     good = setupcheck.check(agent(id="g", start_date=tomorrow), asked(start_date=tomorrow.isoformat()),
                             paid=True, today=TODAY)
-    bad = setupcheck.check(agent(id="b", start_date=tomorrow), None, paid=True, today=TODAY)
+    bad = setupcheck.check(agent(id="b", start_date=tomorrow), None, paid=True, today=TODAY, posts_read=True)
     later = setupcheck.check(agent(id="l", start_date=TODAY + timedelta(days=3)), None, paid=True, today=TODAY)
     assert setupcheck.not_ready([good, bad, later], tomorrow) == [bad]
 
@@ -228,7 +233,7 @@ def test_a_wrong_setup_is_raised_once_tagging_franklin_and_ticked_off_when_put_r
     [line] = board.names("concerns")
     assert line.startswith(title + ": Daily cap")
     [comment] = board.comments
-    assert comment.startswith("@franklin88 ⚠ **" + title) and "Thread: https://discord.com/x" in comment
+    assert comment.startswith("@franklin88 ⚠ **" + title) and "See: https://discord.com/x" in comment
     assert [one[0] for one in fresh] == [title]
 
     # The next pass: still wrong, nothing said again, nothing doubled.
@@ -323,12 +328,29 @@ class Thread:
         return gen()
 
 
+class SetupChannel:
+    """#new-agent-setup, with Nova Cloud's posts in it."""
+
+    name = "💻 | new-agent-setup"
+    id = 4242
+
+    def __init__(self, posts=()):
+        self.posts = list(posts)
+
+    def history(self, **kw):
+        async def gen():
+            for one in self.posts:
+                yield one
+        return gen()
+
+
 class Guild:
     name = "𝐀𝐠𝐞𝐧𝐭 𝐋𝐞𝐚𝐝 𝐋𝐚𝐛 Growth Team"
-    text_channels = []
 
-    def __init__(self, threads):
+    def __init__(self, threads, posts=()):
         self.threads = threads
+        self.setup = SetupChannel(posts)
+        self.text_channels = [self.setup]
 
     async def active_threads(self):
         return self.threads
@@ -361,6 +383,7 @@ def test_the_pass_reads_each_thread_once_until_it_changes(monkeypatch):
                same_as_before=False, hours_match="unclear", live=False)
     bot, board, calls = _pass(monkeypatch, agents=[agent(), agent(id="z", name="Zed Nobody")],
                               threads=["Gavin Littledike - FEX 25"], reads={"Gavin Littledike": got})
+    bot.guilds[0].setup.posts = [nova("Gavin Littledike")]
     results, fresh, problems = asyncio.run(client._setup_pass(bot))
     assert problems == []
     assert [(one.agent.name, one.all_good) for one in results] == [("Gavin Littledike", True), ("Zed Nobody", False)]
@@ -484,7 +507,8 @@ def test_a_thread_about_their_other_order_isnt_held_against_this_one():
                                  "states": ["DC", "FL"], "start_date": "2026-09-24"}, thread="Gavin Littledike")
     assert got.lead_type == "" and got.leads is None and got.start is None
     result = setupcheck.check(agent(lead_type="MTG_PLUS"), got, paid=True, today=TODAY)
-    assert wrong_of(result) == {"Thread": "their thread doesn't mention this order (MTG_PLUS)"}
+    assert result.all_good
+    assert said_of(result, "Thread") == "their thread doesn't mention this order (MTG_PLUS)"
 
 
 def test_a_payment_with_no_invoice_under_their_name_is_paid(monkeypatch):
@@ -499,7 +523,7 @@ def test_a_payment_with_no_invoice_under_their_name_is_paid(monkeypatch):
 
 def test_the_newest_threads_are_read_and_an_off_order_thread_says_what_its_about(monkeypatch):
     got = {"this_order": False, "thread_about": "their 09/24 OTP Vet order, 25 leads"}
-    assert wrong_of(setupcheck.check(agent(), setupcheck.asked_from(got), paid=True, today=TODAY))["Thread"] == \
+    assert said_of(setupcheck.check(agent(), setupcheck.asked_from(got), paid=True, today=TODAY), "Thread") == \
         "their thread doesn't mention this order (FEX) - it's about their 09/24 OTP Vet order, 25 leads"
 
     when = datetime(2026, 10, 12, 15, tzinfo=timezone.utc)
@@ -527,7 +551,7 @@ def test_only_threads_made_since_the_move_to_discord_by_a_person_count(monkeypat
     bot.guilds[0].threads = [old, suki]
     bot.guilds[0].get_member = lambda i: SimpleNamespace(bot=i == 7)
     results, _fresh, _problems = asyncio.run(client._setup_pass(bot))
-    assert calls == [] and wrong_of(results[0])["Thread"] == "no thread for them in the Growth server"
+    assert calls == [] and said_of(results[0], "Thread") == "no thread for them in the Growth server"
 
     new = Thread("Gavin Littledike - FEX", [Message(3, "new order", when)])
     new.owner_id = 8
@@ -538,16 +562,78 @@ def test_only_threads_made_since_the_move_to_discord_by_a_person_count(monkeypat
 
 def test_the_same_problem_reworded_is_the_line_renamed_and_not_said_again(monkeypatch):
     board = Board()
-    _fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(), None, paid=True, today=TODAY)])
+    sms_failed = setupcheck.parse_setup_post(nova_text("Gavin Littledike", test="sms ✗ · email ✓"), today=TODAY)
+    _fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(
+        agent(), asked(), paid=True, today=TODAY, post=sms_failed, posts_read=True)])
     assert len(board.comments) == 1
-    off = setupcheck.asked_from({"this_order": False, "thread_about": "their 09/24 OTP Vet order"})
-    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(), off, paid=True, today=TODAY)], said)
+    email_failed = setupcheck.parse_setup_post(nova_text("Gavin Littledike", test="sms ✓ · email ✗"), today=TODAY)
+    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(
+        agent(), asked(), paid=True, today=TODAY, post=email_failed, posts_read=True)], said)
     assert fresh == [] and len(board.comments) == 1, "a reworded concern pinged Franklin again"
     [(line, state)] = board.names("concerns").items()
-    assert "doesn't mention this order" in line and state == "incomplete"
+    assert "didn't arrive by email" in line and state == "incomplete"
 
     # A new kind of problem is news.
-    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(agent(daily_cap=0), asked(), paid=False, today=TODAY)], said)
-    assert len(board.comments) == 2 and {f.split(": ")[0] for f in fresh[0][1]} == {
-        "Gavin Littledike (FEX) - 10/14 - Wednesday"}
-    assert board.names("concerns")[line] == "complete", "the thread is found now: put right"
+    fresh, said, _ = _sync(monkeypatch, board, [setupcheck.check(
+        agent(daily_cap=0), asked(), paid=True, today=TODAY, post=email_failed, posts_read=True)], said)
+    assert len(board.comments) == 2 and [one.split(": ")[1].split(" — ")[0] for one in fresh[0][1]] == ["Daily cap"]
+
+    good = setupcheck.parse_setup_post(nova_text("Gavin Littledike"), today=TODAY)
+    _sync(monkeypatch, board, [setupcheck.check(agent(), asked(), paid=True, today=TODAY, post=good, posts_read=True)], said)
+    assert board.names("concerns")[line] == "complete", "the test lead is fine now: put right"
+
+
+# ------------------------------------------------------------- #new-agent-setup
+
+def nova_text(name, *, launch="Wednesday, October 14", leads=25, test="sms ✓ · email ✓ · discord ✓ · sheet ✓", by="Therese"):
+    return (f"<@123> ✅ **{name}** setup is done (by {by}).\n📅 Launch date: **{launch}**\n"
+            f"🔍 Channels checked with a test lead (+12145550100): {test}\n\n"
+            "<@456> — please schedule/turn them on for that date.\n"
+            f"New Agent Setup\nAgent: {name}\nTrello Card: Open Card\nRequested Leads: {leads}\nLaunch: {launch}\n"
+            f"✅ {by} marked this setup done.")
+
+
+def nova(name, **kw):
+    return SimpleNamespace(content=nova_text(name, **kw), embeds=[], id=777,
+                           created_at=datetime(2026, 10, 13, 14, 50, tzinfo=timezone.utc),
+                           jump_url="https://discord.com/channels/1/4242/777")
+
+
+def test_novas_post_is_read():
+    post = setupcheck.parse_setup_post(nova_text("Wesley Zurschmit"), today=TODAY, link="L")
+    assert (post.name, post.by, post.launch, post.leads, post.link) == (
+        "Wesley Zurschmit", "Therese", date(2026, 10, 14), 25, "L")
+    assert post.channels == {"sms": True, "email": True, "discord": True, "sheet": True}
+    assert setupcheck.parse_setup_post("Wesley is live 🎉", today=TODAY) is None
+
+
+def test_a_setup_post_that_matches_is_all_good_and_one_that_doesnt_says_why():
+    post = setupcheck.parse_setup_post(nova_text("Gavin Littledike"), today=TODAY)
+    assert setupcheck.check(agent(), None, paid=True, today=TODAY, post=post, posts_read=True).all_good
+    off = setupcheck.parse_setup_post(nova_text("Gavin Littledike", launch="Thursday, October 15", leads=30,
+                                                test="sms ✓ · email ✗ · discord ✓ · sheet ✗"), today=TODAY)
+    wrong = wrong_of(setupcheck.check(agent(), None, paid=True, today=TODAY, post=off, posts_read=True))
+    assert wrong == {"Test lead": "didn't arrive by email, sheet",
+                     "Launch date": "#new-agent-setup says 10/15, the hub says 10/14",
+                     "Requested leads": "#new-agent-setup says 30, the hub has 25"}
+    two = setupcheck.check(agent(), None, paid=True, today=TODAY, post=off, posts_read=True, one_order=False)
+    assert "Requested leads" not in wrong_of(two), "two orders at once: the post's count is one of them"
+
+
+def test_no_setup_post_yet_is_a_concern_and_pending_is_not_turned_on():
+    result = setupcheck.check(agent(status="pending"), None, paid=True, today=TODAY, posts_read=True)
+    assert wrong_of(result) == {"Setup done": "no “setup is done” for them in #new-agent-setup yet",
+                                "Scheduled": "not turned on yet - the hub says “pending”"}
+    assert setupcheck.post_for("Wesley Zurschmit", [
+        setupcheck.parse_setup_post(nova_text("Gavin Littledike"), today=TODAY)]) is None
+
+
+def test_the_pass_checks_novas_posts_and_links_them(monkeypatch):
+    bot, board, calls = _pass(monkeypatch, agents=[agent(), agent(id="w", name="Wesley Zurschmit", lead_type="TRUCKER_IUL")],
+                              threads=[], reads={})
+    bot.guilds[0].setup.posts = [nova("Wesley Zurschmit", leads=30)]
+    results, fresh, problems = asyncio.run(client._setup_pass(bot))
+    by_name = {one.agent.name: wrong_of(one) for one in results}
+    assert by_name["Wesley Zurschmit"] == {"Requested leads": "#new-agent-setup says 30, the hub has 25"}
+    assert by_name["Gavin Littledike"] == {"Setup done": "no “setup is done” for them in #new-agent-setup yet"}
+    assert "See: https://discord.com/channels/1/4242/777" in "\n".join(board.comments)

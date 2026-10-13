@@ -190,6 +190,71 @@ def near_threads(name: str, threads, *, most: int = 5) -> list[str]:
     return sorted(set(found))[:most]
 
 
+# ------------------------------------------------------------- #new-agent-setup
+
+@dataclass
+class SetupPost:
+    """Nova Cloud's "✅ Wesley Zurschmit setup is done (by Therese)" in
+    #new-agent-setup - the setup finished and tested, and who did it."""
+
+    name: str
+    by: str = ""
+    launch: date | None = None
+    leads: int | None = None
+    #: The test lead, channel by channel: {"sms": True, "email": True, ...}.
+    channels: dict = field(default_factory=dict)
+    link: str = ""
+    when: str = ""
+
+
+_MONTHS = {name: at for at, name in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"), start=1)}
+_DONE_POST = re.compile(r"✅\s*(.+?)\s+setup is done(?:\s*\(by\s+([^)]+)\))?", re.IGNORECASE)
+_AGENT_LINE = re.compile(r"^\s*Agent:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_LAUNCH = re.compile(r"Launch(?:\s+date)?:\s*(?:[A-Za-z]+,?\s+)?([A-Za-z]+)\.?\s+(\d{1,2})", re.IGNORECASE)
+_LEADS = re.compile(r"Requested\s+Leads:\s*(\d+)", re.IGNORECASE)
+_CHANNEL = re.compile(r"\b(sms|email|discord|sheet)\s*([✓✔✅]|[✗✘❌]|\bx\b)", re.IGNORECASE)
+
+
+def parse_setup_post(text: str, *, today: date, link: str = "", when: str = "") -> SetupPost | None:
+    """One #new-agent-setup post, or None when it isn't a "setup is done"."""
+    plain = re.sub(r"<@[!&]?\d+>|\*\*|__", "", str(text or ""))
+    done = _DONE_POST.search(plain)
+    if not done:
+        return None
+    name = " ".join(done.group(1).split())
+    agent = _AGENT_LINE.search(plain)
+    if agent and not name:
+        name = " ".join(agent.group(1).split())
+    launch = None
+    found = _LAUNCH.search(plain)
+    if found and found.group(1).casefold() in _MONTHS:
+        month, day = _MONTHS[found.group(1).casefold()], int(found.group(2))
+        try:
+            launch = date(today.year, month, day)
+            # "January 3" said in late December is next year's.
+            if (launch - today).days < -180:
+                launch = date(today.year + 1, month, day)
+        except ValueError:
+            launch = None
+    leads = _LEADS.search(plain)
+    channels = {}
+    for one in _CHANNEL.finditer(plain):
+        channels[one.group(1).casefold()] = one.group(2) in "✓✔✅"
+    return SetupPost(name=name, by=" ".join((done.group(2) or "").split()), launch=launch,
+                     leads=int(leads.group(1)) if leads else None, channels=channels, link=link, when=when)
+
+
+def post_for(name: str, posts) -> SetupPost | None:
+    """Their newest "setup is done", by their whole name."""
+    from . import clearout
+
+    mine = [one for one in posts or [] if clearout.name_match(name, one.name) >= 2
+            or clearout.name_match(one.name, name) >= 2]
+    return max(mine, key=lambda one: one.when) if mine else None
+
+
 # ------------------------------------------------------------- the checks
 
 @dataclass
@@ -207,6 +272,12 @@ class Result:
     agent: object
     asked: Asked | None
     findings: list = field(default_factory=list)
+    post: SetupPost | None = None
+
+    @property
+    def link(self) -> str:
+        """Where to look: their setup post, else their thread."""
+        return (self.post.link if self.post and self.post.link else "") or (self.asked.link if self.asked else "")
 
     @property
     def wrong(self) -> list:
@@ -217,16 +288,35 @@ class Result:
         return not self.wrong
 
 
-def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: bool = False) -> Result:
+def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: bool = False,
+          post: SetupPost | None = None, posts_read: bool = False, one_order: bool = True) -> Result:
     """Every check for one agent on the hub. `zelle`: the Zelle channel was
-    read too, so "not paid" is neither Payra nor Zelle."""
+    read too, so "not paid" is neither Payra nor Zelle. `post`: their "setup
+    is done" in #new-agent-setup, when `posts_read`. `one_order`: the only
+    order of theirs coming up, so the post's lead count is this order's."""
     found = []
     found.append(Finding("Paid", paid, "" if paid else (
         f"no payment in {'Payra or Zelle' if zelle else 'Payra'} under their name" if paid is False else "Payra not read")))
+    if posts_read:
+        if post is None:
+            found.append(Finding("Setup done", False, "no “setup is done” for them in #new-agent-setup yet"))
+        else:
+            found.append(Finding("Setup done", True, f"by {post.by}" if post.by else ""))
+            failed = sorted(name for name, ok in post.channels.items() if not ok)
+            if failed:
+                found.append(Finding("Test lead", False, f"didn't arrive by {', '.join(failed)}"))
+            if post.launch is not None and agent.start_date is not None and post.launch != agent.start_date:
+                found.append(Finding("Launch date", False,
+                                     f"#new-agent-setup says {post.launch:%m/%d}, the hub says {agent.start_date:%m/%d}"))
+            if one_order and post.leads is not None and agent.ordered is not None and post.leads != agent.ordered:
+                found.append(Finding("Requested leads", False,
+                                     f"#new-agent-setup says {post.leads}, the hub has {agent.ordered}"))
+    # Their thread, when there is one: what it asked for, held against the
+    # hub. None isn't a concern - the setup post is what says it's done.
     if asked is None:
-        found.append(Finding("Thread", False, "no thread for them in the Growth server"))
+        found.append(Finding("Thread", None, "no thread for them in the Growth server"))
     elif not asked.this_order:
-        found.append(Finding("Thread", False, f"their thread doesn't mention this order ({agent.lead_type or 'this lead type'})"
+        found.append(Finding("Thread", None, f"their thread doesn't mention this order ({agent.lead_type or 'this lead type'})"
                              + (f" - it's about {asked.about}" if asked.about else "")))
     else:
         found.append(Finding("Thread", True, asked.thread))
@@ -235,7 +325,8 @@ def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: 
                          "" if agent.start_date else "no live date on the hub"))
     status = str(agent.status or "").casefold()
     found.append(Finding("Scheduled", status in ("scheduled", "live", "active"),
-                         "" if status in ("scheduled", "live", "active") else f"the hub says “{agent.status or 'nothing'}”"))
+                         "" if status in ("scheduled", "live", "active") else
+                         f"not turned on yet - the hub says “{agent.status or 'nothing'}”"))
     found.append(Finding("Sheet", bool(agent.sheet_url), "" if agent.sheet_url else "no sheet link on the hub"))
     hub_has_states = any(key in (agent.raw or {}) for key in ("states", "state_list", "allowed_states", "licensed_states"))
     if hub_has_states:
@@ -265,7 +356,7 @@ def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: 
         if asked.hours_match:
             found.append(Finding("Hours", asked.hours_match == "yes", "" if asked.hours_match == "yes" else
                                  (asked.hours_why or f"thread asked for {asked.hours}, the hub has {agent.schedule or 'no hours'}")))
-    return Result(agent=agent, asked=asked, findings=found)
+    return Result(agent=agent, asked=asked, findings=found, post=post)
 
 
 def concern_kind(line: str) -> str:

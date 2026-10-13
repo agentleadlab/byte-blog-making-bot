@@ -1433,8 +1433,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > — or **add on trello**, **remind on trello**, or the card said last:
 > **comment** leads went out late **on monday general**. All the same thing.
 > Also `on ads`, `on ops`, `on lead order`; a weekday or 09/01 picks the day
-> @RYTE **checklist** — everybody scheduled on the hub, held up against their thread in the Growth
-> server and their Payra payment, on the Ryte Checklist card: ticked when it all matches, under
+> @RYTE **checklist** — everybody scheduled on the hub, held up against Nova's “setup is done” in
+> #new-agent-setup, their thread if there is one, and their payment, on the Ryte Checklist card: ticked when it all matches, under
 > Concerns when it doesn't. I do it every half hour, and list tomorrow's not-ready ones at 6pm.
 > When somebody in the Growth server tags a teammate with a job, it goes under General Tasks
 > on the card, ticked when they react to it or say it's done. **track <message link>** adds one

@@ -11910,10 +11910,10 @@ def sync_ryte_card(config: Config, results: list, *, said_before: dict) -> tuple
             if new:
                 if tag is None:
                     tag = _franklin_tag(client, config)
-                link = result.asked.link if result.asked else ""
+                link = result.link
                 client.add_comment(card_id, "\n".join(
                     [f"{tag} ⚠ **{title}**".strip()] + [f"• {line.split(': ', 1)[1]}" for line in new]
-                    + ([f"Thread: {link}"] if link else [])))
+                    + ([f"See: {link}"] if link else [])))
                 fresh.append((title, new, link))
             said_now[key] = {"title": title, "lines": lines}
         return fresh, said_now, []

@@ -8297,10 +8297,14 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
     # A client with a channel of their own rather than a thread.
     threads += [one for one in getattr(guild, "text_channels", None) or []]
     threads = _order_threads(guild, threads, today=today)
+    setup_where = _new_agent_setup_channel(guild)
+    posts = await _setup_posts(setup_where, today) if setup_where is not None else None
+    if setup_where is None:
+        problems.append("No #new-agent-setup channel found in the Growth server, so “setup is done” isn't checked.")
     zelle_where = _zelle_channel(bot)
     zelle = await _zelle_posts(zelle_where) if zelle_where is not None else None
     _SETUP_SEEN.clear()
-    _SETUP_SEEN.update(threads=threads, server=str(getattr(guild, "name", "")),
+    _SETUP_SEEN.update(threads=threads, server=str(getattr(guild, "name", "")), posts=len(posts or []),
                        zelle=str(getattr(zelle_where, "name", "")) if zelle_where is not None else "")
 
     read = setupcheck.load("read")
@@ -8338,7 +8342,12 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
             paid = await asyncio.to_thread(partial(jobs.paid_for, agent, zelle=zelle))
         except Exception:
             paid = None
-        results.append(setupcheck.check(agent, asked, paid=paid, today=today, zelle=zelle is not None))
+        same_client = sum(1 for one in agents if setupcheck.key_of(one) != setupcheck.key_of(agent)
+                          and one.name.casefold() == agent.name.casefold())
+        results.append(setupcheck.check(
+            agent, asked, paid=paid, today=today, zelle=zelle is not None,
+            post=setupcheck.post_for(agent.name, posts) if posts is not None else None,
+            posts_read=posts is not None, one_order=same_client == 0))
     await asyncio.to_thread(setupcheck.save, "read", read)
 
     said_before = await asyncio.to_thread(setupcheck.load, "said")
@@ -8657,7 +8666,8 @@ async def _ryte_checklist(bot, responder: Responder) -> None:
                      + ("" if one.all_good else " — " + "; ".join(f"{f.what}: {f.said}" for f in one.wrong)))
     lines += [f"⚠ {one}" for one in problems]
     seen = _SETUP_SEEN.get("threads") or []
-    lines.append(f"-# Read {len(seen)} threads and channels in {_SETUP_SEEN.get('server') or 'the Growth server'}; "
+    lines.append(f"-# Read {_SETUP_SEEN.get('posts', 0)} “setup is done” posts in #new-agent-setup and "
+                 f"{len(seen)} threads and channels in {_SETUP_SEEN.get('server') or 'the Growth server'}; "
                  + (f"Zelle from #{_SETUP_SEEN['zelle']}." if _SETUP_SEEN.get("zelle") else
                     "no #new-payment channel yet, so Payra only.")
                  + (" No thread for somebody who has one? `@Ryte threads <name>`."
@@ -8699,6 +8709,32 @@ async def _setup_threads_for(bot, responder: Responder, name: str) -> None:
 
 #: What the last pass looked through, for its reply.
 _SETUP_SEEN: dict = {}
+
+
+def _new_agent_setup_channel(guild):
+    """#new-agent-setup in the Growth server, where Nova Cloud posts each
+    setup Therese finishes."""
+    for channel in getattr(guild, "text_channels", None) or []:
+        if "newagentsetup" in _plain_letters(getattr(channel, "name", "")):
+            return channel
+    return None
+
+
+async def _setup_posts(channel, today: date) -> list:
+    """Every "setup is done" there since the move to Discord."""
+    from .. import setupcheck
+
+    found = []
+    try:
+        async for one in channel.history(limit=500, after=_setup_since(today)):
+            post = setupcheck.parse_setup_post(
+                _all_of_it(one), today=today, link=str(getattr(one, "jump_url", "") or ""),
+                when=one.created_at.astimezone(timezone.utc).isoformat(timespec="minutes"))
+            if post is not None:
+                found.append(post)
+    except Exception:
+        log.warning("Couldn't read #new-agent-setup", exc_info=True)
+    return found
 
 
 def _zelle_channel(bot):
