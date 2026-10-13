@@ -226,6 +226,8 @@ class Secrets:
     # Where Payra announces payments. Watched rather than polled, so a
     # Levinson agent's purchase reaches the sheet the minute it happens.
     discord_payment_channel_id: str | None = None
+    # Zelle payments, posted in #new-payment - else found by that name.
+    discord_zelle_channel_id: str | None = None
     # Where the acquirer's chargeback notifications land. RYTE reads what he
     # can off each one and flags it; nothing else happens without a button.
     discord_dispute_channel_id: str | None = None
@@ -431,6 +433,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 levinson_optin_sheet_id=_env("LEVINSON_OPTIN_SHEET_ID"),
                 levinson_tag=_env("LEVINSON_TAG") or "levison leads",
                 discord_payment_channel_id=_env("DISCORD_PAYMENT_CHANNEL_ID"),
+                discord_zelle_channel_id=_env("DISCORD_ZELLE_CHANNEL_ID"),
                 discord_dispute_channel_id=_env("DISCORD_DISPUTE_CHANNEL_ID"),
                 discord_chargeback_channel_id=_env("DISCORD_CHARGEBACK_CHANNEL_ID"),
                 discord_clients_guild_id=_env("DISCORD_CLIENTS_GUILD_ID"),

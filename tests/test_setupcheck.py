@@ -435,3 +435,40 @@ def test_closed_threads_are_found_public_private_and_in_forums_but_not_old_ones(
 
     names = {one.name for one in asyncio.run(client._setup_threads(Server()))}
     assert names == {"Lauren Huddleston", "Gavin Littledike", "Madison McGill", "Edward Conway - Trucker IUL"}
+
+
+def test_the_whole_name_anywhere_or_last_name_first_or_a_lone_first_name_is_theirs():
+    for title in ("FEX setup - Gavin Littledike 25 leads", "Littledike, Gavin", "gavin-littledike"):
+        assert setupcheck.threads_for("Gavin Littledike", [_thread(title)]), title
+    alone = [_thread("Gavin"), _thread("Lauren Huddleston")]
+    assert setupcheck.threads_for("Gavin Littledike", alone) == [alone[0]]
+    assert setupcheck.threads_for("Gavin Littledike", [_thread("Gavin"), _thread("Gavin M")]) == []
+    assert setupcheck.threads_for("Gavin Littledike", [_thread("Gavin Morales")]) == []
+
+
+def test_near_threads_are_shown_for_a_name():
+    threads = [_thread("Gav L FEX"), _thread("Littledike FEX 25"), _thread("Lauren Huddleston")]
+    assert setupcheck.near_threads("Gavin Littledike", threads) == ["Littledike FEX 25"]
+
+
+def test_zelle_in_new_payment_counts_as_paid(monkeypatch):
+    from wilbyte import payraapi
+
+    monkeypatch.setattr(payraapi, "load", lambda *a, **k: {"invoices": {}})
+    posts = ["💸 New Zelle payment\nFrom: Gavin Littledike\nAmount: $1,125.00", "From: Gavin Morales $500"]
+    assert jobs.paid_for(agent(), zelle=posts) is True
+    assert jobs.paid_for(agent(name="Montaser Aidah"), zelle=posts) is None, "Payra unread: not a 'no'"
+    assert jobs.paid_by_zelle(agent(raw={"email": "gav@example.com"}), ["zelle from gav@example.com"])
+    assert not jobs.paid_by_zelle(agent(), ["From: Gavin Morales $500"])
+
+
+def test_not_paid_says_where_it_looked():
+    said = {True: "no payment in Payra or Zelle under their name", False: "no payment in Payra under their name"}
+    for zelle, text in said.items():
+        result = setupcheck.check(agent(), asked(), paid=False, today=TODAY, zelle=zelle)
+        assert wrong_of(result)["Paid"] == text
+
+
+def test_threads_command():
+    assert mentions.parse("<@1> threads Gavin Littledike").action == "setupthreads"
+    assert mentions.parse("<@1> threads Gavin Littledike").brief == "Gavin Littledike"

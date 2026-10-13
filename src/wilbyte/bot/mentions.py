@@ -868,6 +868,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # orders against the sheets. Not "hub.agentleadlab.com/...", a link.
     if re.match(r"\s*(?:(?:update|check|run|do)\s+(?:the\s+)?)?(?:ryte\s+)?check\s*list\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="rytechecklist", brief=text)
+    found = re.match(r"\s*(?:find\s+)?threads?\s+(?:for\s+)?([A-Za-z][\w'.\- ]{1,60}?)\s*[.?!]*\s*$", text, re.IGNORECASE)
+    if found:
+        return MentionRequest(action="setupthreads", brief=found.group(1))
     if re.match(r"\s*(?:track|watch|add)\s+(?:this\s+)?(?:<)?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+", text, re.IGNORECASE):
         return MentionRequest(action="teamtrack", brief=text)
     if re.match(r"\s*(?:(?:the|open|what(?:'s| is)?)\s+)*(?:team\s+(?:tasks?|requests?)|open\s+(?:tasks?|requests?))(?:\s+open)?\s*[.?!]*\s*$", text, re.IGNORECASE):
@@ -1435,7 +1438,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Concerns when it doesn't. I do it every half hour, and list tomorrow's not-ready ones at 6pm.
 > When somebody in the Growth server tags a teammate with a job, it goes under General Tasks
 > on the card, ticked when they react to it or say it's done. **track <message link>** adds one
-> I missed; **team tasks** lists what's still open.
+> I missed; **team tasks** lists what's still open. **threads <name>** — the threads I take as
+> somebody's. Paid is Payra, and Zelle once it's posted in #new-payment.
 > **hub fields <name>** — everything the hub has for one client
 > @RYTE **trello setups** — agents set up on leads they didn't order
 > @RYTE **when did Faith go live?** — an agent's launch date, past or future.

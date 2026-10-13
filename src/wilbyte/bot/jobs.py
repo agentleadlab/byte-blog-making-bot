@@ -11746,11 +11746,28 @@ def read_setup_thread(config: Config, agent, messages: list[dict], *, today) -> 
     return _tool_input(response, "setup")
 
 
-def paid_for(agent, *, now=None) -> bool | None:
-    """Whether Payra has a payment for them in the last month - by the hub's
-    email, else their whole name. None when Payra hasn't been read."""
+def paid_by_zelle(agent, posts) -> bool:
+    """Whether a post in the Zelle channel (#new-payment) names them - their
+    whole name, or the hub's email. `posts` are the last month's, as text."""
+    from .. import clearout
+
+    email = str((agent.raw or {}).get("email") or "").strip().casefold()
+    for text in posts or []:
+        said = str(text or "")
+        if (email and email in said.casefold()) or any(
+                clearout.name_match(agent.name, line) >= 2 for line in said.splitlines() if line.strip()):
+            return True
+    return False
+
+
+def paid_for(agent, *, now=None, zelle=None) -> bool | None:
+    """Whether they've paid in the last month: Payra - by the hub's email,
+    else their whole name - or a Zelle payment posted in #new-payment. None
+    when Payra hasn't been read and Zelle doesn't show it either."""
     from .. import clearout, payraapi
 
+    if zelle and paid_by_zelle(agent, zelle):
+        return True
     data = payraapi.load()
     if not data.get("invoices"):
         return None

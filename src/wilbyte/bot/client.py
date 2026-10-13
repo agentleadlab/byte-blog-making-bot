@@ -1668,6 +1668,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message) -> None:
                 await _team_list(responder)
                 return
 
+            if request.action == "setupthreads":
+                await _setup_threads_for(bot, responder, request.brief)
+                return
+
             if request.action == "rytechecklist":
                 await _ryte_checklist(bot, responder)
                 return
@@ -8207,6 +8211,13 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
         return [], [], ["I'm not in the Growth Team server, so I can't read the threads - "
                         "or set DISCORD_SETUP_GUILD_ID in .env."]
     threads = await _setup_threads(guild)
+    # A client with a channel of their own rather than a thread.
+    threads += [one for one in getattr(guild, "text_channels", None) or []]
+    zelle_where = _zelle_channel(bot)
+    zelle = await _zelle_posts(zelle_where) if zelle_where is not None else None
+    _SETUP_SEEN.clear()
+    _SETUP_SEEN.update(threads=threads, server=str(getattr(guild, "name", "")),
+                       zelle=str(getattr(zelle_where, "name", "")) if zelle_where is not None else "")
 
     read = setupcheck.load("read")
     results = []
@@ -8237,10 +8248,10 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
             if got is not None:
                 asked = setupcheck.asked_from(got, thread=str(mine[0].name), link=str(getattr(mine[0], "jump_url", "")))
         try:
-            paid = await asyncio.to_thread(jobs.paid_for, agent)
+            paid = await asyncio.to_thread(partial(jobs.paid_for, agent, zelle=zelle))
         except Exception:
             paid = None
-        results.append(setupcheck.check(agent, asked, paid=paid, today=today))
+        results.append(setupcheck.check(agent, asked, paid=paid, today=today, zelle=zelle is not None))
     await asyncio.to_thread(setupcheck.save, "read", read)
 
     said_before = await asyncio.to_thread(setupcheck.load, "said")
@@ -8558,7 +8569,69 @@ async def _ryte_checklist(bot, responder: Responder) -> None:
         lines.append(("✅ " if one.all_good else "⚠ ") + title
                      + ("" if one.all_good else " — " + "; ".join(f"{f.what}: {f.said}" for f in one.wrong)))
     lines += [f"⚠ {one}" for one in problems]
+    seen = _SETUP_SEEN.get("threads") or []
+    lines.append(f"-# Read {len(seen)} threads and channels in {_SETUP_SEEN.get('server') or 'the Growth server'}; "
+                 + (f"Zelle from #{_SETUP_SEEN['zelle']}." if _SETUP_SEEN.get("zelle") else
+                    "no #new-payment channel yet, so Payra only.")
+                 + (" No thread for somebody who has one? `@Ryte threads <name>`."
+                    if any(f.what == "Thread" for one in results for f in one.wrong) else ""))
     await responder.send("\n".join(lines)[:3900])
+
+
+async def _setup_threads_for(bot, responder: Responder, name: str) -> None:
+    """"@Ryte threads Gavin" - the threads RYTE takes as theirs, and the ones
+    with their name in that it doesn't."""
+    from .. import setupcheck
+
+    guild = _setup_guild(bot, bot.config)
+    if guild is None:
+        await responder.send("I can't see the Growth Team server - set DISCORD_SETUP_GUILD_ID in .env.")
+        return
+    threads = await _setup_threads(guild) + list(getattr(guild, "text_channels", None) or [])
+    mine = setupcheck.threads_for(name, threads)
+    near = [one for one in setupcheck.near_threads(name, threads, most=8)
+            if one not in {str(t.name) for t in mine}]
+    lines = [f"🔎 **{name}** — out of {len(threads)} threads and channels in {guild.name}:"]
+    lines += [f"✅ {one.name}" + (f" · <{one.jump_url}>" if getattr(one, "jump_url", "") else "") for one in mine] or [
+        "No thread I take as theirs."]
+    if near:
+        lines.append("Close, but not taken as theirs: " + "; ".join(f"“{one}”" for one in near))
+        lines.append("-# A thread is theirs when its title has their whole name, or their first name "
+                     "(and last initial) when only one thread fits.")
+    await responder.send("\n".join(lines)[:3900])
+
+
+#: What the last pass looked through, for its reply.
+_SETUP_SEEN: dict = {}
+
+
+def _zelle_channel(bot):
+    """#new-payment, where Zelle payments are posted - DISCORD_ZELLE_CHANNEL_ID,
+    else found by name in any server RYTE is in. None until Tre sets it up."""
+    wanted = (getattr(bot.config.secrets, "discord_zelle_channel_id", "") or "").strip()
+    if wanted.isdigit():
+        return bot.get_channel(int(wanted))
+    for guild in getattr(bot, "guilds", None) or []:
+        for channel in getattr(guild, "text_channels", None) or []:
+            if "newpayment" in _plain_letters(getattr(channel, "name", "")):
+                return channel
+    return None
+
+
+async def _zelle_posts(channel) -> list[str]:
+    """The last month's posts there, as text - forwards and embeds too."""
+    from ..bot.jobs import SETUP_PAID_DAYS
+
+    since = datetime.now(timezone.utc) - timedelta(days=SETUP_PAID_DAYS)
+    posts = []
+    try:
+        async for one in channel.history(limit=500, after=since):
+            text, _images = _request_bits(one)
+            if text.strip():
+                posts.append(text)
+    except Exception:
+        log.warning("Couldn't read the Zelle channel", exc_info=True)
+    return posts
 
 
 async def hub_check_loop(bot: "WilByteBot") -> None:

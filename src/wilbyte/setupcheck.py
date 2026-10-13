@@ -140,23 +140,45 @@ def name_in_thread(title: str) -> str:
 
 
 def threads_for(name: str, threads) -> list:
-    """The threads that are this client's, by the name at the front of their
-    title: the whole name, or their first name and the initial of their last
-    ("Marissa M") - the second only when it's the only one that fits."""
+    """The threads that are this client's, by their title: the whole name -
+    at the front, anywhere in it ("FEX setup - Gavin Littledike"), or last name
+    first ("Littledike, Gavin"). Failing that, their first name and the
+    initial of their last ("Marissa M"), or their first name alone ("Gavin") -
+    those only when it's the one thread that fits."""
     from . import clearout
 
     whole, initial = [], []
     wanted = clearout.words_of(name)
+    # Every thread that starts with their first name: two of those and a
+    # lone "Gavin" could be either Gavin.
+    namesakes = 0
     for one in threads or []:
-        said = name_in_thread(getattr(one, "name", "") or "")
-        if clearout.name_match(name, said) >= 2:
+        title = getattr(one, "name", "") or ""
+        said = name_in_thread(title)
+        if wanted and clearout.words_of(said)[:1] == wanted[:1]:
+            namesakes += 1
+        if (clearout.name_match(name, said) >= 2 or clearout.name_match(name, title) >= 2
+                or (len(wanted) >= 2 and clearout.name_match(" ".join(wanted[1:] + wanted[:1]), title) >= 2)):
             whole.append(one)
             continue
         words = clearout.words_of(said)
-        if (len(wanted) >= 2 and len(words) == 2 and len(words[1]) == 1
-                and words[0] == wanted[0] and words[1] == wanted[-1][:1]):
+        if len(wanted) >= 2 and words and words[0] == wanted[0] and (
+                words[1:] == [wanted[-1][:1]] or (len(words) == 1 and len(wanted[0]) >= 3)):
             initial.append(one)
+    if not whole and len(initial) == 1 and len(clearout.words_of(name_in_thread(initial[0].name))) == 1 and namesakes > 1:
+        return []
     return whole or (initial if len(initial) == 1 else [])
+
+
+def near_threads(name: str, threads, *, most: int = 5) -> list[str]:
+    """Thread titles with any of their name's words in - for "@Ryte threads
+    Gavin", when RYTE says there's no thread and there is."""
+    from . import clearout
+
+    wanted = {word for word in clearout.words_of(name) if len(word) >= 3}
+    found = [str(getattr(one, "name", "") or "") for one in threads or []
+             if wanted & set(clearout.words_of(getattr(one, "name", "") or ""))]
+    return sorted(set(found))[:most]
 
 
 # ------------------------------------------------------------- the checks
@@ -186,11 +208,12 @@ class Result:
         return not self.wrong
 
 
-def check(agent, asked: Asked | None, *, paid: bool | None, today: date) -> Result:
-    """Every check for one agent on the hub."""
+def check(agent, asked: Asked | None, *, paid: bool | None, today: date, zelle: bool = False) -> Result:
+    """Every check for one agent on the hub. `zelle`: the Zelle channel was
+    read too, so "not paid" is neither Payra nor Zelle."""
     found = []
     found.append(Finding("Paid", paid, "" if paid else (
-        "no payment in Payra under their name" if paid is False else "Payra not read")))
+        f"no payment in {'Payra or Zelle' if zelle else 'Payra'} under their name" if paid is False else "Payra not read")))
     if asked is None:
         found.append(Finding("Thread", False, "no thread for them in the Growth server"))
     else:
