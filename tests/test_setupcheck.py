@@ -492,3 +492,21 @@ def test_a_payment_with_no_invoice_under_their_name_is_paid(monkeypatch):
         "payments": {"p": {"id": "p", "customer": "Gavin Littledike", "status": "succeeded",
                            "paid_on": (now - timedelta(days=2)).isoformat()}}})
     assert jobs.paid_for(agent(raw={}), now=now) is True
+
+
+def test_the_newest_threads_are_read_and_an_off_order_thread_says_what_its_about(monkeypatch):
+    got = {"this_order": False, "thread_about": "their 09/24 OTP Vet order, 25 leads"}
+    assert wrong_of(setupcheck.check(agent(), setupcheck.asked_from(got), paid=True, today=TODAY))["Thread"] == \
+        "their thread doesn't mention this order (FEX) - it's about their 09/24 OTP Vet order, 25 leads"
+
+    when = datetime(2026, 10, 12, 15, tzinfo=timezone.utc)
+    bot, board, calls = _pass(monkeypatch, agents=[agent()], threads=[], reads={"Gavin Littledike": {"lead_type": "FEX"}})
+    old = [Thread(f"Gavin Littledike {n}", [Message(n, f"old {n}", when)]) for n in range(3)]
+    new = Thread("Gavin Littledike reorder", [Message(10, "new order", when)])
+    for at, one in enumerate(old):
+        one.id, one.last_message_id = at + 1, at + 1
+    new.id, new.last_message_id = 50, 50
+    bot.guilds[0].threads = old + [new]
+    asyncio.run(client._setup_pass(bot))
+    [(_name, texts, _images)] = calls
+    assert "new order" in texts and "old 0" not in texts

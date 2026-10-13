@@ -8130,7 +8130,7 @@ SETUP_CHECK_SECONDS = 30 * 60
 #: When tomorrow's not-ready list goes to Franklin, on the board's clock.
 SETUP_EVENING = (18, 0)
 #: Bumped when the thread reader changes, so every thread is read again.
-SETUP_READ_VERSION = 2
+SETUP_READ_VERSION = 3
 #: How far back an archived thread is still read.
 SETUP_THREAD_DAYS = 30
 
@@ -8224,11 +8224,14 @@ async def _setup_pass(bot) -> tuple[list, list, list[str]]:
     read = setupcheck.load("read")
     results = []
     for agent in agents:
-        mine = setupcheck.threads_for(agent.name, threads)
+        # Newest talk first: a client back for a second order has the old
+        # order's thread too, and that one is no use for this one.
+        mine = sorted(setupcheck.threads_for(agent.name, threads),
+                      key=lambda one: int(getattr(one, "last_message_id", None) or one.id), reverse=True)[:3]
         asked = None
         if mine:
             said = []
-            for thread in mine[:2]:
+            for thread in mine:
                 try:
                     said += await _thread_said(thread)
                 except Exception:
@@ -8590,12 +8593,16 @@ async def _setup_threads_for(bot, responder: Responder, name: str) -> None:
         await responder.send("I can't see the Growth Team server - set DISCORD_SETUP_GUILD_ID in .env.")
         return
     threads = await _setup_threads(guild) + list(getattr(guild, "text_channels", None) or [])
-    mine = setupcheck.threads_for(name, threads)
+    mine = sorted(setupcheck.threads_for(name, threads),
+                  key=lambda one: int(getattr(one, "last_message_id", None) or one.id), reverse=True)
     near = [one for one in setupcheck.near_threads(name, threads, most=8)
             if one not in {str(t.name) for t in mine}]
     lines = [f"🔎 **{name}** — out of {len(threads)} threads and channels in {guild.name}:"]
-    lines += [f"✅ {one.name}" + (f" · <{one.jump_url}>" if getattr(one, "jump_url", "") else "") for one in mine] or [
+    lines += [("✅ " if at < 3 else "▫️ ") + str(one.name) + (f" · <{one.jump_url}>" if getattr(one, "jump_url", "") else "")
+              for at, one in enumerate(mine)] or [
         "No thread I take as theirs."]
+    if len(mine) > 3:
+        lines.append("-# ✅ the three with the newest messages are read; ▫️ older ones aren't.")
     if near:
         lines.append("Close, but not taken as theirs: " + "; ".join(f"“{one}”" for one in near))
         lines.append("-# A thread is theirs when its title has their whole name, or their first name "

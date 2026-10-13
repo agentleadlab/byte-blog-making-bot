@@ -11717,6 +11717,9 @@ def read_setup_thread(config: Config, agent, messages: list[dict], *, today) -> 
                     "Whether anything in the thread is about THIS order - the one the hub has, by its lead "
                     "type and live date. False when the thread only talks about their other or earlier "
                     "orders; then leave every other field empty.")},
+                "thread_about": {"type": "string", "description": (
+                    "When this_order is false: what the thread IS about, under 15 words - "
+                    "'their 09/24 OTP Vet order, 25 leads'.")},
             },
             "required": ["this_order", "lead_type", "leads", "daily_cap", "states", "hours", "start_date",
                          "same_as_before", "hours_match", "live"],
