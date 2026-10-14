@@ -9017,7 +9017,7 @@ async def _order_said(bot, message, *, since: datetime | None = None) -> tuple[s
                 for picture in pictures:
                     note_images.append(picture)
                     marks.append(f"[screenshot {len(note_images)}]")
-                written = "\n".join(part for part in (_named_tags(one, said).strip(), *marks) if part)
+                written = "\n".join(part for part in (_note_without_tags(said).strip(), *marks) if part)
                 # After the card was made, "setup done" and "signed @Nicole"
                 # are the team talking, not the order.
                 after = since is not None and getattr(one, "created_at", None) is not None and one.created_at > since
@@ -9026,6 +9026,20 @@ async def _order_said(bot, message, *, since: datetime | None = None) -> tuple[s
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
     return "\n".join(lines), note_images + images, (int(thread.id) if thread is not None else None), notes
+
+
+def _note_without_tags(text: str) -> str:
+    """The team's note without anybody's tag - "@Franklin | General Manager"
+    at the end of Samuel Riggins' notes was Kharyl telling Franklin, not the
+    order, and on a Trello card "@franklin" pings him. A line that was only
+    tags goes."""
+    kept = []
+    for line in str(text or "").splitlines():
+        bare = re.sub(r"<@[!&]?\d+>|<#\d+>|@(?:here|everyone)\b", "", line)
+        if line.strip() and not bare.strip(" |·-–—,"):
+            continue
+        kept.append(" ".join(bare.split()) if bare != line else line)
+    return "\n".join(kept).strip()
 
 
 def _named_tags(message, text: str) -> str:

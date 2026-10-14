@@ -12138,7 +12138,9 @@ def order_desc(fields: dict) -> str:
             # "add space from additional notes to the pasted notes" - Trello
             # folds blank lines into one, so the gap is lines holding only a
             # no-break space.
-            lines.append(f"{label}:\n\n\u00a0\n\n\u00a0\n\n{value}")
+            # One spacer: Trello puts paragraph space either side of it, so it
+            # reads as the two lines asked for - two spacers read as four.
+            lines.append(f"{label}:\n\n\u00a0\n\n{value}")
         else:
             lines.append(f"{label}: {' '.join(value.split())}".rstrip())
     return "\n".join(lines)

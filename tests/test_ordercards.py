@@ -643,7 +643,7 @@ def test_additional_notes_are_the_teams_own_words_from_the_thread():
                                 "notes": "UPRISE. Contact info updated in notes"}, [said])
     assert fields["notes"] == said
     desc = jobs.order_desc(fields)
-    assert desc.endswith("Additional Notes:\n\n\u00a0\n\n\u00a0\n\n" + said), "no gap before the team's notes"
+    assert desc.endswith("Additional Notes:\n\n\u00a0\n\n" + said), "no gap before the team's notes"
     assert "Number of Leads Requested: No cap (ad spend)" in desc
     assert jobs.order_fields({"notes": "Same setup as last time"})["notes"] == "Same setup as last time"
 
@@ -1021,3 +1021,12 @@ def test_no_launch_date_is_said_when_the_card_is_made(order, monkeypatch):
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     said = _said(order)[-1][0]
     assert "No launch date in the order" in said and "Ads and Ops checklists" in said
+
+
+
+def test_tags_are_left_out_of_the_teams_notes():
+    """"@franklin 🧑| General Manager" at the end of Samuel Riggins' notes."""
+    said = ("First Name: Samuel\nCan I start my PHX + 2.0 at $1050\n\nUPRISE LIVE FRI OCT 16\n\n<@822523319986290719>\n"
+            "lead sched <@757873984934117396>\n@here")
+    assert client._note_without_tags(said) == ("First Name: Samuel\nCan I start my PHX + 2.0 at $1050\n\nUPRISE LIVE FRI OCT 16\n\n"
+                                       "lead sched")
