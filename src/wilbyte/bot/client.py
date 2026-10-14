@@ -9959,8 +9959,15 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
             since = datetime.fromisoformat(order["made_at"]) if order.get("made_at") else None
         except ValueError:
             since = None
-        card, _examples, _thread = await _order_read(bot, message, since=since,
-                                                     extra=tuple(order.get("extra_notes") or ()))
+        extra = tuple(order.get("extra_notes") or ())
+        if not extra:
+            # Made before the invoice was read for every order - Blaze
+            # Lubbers - or before its note was written: read now.
+            note = await _order_invoice_note(bot, message)
+            if note:
+                extra = (f"Payra invoice note: {note}",)
+                await _order_note(key, extra_notes=list(extra))
+        card, _examples, _thread = await _order_read(bot, message, since=since, extra=extra)
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))

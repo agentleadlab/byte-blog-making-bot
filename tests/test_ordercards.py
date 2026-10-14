@@ -1887,3 +1887,15 @@ def test_what_an_invoice_says_is_its_note_description_and_lines():
                               "lines": [{"name": "VET Leads", "quantity": 50, "price": 39.33}]})
     assert said == "FL TX GA\nDescription: Launch Friday\nLines: VET Leads × 50 @ $39.33"
     assert jobs.invoice_said({"notes": "", "description": "", "lines": [{"name": "VET"}]}) == ""
+
+
+def test_recheck_reads_an_invoice_the_card_was_made_without(order, monkeypatch):
+    order.kind = "fresh"
+    message = _message("New Payment | Payra\nNAME: Blaze Lubbers\nAMOUNT: $1966.5\nPRODUCT: VET")
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "50 VET FL TX")
+    monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("updated", []))
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert "Payra invoice note: 50 VET FL TX" in order.reads[-1]
+    assert ordercards.load()["900"]["extra_notes"] == ["Payra invoice note: 50 VET FL TX"]
