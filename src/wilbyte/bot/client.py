@@ -9678,10 +9678,12 @@ async def _order_sweep(bot) -> list[str]:
         if not last:
             continue
         if not order.get("seen_upto"):
-            # Never looked at before this sweep began: where it is now is
-            # read, not reread - old cards aren't rewritten in a burst.
-            await _order_note(key, seen_upto=last)
-            continue
+            # Never looked at before this sweep began: read up to when its
+            # card was made. Marking where the thread is now would swallow a
+            # note lost to the very restart that brought the sweep in -
+            # Louis Mordecai's 8am-8pm M-F.
+            order["seen_upto"] = str(discord.utils.time_snowflake(made))
+            await _order_note(key, seen_upto=order["seen_upto"])
         if order.get("failed_upto") == last and int(order.get("fails") or 0) >= ORDER_SWEEP_TRIES:
             continue
         if int(last) > int(order["seen_upto"]):

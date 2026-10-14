@@ -1449,16 +1449,26 @@ def test_a_note_lost_to_a_restart_is_found_by_the_sweep(monkeypatch):
     assert refreshed == [("950", 0)]
 
 
-def test_the_first_sweep_only_marks_where_old_orders_are(monkeypatch):
-    ordercards.save({"950": _made("950")})
-    _threads(monkeypatch, {"950": 1234})
+def test_the_first_sweep_reads_from_when_the_card_was_made(monkeypatch):
+    """Louis Mordecai: the note came in, RYTE restarted for the update that
+    brought the sweep - and the first sweep marked it read."""
+    import discord
+    from datetime import datetime, timedelta, timezone
+
+    made = datetime.now(timezone.utc) - timedelta(hours=1)
+    ordercards.save({"950": _made("950", made_at=made.isoformat(timespec="seconds")),
+                     "951": _made("951", made_at=made.isoformat(timespec="seconds"))})
+    at_made = discord.utils.time_snowflake(made.replace(microsecond=0))
+    _threads(monkeypatch, {"950": discord.utils.time_snowflake(made + timedelta(minutes=30)), "951": at_made - 5})
+    refreshed = []
 
     async def refresh(bot, key, *, settle=None):
-        raise AssertionError("an old card was rewritten on the first sweep")
+        refreshed.append(key)
+        return "updated"
 
     monkeypatch.setattr(client, "_order_refresh", refresh)
-    assert asyncio.run(client._order_sweep(SimpleNamespace())) == []
-    assert ordercards.load()["950"]["seen_upto"] == "1234"
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == ["950"]
+    assert ordercards.load()["951"]["seen_upto"] == str(at_made)
 
 
 def test_old_orders_and_ones_already_waiting_are_left_to_themselves(monkeypatch):
@@ -1539,3 +1549,26 @@ def test_a_state_spelled_wrong_in_the_order_is_still_said():
     assert not ordercards._said_state("UT", "Utha")  # short names have to be right
     assert not ordercards._said_state("KS", "Arkansas")
     assert not ordercards._said_state("NY", source)
+
+
+def test_a_forward_with_only_a_tag_on_it_is_a_note(monkeypatch):
+    """Kharyl forwarded Lou's "8am - 8pm M-F" with only "@Nicole" on it."""
+    from datetime import timedelta
+
+    class Thread:
+        id = 900
+        parent = SimpleNamespace(name="new-payment")
+
+        def history(self, **kw):
+            async def gen():
+                snap = SimpleNamespace(content="Hey Kharyl! For the fresh drip could you schedule it from 8am - 8pm "
+                                               "M-F please!", embeds=[], attachments=[])
+                yield SimpleNamespace(id=1, content="<@757873984934117396>", embeds=[], attachments=[],
+                                      message_snapshots=[snap], mentions=[],
+                                      author=SimpleNamespace(display_name="Kharyl", name="kharyl", bot=False),
+                                      created_at=WHEN + timedelta(hours=2))
+            return gen()
+
+    message = _message(thread=Thread())
+    _text, _images, _thread, notes = asyncio.run(client._order_said(SimpleNamespace(), message, since=WHEN))
+    assert notes == ["(forwarded) Hey Kharyl! For the fresh drip could you schedule it from 8am - 8pm M-F please!"]
