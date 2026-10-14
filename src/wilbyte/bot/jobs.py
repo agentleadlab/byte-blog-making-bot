@@ -12172,9 +12172,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
             "when the note was written.")},
         "screenshots": {"type": "array", "items": {"type": "string"}, "description": (
-            "What each screenshot the team posted in the notes says - '[screenshot 1]' is the first image "
-            "shown, '[screenshot 2]' the second - written out as text, one entry each, in order. Keep the "
-            "details: names, states, numbers, dates, hours. Empty when there are none.")},
+            "For each screenshot the team posted in the notes - '[screenshot 1]' is the first image shown, "
+            "'[screenshot 2]' the second - what it means for the setup, written as an instruction to the "
+            "team, not copied out word for word: a client's text 'can you make sure I don't get any leads "
+            "after 9pm' is 'No leads after 9pm — the client asked (screenshot attached)'. Keep the details "
+            "that matter: states, numbers, dates, hours, caps. One entry each, in order. When a screenshot "
+            "asks for nothing, say in a few words what it shows. Empty when there are none.")},
         "launch_iso": {"type": "string", "description": "The launch date as YYYY-MM-DD, or empty."},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
