@@ -211,10 +211,20 @@ def order(monkeypatch):
                 "desc": f"Name: Cole Petersen\nread {len(held.reads)}", "due": "2026-10-14",
                 "missing": ["States"]}
 
-    def making(config, kind, card):
+    def making(config, kind, card, list_name=""):
         held.made.append((kind, card["name"], card["desc"], "new"))
+        held.lists.append(list_name)
         return {"id": "card1", "url": "https://trello.com/c/new1",
-                "list": "Aged Leads Order Done" if kind == "aged" else "In Que"}
+                "list": list_name or ("Aged Leads Order Done" if kind == "aged" else "In Que")}
+
+    held.lists, held.paid, held.bank_comments = [], (None, False), []
+
+    async def paying(bot, message):
+        return held.paid
+
+    monkeypatch.setattr(client, "_order_payment", paying)
+    monkeypatch.setattr(jobs, "order_bank_comment",
+                        lambda config, card_id, text: held.bank_comments.append((card_id, text)))
 
     class Confirm:
         def __init__(self, **kw):
@@ -455,7 +465,7 @@ def test_order_commands(said, action):
 
 
 def test_anything_that_breaks_is_said_and_nothing_is_made(order, monkeypatch):
-    def broken(config, kind, card, template):
+    def broken(config, kind, card, list_name=""):
         raise RuntimeError("Trello said no")
 
     monkeypatch.setattr(jobs, "order_card_make", broken)
@@ -1641,3 +1651,200 @@ def test_order_news_never_goes_to_the_growth_server(monkeypatch):
     assert client._order_responder(bot) is None
     monkeypatch.setattr(client, "_board_responder", lambda bot: ChannelResponder(twin))
     assert client._order_responder(bot).channel is twin
+
+
+# ------------------------------------------------ paid by bank, not settled
+
+def test_bank_or_card_settled_or_not():
+    assert jobs.payment_by_bank({"how": "ACH", "kind": "ach"})
+    assert jobs.payment_by_bank({"how": "", "kind": "bank_account checking"})
+    assert jobs.payment_by_bank({"how": "eCheck"})
+    assert not jobs.payment_by_bank({"how": "Visa", "kind": "card credit"})
+    assert not jobs.payment_by_bank({"how": "Mastercard", "kind": "card"})
+    assert not jobs.payment_by_bank(None)
+    assert not jobs.payment_settled({"status": "Captured"}), "captured doesnt mean settled"
+    assert jobs.payment_settled({"status": "Settled"})
+    assert jobs.payment_failed({"status": "Voided"}) and jobs.payment_failed({"status": "Declined"})
+    assert jobs.payment_failed({"status": "Returned"}) and not jobs.payment_failed({"status": "Captured"})
+
+
+def test_the_payment_found_is_the_one_for_that_amount(monkeypatch):
+    """Luke Mertz: $200 by bank voided, then $207 by card - one invoice."""
+    from datetime import datetime, timezone
+    from wilbyte import payraapi
+
+    records = [
+        {"_id": "p1", "amount": 200, "status": "Voided", "customer_display": "Luke Mertz",
+         "payment_type": "ach", "display_name": "Bank ****7043", "paid_on": "2026-10-14T14:10:00Z"},
+        {"_id": "p2", "amount": 207, "status": "Captured", "customer_display": "Luke Mertz",
+         "payment_type": "card", "display_name": "Visa ****8687", "paid_on": "2026-10-14T14:44:00Z"},
+        {"_id": "p3", "amount": 200, "status": "Captured", "customer_display": "Luke Mertzger",
+         "payment_type": "ach", "paid_on": "2026-10-14T14:50:00Z"},
+    ]
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def changed(self, kind, after):
+            assert kind == "payments"
+            return {"records": records}
+
+    monkeypatch.setattr(payraapi, "PayraClient", Client)
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    now = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+    assert jobs.payra_payment_for(config, name="Luke Mertz", amount="200.00", now=now)["id"] == "p1"
+    assert jobs.payra_payment_for(config, name="Luke Mertz", amount="207", now=now)["id"] == "p2"
+    assert jobs.payra_payment_for(config, name="Luke Mertz", amount="", now=now)["id"] == "p2"
+    assert jobs.payra_payment_for(config, name="Nobody Else", amount="207", now=now) is None
+
+
+BANK = {"id": "pay9", "amount": 200.0, "status": "Captured", "how": "Bank ****7043", "kind": "ach"}
+CARD = {"id": "pay8", "amount": 207.0, "status": "Captured", "how": "Visa ****8687", "kind": "card"}
+
+
+def test_aged_paid_by_bank_waits_in_franklin_admin(order):
+    order.paid = (BANK, True)
+    asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
+    assert order.lists == ["Franklin (Admin)"]
+    [(card_id, comment)] = order.bank_comments
+    assert card_id == "card1" and "Paid via bank" in comment and "not settled" in comment and "Settled" in comment
+    held = ordercards.load()["900"]
+    assert held["bank_hold"] is True and held["payment_id"] == "pay9"
+    [(said, _view)] = _said(order)
+    assert "Paid by bank — not settled yet" in said and "Franklin (Admin)" in said
+
+
+def test_aged_paid_by_card_goes_straight_to_aged_leads_order_done(order):
+    order.paid = (CARD, True)
+    asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
+    assert order.lists == [""] and order.bank_comments == []
+    assert ordercards.load()["900"]["bank_hold"] is False
+
+
+def test_aged_already_settled_by_bank_isnt_held(order):
+    order.paid = (dict(BANK, status="Settled"), True)
+    asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
+    assert order.lists == [""]
+
+
+def test_a_new_agent_paid_by_bank_only_gets_a_comment(order):
+    """"for new agent we dont need to worry ... maybe you can add a comment"."""
+    order.kind, order.paid = "fresh", (BANK, True)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.lists == [""]
+    [(_card, comment)] = order.bank_comments
+    assert "Paid via bank" in comment and "Aged Leads Order Done" not in comment
+    assert ordercards.load()["900"]["bank_hold"] is False
+
+
+def test_an_aged_payment_not_found_in_payra_is_said(order):
+    order.paid = (None, True)
+    asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
+    assert "Couldn't find this payment in Payra" in _said(order)[0][0]
+
+
+def _bank_held(**more):
+    from datetime import datetime, timezone
+    return {"status": "made", "kind": "aged", "card_id": "c1", "name": "Aged Leads - Luke Mertz",
+            "url": "https://trello.com/c/x", "payment_id": "pay9", "bank_hold": True,
+            "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), **more}
+
+
+def test_a_settled_bank_payment_moves_the_card(monkeypatch):
+    ordercards.save({"900": _bank_held(), "901": _bank_held(payment_id="pay10"), "902": _bank_held(bank_hold=False)})
+    status = {"pay9": "Settled", "pay10": "Captured"}
+    monkeypatch.setattr(jobs, "payra_payment_now", lambda config, pid: dict(BANK, id=pid, status=status[pid]))
+    moved, sent = [], []
+    monkeypatch.setattr(jobs, "order_bank_settled", lambda config, card_id, text: moved.append(card_id) or "moved")
+
+    class Responder:
+        async def send(self, text, **kw):
+            sent.append(text)
+
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    assert asyncio.run(client._bank_holds(SimpleNamespace(config=CONFIG))) == ["900"]
+    assert moved == ["c1"] and "settled" in sent[0] and "Aged Leads Order Done" in sent[0]
+    held = ordercards.load()
+    assert held["900"]["bank_hold"] is False and held["901"]["bank_hold"] is True
+
+
+def test_a_failed_bank_payment_is_said_and_left(monkeypatch):
+    ordercards.save({"900": _bank_held()})
+    monkeypatch.setattr(jobs, "payra_payment_now", lambda config, pid: dict(BANK, status="Voided"))
+    comments, sent = [], []
+    monkeypatch.setattr(jobs, "order_bank_comment", lambda config, card_id, text: comments.append(text))
+
+    def never(*a, **k):
+        raise AssertionError("moved a card whose payment failed")
+
+    monkeypatch.setattr(jobs, "order_bank_settled", never)
+
+    class Responder:
+        async def send(self, text, **kw):
+            sent.append(text)
+
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    assert asyncio.run(client._bank_holds(SimpleNamespace(config=CONFIG))) == ["900"]
+    assert "voided" in comments[0] and "No leads" in comments[0] and "Voided" in sent[0]
+    assert ordercards.load()["900"]["bank_hold"] == "failed"
+    assert asyncio.run(client._bank_holds(SimpleNamespace(config=CONFIG))) == [], "said twice"
+
+
+def test_settled_moves_only_a_card_still_in_franklin_admin(monkeypatch):
+    class Held(Board):
+        def __init__(self, here):
+            super().__init__()
+            self.here, self.moves = here, []
+
+        def board_lists(self, board_id):
+            return super().board_lists(board_id) + [{"id": "f", "name": "Franklin (Admin)"}]
+
+        def card_full(self, card_id):
+            return {"idList": self.here}
+
+        def move_card(self, card_id, list_id, position="top"):
+            self.moves.append((card_id, list_id))
+
+        def add_comment(self, card_id, text):
+            self.comments.append(text)
+
+        def close(self):
+            pass
+
+    board = Held("f")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    assert jobs.order_bank_settled(CONFIG, "c1", "✅ Bank payment settled — moved to Aged Leads Order Done.") == "moved"
+    assert board.moves == [("c1", "a")] and "moved" in board.comments[0]
+    board = Held("somewhere-else")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    assert jobs.order_bank_settled(CONFIG, "c1", "✅ Bank payment settled — moved to Aged Leads Order Done.") == "left"
+    assert board.moves == [] and board.comments == ["✅ Bank payment settled."]
+
+
+def test_a_payment_payra_wont_hand_over_by_id_is_read_from_the_saved_copy(monkeypatch):
+    from wilbyte import payraapi
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def one(self, kind, pid):
+            raise payraapi.PayraError("Payra said HTTP 404")
+
+    monkeypatch.setattr(payraapi, "PayraClient", Client)
+    monkeypatch.setattr(payraapi, "load", lambda: {"payments": {"pay9": {"id": "pay9", "status": "Settled"}}})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    assert jobs.payment_settled(jobs.payra_payment_now(config, "pay9"))

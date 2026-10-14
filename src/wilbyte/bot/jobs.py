@@ -12258,16 +12258,21 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                         if key not in ("notes", "agency") and not fields.get(key)]}
 
 
-def order_card_make(config: Config, kind: str, card: dict) -> dict:
+def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "") -> dict:
     """The card, made new - "create a new card not copy" - in its list, with
     the order's title and description. No due date: "that way it wont be
-    red". {"id", "url", "list"}."""
-    from .. import ordercards
+    red". In `list_name` instead when given - an aged order paid by bank
+    waits in Franklin (Admin). {"id", "url", "list"}."""
+    from .. import ordercards, trello
 
     client = open_trello(config)
     try:
         wanted = (config.secrets.order_fresh_list if kind == "fresh" else config.secrets.order_aged_list) or ""
-        where = ordercards.list_for(kind, client.board_lists(config.secrets.trello_board_id), wanted=wanted)
+        lists = client.board_lists(config.secrets.trello_board_id)
+        where = trello.find_list(lists, list_name) if list_name else None
+        if list_name and where is None:
+            raise ValueError(f"There's no “{list_name}” list on the board.")
+        where = where or ordercards.list_for(kind, lists, wanted=wanted)
         if where is None:
             raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
                              + (f" called “{wanted}”" if wanted else "") + ".")
@@ -12582,3 +12587,131 @@ def same_order(config: Config, existing: dict, card: dict) -> bool:
     if had_launch and new_launch and had_launch != new_launch:
         return False
     return True
+
+
+
+# ------------------------------------------------ paid by bank, not settled
+
+#: How Payra names a bank payment - ACH, e-check, a checking account. A card
+#: is Visa, Mastercard, Amex, Discover.
+_BANK_PAID = re.compile(r"(?<![a-z])(?:ach|bank\w*|e-?check|checking|savings|eft)(?![a-z])", re.IGNORECASE)
+#: A bank payment's money in: "captured doesnt mean settled".
+_SETTLED = re.compile(r"\b(?:settled|completed?|succeeded|deposited|funded)\b", re.IGNORECASE)
+#: A bank payment that won't arrive.
+_UNPAID = re.compile(r"fail|declin|void|error|cancel|reject|return|refund|chargeback|reversed", re.IGNORECASE)
+
+
+def payment_by_bank(payment: dict | None) -> bool:
+    if not payment:
+        return False
+    return bool(_BANK_PAID.search(f"{payment.get('how', '')} {payment.get('kind', '')}"))
+
+
+def payment_settled(payment: dict | None) -> bool:
+    return bool(payment) and bool(_SETTLED.search(str(payment.get("status") or "")))
+
+
+def payment_failed(payment: dict | None) -> bool:
+    return bool(payment) and (bool(payment.get("refund"))
+                              or bool(_UNPAID.search(str(payment.get("status") or ""))))
+
+
+def payra_payment_for(config: Config, *, name: str, amount: str = "", now=None) -> dict | None:
+    """The Payra payment behind a payment post just made: theirs by whole
+    name, in the last two days, the same amount when there's one - Luke
+    Mertz's $200 by bank was voided and his $207 by card went through, the
+    same invoice both times. Payra read now; the saved copy if it can't be."""
+    from .. import clearout, payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    if not (token and site and name):
+        return None
+    now = now or datetime.now(timezone.utc)
+    payments = {}
+    try:
+        with payraapi.PayraClient(token, site, timeout=60.0) as client:
+            after = payraapi.when(now - timedelta(days=2))
+            for _page in range(5):
+                got = client.changed("payments", after)
+                for record in got.get("records") or []:
+                    one = payraapi.slim_payment(record)
+                    if one["id"]:
+                        payments[one["id"]] = one
+                onward = str(got.get("next_updated_after") or "")
+                if not got.get("records") or not onward or onward == after:
+                    break
+                after = onward
+    except Exception:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra's payments", exc_info=True)
+        payments = dict(payraapi.load().get("payments") or {})
+    wanted = payraapi._cents(amount)
+    found = []
+    for payment in payments.values():
+        if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
+            continue
+        try:
+            paid = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
+        if now - paid > timedelta(days=2):
+            continue
+        same = wanted is not None and payraapi._cents(payment.get("amount")) == wanted
+        found.append((same, paid, payment))
+    if wanted is not None and any(one[0] for one in found):
+        found = [one for one in found if one[0]]
+    if not found:
+        return None
+    found.sort(key=lambda one: one[1], reverse=True)
+    return found[0][2]
+
+
+def payra_payment_now(config: Config, payment_id: str) -> dict | None:
+    """One payment as Payra has it now - for whether it's settled. Asked for
+    by its id; else as the half-hourly read last saw it, which picks up a
+    status changing because the record's updated."""
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    try:
+        with payraapi.PayraClient(token, site, timeout=60.0) as client:
+            record = client.one("payment", payment_id)
+        if record:
+            return payraapi.slim_payment(record)
+    except Exception:
+        logging.getLogger("wilbyte.bot").info("Couldn't read payment %s by its id", payment_id, exc_info=True)
+    return (payraapi.load().get("payments") or {}).get(payment_id)
+
+
+def order_bank_comment(config: Config, card_id: str, text: str) -> None:
+    client = open_trello(config)
+    try:
+        client.add_comment(card_id, text)
+    finally:
+        client.close()
+
+
+def order_bank_settled(config: Config, card_id: str, text: str) -> str:
+    """A held aged card, its bank payment settled: moved from Franklin
+    (Admin) to Aged Leads Order Done - only from there, so a card somebody
+    has moved on already isn't pulled back - with `text` as a comment.
+    "moved", or "left" when it wasn't in Franklin (Admin)."""
+    from .. import agents, ordercards, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        parked = trello.find_list(lists, agents.PARKED)
+        aged = ordercards.list_for("aged", lists, wanted=config.secrets.order_aged_list or "")
+        if aged is None:
+            raise ValueError("There's no Aged Leads Order Done list on the board.")
+        here = str(client.card_full(card_id).get("idList") or "")
+        moved = parked is not None and here == str(parked.get("id") or "")
+        if moved:
+            client.move_card(card_id, str(aged["id"]))
+        client.add_comment(card_id, text if moved else text.split(" — ", 1)[0] + ".")
+        return "moved" if moved else "left"
+    finally:
+        client.close()

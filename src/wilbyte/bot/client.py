@@ -391,6 +391,9 @@ class WilByteBot(discord.Client):
                 self.config.secrets, "payra_site_id", None
             ):
                 _also_running(self.loop.create_task(payra_loop(self)))
+                # Aged cards waiting on a bank payment to settle.
+                if getattr(self.config.secrets, "trello_key", None):
+                    _also_running(self.loop.create_task(bank_hold_loop(self)))
         # Only when asked for. Calls are reviewed before they earn a card, so
         # filing everything found would fill the gallery with the ones that
         # were looked at and turned down.
@@ -9465,13 +9468,25 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         _also_running(asyncio.get_running_loop().create_task(
             _order_held(bot, _payload_copy(payload), key, responder, card, wrong, link)))
         return
+    # "when they pay thru bank, dont add the card on the aged leads order
+    # card immediately": captured isn't settled, and an aged order's leads go
+    # out from Aged Leads Order Done. It waits in Franklin (Admin) instead.
+    paid, looked = await _order_payment(bot, message)
+    bank = jobs.payment_by_bank(paid)
+    hold = bank and kind == "aged" and BANK_HOLD_AGED and not jobs.payment_settled(paid)
     try:
-        made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card)
+        made = await asyncio.to_thread(partial(jobs.order_card_make, bot.config, kind, card,
+                                               list_name=PARKED_LIST if hold else ""))
     except Exception as exc:
         await _order_forget(key)
         if responder is not None:
             await responder.send(f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
         return
+    if bank:
+        try:
+            await asyncio.to_thread(jobs.order_bank_comment, bot.config, made["id"], _bank_comment(paid, hold=hold))
+        except Exception:
+            log.warning("Couldn't say on the card that they paid by bank", exc_info=True)
     attached = []
     if card.get("shots"):
         try:
@@ -9483,7 +9498,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                       extra_notes=list(getattr(payload, "extra_notes", ()) or ()),
                       made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       written=card["desc"], client=card["client"], link=link, attached=attached,
-                      thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
+                      thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id),
+                      payment_id=str((paid or {}).get("id") or ""), bank=bank, bank_hold=hold)
     try:
         await _order_seen(bot, key)
     except Exception:
@@ -9491,6 +9507,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     await _order_mark(bot, payload.channel_id, key)
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                + ("\n🏦 **Paid by bank — not settled yet.** The card waits in Franklin (Admin) with a comment; "
+                   "I'll move it to Aged Leads Order Done once Payra shows it Settled." if hold else
+                   "\n🏦 Paid by bank — captured, not settled yet. Said in a comment on the card." if bank else "")
+                + ("\n⚠ Couldn't find this payment in Payra to tell bank from card — check how they paid before "
+                   "their leads go out." if kind == "aged" and looked and paid is None else "")
                 + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
                 # No launch date and the agent pass can't put them on the
                 # Ads and Ops checklists - Bram's card sat in Franklin (Admin).
@@ -9527,6 +9548,112 @@ async def _order_mark(bot, channel_id, message_id) -> bool:
     except Exception:
         log.warning("Couldn't put the gavel on the payment", exc_info=True)
         return False
+
+
+#: "if its an aged leads, and they paid via bank, put the card on Franklin
+#: Admin ... then ryte will move the card back to aged lead order done once
+#: its settled". New agents aren't held: the launch date allows for it.
+BANK_HOLD_AGED = True
+PARKED_LIST = "Franklin (Admin)"
+#: How often a held card's payment is looked at, and for how long.
+BANK_CHECK_SECONDS = 10 * 60
+BANK_WATCH_DAYS = 14
+
+
+async def _order_payment(bot, message) -> tuple[dict | None, bool]:
+    """(the Payra payment behind a payment post, whether there was one to
+    look for). A Zelle post has none."""
+    said = _all_of_it(message)
+    if "payra" not in said.casefold():
+        return None, False
+    name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    try:
+        return await asyncio.to_thread(partial(jobs.payra_payment_for, bot.config, name=name, amount=amount)), True
+    except Exception:
+        log.warning("Couldn't find %s's payment in Payra", name, exc_info=True)
+        return None, True
+
+
+def _bank_comment(paid: dict, *, hold: bool) -> str:
+    amount = paid.get("amount")
+    money = f"${float(amount):,.2f} " if isinstance(amount, (int, float)) else ""
+    status = str(paid.get("status") or "captured").lower()
+    if hold:
+        return (f"🏦 Paid via bank — {money}{status}, not settled yet. Waiting here until it settles: no leads "
+                f"until then. Ryte moves this card to Aged Leads Order Done once Payra shows it Settled.")
+    return f"🏦 Paid via bank — {money}{status}, not settled yet."
+
+
+async def _bank_holds(bot, *, now: datetime | None = None) -> list[str]:
+    """Aged cards held for a bank payment, looked at again: settled, moved to
+    Aged Leads Order Done; failed, said. The orders settled or failed."""
+    from .. import ordercards
+
+    now = now or datetime.now(timezone.utc)
+    held = await asyncio.to_thread(ordercards.load)
+    done = []
+    for key, order in held.items():
+        if not isinstance(order, dict) or order.get("bank_hold") is not True or not order.get("payment_id"):
+            continue
+        try:
+            made = datetime.fromisoformat(str(order.get("made_at") or ""))
+        except ValueError:
+            continue
+        if now - made > timedelta(days=BANK_WATCH_DAYS):
+            continue
+        try:
+            paid = await asyncio.to_thread(jobs.payra_payment_now, bot.config, order["payment_id"])
+        except Exception:
+            log.warning("Couldn't look at %s's bank payment", order.get("name"), exc_info=True)
+            continue
+        who = order.get("name") or "An aged order"
+        responder = _order_responder(bot)
+        if jobs.payment_settled(paid):
+            try:
+                where = await asyncio.to_thread(
+                    jobs.order_bank_settled, bot.config, order["card_id"],
+                    "✅ Bank payment settled — moved to Aged Leads Order Done.")
+            except Exception as exc:
+                log.warning("Couldn't move %s's card", who, exc_info=True)
+                if responder is not None and not order.get("bank_said"):
+                    await _order_note(key, bank_said=True)
+                    await responder.send(f"🏦 ⚠ **{who}** — bank payment settled, but I couldn't move the card: "
+                                         f"{_readable(exc)}\n{order.get('url', '')}")
+                continue
+            await _order_note(key, bank_hold=False, bank_settled=now.isoformat(timespec="seconds"))
+            done.append(key)
+            if responder is not None:
+                await responder.send(
+                    f"🏦 ✅ **{who}** — bank payment settled; "
+                    + ("card moved to Aged Leads Order Done." if where == "moved" else
+                       "the card had been moved out of Franklin (Admin) already, so I left it where it is.")
+                    + f"\n{order.get('url', '')}", quiet=True)
+        elif jobs.payment_failed(paid):
+            status = str((paid or {}).get("status") or "failed")
+            try:
+                await asyncio.to_thread(jobs.order_bank_comment, bot.config, order["card_id"],
+                                        f"⚠ Bank payment {status.lower()} — it won't settle. No leads.")
+            except Exception:
+                log.warning("Couldn't comment on %s's card", who, exc_info=True)
+            await _order_note(key, bank_hold="failed")
+            done.append(key)
+            if responder is not None:
+                await responder.send(f"🏦 ⚠ **{who}**'s bank payment is **{status}** — the card stays in "
+                                     f"Franklin (Admin), no leads.\n{order.get('url', '')}")
+    return done
+
+
+async def bank_hold_loop(bot: "WilByteBot") -> None:
+    await asyncio.sleep(90)
+    while not bot.is_closed():
+        try:
+            await _bank_holds(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Checking the bank payments failed; trying again next time")
+        await asyncio.sleep(BANK_CHECK_SECONDS)
 
 
 def _payload_copy(payload, **changed):
