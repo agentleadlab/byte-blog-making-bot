@@ -1488,7 +1488,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > I missed; **team tasks** lists what's still open. **threads <name>** — the threads I take as
 > somebody's. Paid is Payra, and Zelle once it's posted in #new-payment.
 > 🔨 **Orders** — anyone's :leadlab_hammertime: on an order in the Growth server makes its Trello card:
-> a new agent's card into the Queue, straight away (aged leads are off for now) - Name, Email,
+> a new agent's card into the Queue, an aged order's into Aged Leads Order Done, straight away - Name, Email,
 > Phone Number, States, Lead Type, Number of Leads, Launch Date, Additional Notes. New notes in
 > its thread update the card.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?

@@ -8964,7 +8964,7 @@ ORDER_ASK_SECONDS = 24 * 60 * 60
 FRESH_ASKS_FIRST = False
 #: "actually focus on new agent setup for now, not aged leads" - an aged
 #: order gavelled is left alone, said so. True turns them back on.
-AGED_ORDERS_ON = False
+AGED_ORDERS_ON = True
 #: Orders being read or waiting on their button right now - a second gavel
 #: meanwhile isn't a second card. Not kept over a restart, where the button
 #: is gone anyway: gavelling it again asks again.
@@ -9308,9 +9308,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
     # Another payment for an order that has its card already: on that card.
-    if kind == "fresh" and card.get("client") and not getattr(payload, "separate", False):
+    if card.get("client") and not getattr(payload, "separate", False):
         try:
-            existing = await asyncio.to_thread(jobs.recent_card_for, bot.config, card["client"])
+            existing = await asyncio.to_thread(partial(jobs.recent_card_for, bot.config, card["client"], kind=kind))
         except Exception:
             log.warning("Couldn't look for their card", exc_info=True)
             existing = None
@@ -9370,12 +9370,13 @@ async def _order_onto_card(bot, payload, key, responder, message, card, existing
             + (f" · {product.group(1).strip()}" if product and product.group(1).strip() else "")
             + f"\n{link}")
     await asyncio.to_thread(jobs.order_payment_comment, bot.config, existing["id"], line)
-    await _order_note(key, status="made", kind="fresh", card_id=existing["id"], url=existing["url"],
+    await _order_note(key, status="made", kind=card.get("kind", "fresh"), card_id=existing["id"], url=existing["url"],
                       name=existing["name"], client=card.get("client", ""), merged=True, link=link,
                       message_channel_id=str(payload.channel_id))
     if responder is None:
         return
-    said = (f"🔨 **{card.get('client')}** already has a card from this week — this payment went on it as a comment, "
+    when = "today" if card.get("kind") == "aged" else "this week"
+    said = (f"🔨 **{card.get('client')}** already has a card from {when} — this payment went on it as a comment, "
             f"no second card.\n{existing['url']}")
     ack = _ORDER_ACKS.pop(key, None)
     view = views.ConfirmView(requester_id=None, timeout=12 * 60 * 60, label="Make a separate card", emoji="🔨")

@@ -226,7 +226,7 @@ def order(monkeypatch):
     monkeypatch.setattr(jobs, "read_order", reading)
     monkeypatch.setattr(jobs, "order_card_make", making)
     held.existing, held.comments = None, []
-    monkeypatch.setattr(jobs, "recent_card_for", lambda config, name, now=None: held.existing)
+    monkeypatch.setattr(jobs, "recent_card_for", lambda config, name, now=None, kind="fresh": held.existing)
     monkeypatch.setattr(jobs, "order_payment_comment", lambda config, card_id, text: held.comments.append((card_id, text)))
     monkeypatch.setattr(jobs, "order_template", lambda config, kind: {"id": f"TPL-{kind}", "name": "x", "desc": "", "url": "u"})
     monkeypatch.setattr(client, "_board_responder", lambda bot: held.responder)
@@ -596,8 +596,9 @@ def test_order_check_with_aged_off(order, monkeypatch):
     assert "⏸ Aged Leads orders: off for now" in said and "❌" not in said
 
 
-def test_aged_orders_are_off_by_default():
-    assert client.AGED_ORDERS_ON is False
+def test_aged_orders_are_on():
+    """"i want ryte to do the same thing for the aged leads now"."""
+    assert client.AGED_ORDERS_ON is True
 
 
 def test_taking_the_gavel_off_and_putting_it_back_makes_a_fresh_card(order):
@@ -989,7 +990,7 @@ def test_only_this_weeks_card_counts(monkeypatch):
     def made(days_ago):
         return format(int((now - timedelta(days=days_ago)).timestamp()), "x") + "0" * 16
 
-    monkeypatch.setattr(jobs, "new_agent_cards", lambda config: [
+    monkeypatch.setattr(jobs, "new_agent_cards", lambda config, kind="fresh": [
         {"id": made(30), "name": "New Agent - Bram Gutierrez", "url": "old"},
         {"id": made(1), "name": "New Agent - Killian Cooper", "url": "new"}])
     assert jobs.recent_card_for(CONFIG, "Bram Gutierrez", now=now) is None, "last month's order is its own"
@@ -1030,3 +1031,39 @@ def test_tags_are_left_out_of_the_teams_notes():
             "lead sched <@757873984934117396>\n@here")
     assert client._note_without_tags(said) == ("First Name: Samuel\nCan I start my PHX + 2.0 at $1050\n\nUPRISE LIVE FRI OCT 16\n\n"
                                        "lead sched")
+
+
+
+# ------------------------------------------------------------- aged leads
+
+def test_an_aged_card_in_franklins_aged_layout():
+    """"Aged Leads - Name of Agent / Name / Email / Phone Number / Lead Type /
+    Number of Leads Requested / States / Agency / Additional Notes"."""
+    fields = jobs.order_fields({"name": "Ayden Escarrega", "email": "ayden@example.com", "phone": "+15550104032",
+                                "package": "Aged Leads (MTG)", "leads": "50", "states": "AZ", "agency": "UPRISE",
+                                "launch": "Tuesday, October 13"}, ["50 aged MTG, AZ only"])
+    assert jobs.order_desc(fields, "aged") == (
+        "Name: Ayden Escarrega\nEmail: ayden@example.com\nPhone Number: +15550104032\nLead Type: Aged Leads (MTG)\n"
+        "Number of Leads Requested: 50\nStates: AZ\nAgency: UPRISE\nAdditional Notes:\n\n\u00a0\n\n50 aged MTG, AZ only")
+    assert "Agency" not in jobs.order_desc(fields, "fresh") and "Launch Date: Tuesday, October 13" in jobs.order_desc(fields)
+
+
+def test_an_aged_order_makes_its_card_in_aged_leads_order_done(order):
+    order.kind = "aged"
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert [one[0] for one in order.made] == ["aged"]
+    assert "Aged Leads card made" in _said(order)[-1][0] and "No launch date" not in _said(order)[-1][0]
+
+
+def test_a_second_aged_payment_the_same_day_goes_on_the_card_but_not_the_next(monkeypatch):
+    now = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+
+    def made(hours_ago):
+        return format(int((now - timedelta(hours=hours_ago)).timestamp()), "x") + "0" * 16
+
+    monkeypatch.setattr(jobs, "new_agent_cards", lambda config, kind="fresh": [
+        {"id": made(3), "name": "Aged Leads - Ayden Escarrega", "url": "today"},
+        {"id": made(30), "name": "Aged Leads - Raymond Vargas", "url": "yesterday"}] if kind == "aged" else [])
+    assert jobs.recent_card_for(CONFIG, "Ayden Escarrega", now=now, kind="aged")["url"] == "today"
+    assert jobs.recent_card_for(CONFIG, "Raymond Vargas", now=now, kind="aged") is None, "yesterday's is its own order"
+    assert jobs.recent_card_for(CONFIG, "Ayden Escarrega", now=now) is None, "an aged card isn't a New Agent card"

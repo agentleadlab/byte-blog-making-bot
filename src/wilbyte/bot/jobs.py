@@ -12079,6 +12079,19 @@ def order_template(config: Config, kind: str) -> dict:
 ORDER_MODEL = "claude-haiku-5-5"
 
 #: A new agent's card description, field by field - "Do this template".
+#: An aged leads card's description - "Aged Leads - Name of Agent" and
+#: Franklin's fields for it.
+AGED_FIELDS = (
+    ("name", "Name"),
+    ("email", "Email"),
+    ("phone", "Phone Number"),
+    ("package", "Lead Type"),
+    ("leads", "Number of Leads Requested"),
+    ("states", "States"),
+    ("agency", "Agency"),
+    ("notes", "Additional Notes"),
+)
+
 ORDER_FIELDS = (
     ("name", "Name"),
     ("email", "Email"),
@@ -12108,7 +12121,7 @@ def order_fields(got: dict, notes: list[str] = ()) -> dict:
     the team wrote them in the thread - "the thread message replied from the
     team should be added on the additional notes"."""
     fields = {}
-    for key, _label in ORDER_FIELDS:
+    for key in dict.fromkeys(key for key, _label in ORDER_FIELDS + AGED_FIELDS):
         value = " ".join(str(got.get(key) or "").split())
         fields[key] = "" if value.casefold().strip(" .") in _SAYS_NOTHING else value
     if _AD_SPEND.search(fields["package"]) and not re.search(r"\d", fields["leads"]):
@@ -12127,12 +12140,12 @@ def order_fields(got: dict, notes: list[str] = ()) -> dict:
     return fields
 
 
-def order_desc(fields: dict) -> str:
+def order_desc(fields: dict, kind: str = "fresh") -> str:
     """The description in Franklin's layout - every label there, blank after
     it when the order doesn't say. Additional Notes last, line by line as the
     team wrote them."""
     lines = []
-    for key, label in ORDER_FIELDS:
+    for key, label in (AGED_FIELDS if kind == "aged" else ORDER_FIELDS):
         value = str(fields.get(key) or "").strip()
         if key == "notes" and value:
             # "add space from additional notes to the pasted notes" - Trello
@@ -12179,6 +12192,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "that matter: states, numbers, dates, hours, caps. One entry each, in order. When a screenshot "
             "asks for nothing, say in a few words what it shows. Empty when there are none.")},
         "launch_iso": {"type": "string", "description": "The launch date as YYYY-MM-DD, or empty."},
+        "agency": {"type": "string", "description": (
+            "The agency or IMO they're with, when the notes say - 'UPRISE', 'FEARLESS'. Empty if not said.")},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
@@ -12222,8 +12237,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         launch_iso = ""
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso,
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
-            "desc": order_desc(fields), "due": "",
-            "missing": [label for key, label in ORDER_FIELDS if key != "notes" and not fields[key]]}
+            "desc": order_desc(fields, kind), "due": "",
+            "missing": [label for key, label in (AGED_FIELDS if kind == "aged" else ORDER_FIELDS)
+                        if key not in ("notes", "agency") and not fields.get(key)]}
 
 
 def order_card_make(config: Config, kind: str, card: dict) -> dict:
@@ -12360,9 +12376,13 @@ def hub_task_verdict(config: Config, *, task: str, records: list[str], today) ->
 
 
 
-def new_agent_cards(config: Config) -> list[dict]:
-    """The board's open New Agent cards - {"name", "url"} - for not making a
-    card for somebody who has one, by hand or not."""
+#: How each kind of order card's title starts.
+_CARD_TITLE = {"fresh": r"\s*new\s*agent\b", "aged": r"\s*aged\s*leads?\b"}
+
+
+def new_agent_cards(config: Config, kind: str = "fresh") -> list[dict]:
+    """The board's open New Agent (or Aged Leads) cards - {"id", "name",
+    "url"} - for not making a card for somebody who has one, by hand or not."""
     client = open_trello(config)
     try:
         cards = client.board_cards(config.secrets.trello_board_id)
@@ -12370,7 +12390,7 @@ def new_agent_cards(config: Config) -> list[dict]:
         client.close()
     return [{"id": str(one.get("id") or ""), "name": str(one.get("name") or ""),
              "url": str(one.get("shortUrl") or one.get("url") or "")}
-            for one in cards if re.match(r"\s*new\s*agent\b", str(one.get("name") or ""), re.IGNORECASE)]
+            for one in cards if re.match(_CARD_TITLE[kind], str(one.get("name") or ""), re.IGNORECASE)]
 
 
 def card_made_at(card_id: str):
@@ -12384,14 +12404,18 @@ def card_made_at(card_id: str):
 #: How recent a client's New Agent card has to be for another payment to be
 #: the same order - "bram paid alot of time for the same order".
 SAME_ORDER_DAYS = 7
+#: Aged leads are bought again and again - only a payment the same day is
+#: the same order.
+SAME_AGED_ORDER = timedelta(hours=24)
 
 
-def recent_card_for(config: Config, name: str, *, now=None) -> dict | None:
-    """Their New Agent card from the last week, if there is one - another
-    payment then goes on it rather than making a second card."""
+def recent_card_for(config: Config, name: str, *, now=None, kind: str = "fresh") -> dict | None:
+    """Their card from the last week (a day, for aged leads), if there is one
+    - another payment then goes on it rather than making a second card."""
     now = now or datetime.now(timezone.utc)
-    cards = [one for one in new_agent_cards(config)
-             if (card_made_at(one["id"]) or now) >= now - timedelta(days=SAME_ORDER_DAYS)]
+    window = SAME_AGED_ORDER if kind == "aged" else timedelta(days=SAME_ORDER_DAYS)
+    cards = [one for one in new_agent_cards(config, kind)
+             if (card_made_at(one["id"]) or now) >= now - window]
     return has_new_agent_card(name, cards)
 
 
@@ -12408,7 +12432,7 @@ def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
     from .. import clearout
 
     for one in cards:
-        title = re.sub(r"^\s*new\s*agent\s*[-–—:]*\s*", "", one["name"], flags=re.IGNORECASE)
+        title = re.sub(r"^\s*(?:new\s*agent|aged\s*leads?)\s*[-–—:]*\s*", "", one["name"], flags=re.IGNORECASE)
         if clearout.name_match(name, title) >= 2:
             return one
     return None
