@@ -8305,6 +8305,9 @@ TEAM_TASKS_EVERY_SECONDS = 30 * 60
 #: Checklist card - "lets stop this". The items stay on the card, ticked as
 #: they're done, and the daytime pings in Ryte The Goat carry on.
 TEAM_EVENING_NOTE = False
+#: The "Still open with the team - worth a nudge" pings: "it should also stop
+#: doing this now". The requests are still kept and ticked on the card.
+TEAM_NUDGES = False
 
 #: How often everybody scheduled on the hub is checked again.
 CHECKLIST_EVERY_SECONDS = 30 * 60
@@ -8870,7 +8873,8 @@ async def team_tasks_loop(bot: "WilByteBot") -> None:
                 await _team_tasks_on_hub(bot)
             except Exception:
                 log.warning("Couldn't check the open requests on the hub", exc_info=True)
-            await _team_reminders(bot)
+            if TEAM_NUDGES:
+                await _team_reminders(bot)
             now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
             today = _today(bot.config).isoformat()
             if TEAM_EVENING_NOTE and (now.hour, now.minute) >= SETUP_EVENING and teamtasks.said_today() != today:
@@ -9471,6 +9475,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         await _order_seen(bot, key)
     except Exception:
         log.warning("Couldn't see how far the order's thread goes", exc_info=True)
+    await _order_mark(bot, payload.channel_id, key)
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
                 + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
@@ -9488,6 +9493,27 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await ack.edit(content=said)
         except Exception:
             await responder.send(said, quiet=True)
+
+
+async def _order_mark(bot, channel_id, message_id) -> bool:
+    """The gavel on the payment once its card is made: "can it add an emoji
+    to that payment that way i know? same emoji as leadlab_hammertime". RYTE's
+    own reactions never count as a gavel. Whether it went on."""
+    from .. import ordercards
+
+    try:
+        channel = bot.get_channel(int(channel_id)) or await bot.fetch_channel(int(channel_id))
+        here = getattr(getattr(channel, "guild", None), "id", None)
+        emojis = [one for one in getattr(bot, "emojis", None) or [] if ordercards.is_gavel(one)]
+        emojis.sort(key=lambda one: getattr(getattr(one, "guild", None), "id", None) != here)
+        if not emojis:
+            log.warning("No :%s: emoji where RYTE can use it", ordercards.GAVEL)
+            return False
+        await channel.get_partial_message(int(message_id)).add_reaction(emojis[0])
+        return True
+    except Exception:
+        log.warning("Couldn't put the gavel on the payment", exc_info=True)
+        return False
 
 
 def _payload_copy(payload, **changed):
@@ -9553,6 +9579,7 @@ async def _order_onto_card(bot, payload, key, responder, message, card, existing
     await _order_note(key, status="made", kind=card.get("kind", "fresh"), card_id=existing["id"], url=existing["url"],
                       name=existing["name"], client=card.get("client", ""), merged=True, link=link,
                       message_channel_id=str(payload.channel_id))
+    await _order_mark(bot, payload.channel_id, key)
     if responder is None:
         return
     when = "today" if card.get("kind") == "aged" else "this week"
@@ -10070,6 +10097,7 @@ async def _order_backfill(bot, responder: Responder, author) -> None:
                 await _order_seen(bot, key)
             except Exception:
                 log.warning("Couldn't see how far the order's thread goes", exc_info=True)
+            await _order_mark(bot, one.channel.id, key)
             made_lines.append(f"✅ {card['name']} — {made['url']}")
         except Exception as exc:
             made_lines.append(f"⚠ {card['client']}: {_readable(exc)}")

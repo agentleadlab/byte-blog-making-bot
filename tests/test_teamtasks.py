@@ -461,3 +461,8 @@ def test_a_thread_request_is_named_from_the_post_it_hangs_off():
 def test_the_6pm_card_comment_is_stopped():
     """"lets stop this" - the 🌙 list on the Ryte Checklist card."""
     assert client.TEAM_EVENING_NOTE is False
+
+
+def test_the_nudges_are_stopped():
+    """"it should also stop doing this now" - Still open with the team."""
+    assert client.TEAM_NUDGES is False

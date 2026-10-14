@@ -1591,3 +1591,33 @@ def test_payra_down_still_makes_the_aged_card(order, monkeypatch):
     assert asyncio.run(client._aged_from_invoice(_bot(_aged_post()), _aged_post(), wait=0)) == "made"
     assert len(order.made) == 1
     assert any("Couldn't read" in said for said, _view in _said(order))
+
+
+def test_the_gavel_goes_on_the_payment_once_its_card_is_made(order):
+    """"once ryte finished creating a card, can it add an emoji to that
+    payment that way i know? same emoji as leadlab_hammertime"."""
+    message = _message(thread=_notes("25 aged MTG, states AZ TX"))
+    reacted = []
+
+    class Partial:
+        def __init__(self, i):
+            self.i = i
+
+        async def add_reaction(self, emoji):
+            reacted.append((self.i, emoji.name))
+
+    message.channel.get_partial_message = Partial
+    message.channel.guild = SimpleNamespace(id=1)
+    bot = _bot(message)
+    bot.emojis = [SimpleNamespace(name="smile", guild=SimpleNamespace(id=1)),
+                  SimpleNamespace(name="leadlab_hammertime", guild=SimpleNamespace(id=2)),
+                  SimpleNamespace(name="leadlab_hammertime", guild=SimpleNamespace(id=1))]
+    asyncio.run(client._order_gavelled(bot, GAVEL))
+    assert len(order.made) == 1
+    assert reacted == [(900, "leadlab_hammertime")]
+    # RYTE's own gavel is never a gavel.
+    started = []
+    fake = SimpleNamespace(user=SimpleNamespace(id=RYTE), loop=SimpleNamespace(create_task=started.append))
+    asyncio.run(client.WilByteBot.on_raw_reaction_add(fake, SimpleNamespace(
+        user_id=RYTE, emoji=SimpleNamespace(name="leadlab_hammertime"), message_id=900, channel_id=700)))
+    assert started == []
