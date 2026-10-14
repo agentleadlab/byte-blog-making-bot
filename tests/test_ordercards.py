@@ -873,8 +873,9 @@ def test_backfill_makes_only_whats_missing_on_one_button(order, monkeypatch):
         who = names[message.id]
         kind = "aged" if who == "Ayden Escarrega" else "fresh"
         return ({"kind": kind, "client": who, "name": f"New Agent - {who}", "desc": "d", "shots": [],
-                 "fields": {"package": "VET", "leads": "20", "launch": "Tuesday, October 13"},
-                 "launch_iso": "2026-10-13"}, {}, None)
+                 "fields": {"package": "VET", "leads": "20", "launch": "Tuesday, October 13", "states": "TX, FL"},
+                 "source": f"NAME: {who}\nPRODUCT: VET\n20 vets TX, FL live today", "launch_iso": "2026-10-13"},
+                {}, None)
 
     async def payments(bot, day):
         return posts
