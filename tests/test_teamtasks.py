@@ -456,3 +456,8 @@ def test_a_thread_request_is_named_from_the_post_it_hangs_off():
     thread = SimpleNamespace(id=5, name="@here", parent=Parent())
     where = asyncio.run(client._where_with_context(thread))
     assert "NAME: Killian Cooper" in where and "@here" in where
+
+
+def test_the_6pm_card_comment_is_stopped():
+    """"lets stop this" - the 🌙 list on the Ryte Checklist card."""
+    assert client.TEAM_EVENING_NOTE is False

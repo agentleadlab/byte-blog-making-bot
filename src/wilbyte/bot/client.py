@@ -8293,6 +8293,10 @@ TEAM_REMINDERS_MOST = 2
 TEAM_REMIND_HOURS = (9, 18)
 #: How often open requests are looked at again.
 TEAM_TASKS_EVERY_SECONDS = 30 * 60
+#: The 6pm "🌙 Asked of the team and not done yet" comment on the Ryte
+#: Checklist card - "lets stop this". The items stay on the card, ticked as
+#: they're done, and the daytime pings in Ryte The Goat carry on.
+TEAM_EVENING_NOTE = False
 
 #: How often everybody scheduled on the hub is checked again.
 CHECKLIST_EVERY_SECONDS = 30 * 60
@@ -8861,7 +8865,7 @@ async def team_tasks_loop(bot: "WilByteBot") -> None:
             await _team_reminders(bot)
             now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
             today = _today(bot.config).isoformat()
-            if (now.hour, now.minute) >= SETUP_EVENING and teamtasks.said_today() != today:
+            if TEAM_EVENING_NOTE and (now.hour, now.minute) >= SETUP_EVENING and teamtasks.said_today() != today:
                 open_now = teamtasks.open_ones(await asyncio.to_thread(teamtasks.load))
                 if open_now:
                     text = "🌙 Asked of the team and not done yet:\n" + "\n".join(
