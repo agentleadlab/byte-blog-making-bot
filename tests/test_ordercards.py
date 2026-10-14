@@ -1581,3 +1581,13 @@ def test_a_forward_with_only_a_tag_on_it_is_a_note(monkeypatch):
     message = _message(thread=Thread())
     _text, _images, _thread, notes = asyncio.run(client._order_said(SimpleNamespace(), message, since=WHEN))
     assert notes == ["(forwarded) Hey Kharyl! For the fresh drip could you schedule it from 8am - 8pm M-F please!"]
+
+
+def test_payra_down_still_makes_the_aged_card(order, monkeypatch):
+    def down(config, **kw):
+        raise RuntimeError("Payra is down")
+
+    monkeypatch.setattr(jobs, "payra_invoice_note", down)
+    assert asyncio.run(client._aged_from_invoice(_bot(_aged_post()), _aged_post(), wait=0)) == "made"
+    assert len(order.made) == 1
+    assert any("Couldn't read" in said for said, _view in _said(order))

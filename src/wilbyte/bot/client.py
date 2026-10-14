@@ -9250,8 +9250,17 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
         note = await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
                                                amount=amount))
     except Exception:
+        # Payra down is no reason for no card: made from the payment and the
+        # thread, and said - a silent "failed" left nothing to see.
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
-        return "failed"
+        note = None
+        responder = _order_responder(bot)
+        if responder is not None:
+            try:
+                await responder.send(f"⚠ Couldn't read **{name or 'an aged order'}**'s Payra invoice note — making the "
+                                     f"card from the payment and its thread. Check its states.", quiet=True)
+            except Exception:
+                pass
     # "aged leads should be automatic add with states, thread or no thread
     # while relying on invoice if it has no states/thread added": the thread
     # first, the invoice's note beside it, and the card made either way.
