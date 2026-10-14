@@ -8970,8 +8970,10 @@ async def _team_list(responder: Responder, bot=None) -> None:
 
 #: One gavel at a time: a double-click mustn't make two cards.
 _ORDER_LOCK = asyncio.Lock()
-#: Notes come in bursts. A card is updated this long after the last one.
-ORDER_NOTES_SETTLE_SECONDS = 120
+#: Notes come in bursts. A card is updated this long after the last one -
+#: each new note starts it again, so a burst is still one update. Two
+#: minutes was too slow: "if it will, it should be faster".
+ORDER_NOTES_SETTLE_SECONDS = 30
 #: {order: the update waiting for the notes to settle}.
 _ORDER_PENDING: dict = {}
 #: {order: the "Making the card…" message, to turn into the card's link}.
