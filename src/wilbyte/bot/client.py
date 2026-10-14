@@ -9213,6 +9213,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             card["kind"] = "fresh"
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
+    # Another payment for an order that has its card already: on that card.
+    if kind == "fresh" and card.get("client") and not getattr(payload, "separate", False):
+        try:
+            existing = await asyncio.to_thread(jobs.recent_card_for, bot.config, card["client"])
+        except Exception:
+            log.warning("Couldn't look for their card", exc_info=True)
+            existing = None
+        if existing is not None:
+            await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
+            return
     try:
         made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card)
     except Exception as exc:
@@ -9242,6 +9252,58 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await ack.edit(content=said)
         except Exception:
             await responder.send(said, quiet=True)
+
+
+_AMOUNT = re.compile(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
+_PRODUCT = re.compile(r"PRODUCT:\**\s*([^\n]*)", re.IGNORECASE)
+
+
+async def _order_onto_card(bot, payload, key, responder, message, card, existing, link) -> None:
+    """"bram paid alot of time for the same order" - another payment from a
+    client whose New Agent card is from this week goes on that card as a
+    comment, not a second card. A button makes one anyway, for an order that
+    really is new."""
+    paid = _all_of_it(message)
+    amount = _AMOUNT.search(paid)
+    product = _PRODUCT.search(paid)
+    line = ("💰 Another payment for this order: "
+            + (f"${amount.group(1)}" if amount else "amount not given")
+            + (f" · {product.group(1).strip()}" if product and product.group(1).strip() else "")
+            + f"\n{link}")
+    await asyncio.to_thread(jobs.order_payment_comment, bot.config, existing["id"], line)
+    await _order_note(key, status="made", kind="fresh", card_id=existing["id"], url=existing["url"],
+                      name=existing["name"], client=card.get("client", ""), merged=True, link=link,
+                      message_channel_id=str(payload.channel_id))
+    if responder is None:
+        return
+    said = (f"🔨 **{card.get('client')}** already has a card from this week — this payment went on it as a comment, "
+            f"no second card.\n{existing['url']}")
+    ack = _ORDER_ACKS.pop(key, None)
+    view = views.ConfirmView(requester_id=None, timeout=12 * 60 * 60, label="Make a separate card", emoji="🔨")
+    try:
+        if ack is None or not hasattr(ack, "edit"):
+            raise LookupError
+        await ack.edit(content=said, view=view)
+    except Exception:
+        await responder.send(said, view=view, quiet=True)
+    await view.wait()
+    if not view.confirmed:
+        return
+    # A new order after all: forgotten as merged, and made as a card of its own.
+    await _order_forget_made(key)
+    await _order_make(bot, SimpleNamespace(
+        message_id=payload.message_id, channel_id=payload.channel_id, user_id=payload.user_id,
+        guild_id=getattr(payload, "guild_id", None), member=getattr(payload, "member", None), separate=True),
+        key, responder)
+
+
+async def _order_forget_made(key: str) -> None:
+    from .. import ordercards
+
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        held.pop(key, None)
+        await asyncio.to_thread(ordercards.save, held)
 
 
 async def _order_note(key: str, **fields) -> None:

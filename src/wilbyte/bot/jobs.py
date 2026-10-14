@@ -12347,8 +12347,39 @@ def new_agent_cards(config: Config) -> list[dict]:
         cards = client.board_cards(config.secrets.trello_board_id)
     finally:
         client.close()
-    return [{"name": str(one.get("name") or ""), "url": str(one.get("shortUrl") or one.get("url") or "")}
+    return [{"id": str(one.get("id") or ""), "name": str(one.get("name") or ""),
+             "url": str(one.get("shortUrl") or one.get("url") or "")}
             for one in cards if re.match(r"\s*new\s*agent\b", str(one.get("name") or ""), re.IGNORECASE)]
+
+
+def card_made_at(card_id: str):
+    """When a Trello card was made - its id starts with the time, in seconds."""
+    try:
+        return datetime.fromtimestamp(int(str(card_id)[:8], 16), tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+#: How recent a client's New Agent card has to be for another payment to be
+#: the same order - "bram paid alot of time for the same order".
+SAME_ORDER_DAYS = 7
+
+
+def recent_card_for(config: Config, name: str, *, now=None) -> dict | None:
+    """Their New Agent card from the last week, if there is one - another
+    payment then goes on it rather than making a second card."""
+    now = now or datetime.now(timezone.utc)
+    cards = [one for one in new_agent_cards(config)
+             if (card_made_at(one["id"]) or now) >= now - timedelta(days=SAME_ORDER_DAYS)]
+    return has_new_agent_card(name, cards)
+
+
+def order_payment_comment(config: Config, card_id: str, text: str) -> None:
+    client = open_trello(config)
+    try:
+        client.add_comment(card_id, text)
+    finally:
+        client.close()
 
 
 def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:

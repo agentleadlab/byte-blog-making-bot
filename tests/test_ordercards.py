@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -225,6 +225,9 @@ def order(monkeypatch):
 
     monkeypatch.setattr(jobs, "read_order", reading)
     monkeypatch.setattr(jobs, "order_card_make", making)
+    held.existing, held.comments = None, []
+    monkeypatch.setattr(jobs, "recent_card_for", lambda config, name, now=None: held.existing)
+    monkeypatch.setattr(jobs, "order_payment_comment", lambda config, card_id, text: held.comments.append((card_id, text)))
     monkeypatch.setattr(jobs, "order_template", lambda config, kind: {"id": f"TPL-{kind}", "name": "x", "desc": "", "url": "u"})
     monkeypatch.setattr(client, "_board_responder", lambda bot: held.responder)
     monkeypatch.setattr(client, "_today", lambda config: date(2026, 10, 13))
@@ -950,3 +953,44 @@ def test_everyones_gavel_counts_in_growth_but_not_elsewhere_and_never_a_bots(mon
     assert not client._gavel_counts(bot, gavel(77, 2, is_bot=True)), "a bot's"
     monkeypatch.setattr(client, "GAVEL_EVERYONE", False)
     assert not client._gavel_counts(bot, gavel(KHARYL, 2))
+
+
+
+# ------------------------------------------------------------- paid more than once
+
+def test_another_payment_for_this_weeks_order_goes_on_its_card(order):
+    """"bram paid alot of time for the same order"."""
+    order.kind, order.pressed = "fresh", False
+    order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
+                      "url": "https://trello.com/c/bram"}
+    message = _message("New Payment | Payra\nNAME: Bram Gutierrez\nAMOUNT: $372.6\nPRODUCT: Text-Verified Trucker IUL")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert order.made == [], "a second card for the same order"
+    [(card_id, text)] = order.comments
+    assert card_id == "5f0000000000000000000001"
+    assert text.startswith("💰 Another payment for this order: $372.6 · Text-Verified Trucker IUL")
+    said = [one for one in _said(order) if one[1] is not None][0][0]
+    assert "already has a card from this week" in said and "https://trello.com/c/bram" in said
+    assert ordercards.load()["900"]["merged"] is True
+
+
+def test_a_separate_card_when_its_a_new_order_after_all(order):
+    order.kind, order.pressed = "fresh", True
+    order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
+                      "url": "https://trello.com/c/bram"}
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert len(order.comments) == 1 and [one[0] for one in order.made] == ["fresh"]
+    assert ordercards.load()["900"].get("merged") is None and ordercards.load()["900"]["card_id"] == "card1"
+
+
+def test_only_this_weeks_card_counts(monkeypatch):
+    now = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+
+    def made(days_ago):
+        return format(int((now - timedelta(days=days_ago)).timestamp()), "x") + "0" * 16
+
+    monkeypatch.setattr(jobs, "new_agent_cards", lambda config: [
+        {"id": made(30), "name": "New Agent - Bram Gutierrez", "url": "old"},
+        {"id": made(1), "name": "New Agent - Killian Cooper", "url": "new"}])
+    assert jobs.recent_card_for(CONFIG, "Bram Gutierrez", now=now) is None, "last month's order is its own"
+    assert jobs.recent_card_for(CONFIG, "Killian Cooper", now=now)["url"] == "new"
