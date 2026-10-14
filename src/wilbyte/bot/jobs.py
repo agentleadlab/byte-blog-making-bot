@@ -12283,7 +12283,7 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
         if where is None:
             raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
                              + (f" called “{wanted}”" if wanted else "") + ".")
-        made = client.create_card(str(where["id"]), card["name"])
+        made = _create_once(client, str(where["id"]), card["name"])
         card_id = str(made.get("id") or "")
         if card.get("desc"):
             client.set_description(card_id, card["desc"])
@@ -12291,6 +12291,36 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
                 "list": str(where.get("name") or "")}
     finally:
         client.close()
+
+
+#: Waits before asking Trello again to make a card it answered 5xx to.
+CREATE_PAUSES = (5.0, 15.0, 30.0)
+
+
+def _create_once(client, list_id: str, name: str, *, now=None) -> dict:
+    """A card made, through Trello's "having a moment": Blake Settle's came
+    back HTTP 503 and wasn't made. A 5xx can still have made it, so the list
+    is looked at for it before asking again - one card, never two."""
+    import time
+
+    from .. import trello
+
+    started = (now or datetime.now(timezone.utc)) - timedelta(seconds=30)
+    for pause in (*CREATE_PAUSES, None):
+        try:
+            return client.create_card(list_id, name)
+        except trello.TrelloError as exc:
+            if pause is None or not re.search(r"HTTP 5\d\d", str(exc)):
+                raise
+        time.sleep(pause)
+        for one in client.list_cards(list_id):
+            try:
+                made = datetime.fromtimestamp(int(str(one.get("id") or "")[:8], 16), timezone.utc)
+            except ValueError:
+                continue
+            if str(one.get("name") or "") == name and made >= started:
+                return one
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def order_card_move(config: Config, card_id: str, kind: str) -> str:

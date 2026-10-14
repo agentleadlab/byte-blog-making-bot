@@ -1310,7 +1310,7 @@ def test_a_card_that_matches_the_order_passes():
 @pytest.mark.parametrize("fields, said", [
     ({"states": "TX, FL, SC, MO"}, "MO is on the card but isn't in the order"),
     ({"states": "TX, FL, SC"}, "the order also says GA"),
-    ({"package": "Text-Verified Veteran"}, "the payment says “Text-Verified Trucker IUL”"),
+    ({"package": "Text-Verified Veteran"}, "the payment post says “Text-Verified Trucker IUL”"),
     ({"leads": "25"}, "25 isn't in the order"),
     ({"leads": "No cap (ad spend)"}, "doesn't say Phoenix"),
     ({"email": "someone@example.com"}, "someone@example.com isn't in the order"),
@@ -1918,3 +1918,41 @@ def test_a_card_that_turns_out_aged_moves_to_aged_leads_order_done(order, monkey
     assert any("moved to Aged Leads Order Done" in said for said, _v in order.responder.sent)
     asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
     assert len(moved) == 1, "moved again"
+
+
+def test_a_503_making_a_card_is_tried_again_without_making_two(monkeypatch):
+    """Blake Settle: POST /cards -> HTTP 503, and no card."""
+    from datetime import datetime, timezone
+    from wilbyte import trello
+
+    monkeypatch.setattr(jobs, "CREATE_PAUSES", (0.0, 0.0, 0.0))
+    now = datetime(2026, 10, 14, 23, 40, tzinfo=timezone.utc)
+    stamp = f"{int(now.timestamp()):08x}" + "0" * 16
+
+    class Flaky:
+        def __init__(self, made_anyway):
+            self.tries, self.made_anyway = 0, made_anyway
+
+        def create_card(self, list_id, name):
+            self.tries += 1
+            if self.tries == 1:
+                raise trello.TrelloError("POST /cards -> HTTP 503: ")
+            return {"id": "fresh", "shortUrl": "u2"}
+
+        def list_cards(self, list_id):
+            return [{"id": stamp, "name": "New Agent - Blake Settle", "shortUrl": "u1"}] if self.made_anyway else \
+                [{"id": "0" * 24, "name": "New Agent - Blake Settle"}]
+
+    retried = Flaky(made_anyway=False)
+    assert jobs._create_once(retried, "q", "New Agent - Blake Settle", now=now)["id"] == "fresh"
+    assert retried.tries == 2
+    there = Flaky(made_anyway=True)
+    assert jobs._create_once(there, "q", "New Agent - Blake Settle", now=now)["id"] == stamp
+    assert there.tries == 1, "made a second card"
+
+    class Refused(Flaky):
+        def create_card(self, list_id, name):
+            raise trello.TrelloError("POST /cards -> HTTP 400: invalid")
+
+    with pytest.raises(trello.TrelloError):
+        jobs._create_once(Refused(False), "q", "x", now=now)

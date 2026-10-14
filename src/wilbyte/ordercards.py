@@ -317,7 +317,9 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         if not aged_paid and kind == "aged" and family:
             wrong.append(f"Lead type: the payment is for “{product}” - not aged - but this reads as an aged order")
         if package and setupcheck.same_product(package, product) is False:
-            wrong.append(f"Lead type: the card says “{package}”, the payment says “{product}”")
+            wrong.append(f"Lead type: the payment post says “{product}” but the order"
+                         + (" (its Payra invoice)" if "payra invoice note" in source.casefold() else "")
+                         + f" says “{package}” — which one did they buy?")
     if not package:
         missing.append("no lead type")
 
