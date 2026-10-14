@@ -1415,3 +1415,116 @@ def test_a_different_order_from_the_same_person_gets_its_own_card(order):
     order.same = False
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert order.comments == [] and [one[0] for one in order.made] == ["fresh"]
+
+
+# ------------------------------------------------- notes a card missed
+
+def _made(key, **more):
+    from datetime import datetime, timezone
+    return {"status": "made", "card_id": f"c{key}", "name": f"Aged Leads - {key}", "url": f"https://trello.com/c/{key}",
+            "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "thread_id": key, **more}
+
+
+def _threads(monkeypatch, last):
+    async def thread(bot, key, order):
+        return SimpleNamespace(parent=object(), last_message_id=last.get(key)) if key in last else None
+
+    monkeypatch.setattr(client, "_order_thread", thread)
+
+
+def test_a_note_lost_to_a_restart_is_found_by_the_sweep(monkeypatch):
+    """Leo Fonseca: Faith's note came in, RYTE restarted inside the two
+    minutes, and the card never heard about it."""
+    ordercards.save({"950": _made("950", seen_upto="1000"), "951": _made("951", seen_upto="2000"),
+                     "952": _made("952", seen_upto="10", merged=True)})
+    _threads(monkeypatch, {"950": 1001, "951": 2000, "952": 99})
+    refreshed = []
+
+    async def refresh(bot, key, *, settle=None):
+        refreshed.append((key, settle))
+        return "updated"
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == ["950"]
+    assert refreshed == [("950", 0)]
+
+
+def test_the_first_sweep_only_marks_where_old_orders_are(monkeypatch):
+    ordercards.save({"950": _made("950")})
+    _threads(monkeypatch, {"950": 1234})
+
+    async def refresh(bot, key, *, settle=None):
+        raise AssertionError("an old card was rewritten on the first sweep")
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == []
+    assert ordercards.load()["950"]["seen_upto"] == "1234"
+
+
+def test_old_orders_and_ones_already_waiting_are_left_to_themselves(monkeypatch):
+    ordercards.save({"950": _made("950", seen_upto="1", made_at="2026-01-01T00:00:00+00:00"),
+                     "951": _made("951", seen_upto="1")})
+    _threads(monkeypatch, {"950": 5, "951": 5})
+    monkeypatch.setitem(client._ORDER_PENDING, "951", SimpleNamespace(cancel=lambda: None))
+
+    async def refresh(bot, key, *, settle=None):
+        raise AssertionError(key)
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == []
+
+
+def test_a_failed_update_is_said_once_and_given_up_after_three_tries(monkeypatch):
+    ordercards.save({"950": _made("950", seen_upto="1", message_channel_id="700")})
+    _threads(monkeypatch, {"950": 5})
+    sent = []
+
+    class Responder:
+        async def send(self, text, **kw):
+            sent.append(text)
+
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+
+    def broken(i):
+        raise RuntimeError("Trello said no")
+
+    bot = SimpleNamespace(config=CONFIG, get_channel=broken)
+    for _ in range(3):
+        assert asyncio.run(client._order_refresh(bot, "950", settle=0)) == "failed"
+    assert len(sent) == 1 and "Couldn't update **Aged Leads - 950**" in sent[0] and "update card" in sent[0]
+    assert ordercards.load()["950"]["fails"] == 3
+
+    async def refresh(bot, key, *, settle=None):
+        raise AssertionError("tried a fourth time")
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == []
+    # A newer note is a fresh try.
+    _threads(monkeypatch, {"950": 6})
+    monkeypatch.setattr(client, "_order_refresh", lambda bot, key, settle=None: asyncio.sleep(0, "updated"))
+    assert asyncio.run(client._order_sweep(SimpleNamespace())) == ["950"]
+
+
+def test_update_card_reads_the_thread_again(monkeypatch):
+    from wilbyte.bot import mentions
+
+    link = "https://discord.com/channels/1/700/950"
+    assert mentions.parse(f"update card {link}").action == "orderrefresh"
+    assert mentions.parse(f"refresh order {link}").action == "orderrefresh"
+    assert mentions.parse(f"order {link}").action == "orderlink"
+    ordercards.save({"950": _made("950")})
+    sent, refreshed = [], []
+
+    class Responder:
+        async def send(self, text, **kw):
+            sent.append(text)
+
+    async def refresh(bot, key, *, settle=None):
+        refreshed.append((key, settle))
+        return "same"
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), f"update card {link}"))
+    assert refreshed == [("950", 0)] and "Nothing new" in sent[-1]
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "update card https://discord.com/channels/1/700/4"))
+    assert "haven't made a card" in sent[-1]

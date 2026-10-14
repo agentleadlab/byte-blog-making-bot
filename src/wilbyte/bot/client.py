@@ -383,6 +383,10 @@ class WilByteBot(discord.Client):
                     _also_running(self.loop.create_task(setup_check_pass_loop(self)))
             if getattr(self.config.secrets, "trello_key", None) and TEAM_TASKS_ON:
                 _also_running(self.loop.create_task(team_tasks_loop(self)))
+            # Notes in an order's thread the card missed - a restart in the
+            # two minutes after one is posted loses its update otherwise.
+            if getattr(self.config.secrets, "trello_key", None):
+                _also_running(self.loop.create_task(order_sweep_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -1750,6 +1754,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
             if request.action == "ordertemplate":
                 kind, _, link = (request.brief or "").partition(" ")
                 await _order_template_set(responder, kind, link, config)
+                return
+
+            if request.action == "orderrefresh":
+                await _order_update_now(bot, responder, request.brief or "")
                 return
 
             if request.action == "orderlink":
@@ -9448,6 +9456,10 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                       made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
+    try:
+        await _order_seen(bot, key)
+    except Exception:
+        log.warning("Couldn't see how far the order's thread goes", exc_info=True)
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
                 + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
@@ -9603,6 +9615,115 @@ def _order_note_posted(bot, message) -> None:
             _ORDER_PENDING[key] = bot.loop.create_task(_order_refresh(bot, key))
 
 
+async def _order_thread(bot, key: str, order: dict):
+    """The thread under an order's post - its id is the post's - or None."""
+    for wanted in dict.fromkeys(one for one in (str(order.get("thread_id") or ""), key) if one):
+        found = bot.get_channel(int(wanted))
+        if found is None:
+            try:
+                found = await bot.fetch_channel(int(wanted))
+            except Exception:
+                found = None
+        if found is not None and getattr(found, "parent", None) is not None:
+            return found
+    return None
+
+
+async def _order_last(bot, key: str, order: dict) -> str:
+    """The newest message in an order's thread - "" without one."""
+    thread = await _order_thread(bot, key, order)
+    last = getattr(thread, "last_message_id", None) if thread is not None else None
+    return str(last or "")
+
+
+async def _order_seen(bot, key: str) -> None:
+    """How far into its thread an order's card has read - for the sweep."""
+    from .. import ordercards
+
+    last = await _order_last(bot, key, ordercards.load().get(key) or {})
+    if last:
+        await _order_note(key, seen_upto=last, failed_upto="", fails=0)
+
+
+#: Tries at one note that won't go on a card before the sweep leaves it.
+ORDER_SWEEP_TRIES = 3
+
+
+#: How often order threads are looked through for notes a card missed.
+ORDER_SWEEP_SECONDS = 5 * 60
+#: How long an order's thread is watched after its card is made.
+ORDER_SWEEP_DAYS = 3
+
+
+async def _order_sweep(bot) -> list[str]:
+    """Notes in an order's thread that its card hasn't read - the two minutes
+    after Faith's note on Leo Fonseca were cut short by a restart, and nothing
+    came back for it. Each order whose thread has a message past the last
+    one read gets its card updated. The orders updated."""
+    from .. import ordercards
+
+    held = await asyncio.to_thread(ordercards.load)
+    now = datetime.now(timezone.utc)
+    due = []
+    for key, order in held.items():
+        if not isinstance(order, dict) or order.get("status") != "made" or order.get("merged"):
+            continue
+        try:
+            made = datetime.fromisoformat(str(order.get("made_at") or ""))
+        except ValueError:
+            continue
+        if now - made > timedelta(days=ORDER_SWEEP_DAYS) or key in _ORDER_PENDING:
+            continue
+        last = await _order_last(bot, key, order)
+        if not last:
+            continue
+        if not order.get("seen_upto"):
+            # Never looked at before this sweep began: where it is now is
+            # read, not reread - old cards aren't rewritten in a burst.
+            await _order_note(key, seen_upto=last)
+            continue
+        if order.get("failed_upto") == last and int(order.get("fails") or 0) >= ORDER_SWEEP_TRIES:
+            continue
+        if int(last) > int(order["seen_upto"]):
+            due.append(key)
+    for key in due:
+        await _order_refresh(bot, key, settle=0)
+    return due
+
+
+async def order_sweep_loop(bot: "WilByteBot") -> None:
+    await asyncio.sleep(60)
+    while not bot.is_closed():
+        try:
+            await _order_sweep(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("The order thread sweep failed; trying again next time")
+        await asyncio.sleep(ORDER_SWEEP_SECONDS)
+
+
+async def _order_update_now(bot, responder: Responder, said: str) -> None:
+    """"@Ryte update card <the order's link>" - its card re-read now."""
+    from .. import ordercards
+
+    found = _MESSAGE_LINK.search(said or "")
+    if not found:
+        await responder.send("Send the order's link: right-click the payment post → **Copy Message Link**.")
+        return
+    key = found.group(3)
+    order = ordercards.load().get(key) or {}
+    if order.get("status") != "made":
+        await responder.send("I haven't made a card for that order - gavel it, or `@Ryte order <link>`.")
+        return
+    await responder.send(f"📝 Reading {order.get('name') or 'the order'} again…")
+    done = await _order_refresh(bot, key, settle=0)
+    if done == "same":
+        await responder.send(f"Nothing new for the card — it already says what the order says.\n{order.get('url', '')}")
+    elif done == "failed":
+        await responder.send("⚠ Couldn't update it — the reason's in #trello-manager.")
+
+
 async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     """The card brought up to date with the order's notes."""
     from .. import ordercards
@@ -9625,9 +9746,26 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))
-    except Exception:
+    except Exception as exc:
         log.exception("Couldn't update the order card")
+        # Said, not only logged - "why isnt this being updated then?" - once
+        # for each new note; the sweep tries it again quietly.
+        try:
+            last = await _order_last(bot, key, order)
+        except Exception:
+            last = ""
+        fails = int(order.get("fails") or 0) + 1 if last and order.get("failed_upto") == last else 1
+        await _order_note(key, failed_upto=last, fails=fails)
+        responder = _order_responder(bot)
+        if responder is not None and fails == 1:
+            try:
+                await responder.send(f"⚠ Couldn't update **{order.get('name') or 'an order card'}** from the new notes: "
+                                     f"{_readable(exc)}\n{order.get('url', '')}\n-# `@Ryte update card <the order's link>` "
+                                     f"tries again.")
+            except Exception:
+                pass
         return "failed"
+    await _order_seen(bot, key)
     if card.get("shots"):
         try:
             more = await asyncio.to_thread(partial(jobs.order_card_attach, bot.config, order["card_id"], card["shots"],
@@ -9899,6 +10037,10 @@ async def _order_backfill(bot, responder: Responder, author) -> None:
                               made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                               written=card["desc"], client=card["client"], link=str(one.jump_url), attached=attached,
                               thread_id=str(thread_id or ""), message_channel_id=str(one.channel.id))
+            try:
+                await _order_seen(bot, key)
+            except Exception:
+                log.warning("Couldn't see how far the order's thread goes", exc_info=True)
             made_lines.append(f"✅ {card['name']} — {made['url']}")
         except Exception as exc:
             made_lines.append(f"⚠ {card['client']}: {_readable(exc)}")
