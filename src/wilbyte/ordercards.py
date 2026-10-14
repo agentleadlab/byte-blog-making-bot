@@ -251,6 +251,21 @@ def _state_lines(source: str) -> list[str]:
     return found
 
 
+_STAMP = re.compile(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\]\s*", re.MULTILINE)
+_WHEN = re.compile(
+    r"\b(?:today|tonight|tomorrow|tmrw?|asap|live|launch\w*|start\w*|"
+    r"(?:mon|tues|wednes|thurs|fri|satur|sun)day|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+    r"january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\.?|\b\d{1,2}/\d{1,2}\b|\b\d{4}-\d\d-\d\d\b",
+    re.IGNORECASE)
+
+
+def says_when(source: str) -> bool:
+    """Whether the order says anything about when - leaving out the time
+    each message was posted, which RYTE adds as it reads them."""
+    return bool(_WHEN.search(_STAMP.sub("", str(source or ""))))
+
+
 def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     """(what doesn't add up - the card isn't made without a person saying so,
     what's only missing - said when it's made). Every value has to be in the
@@ -333,6 +348,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             day = None
         if day is not None and not (today - timedelta(days=1) <= day <= today + timedelta(days=45)):
             wrong.append(f"Launch date: {day:%a %m/%d/%Y} is too far from today to be right")
+        elif day is not None and kind == "fresh" and not says_when(source):
+            # Blaze Lubbers: nothing said when, and the card said "today" -
+            # the day the payment was posted.
+            wrong.append(f"Launch date: {day:%a %m/%d} is on the card but the order doesn't say when they launch")
     elif kind == "fresh":
         missing.append("no launch date")
     return wrong, missing

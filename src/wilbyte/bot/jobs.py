@@ -12196,7 +12196,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "like) buy ad spend, not a lead count: put 'No cap (ad spend)'. Empty if it isn't said.")},
         "launch": {"type": "string", "description": (
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
-            "when the note was written.")},
+            "when the note was written. Empty when nothing in the order says when they launch - never the "
+            "day it was paid or posted.")},
         "screenshots": {"type": "array", "items": {"type": "string"}, "description": (
             "For each screenshot the team posted in the notes - '[screenshot 1]' is the first image shown, "
             "'[screenshot 2]' the second - what it means for the setup, written as an instruction to the "
@@ -12251,6 +12252,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     # What the order says, to hold what was read up against - the text, and
     # what each screenshot was read as.
     source = text + "\n" + "\n".join(str(one or "") for one in got.get("screenshots") or [])
+    from .. import ordercards
+
+    if fields.get("launch") and not ordercards.says_when(source):
+        # Nothing said when they launch: blank, not the day it was paid -
+        # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
+        fields["launch"], launch_iso = "", ""
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",
@@ -12497,7 +12504,7 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
     found = []
     for invoice in (data.get("invoices") or {}).values():
         theirs = (email and invoice.get("email") == email) or clearout.name_match(name, invoice.get("name", "")) >= 2
-        if not theirs or not str(invoice.get("notes") or "").strip():
+        if not theirs or not invoice_said(invoice):
             continue
         try:
             made = datetime.fromisoformat(str(invoice.get("created") or invoice.get("updated") or "").replace("Z", "+00:00"))
@@ -12511,7 +12518,23 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
     if not found:
         return ""
     found.sort(key=lambda one: (one[0], one[1]), reverse=True)
-    return str(found[0][2].get("notes") or "").strip()
+    return invoice_said(found[0][2])
+
+
+def invoice_said(invoice: dict) -> str:
+    """What an invoice says about the order: its note, its description and
+    its lines - "the information is on invoice" (Blaze Lubbers)."""
+    from .. import payraapi
+
+    note = str(invoice.get("notes") or "").strip()
+    about = str(invoice.get("description") or "").strip()
+    lines = [payraapi.line_text(one) for one in invoice.get("lines") or []]
+    lines = [one for one in lines if one.strip()]
+    if not (note or about):
+        return ""
+    return "\n".join(bit for bit in (
+        note, f"Description: {about}" if about and about not in note else "",
+        "Lines: " + "; ".join(lines) if lines else "") if bit)
 
 
 

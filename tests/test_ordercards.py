@@ -1848,3 +1848,42 @@ def test_a_payment_payra_wont_hand_over_by_id_is_read_from_the_saved_copy(monkey
     monkeypatch.setattr(payraapi, "load", lambda: {"payments": {"pay9": {"id": "pay9", "status": "Settled"}}})
     config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
     assert jobs.payment_settled(jobs.payra_payment_now(config, "pay9"))
+
+
+def test_a_launch_date_the_order_never_gives_isnt_made_up():
+    """Blaze Lubbers: the card said "Wednesday, October 14" - the day paid."""
+    paid = "[10/14 03:24PM] LeadLab: New Payment | Payra\nNAME: Blaze Lubbers\nEMAIL: lubbersllc@gmail.com\nPRODUCT: VET"
+    assert not ordercards.says_when(paid)
+    assert not ordercards.says_when("[10/14 03:24PM] LeadLab: NAME: Monica Sunderland\nEMAIL: keegan.sunny@gmail.com")
+    assert ordercards.says_when(paid + "\n[10/14 03:30PM] Kharyl: live tomorrow")
+    assert ordercards.says_when(paid + "\nPayra invoice note: 50 VET FL TX, start Fri 10/16")
+    assert ordercards.says_when("launch Oct. 16")
+    card = {"kind": "fresh", "source": paid, "launch_iso": "2026-10-14",
+            "fields": {"states": "", "package": "VET", "leads": "", "launch": "Wednesday, October 14"}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 14))
+    assert any("doesn't say when" in one for one in wrong)
+
+
+def test_the_invoice_is_read_for_a_gavelled_new_agent(order, monkeypatch):
+    """"the information is on ... invoice"."""
+    order.kind = "fresh"
+    looked = []
+
+    def note(config, *, name, email="", amount="", now=None):
+        looked.append((name, amount))
+        return "50 VET, FL TX GA, launch Fri 10/16"
+
+    monkeypatch.setattr(jobs, "payra_invoice_note", note)
+    message = _message("New Payment | Payra\nNAME: Blaze Lubbers\nEMAIL: lubbersllc@example.com\nAMOUNT: $1966.5\n"
+                       "PRODUCT: VET")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert looked == [("Blaze Lubbers", "1966.5")]
+    assert "Payra invoice note: 50 VET, FL TX GA, launch Fri 10/16" in order.reads[0]
+    assert ordercards.load()["900"]["extra_notes"] == ["Payra invoice note: 50 VET, FL TX GA, launch Fri 10/16"]
+
+
+def test_what_an_invoice_says_is_its_note_description_and_lines():
+    said = jobs.invoice_said({"notes": "FL TX GA", "description": "Launch Friday",
+                              "lines": [{"name": "VET Leads", "quantity": 50, "price": 39.33}]})
+    assert said == "FL TX GA\nDescription: Launch Friday\nLines: VET Leads × 50 @ $39.33"
+    assert jobs.invoice_said({"notes": "", "description": "", "lines": [{"name": "VET"}]}) == ""

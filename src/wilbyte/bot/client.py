@@ -9391,6 +9391,12 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     try:
         channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
         message = await channel.fetch_message(payload.message_id)
+        # "the information is on ... invoice": a gavelled order's Payra
+        # invoice read with it, new agent or aged, as the invoice path does.
+        if not getattr(payload, "extra_notes", ()):
+            note = await _order_invoice_note(bot, message)
+            if note:
+                payload = _payload_copy(payload, extra_notes=(f"Payra invoice note: {note}",))
         card, examples, thread_id = await _order_read(bot, message, extra=getattr(payload, "extra_notes", ()))
     except Exception as exc:
         log.exception("Couldn't read the gavelled order")
@@ -9558,6 +9564,22 @@ PARKED_LIST = "Franklin (Admin)"
 #: How often a held card's payment is looked at, and for how long.
 BANK_CHECK_SECONDS = 10 * 60
 BANK_WATCH_DAYS = 14
+
+
+async def _order_invoice_note(bot, message) -> str:
+    """The Payra invoice's note behind a payment post, or ""."""
+    said = _all_of_it(message)
+    if "payra" not in said.casefold():
+        return ""
+    name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
+    email = (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *")
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    try:
+        return await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
+                                               amount=amount))
+    except Exception:
+        log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
+        return ""
 
 
 async def _order_payment(bot, message) -> tuple[dict | None, bool]:
