@@ -12535,3 +12535,50 @@ def payra_invoice_note_fields(config: Config, name: str, *, now=None) -> list[tu
             after = onward
     found.sort(reverse=True)
     return [(label, fields) for _when, label, fields in found[:5]]
+
+
+_MONTH_DAY = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b|\b(\d{1,2})/(\d{1,2})\b",
+                        re.IGNORECASE)
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
+
+def _month_day(said: str):
+    """(month, day) out of "Friday, October 16" or "10/16" - or None."""
+    found = _MONTH_DAY.search(str(said or ""))
+    if not found:
+        return None
+    if found.group(1):
+        return _MONTHS.index(found.group(1)[:3].casefold()) + 1, int(found.group(2))
+    return int(found.group(3)), int(found.group(4))
+
+
+def _desc_field(desc: str, *labels: str) -> str:
+    for label in labels:
+        found = re.search(rf"^\s*{label}\s*:[ \t]*(.*)$", str(desc or ""), re.IGNORECASE | re.MULTILINE)
+        if found and found.group(1).strip():
+            return found.group(1).strip()
+    return ""
+
+
+def same_order(config: Config, existing: dict, card: dict) -> bool:
+    """Whether another payment is for the order that already has this card -
+    "same person different orders different live dates" are not. The same
+    lead type and the same launch date, as far as either says: a payment
+    with nothing new said about it goes on the card it belongs to."""
+    from .. import setupcheck
+
+    client = open_trello(config)
+    try:
+        desc = str(client.card_detail(existing["id"]).get("desc") or "")
+    finally:
+        client.close()
+    fields = card.get("fields") or {}
+    had_type = _desc_field(desc, r"Lead Type/Package Selected", r"Lead Type")
+    if had_type and fields.get("package") and setupcheck.same_product(fields["package"], had_type) is False \
+            and setupcheck.same_product(had_type, fields["package"]) is False:
+        return False
+    had_launch = _month_day(_desc_field(desc, r"Launch Date"))
+    new_launch = _month_day(fields.get("launch") or "") or _month_day(card.get("launch_iso", "")[5:].replace("-", "/"))
+    if had_launch and new_launch and had_launch != new_launch:
+        return False
+    return True

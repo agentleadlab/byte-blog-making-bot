@@ -9409,8 +9409,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             log.warning("Couldn't look for their card", exc_info=True)
             existing = None
         if existing is not None:
-            await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
-            return
+            # Their card, but is it this order? A different lead type or live
+            # date is a new order of theirs, with a card of its own.
+            try:
+                same = await asyncio.to_thread(jobs.same_order, bot.config, existing, card)
+            except Exception:
+                log.warning("Couldn't read their card to compare", exc_info=True)
+                same = True
+            if same:
+                await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
+                return
     # "Be Sure to not fail here": what was read, held up against the order.
     # Anything that doesn't add up and the card waits for a person.
     wrong, missing = ordercards.doubts(card, today=_today(bot.config))

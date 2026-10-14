@@ -227,6 +227,8 @@ def order(monkeypatch):
     monkeypatch.setattr(jobs, "order_card_make", making)
     held.existing, held.comments = None, []
     monkeypatch.setattr(jobs, "recent_card_for", lambda config, name, now=None, kind="fresh": held.existing)
+    held.same = True
+    monkeypatch.setattr(jobs, "same_order", lambda config, existing, card: held.same)
     monkeypatch.setattr(jobs, "order_payment_comment", lambda config, card_id, text: held.comments.append((card_id, text)))
     monkeypatch.setattr(jobs, "order_template", lambda config, kind: {"id": f"TPL-{kind}", "name": "x", "desc": "", "url": "u"})
     monkeypatch.setattr(client, "_board_responder", lambda bot: held.responder)
@@ -1375,3 +1377,41 @@ def test_held_and_left_makes_nothing_and_can_be_gavelled_again(order, monkeypatc
 
     asyncio.run(run())
     assert order.made == [] and "900" not in ordercards.load() and "900" not in client._ORDER_ACTIVE
+
+
+
+# ------------------------------------------------------------- same name, another order
+
+def _their_card(monkeypatch, desc):
+    class Trello:
+        def card_detail(self, card_id):
+            return {"desc": desc}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Trello())
+
+
+def test_another_payment_with_nothing_new_is_the_same_order(monkeypatch):
+    _their_card(monkeypatch, "Name: Bram Gutierrez\nLead Type/Package Selected: Text-Verified Veteran Leads\n"
+                             "Launch Date: Tuesday, October 13")
+    assert jobs.same_order(CONFIG, {"id": "c"}, {"fields": {"package": "VET", "launch": ""}, "launch_iso": ""})
+    assert jobs.same_order(CONFIG, {"id": "c"}, {"fields": {"package": "Text-Verified Veteran", "launch": "Oct 13"}})
+
+
+def test_a_different_live_date_or_lead_type_is_a_different_order(monkeypatch):
+    """"same person different orders different live dates"."""
+    _their_card(monkeypatch, "Name: Bram Gutierrez\nLead Type/Package Selected: Text-Verified Veteran Leads\n"
+                             "Launch Date: Tuesday, October 13")
+    assert not jobs.same_order(CONFIG, {"id": "c"}, {"fields": {"package": "VET", "launch": "Wednesday, October 14"}})
+    assert not jobs.same_order(CONFIG, {"id": "c"}, {"fields": {"package": "Text-Verified Trucker IUL", "launch": ""}})
+
+
+def test_a_different_order_from_the_same_person_gets_its_own_card(order):
+    order.kind = "fresh"
+    order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
+                      "url": "https://trello.com/c/bram"}
+    order.same = False
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.comments == [] and [one[0] for one in order.made] == ["fresh"]
