@@ -1067,3 +1067,132 @@ def test_a_second_aged_payment_the_same_day_goes_on_the_card_but_not_the_next(mo
     assert jobs.recent_card_for(CONFIG, "Ayden Escarrega", now=now, kind="aged")["url"] == "today"
     assert jobs.recent_card_for(CONFIG, "Raymond Vargas", now=now, kind="aged") is None, "yesterday's is its own order"
     assert jobs.recent_card_for(CONFIG, "Ayden Escarrega", now=now) is None, "an aged card isn't a New Agent card"
+
+
+# ------------------------------------------------------------- aged, from the invoice note
+
+def test_the_invoices_note_is_kept_whatever_payra_calls_it():
+    from wilbyte import payraapi
+
+    record = {"_id": "inv1", "customer": {"first_name": "Aiden", "last_name": "Larsen", "email": "a@example.com"},
+              "totals": {"total": 103.5}, "internal_note": "AGED IUL\n180+\nin states IL, SC, AZ, and TX",
+              "notes": [{"text": "100 $1 Aged leads in those same states"}], "description": "Aged IUL"}
+    slim = payraapi.slim_invoice(record)
+    assert slim["notes"] == "AGED IUL\n180+\nin states IL, SC, AZ, and TX\n100 $1 Aged leads in those same states"
+
+
+def test_the_payments_invoice_note_by_email_and_amount(monkeypatch):
+    from wilbyte import payraapi
+
+    now = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+    data = {"invoices": {
+        "a": {"id": "a", "name": "Aiden Larsen", "email": "larsen@example.com", "total": 103.5,
+              "notes": "AGED IUL 180+ in states IL, SC, AZ, TX", "created": "2026-10-14T14:40:00Z"},
+        "b": {"id": "b", "name": "Aiden Larsen", "email": "larsen@example.com", "total": 500,
+              "notes": "a different order", "created": "2026-10-14T14:50:00Z"},
+        "c": {"id": "c", "name": "Aiden Larsen", "email": "larsen@example.com", "total": 103.5,
+              "notes": "last month's", "created": "2026-09-14T14:40:00Z"},
+        "d": {"id": "d", "name": "Somebody Else", "email": "x@example.com", "total": 103.5,
+              "notes": "not theirs", "created": "2026-10-14T14:55:00Z"}}}
+    class Payra:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            raise payraapi.PayraError("offline")
+
+    monkeypatch.setattr(payraapi, "PayraClient", Payra)
+    monkeypatch.setattr(payraapi, "load", lambda *a, **k: data)
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    assert jobs.payra_invoice_note(config, name="Aiden Larsen", email="larsen@example.com", amount="$103.5",
+                                   now=now) == "AGED IUL 180+ in states IL, SC, AZ, TX"
+    assert jobs.payra_invoice_note(config, name="Nobody Here", amount="$1", now=now) == ""
+
+
+def _aged_post(i=950):
+    message = _message("@here\nNew Payment | Payra\nNAME: Aiden Larsen\nEMAIL: larsen@example.com\n"
+                       "AMOUNT: $103.5\nPRODUCT: Aged Leads (IUL)")
+    message.id, message.channel.name = i, "💸 | new-payment"
+    return message
+
+
+def test_an_aged_payment_with_an_invoice_note_gets_its_card_with_no_gavel(order, monkeypatch):
+    """"ryte will just immediately create the card"."""
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "AGED IUL\n180+\nin states IL, SC, AZ, and TX")
+    message = _aged_post()
+    assert client._aged_payment(message)
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
+    assert [one[0] for one in order.made] == ["aged"]
+    assert order.notes[0] == "Payra invoice note: AGED IUL\n180+\nin states IL, SC, AZ, and TX"
+    assert "Payra invoice note: AGED IUL" in order.reads[0]
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "already"
+
+
+def test_no_note_no_card_and_the_gavel_still_works(order, monkeypatch):
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    message = _aged_post()
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "no note"
+    assert order.made == []
+
+
+def test_from_a_note_its_aged_or_nothing(order, monkeypatch):
+    order.kind = "fresh"
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "25 OTP vets")
+    asyncio.run(client._aged_from_invoice(_bot(_aged_post()), _aged_post(), wait=0))
+    assert order.made == [], "a New Agent card made with nobody's gavel"
+
+
+def test_only_aged_payments_in_new_payment():
+    vet = _message("New Payment | Payra\nNAME: Fabian\nPRODUCT: VET")
+    vet.channel.name = "new-payment"
+    assert not client._aged_payment(vet)
+    elsewhere = _aged_post()
+    elsewhere.channel.name = "team-chat"
+    assert not client._aged_payment(elsewhere)
+
+
+
+def test_the_note_is_read_straight_from_payras_last_two_days(monkeypatch):
+    from wilbyte import payraapi
+
+    now = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+    asked = []
+
+    class Payra:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            asked.append((kind, after))
+            return {"records": [{"_id": "inv9", "customer": {"first_name": "Aiden", "last_name": "Larsen",
+                                                              "email": "larsen@example.com"},
+                                 "totals": {"total": 103.5}, "notes": "AGED IUL in IL, SC, AZ, TX",
+                                 "created_at": "2026-10-14T14:44:00Z"}]}
+
+    monkeypatch.setattr(payraapi, "PayraClient", Payra)
+    monkeypatch.setattr(payraapi, "load", lambda *a, **k: {"invoices": {}})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    assert jobs.payra_invoice_note(config, name="Aiden Larsen", email="larsen@example.com", amount="$103.5",
+                                   now=now) == "AGED IUL in IL, SC, AZ, TX"
+    assert asked[0][0] == "invoices" and asked[0][1].startswith("2026-10-12")
+
+
+def test_invoice_note_shows_every_note_field_as_payra_has_it(order, monkeypatch):
+    monkeypatch.setattr(jobs, "payra_invoice_note_fields", lambda config, name: [
+        ("#INV-19860 · $103.5", [("internal_note", "AGED IUL 180+ in states IL, SC, AZ, and TX")])])
+    asyncio.run(client._invoice_note(_bot(_message()), order.responder, "Aiden Larsen"))
+    said = order.responder.sent[-1][0]
+    assert "**#INV-19860 · $103.5**" in said and "`internal_note`: AGED IUL 180+" in said
+    assert mentions.parse("<@1> invoice note Aiden Larsen").action == "invoicenote"

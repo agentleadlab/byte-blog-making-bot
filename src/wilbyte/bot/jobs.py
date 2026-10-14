@@ -8,6 +8,7 @@ without a gateway connection.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 from dataclasses import dataclass
@@ -10848,6 +10849,18 @@ def payra_sync(config: Config) -> dict:
 
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    # One at a time: the half-hourly sync and an aged order's look-up both
+    # read and write the same file.
+    with _PAYRA_SYNCING:
+        return _payra_sync(config, token, site)
+
+
+_PAYRA_SYNCING = threading.Lock()
+
+
+def _payra_sync(config: Config, token: str, site: str) -> dict:
+    from .. import payraapi
+
     data = payraapi.load()
     try:
         # Three minutes a page: a long stretch asked for at once takes Payra
@@ -12436,3 +12449,86 @@ def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
         if clearout.name_match(name, title) >= 2:
             return one
     return None
+
+
+
+def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: str = "", now=None) -> str:
+    """The note on the Payra invoice behind a payment just posted - "can ryte
+    access agents state for aged leads on summit pay invoice internal note".
+    Payra read now, so the invoice paid a minute ago is there. Matched by
+    email, else whole name, paid in the last two days, the total the payment
+    was when there's a choice. "" when there's no note to read."""
+    from .. import clearout, payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    if not (token and site):
+        return ""
+    now = now or datetime.now(timezone.utc)
+    # The last two days straight from Payra - quick, and current to the
+    # minute - rather than the saved copy, which the half-hourly read fills.
+    data = {"invoices": {}}
+    try:
+        with payraapi.PayraClient(token, site, timeout=60.0) as client:
+            after = payraapi.when(now - timedelta(days=2))
+            for _page in range(5):
+                got = client.changed("invoices", after)
+                for record in got.get("records") or []:
+                    one = payraapi.slim_invoice(record)
+                    if one["id"]:
+                        data["invoices"][one["id"]] = one
+                onward = str(got.get("next_updated_after") or "")
+                if not got.get("records") or not onward or onward == after:
+                    break
+                after = onward
+    except Exception:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra for the invoice note", exc_info=True)
+        data = payraapi.load()
+    email = str(email or "").strip().casefold()
+    wanted = payraapi._cents(amount)
+    found = []
+    for invoice in (data.get("invoices") or {}).values():
+        theirs = (email and invoice.get("email") == email) or clearout.name_match(name, invoice.get("name", "")) >= 2
+        if not theirs or not str(invoice.get("notes") or "").strip():
+            continue
+        try:
+            made = datetime.fromisoformat(str(invoice.get("created") or invoice.get("updated") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        made = made if made.tzinfo else made.replace(tzinfo=timezone.utc)
+        if now - made > timedelta(days=2):
+            continue
+        same = wanted is not None and payraapi._cents(invoice.get("total")) == wanted
+        found.append((same, made, invoice))
+    if not found:
+        return ""
+    found.sort(key=lambda one: (one[0], one[1]), reverse=True)
+    return str(found[0][2].get("notes") or "").strip()
+
+
+
+def payra_invoice_note_fields(config: Config, name: str, *, now=None) -> list[tuple[str, list]]:
+    """"@Ryte invoice note Aiden Larsen" - each of their invoices from the
+    last week, newest first, with every note-like field on it as Payra has it.
+    [(invoice number and total, [(field, text)])]."""
+    from .. import clearout, payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    now = now or datetime.now(timezone.utc)
+    found = []
+    with payraapi.PayraClient(token, site, timeout=60.0) as client:
+        after = payraapi.when(now - timedelta(days=7))
+        for _page in range(10):
+            got = client.changed("invoices", after)
+            for record in got.get("records") or []:
+                one = payraapi.slim_invoice(record)
+                if clearout.name_match(name, one["name"]) >= 2:
+                    found.append((one["created"], f"#{one['number'] or one['id']} · ${one['total']}",
+                                  payraapi.note_fields(record)))
+            onward = str(got.get("next_updated_after") or "")
+            if not got.get("records") or not onward or onward == after:
+                break
+            after = onward
+    found.sort(reverse=True)
+    return [(label, fields) for _when, label, fields in found[:5]]

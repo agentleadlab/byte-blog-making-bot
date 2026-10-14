@@ -466,6 +466,10 @@ class WilByteBot(discord.Client):
             return
         if not getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None)):
             _order_note_posted(self, message)
+        # An aged order's payment: its card made from the Payra invoice's note.
+        if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
+                and _in_setup_guild(self, getattr(message, "guild", None)) and _aged_payment(message)):
+            _also_running(self.loop.create_task(_aged_from_invoice(self, message)))
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
         if (TEAM_TASKS_ON and not getattr(message.author, "bot", False)
@@ -1762,6 +1766,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
             if request.action == "livelist":
                 await _live_list(bot, responder)
+                return
+
+            if request.action == "invoicenote":
+                await _invoice_note(bot, responder, request.brief or "")
                 return
 
             if request.action == "ordercheck":
@@ -9065,8 +9073,14 @@ async def _order_examples(config) -> dict:
     return found
 
 
-async def _order_read(bot, message, *, since: datetime | None = None) -> tuple[dict, dict, int | None]:
+async def _order_read(bot, message, *, since: datetime | None = None,
+                      extra: tuple = ()) -> tuple[dict, dict, int | None]:
     text, images, thread_id, notes = await _order_said(bot, message, since=since)
+    # The Payra invoice's note, for an aged order made from it: read with the
+    # order, and on the card first in Additional Notes.
+    if extra:
+        text += "\n" + "\n".join(extra)
+        notes = list(extra) + list(notes)
     card = await asyncio.to_thread(partial(
         jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes))
     # The team's screenshots - the first ones in `images`, one a marker.
@@ -9169,6 +9183,57 @@ def _gavel_counts(bot, payload) -> bool:
     return GAVEL_EVERYONE and _in_setup_guild(bot, guild)
 
 
+#: "can ryte access agents state for aged leads on summit pay invoice
+#: internal note ... and ryte will just immediately create the card?" - an
+#: aged payment posted in #new-payment whose Payra invoice has a note gets
+#: its card at once, no thread or gavel.
+AGED_FROM_INVOICE = True
+#: How long after the payment's post the invoice is looked for.
+AGED_INVOICE_WAIT_SECONDS = 20
+
+
+def _aged_payment(message) -> bool:
+    """A Payra payment post for aged leads, in #new-payment."""
+    if "newpayment" not in _plain_letters(getattr(getattr(message, "channel", None), "name", "")):
+        return False
+    said = _all_of_it(message)
+    return "new payment" in said.casefold() and bool(re.search(r"PRODUCT:\**\s*aged\b", said, re.IGNORECASE))
+
+
+_PAID_NAME = re.compile(r"NAME:\**\s*([^\n]+)", re.IGNORECASE)
+_PAID_EMAIL = re.compile(r"EMAIL:\**\s*([^\s]+@[^\s]+)", re.IGNORECASE)
+
+
+async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
+    """The aged order's card from its invoice note - or nothing, when the
+    invoice has none (the thread and the gavel still work). What happened."""
+    from .. import ordercards
+
+    await asyncio.sleep(AGED_INVOICE_WAIT_SECONDS if wait is None else wait)
+    key = str(message.id)
+    if ordercards.load().get(key) or key in _ORDER_ACTIVE:
+        return "already"
+    said = _all_of_it(message)
+    name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
+    email = (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *")
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    try:
+        note = await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
+                                               amount=amount))
+    except Exception:
+        log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
+        return "failed"
+    if not note:
+        log.info("No invoice note for %s's aged order - left for the thread and the gavel", name)
+        return "no note"
+    log.info("Making %s's aged card from the invoice note", name)
+    await _order_gavelled(bot, SimpleNamespace(
+        message_id=message.id, channel_id=message.channel.id, user_id=0,
+        guild_id=getattr(getattr(message, "guild", None), "id", None), member=None,
+        extra_notes=(f"Payra invoice note: {note}",), aged_only=True))
+    return "made"
+
+
 def _order_responder(bot):
     """Where orders are said in Ryte The Goat: the board's channel, else
     #hub-agent-fulfillment."""
@@ -9268,7 +9333,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     try:
         channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
         message = await channel.fetch_message(payload.message_id)
-        card, examples, thread_id = await _order_read(bot, message)
+        card, examples, thread_id = await _order_read(bot, message, extra=getattr(payload, "extra_notes", ()))
     except Exception as exc:
         log.exception("Couldn't read the gavelled order")
         await _order_forget(key)
@@ -9276,6 +9341,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)}")
         return
     kind, link = card["kind"], str(getattr(message, "jump_url", "") or "")
+    if getattr(payload, "aged_only", False) and (kind != "aged" or not AGED_ORDERS_ON):
+        # Made from an invoice note with nobody's gavel: aged only, or nothing.
+        await _order_forget(key)
+        ack = _ORDER_ACKS.pop(key, None)
+        if ack is not None and hasattr(ack, "delete"):
+            try:
+                await ack.delete()
+            except Exception:
+                pass
+        return
     if kind == "aged" and not AGED_ORDERS_ON:
         await _order_forget(key)
         if responder is not None:
@@ -9303,7 +9378,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             return
         # Read again: notes may have come in while it waited.
         try:
-            card, examples, thread_id = await _order_read(bot, message)
+            card, examples, thread_id = await _order_read(bot, message, extra=getattr(payload, "extra_notes", ()))
             card["kind"] = "fresh"
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
@@ -9555,6 +9630,29 @@ async def _gavel_allow(bot, responder: Responder, message, *, allowed: bool) -> 
     now = ", ".join(f"<@{one}>" for one in ordercards.gavellers(bot.config))
     await responder.send((f"🔨 {names}'s gavel makes cards now." if allowed else f"🔨 {names}'s gavel doesn't count any more.")
                          + f"\n-# Counts: {now or 'nobody'}", quiet=True)
+
+
+async def _invoice_note(bot, responder: Responder, name: str) -> None:
+    """"@Ryte invoice note <name>" - what RYTE reads as their invoice's note."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        await responder.send("Whose? `@Ryte invoice note Aiden Larsen`")
+        return
+    try:
+        found = await asyncio.to_thread(jobs.payra_invoice_note_fields, bot.config, name)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read Payra: {_readable(exc)}")
+        return
+    if not found:
+        await responder.send(f"No invoice for **{name}** in Payra this week.")
+        return
+    lines = [f"🧾 **{name}** — note fields on their invoices this week, as Payra has them:"]
+    for label, fields in found:
+        lines.append(f"**{label}**")
+        lines += [f"• `{key}`: {text}" for key, text in fields] or ["• no note"]
+    lines.append("-# An aged order's card is made from these. Something here on every invoice (set wording) "
+                 "isn't a note - tell Claude which field is the real one.")
+    await responder.send("\n".join(lines)[:1900])
 
 
 async def _order_check(bot, responder: Responder) -> None:

@@ -120,7 +120,7 @@ def test_a_failure_keeps_what_was_read_and_where_it_got_to():
 def test_kept_is_only_what_a_reply_needs():
     one = payraapi.slim_invoice(_invoice(1))
     assert one == {
-        "id": "inv1", "number": "1001", "total": 700, "description": "OTP VETS",
+        "id": "inv1", "number": "1001", "total": 700, "description": "OTP VETS", "notes": "",
         "invoice_date": "2026-09-19", "due_date": "2026-09-26", "active": True,
         "name": "Adrian Pacheco", "email": "a@x.com", "phone": "3125550188",
         "lines": [], "payment_ids": [], "paid_here": [], "sent": [], "created": "",

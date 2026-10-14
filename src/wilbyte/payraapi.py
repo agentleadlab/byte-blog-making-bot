@@ -16,6 +16,7 @@ not - not Payra's whole record.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -240,6 +241,37 @@ def sent_text(one) -> str:
     return " · ".join(bit for bit in (str(how).title() if how else "", _spelled(when) if when else "") if bit)
 
 
+#: The invoice's own notes - where the team writes what an aged order is:
+#: "AGED IUL / 180+ / in states IL, SC, AZ, and TX".
+_NOTE_KEY = re.compile(r"note|memo|comment|footer|terms|message|internal|instruction", re.IGNORECASE)
+
+
+def note_fields(record: dict) -> list[tuple[str, str]]:
+    """(field, what it says) for each of an invoice's note-like fields - to
+    see which one the team's note is in."""
+    return [(str(key), " ".join(str(value).split())[:300]) for key, value in (record or {}).items()
+            if _NOTE_KEY.search(str(key)) and value not in (None, "", [], {})]
+
+
+def invoice_notes(record: dict) -> str:
+    """Every note on an invoice, as text - whatever Payra calls the field."""
+    found = []
+
+    def take(value):
+        if isinstance(value, str) and value.strip():
+            found.append(value.strip())
+        elif isinstance(value, list):
+            for one in value:
+                take(one.get("text") or one.get("note") or one.get("body") if isinstance(one, dict) else one)
+        elif isinstance(value, dict):
+            take(value.get("text") or value.get("note") or value.get("body") or "")
+
+    for key, value in (record or {}).items():
+        if _NOTE_KEY.search(str(key)):
+            take(value)
+    return "\n".join(dict.fromkeys(found))[:2000]
+
+
 def slim_invoice(record: dict) -> dict:
     who = record.get("customer") or {}
     totals = record.get("totals") or {}
@@ -250,6 +282,7 @@ def slim_invoice(record: dict) -> dict:
         "number": str(record.get("invoice_number") or record.get("reference_number") or ""),
         "total": totals.get("total"),
         "description": str(record.get("description") or "")[:120],
+        "notes": invoice_notes(record),
         "invoice_date": str(record.get("invoice_date") or "")[:10],
         "due_date": str(record.get("due_date") or "")[:10],
         "active": record.get("active", True),

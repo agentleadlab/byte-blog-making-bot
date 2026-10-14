@@ -904,6 +904,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="gavelallow", brief=text)
     if re.match(r"\s*gavel\s+(?:remove|stop|disallow|revoke)\b", text, re.IGNORECASE):
         return MentionRequest(action="gavelremove", brief=text)
+    note = re.match(r"\s*(?:invoice|payra)\s+notes?\s+(?:for\s+)?(.+?)\s*[.?!]*\s*$", text, re.IGNORECASE)
+    if note:
+        return MentionRequest(action="invoicenote", brief=note.group(1))
     if re.match(r"\s*backfill\s+(?:the\s+)?(?:orders?|cards?|new\s*agents?)\b", text, re.IGNORECASE):
         return MentionRequest(action="orderbackfill", brief=text)
     if (re.match(r"\s*(?:live|going\s+live)\s+list\s*[.?!]*\s*$", text, re.IGNORECASE)
@@ -1494,6 +1497,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
+> **invoice note <name>** — the note fields on their Payra invoices, as an aged card reads them.
 > **going live today and tomorrow** (or **live list**) — names, lead type and states.
 > **hub tasks** — every open request on the card checked on the hub (reading only); done there, ticked.
 > **hub fields <name>** — everything the hub has for one client
