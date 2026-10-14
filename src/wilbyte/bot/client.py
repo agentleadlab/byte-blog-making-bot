@@ -7402,12 +7402,35 @@ async def _file_agents(responder: Responder, config: Config, *, silent: bool = F
     note = f"🧾 Filed {filed} agent(s)."
     if silent and filed:
         note += "\n" + rules.describe(doable, today=_today(config))
+    # "all this time tho Bram has his launch date" - his card came in on the
+    # evening before, after the 11:30 step had put tomorrow's setup card on
+    # the Ads and Ops checklists, so the setup card he went on was never
+    # linked there. Linked again now - safe to run twice.
+    from .. import dailyops
+
+    next_worked = dailyops.next_day(jobs.board_day(config))
+    if filed and any(plan.when != "today" and getattr(plan.agent, "launch", None) == next_worked for plan in doable):
+        now = datetime.now(ZoneInfo(config.schedule.timezone))
+        if (now.hour, now.minute) >= LINK_SETUP_AT:
+            try:
+                linked, link_trouble = await asyncio.to_thread(jobs.link_setup_on_day, config)
+                if linked:
+                    note += ("\n🔗 Tomorrow's setup card is on " + ", ".join(linked)
+                             + " now — it came in after the 11:30 linking.")
+                problems = list(problems) + list(link_trouble)
+            except Exception:
+                log.warning("Couldn't link tomorrow's setup card again", exc_info=True)
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     if filed or problems:
         await responder.send(note)
     if silent:
         await _report_stuck(responder, stuck)
+
+
+#: When tomorrow's setup card goes on the Ads and Ops checklists - the
+#: board's 11:30 "link_setup" step.
+LINK_SETUP_AT = (11, 30)
 
 
 # Launches worth being reminded about: today, tomorrow, or a card with no

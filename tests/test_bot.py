@@ -7487,3 +7487,35 @@ def test_last_nights_end_of_day_is_caught_up_the_next_morning(monkeypatch):
     ran.clear()
     asyncio.run(client._board_steps(bot))
     assert ran == [], "and only once"
+
+
+def test_an_agent_filed_for_tomorrow_after_the_1130_linking_gets_it_linked(config, monkeypatch):
+    """"all this time tho Bram has his launch date" - his card came in on the
+    Tuesday evening for Wednesday, after tomorrow's setup card had been put on
+    the Ads and Ops checklists at 11:30."""
+    from datetime import timezone as tz
+    from types import SimpleNamespace
+    from wilbyte import agents as rules
+    from wilbyte.bot import client
+
+    bram = rules.Agent(name="Bram Gutierrez", card_id="5f" + "0" * 22, url="https://trello.com/c/b",
+                       stated="Text-Verified Trucker IUL", launch=date(2026, 10, 14), said="")
+    monkeypatch.setattr(jobs, "read_agents", lambda cfg: ([_plan_for(bram)], {"Done": "d"}, [], []))
+    monkeypatch.setattr(jobs, "apply_agents", lambda cfg, plans, where: (len(plans), []))
+    monkeypatch.setattr(jobs, "board_day", lambda cfg: date(2026, 10, 13))
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 10, 13))
+    linked = []
+    monkeypatch.setattr(jobs, "link_setup_on_day", lambda cfg, **kw: (
+        linked.append(1), (["Ads 10/14/26 · Nicole"], []))[1])
+
+    def at(hour, minute):
+        monkeypatch.setattr(client, "datetime", SimpleNamespace(
+            now=lambda zone=None: datetime(2026, 10, 13, hour, minute, tzinfo=zone or tz.utc)))
+        heard = Listening()
+        asyncio.run(client._file_agents(ChannelResponder(heard), config, silent=True))
+        return heard.said
+
+    said = at(19, 50)
+    assert linked == [1] and "Tomorrow's setup card is on Ads 10/14/26 · Nicole now" in str(said)
+    at(9, 0)
+    assert linked == [1], "linked again before the 11:30 step has even run"
