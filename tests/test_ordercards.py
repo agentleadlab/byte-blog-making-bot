@@ -994,3 +994,30 @@ def test_only_this_weeks_card_counts(monkeypatch):
         {"id": made(1), "name": "New Agent - Killian Cooper", "url": "new"}])
     assert jobs.recent_card_for(CONFIG, "Bram Gutierrez", now=now) is None, "last month's order is its own"
     assert jobs.recent_card_for(CONFIG, "Killian Cooper", now=now)["url"] == "new"
+
+
+# ------------------------------------------------------------- onto the Ads card
+
+def test_the_cards_layout_reads_like_the_old_one_for_the_ads_and_ops_checklists():
+    """"bram's trucker card but was not added on the ads? nicole's sides"."""
+    from wilbyte import agents
+
+    fields = {"name": "Bram Gutierrez", "email": "a@example.com", "phone": "+15550100000", "states": "TX, FL",
+              "package": "Text-Verified Trucker IUL", "leads": "25", "launch": "Wednesday, October 14", "notes": ""}
+    desc = jobs.order_desc(fields)
+    agent = agents.read_agent({"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez", "desc": desc,
+                               "shortUrl": "u"}, text=desc, today=date(2026, 10, 14))
+    assert agent.lead_type == "Text-Verified Trucker IUL" and agent.stated == "Text-Verified Trucker IUL"
+    assert agent.launch == date(2026, 10, 14)
+    assert not agents.cannot_read(agent, needs_lead_type=True)
+
+
+def test_no_launch_date_is_said_when_the_card_is_made(order, monkeypatch):
+    def reading(config, *, text, images, today, notes=()):
+        return {"kind": "fresh", "client": "Bram Gutierrez", "name": "New Agent - Bram Gutierrez", "desc": "d",
+                "fields": {"launch": "", "package": "VET"}, "missing": ["Launch Date"], "launch_iso": ""}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    said = _said(order)[-1][0]
+    assert "No launch date in the order" in said and "Ads and Ops checklists" in said

@@ -9243,6 +9243,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                # No launch date and the agent pass can't put them on the
+                # Ads and Ops checklists - Bram's card sat in Franklin (Admin).
+                + ("\n⚠ **No launch date in the order** — the card won't go on the Ads and Ops checklists until "
+                   "one's posted in the thread (or put on the card)."
+                   if not (card.get("fields") or {}).get("launch") and "launch" in (card.get("fields") or {}) else "")
                 + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
                    f"posted in the thread." if card.get("missing") else ""))
         ack = _ORDER_ACKS.pop(key, None)

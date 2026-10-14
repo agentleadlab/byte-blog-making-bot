@@ -136,7 +136,10 @@ CLIENT_CARD = re.compile(
 #
 # The order form's own field, colon and value on the one line.
 LEAD_TYPE_LINE = re.compile(
-    r"^[ \t]*lead[ \t]*type\b[ \t]*:[ \t]*(\S.*?)[ \t]*$",
+    # "Lead Type/Package Selected:" too - the layout RYTE writes order cards
+    # in, which Franklin set: read as anything else, Bram's card went on the
+    # checklists as "Lead Type/Package Selected: Text-Verified Trucker IUL".
+    r"^[ \t]*lead[ \t]*type(?:[ \t]*/[ \t]*package(?:[ \t]+selected)?)?\b[ \t]*:[ \t]*(\S.*?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -819,7 +822,9 @@ _RATE_TAIL = re.compile(r"\s*@\s*\$.*$", re.DOTALL)
 
 # "Package Selected: Basic Spanish IUL" is a label and then a lead type. The
 # label is the form's word for the field, not anything about the leads.
-_LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z ]{0,30}:\s*")
+# "Lead Type/Package Selected:" is a label too - the slash is in the layout
+# RYTE writes its order cards in.
+_LABEL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z /]{0,30}:\s*")
 
 # The leads, a colon, and how many: "Fresh Veterans: 35", "OTP FEX: 20 leads".
 _COUNT_AFTER = re.compile(
