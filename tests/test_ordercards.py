@@ -434,7 +434,8 @@ def test_order_check_says_whats_missing(order, monkeypatch):
     order.responder.channel = SimpleNamespace(name="trello-manager")
     asyncio.run(client._order_check(_bot(_message()), order.responder))
     said = order.responder.sent[-1][0]
-    assert f"✅ Gavel counts from <@{FRANKLIN}>" in said and "✅ Said in #trello-manager" in said
+    assert "✅ Anyone's gavel counts in the Growth server" in said and f"✅ Elsewhere, from <@{FRANKLIN}>" in said
+    assert "✅ Said in #trello-manager" in said
     assert "✅ Each card is new, no due date, described as: Name · Email · Phone Number" in said
     assert "✅ New Agent cards go in **In Que**" in said and "❌ No list for Aged Leads cards" in said
 
@@ -520,9 +521,9 @@ def test_gavels_dropped_while_ryte_was_down_are_found_anywhere(order, monkeypatc
 
     monkeypatch.setattr(client.asyncio, "sleep", no_wait)
     done = asyncio.run(client._catch_up_gavels(_bot(_message()), now=now))
-    assert gavelled == [(901, FRANKLIN)] and done == ["901"]
+    assert gavelled == [(901, FRANKLIN), (903, KHARYL)] and done == ["901", "903"], "everyone's gavel counts in Growth"
 
-    ordercards.save({"901": {"status": "made"}})
+    ordercards.save({"901": {"status": "made"}, "903": {"status": "made"}})
     gavelled.clear()
     asyncio.run(client._catch_up_gavels(_bot(_message()), now=now))
     assert gavelled == [], "a made card was gavelled again"
@@ -930,3 +931,22 @@ def test_the_live_list_today_and_tomorrow_with_lead_type_and_states(order, monke
 ])
 def test_backfill_and_live_list_commands(said, action):
     assert mentions.parse(said).action == action
+
+
+# ------------------------------------------------------------- everyone's gavel
+
+def test_everyones_gavel_counts_in_growth_but_not_elsewhere_and_never_a_bots(monkeypatch):
+    """"let everyone's gavel count, not just mine"."""
+    growth, clients = SimpleNamespace(id=2), SimpleNamespace(id=3)
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, guild: guild is growth)
+    bot = SimpleNamespace(config=CONFIG, get_guild=lambda i: {2: growth, 3: clients}.get(i))
+
+    def gavel(user, guild_id, *, is_bot=False):
+        return SimpleNamespace(user_id=user, guild_id=guild_id, member=SimpleNamespace(bot=is_bot))
+
+    assert client._gavel_counts(bot, gavel(KHARYL, 2)), "Kharyl's gavel in Growth"
+    assert not client._gavel_counts(bot, gavel(KHARYL, 3)), "a gavel in the clients' server"
+    assert client._gavel_counts(bot, gavel(FRANKLIN, 3)), "Franklin's counts anywhere"
+    assert not client._gavel_counts(bot, gavel(77, 2, is_bot=True)), "a bot's"
+    monkeypatch.setattr(client, "GAVEL_EVERYONE", False)
+    assert not client._gavel_counts(bot, gavel(KHARYL, 2))

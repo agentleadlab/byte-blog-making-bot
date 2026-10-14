@@ -1487,7 +1487,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Franklin here. **track <message link>** adds one
 > I missed; **team tasks** lists what's still open. **threads <name>** — the threads I take as
 > somebody's. Paid is Payra, and Zelle once it's posted in #new-payment.
-> 🔨 **Orders** — Franklin's :leadlab_hammertime: on an order in Discord makes its Trello card:
+> 🔨 **Orders** — anyone's :leadlab_hammertime: on an order in the Growth server makes its Trello card:
 > a new agent's card into the Queue, straight away (aged leads are off for now) - Name, Email,
 > Phone Number, States, Lead Type, Number of Leads, Launch Date, Additional Notes. New notes in
 > its thread update the card.

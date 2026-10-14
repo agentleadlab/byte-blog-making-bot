@@ -419,7 +419,7 @@ class WilByteBot(discord.Client):
         card forgotten, so the next gavel makes a fresh one."""
         from .. import ordercards
 
-        if not ordercards.is_gavel(payload.emoji) or not ordercards.may_gavel(payload.user_id, self.config):
+        if not ordercards.is_gavel(payload.emoji) or not _gavel_counts(self, payload):
             return
         try:
             await _order_ungavelled(self, payload)
@@ -435,7 +435,7 @@ class WilByteBot(discord.Client):
 
         if ordercards.is_gavel(payload.emoji):
             log.info("Gavel on message %s by %s", payload.message_id, payload.user_id)
-            if ordercards.may_gavel(payload.user_id, self.config):
+            if _gavel_counts(self, payload):
                 _also_running(self.loop.create_task(_order_gavelled(self, payload)))
             else:
                 _also_running(self.loop.create_task(_order_gavel_refused(self, payload)))
@@ -9040,7 +9040,8 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
                     if held.get("status") in ("made", "left") or str(message.id) in _ORDER_ACTIVE:
                         break
                     async for person in reaction.users():
-                        if ordercards.may_gavel(person.id, bot.config):
+                        if not getattr(person, "bot", False) and (
+                                GAVEL_EVERYONE or ordercards.may_gavel(person.id, bot.config)):
                             log.info("Catching up a gavel on %s", message.id)
                             done.append(str(message.id))
                             await _order_gavelled(bot, SimpleNamespace(
@@ -9051,6 +9052,27 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
         except Exception:
             continue
     return done
+
+
+#: "let everyone's gavel count, not just mine" - anybody's gavel in the
+#: Growth server, where it's only the team. Elsewhere - Agent Lead Lab
+#: Clients, where the emoji is from - only the people allowed.
+GAVEL_EVERYONE = True
+
+
+def _gavel_counts(bot, payload) -> bool:
+    """Whether this gavel makes a card: a person's in the Growth server, or
+    anywhere from somebody allowed. Never a bot's."""
+    from .. import ordercards
+
+    member = getattr(payload, "member", None)
+    if getattr(member, "bot", False):
+        return False
+    if ordercards.may_gavel(payload.user_id, bot.config):
+        return True
+    guild_id = getattr(payload, "guild_id", None)
+    guild = bot.get_guild(guild_id) if guild_id and hasattr(bot, "get_guild") else None
+    return GAVEL_EVERYONE and _in_setup_guild(bot, guild)
 
 
 def _order_responder(bot):
@@ -9379,7 +9401,10 @@ async def _order_check(bot, responder: Responder) -> None:
 
     lines = ["🔨 **Order cards — the gavel's setup**"]
     allowed = ordercards.gavellers(bot.config)
-    lines.append(("✅ Gavel counts from " + ", ".join(f"<@{one}>" for one in allowed)) if allowed else
+    if GAVEL_EVERYONE:
+        lines.append("✅ Anyone's gavel counts in the Growth server")
+    lines.append(("✅ " + ("Elsewhere, from " if GAVEL_EVERYONE else "Gavel counts from ")
+                  + ", ".join(f"<@{one}>" for one in allowed)) if allowed else
                  "❌ Nobody's gavel counts — set DISCORD_NOTIFY_USER_ID (yours) or ORDER_GAVEL_USER_IDS in .env.")
     responder_there = _order_responder(bot)
     channel = getattr(responder_there, "channel", None)
