@@ -12248,7 +12248,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     launch_iso = str(got.get("launch_iso") or "")[:10]
     if not re.match(r"\d{4}-\d{2}-\d{2}$", launch_iso):
         launch_iso = ""
-    return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso,
+    # What the order says, to hold what was read up against - the text, and
+    # what each screenshot was read as.
+    source = text + "\n" + "\n".join(str(one or "") for one in got.get("screenshots") or [])
+    return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",
             "missing": [label for key, label in (AGED_FIELDS if kind == "aged" else ORDER_FIELDS)

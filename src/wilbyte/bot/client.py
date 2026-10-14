@@ -9411,6 +9411,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         if existing is not None:
             await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
             return
+    # "Be Sure to not fail here": what was read, held up against the order.
+    # Anything that doesn't add up and the card waits for a person.
+    wrong, missing = ordercards.doubts(card, today=_today(bot.config))
+    if wrong and not getattr(payload, "confirmed", False):
+        # Waited on apart from the gavel, so gavelling it again once the
+        # thread is fixed isn't taken for this one still going.
+        await _order_forget(key)
+        _also_running(asyncio.get_running_loop().create_task(
+            _order_held(bot, _payload_copy(payload), key, responder, card, wrong, link)))
+        return
     try:
         made = await asyncio.to_thread(jobs.order_card_make, bot.config, kind, card)
     except Exception as exc:
@@ -9432,6 +9442,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
                 # No launch date and the agent pass can't put them on the
                 # Ads and Ops checklists - Bram's card sat in Franklin (Admin).
                 + ("\n⚠ **No launch date in the order** — the card won't go on the Ads and Ops checklists until "
@@ -9446,6 +9457,49 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await ack.edit(content=said)
         except Exception:
             await responder.send(said, quiet=True)
+
+
+def _payload_copy(payload, **changed):
+    """A gavel's particulars, kept - Discord's own event can't be copied."""
+    kept = {name: getattr(payload, name, None) for name in (
+        "message_id", "channel_id", "user_id", "guild_id", "member")}
+    for name in ("extra_notes", "aged_only", "separate", "confirmed"):
+        if hasattr(payload, name):
+            kept[name] = getattr(payload, name)
+    kept.update(changed)
+    return SimpleNamespace(**kept)
+
+
+async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
+    """A card that would go wrong, not made: what it would be, what doesn't
+    add up, and a button for a person who has looked."""
+    from .. import ordercards
+
+    if responder is None:
+        return
+    said = (f"🔨 ⚠ **Not made yet — {card.get('client') or 'this order'}**: what I read doesn't add up.\n"
+            + "\n".join(f"• {one}" for one in wrong)
+            + f"\n<{link}>\n" + _order_preview(card)
+            + "\n-# Fix it in the thread and gavel it again, or press Create anyway if the card is right.")
+    view = views.ConfirmView(requester_id=None, timeout=24 * 60 * 60, label="Create anyway", emoji="⚠️")
+    ack = _ORDER_ACKS.pop(key, None)
+    try:
+        if ack is None or not hasattr(ack, "edit"):
+            raise LookupError
+        await ack.edit(content=said[:1950], view=view)
+    except Exception:
+        await responder.send(said[:1950], view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    async with _ORDER_LOCK:
+        if key in _ORDER_ACTIVE or ((await asyncio.to_thread(ordercards.load)).get(key) or {}).get("status") == "made":
+            return
+        _ORDER_ACTIVE.add(key)
+    try:
+        await _order_make(bot, _payload_copy(payload, confirmed=True), key, responder)
+    finally:
+        _ORDER_ACTIVE.discard(key)
 
 
 _AMOUNT = re.compile(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
@@ -9579,6 +9633,11 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
                 done = "screenshots"
     if done == "updated":
         await _order_note(key, written=card["desc"], name=card["name"])
+        wrong, _missing = ordercards.doubts(card, today=_today(bot.config))
+        responder = _order_responder(bot)
+        if wrong and responder is not None:
+            await responder.send(f"⚠ **{order.get('name') or 'An order card'}** — updated from new notes, and something "
+                                 f"doesn't add up: " + "; ".join(wrong) + f" — check the card.\n{order.get('url', '')}")
     elif done == "commented":
         await _order_note(key, commented=list(order.get("commented") or []) + said)
     if done != "same":
@@ -9793,6 +9852,10 @@ async def _order_backfill(bot, responder: Responder, author) -> None:
             continue
         if any(clearout.name_match(who, other) >= 2 for other in seen):
             skipped.append(f"{who} — a second payment today; one card")
+            continue
+        wrong, _missing = ordercards.doubts(card, today=today)
+        if wrong:
+            skipped.append(f"⚠ {who} — not made, doesn't add up: " + "; ".join(wrong) + " — fix the thread and gavel it")
             continue
         seen.append(who)
         todo.append((one, card, thread_id))

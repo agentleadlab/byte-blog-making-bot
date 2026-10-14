@@ -183,3 +183,133 @@ def set_template(kind: str, link: str) -> None:
     held = _load(where)
     held[kind] = link
     _save(where, held)
+
+
+# ------------------------------------------------------------- not failing here
+
+#: "make sure that this is not failing, we dont want setting up agent with
+#: wrong states, wrong lead type, wrong cap, etc." - what Claude read off an
+#: order, held up against what the order says, by plain rules.
+US_STATES = {
+    "AL": "alabama", "AK": "alaska", "AZ": "arizona", "AR": "arkansas", "CA": "california",
+    "CO": "colorado", "CT": "connecticut", "DE": "delaware", "DC": "district of columbia",
+    "FL": "florida", "GA": "georgia", "HI": "hawaii", "ID": "idaho", "IL": "illinois",
+    "IN": "indiana", "IA": "iowa", "KS": "kansas", "KY": "kentucky", "LA": "louisiana",
+    "ME": "maine", "MD": "maryland", "MA": "massachusetts", "MI": "michigan", "MN": "minnesota",
+    "MS": "mississippi", "MO": "missouri", "MT": "montana", "NE": "nebraska", "NV": "nevada",
+    "NH": "new hampshire", "NJ": "new jersey", "NM": "new mexico", "NY": "new york",
+    "NC": "north carolina", "ND": "north dakota", "OH": "ohio", "OK": "oklahoma", "OR": "oregon",
+    "PA": "pennsylvania", "RI": "rhode island", "SC": "south carolina", "SD": "south dakota",
+    "TN": "tennessee", "TX": "texas", "UT": "utah", "VT": "vermont", "VA": "virginia",
+    "WA": "washington", "WV": "west virginia", "WI": "wisconsin", "WY": "wyoming",
+}
+_ALL_BUT = re.compile(r"\b(?:all|every)\b.*?\b(?:except|besides|but|excluding|other\s+than|minus|not)\b",
+                      re.IGNORECASE)
+_CODE = re.compile(r"(?<![A-Za-z])([A-Za-z]{2})(?![A-Za-z])")
+
+
+def _codes(text: str) -> list[str]:
+    """The state codes written in `text`, as written - "TX, FL", "tx/fl"."""
+    return [one.upper() for one in _CODE.findall(str(text or "")) if one.upper() in US_STATES]
+
+
+def _said_state(code: str, source: str) -> bool:
+    upper = str(source or "").upper()
+    return bool(re.search(rf"(?<![A-Z]){code}(?![A-Z])", upper)) or US_STATES[code] in str(source or "").casefold()
+
+
+def _state_lines(source: str) -> list[str]:
+    """The order's lines that list states: three or more codes, or "states"."""
+    found = []
+    for line in str(source or "").splitlines():
+        codes = [one for one in _CODE.findall(line) if one.upper() in US_STATES and one.isupper()]
+        if len(codes) >= 3 or (codes and re.search(r"\bstates?\b", line, re.IGNORECASE)):
+            found.append(line)
+    return found
+
+
+def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
+    """(what doesn't add up - the card isn't made without a person saying so,
+    what's only missing - said when it's made). Every value has to be in the
+    order as written: Claude reading it is not the same as it being there."""
+    from datetime import date, timedelta
+
+    from . import setupcheck
+
+    fields = card.get("fields") or {}
+    source = str(card.get("source") or "")
+    kind = card.get("kind") or "fresh"
+    wrong, missing = [], []
+
+    # States.
+    states = str(fields.get("states") or "").strip()
+    if not states:
+        missing.append("no states in the order yet")
+    elif _ALL_BUT.search(states):
+        left_out = _codes(_ALL_BUT.split(states, maxsplit=1)[-1])
+        for code in left_out:
+            if not _said_state(code, source):
+                wrong.append(f"States: {code} is left out on the card but isn't in the order")
+    else:
+        on_card = _codes(states)
+        if not on_card and not re.search(r"\ball\b", states, re.IGNORECASE):
+            wrong.append(f"States: “{states}” isn't a list of states")
+        for code in on_card:
+            if not _said_state(code, source):
+                wrong.append(f"States: {code} is on the card but isn't in the order")
+        listed = set()
+        for line in _state_lines(source):
+            if _ALL_BUT.search(line) or re.search(r"\b(?:except|besides|excluding|not|no)\b", line, re.IGNORECASE):
+                continue
+            listed.update(code.upper() for code in _CODE.findall(line)
+                          if code.upper() in US_STATES and code.isupper())
+        left = sorted(listed - set(on_card))
+        if left and on_card:
+            wrong.append(f"States: the order also says {', '.join(left)} - not on the card")
+
+    # Lead type, against the payment's product line.
+    product = re.search(r"PRODUCT:\**\s*([^\n]*)", source, re.IGNORECASE)
+    product = " ".join(product.group(1).split()) if product else ""
+    package = str(fields.get("package") or "")
+    if product and not re.match(r"^[—\-–(]", product):
+        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE))
+        if aged_paid and kind != "aged":
+            wrong.append(f"Lead type: the payment is for “{product}” - aged - but this reads as a new agent's order")
+        family, _subtypes = setupcheck.product_of(product)
+        if not aged_paid and kind == "aged" and family:
+            wrong.append(f"Lead type: the payment is for “{product}” - not aged - but this reads as an aged order")
+        if package and setupcheck.same_product(package, product) is False:
+            wrong.append(f"Lead type: the card says “{package}”, the payment says “{product}”")
+    if not package:
+        missing.append("no lead type")
+
+    # How many.
+    leads = str(fields.get("leads") or "")
+    count = re.search(r"\d+", leads)
+    if count and not re.search(rf"(?<![\d$.]){count.group(0)}(?![\d.])", source):
+        wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
+    if "no cap" in leads.casefold() and not re.search(r"\bphx\b|phoenix|ad\s*spend", source, re.IGNORECASE):
+        wrong.append("Number of leads: “No cap (ad spend)” but the order doesn't say Phoenix / ad spend")
+    if not leads:
+        missing.append("no number of leads")
+
+    # Contact.
+    email = str(fields.get("email") or "").strip().casefold()
+    if email and email not in source.casefold():
+        wrong.append(f"Email: {email} isn't in the order")
+    phone = re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:]
+    if len(phone) == 10 and phone not in re.sub(r"\D", "", source):
+        wrong.append(f"Phone: {fields.get('phone')} isn't in the order")
+
+    # When.
+    launch = str(card.get("launch_iso") or "")
+    if launch:
+        try:
+            day = date.fromisoformat(launch)
+        except ValueError:
+            day = None
+        if day is not None and not (today - timedelta(days=1) <= day <= today + timedelta(days=45)):
+            wrong.append(f"Launch date: {day:%a %m/%d/%Y} is too far from today to be right")
+    elif kind == "fresh":
+        missing.append("no launch date")
+    return wrong, missing

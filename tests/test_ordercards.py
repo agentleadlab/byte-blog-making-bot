@@ -1275,3 +1275,102 @@ def test_an_aged_payment_missed_while_down_gets_its_card_on_start(order, monkeyp
 
     done = asyncio.run(run())
     assert done == ["960"] and made == [(960, 0.0)], "this morning's may have a card made by hand"
+
+
+# ------------------------------------------------------------- be sure not to fail here
+
+def _checked(**fields):
+    source = ("New Payment | Payra\nNAME: Taylor Bolger\nEMAIL: t@example.com\nPHONE: +16602806422\n"
+              "PRODUCT: Text-Verified Trucker IUL\nKharyl: 20 trucker IUL, TX, FL, SC, GA\nlive fri oct 16")
+    base = dict(name="Taylor Bolger", email="t@example.com", phone="+16602806422", states="TX, FL, SC, GA",
+                package="Text-Verified Trucker IUL", leads="20", launch="Friday, October 16")
+    base.update(fields)
+    return {"kind": "fresh", "launch_iso": "2026-10-16", "source": source, "fields": base}
+
+
+def test_a_card_that_matches_the_order_passes():
+    """"make sure that this is not failing, we dont want setting up agent with
+    wrong states, wrong lead type, wrong cap, etc."."""
+    assert ordercards.doubts(_checked(), today=date(2026, 10, 14)) == ([], [])
+
+
+@pytest.mark.parametrize("fields, said", [
+    ({"states": "TX, FL, SC, MO"}, "MO is on the card but isn't in the order"),
+    ({"states": "TX, FL, SC"}, "the order also says GA"),
+    ({"package": "Text-Verified Veteran"}, "the payment says “Text-Verified Trucker IUL”"),
+    ({"leads": "25"}, "25 isn't in the order"),
+    ({"leads": "No cap (ad spend)"}, "doesn't say Phoenix"),
+    ({"email": "someone@example.com"}, "someone@example.com isn't in the order"),
+    ({"phone": "+15550001111"}, "isn't in the order"),
+])
+def test_what_doesnt_match_the_order_is_caught(fields, said):
+    wrong, _missing = ordercards.doubts(_checked(**fields), today=date(2026, 10, 14))
+    assert any(said in one for one in wrong), wrong
+
+
+def test_aged_read_as_fresh_and_a_far_launch_are_caught():
+    card = _checked()
+    card["source"] = card["source"].replace("Text-Verified Trucker IUL", "Aged Leads (VET)")
+    card["fields"]["package"] = "Aged VET"
+    assert any("aged - but this reads as a new agent's order" in one
+               for one in ordercards.doubts(card, today=date(2026, 10, 14))[0])
+    far = _checked()
+    far["launch_iso"] = "2027-03-01"
+    assert any("too far from today" in one for one in ordercards.doubts(far, today=date(2026, 10, 14))[0])
+
+
+def test_all_states_except_and_ad_spend_pass_when_the_order_says_so():
+    card = {"kind": "fresh", "launch_iso": "2026-10-16",
+            "source": "NAME: Samuel Riggins\nPRODUCT:\nPHX + 2.0 at $1050\nALL STATES besides CA, GA, IA, NY\nLIVE FRI OCT 16",
+            "fields": {"states": "All states except CA, GA, IA, NY", "package": "PHX + 2.0", "leads": "No cap (ad spend)"}}
+    assert ordercards.doubts(card, today=date(2026, 10, 14))[0] == []
+    card["fields"]["states"] = "All states except CA, GA, IA, NY, TX"
+    assert any("TX is left out" in one for one in ordercards.doubts(card, today=date(2026, 10, 14))[0])
+
+
+def test_missing_isnt_wrong():
+    card = _checked(states="", leads="")
+    wrong, missing = ordercards.doubts(card, today=date(2026, 10, 14))
+    assert wrong == [] and "no states in the order yet" in missing
+
+
+def test_a_card_that_doesnt_add_up_isnt_made_until_somebody_says_so(order, monkeypatch):
+    def reading(config, *, text, images, today, notes=()):
+        order.reads.append(text)
+        return {**_checked(states="TX, FL, SC, MO"), "client": "Taylor Bolger", "name": "New Agent - Taylor Bolger",
+                "desc": "d", "missing": []}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    monkeypatch.setattr(client, "_today", lambda config: date(2026, 10, 14))
+    order.pressed = True
+
+    async def run():
+        await client._order_gavelled(_bot(_message()), GAVEL)
+        for _ in range(200):
+            if order.made:
+                break
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    held = [text for text, view in order.responder.sent if view is not None]
+    assert held and "Not made yet — Taylor Bolger" in held[0] and "MO is on the card" in held[0]
+    assert len(order.made) == 1, "pressing Create anyway made it"
+    assert "Made past a check" in _said(order)[-1][0]
+
+
+def test_held_and_left_makes_nothing_and_can_be_gavelled_again(order, monkeypatch):
+    def reading(config, *, text, images, today, notes=()):
+        return {**_checked(leads="25"), "client": "Taylor Bolger", "name": "New Agent - Taylor Bolger",
+                "desc": "d", "missing": []}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    monkeypatch.setattr(client, "_today", lambda config: date(2026, 10, 14))
+    order.pressed = False
+
+    async def run():
+        await client._order_gavelled(_bot(_message()), GAVEL)
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    assert order.made == [] and "900" not in ordercards.load() and "900" not in client._ORDER_ACTIVE
