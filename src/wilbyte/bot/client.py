@@ -9278,11 +9278,24 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
 
 def _order_responder(bot):
     """Where orders are said in Ryte The Goat: the board's channel, else
-    #hub-agent-fulfillment."""
-    responder = _board_responder(bot) or _hub_responder(bot)
-    if responder is None:
-        log.error("No board channel and no #hub-agent-fulfillment to say orders in")
-    return responder
+    #hub-agent-fulfillment. Never the Growth server - "why did this ping
+    here": the board's channel is Growth's #trello-manager, and an order
+    update sent there on its own showed up in front of the team. So its
+    Ryte The Goat twin, straight."""
+    for found in (_board_responder(bot), _hub_responder(bot)):
+        if found is None:
+            continue
+        channel = getattr(found, "channel", None)
+        if channel is None or not _in_setup_guild(bot, getattr(channel, "guild", None)):
+            return found
+        guild = getattr(getattr(channel, "guild", None), "id", None)
+        twin = mirror.copy_of(getattr(channel, "id", None))
+        twin = bot.get_channel(twin) if twin else None
+        if twin is not None:
+            return ChannelResponder(twin)
+        log.warning("Channel %s is in the Growth server (%s) with no twin in Ryte The Goat", channel.id, guild)
+    log.error("No board channel and no #hub-agent-fulfillment in Ryte The Goat to say orders in")
+    return None
 
 
 async def _order_ungavelled(bot, payload) -> None:

@@ -265,7 +265,10 @@ async def _send(self, content=None, **kw):
             return await _SEND(where, content, **{
                 key: value for key, value in kw.items() if key not in _NOT_COPIED
             })
-        log.warning("Can't find channel %s to send into instead of %s", instead, here)
+        # Not said where nobody asked for it - the Growth server - just
+        # because Ryte The Goat's channel wasn't to hand.
+        log.warning("Can't find channel %s to send into instead of %s - not sent", instead, here)
+        return None
     copy_id = _INTO.get() or (copy_of(here) if PAIRS else None)
     if copy_id is None or copy_id == here:
         return await _SEND(self, content, **kw)

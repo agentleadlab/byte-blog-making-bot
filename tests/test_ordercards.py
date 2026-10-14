@@ -1621,3 +1621,23 @@ def test_the_gavel_goes_on_the_payment_once_its_card_is_made(order):
     asyncio.run(client.WilByteBot.on_raw_reaction_add(fake, SimpleNamespace(
         user_id=RYTE, emoji=SimpleNamespace(name="leadlab_hammertime"), message_id=900, channel_id=700)))
     assert started == []
+
+
+def test_order_news_never_goes_to_the_growth_server(monkeypatch):
+    """"why did this ping here" - Growth's #trello-manager, unasked."""
+    from wilbyte.bot import mirror
+    from wilbyte.bot.responders import ChannelResponder
+
+    growth, goat = SimpleNamespace(id=1), SimpleNamespace(id=2)
+    board = SimpleNamespace(id=10, guild=growth)
+    twin = SimpleNamespace(id=20, guild=goat)
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, guild: guild is growth)
+    monkeypatch.setattr(client, "_board_responder", lambda bot: ChannelResponder(board))
+    monkeypatch.setattr(client, "_hub_responder", lambda bot: None)
+    monkeypatch.setitem(mirror.PAIRS, 10, 20)
+    bot = SimpleNamespace(get_channel=lambda i: {20: twin}.get(i))
+    assert client._order_responder(bot).channel is twin
+    monkeypatch.delitem(mirror.PAIRS, 10)
+    assert client._order_responder(bot) is None
+    monkeypatch.setattr(client, "_board_responder", lambda bot: ChannelResponder(twin))
+    assert client._order_responder(bot).channel is twin
