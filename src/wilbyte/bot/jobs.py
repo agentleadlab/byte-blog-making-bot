@@ -12293,6 +12293,23 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
         client.close()
 
 
+def order_card_move(config: Config, card_id: str, kind: str) -> str:
+    """The card moved to its kind's list - In Que, or Aged Leads Order
+    Done. The list's name."""
+    from .. import ordercards
+
+    client = open_trello(config)
+    try:
+        wanted = (config.secrets.order_fresh_list if kind == "fresh" else config.secrets.order_aged_list) or ""
+        where = ordercards.list_for(kind, client.board_lists(config.secrets.trello_board_id), wanted=wanted)
+        if where is None:
+            raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board.")
+        client.move_card(card_id, str(where["id"]))
+        return str(where.get("name") or "")
+    finally:
+        client.close()
+
+
 #: The largest screenshot carried onto a card.
 ORDER_SHOT_MOST_BYTES = 10 * 1024 * 1024
 

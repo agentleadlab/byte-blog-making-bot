@@ -9991,6 +9991,22 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
                 pass
         return "failed"
     await _order_seen(bot, key)
+    # Read as a new agent when gavelled - a Zelle post says nothing of what
+    # was bought - and the thread then says aged: Declan Connolly's card was
+    # renamed Aged Leads but sat in In Que, and was parked in Franklin
+    # (Admin) for having no launch date. Its list follows what it is.
+    now_kind = card.get("kind") or order.get("kind")
+    if now_kind in ("fresh", "aged") and now_kind != order.get("kind") and order.get("bank_hold") is not True:
+        try:
+            where = await asyncio.to_thread(jobs.order_card_move, bot.config, order["card_id"], now_kind)
+            await _order_note(key, kind=now_kind)
+            responder = _order_responder(bot)
+            if responder is not None:
+                await responder.send(f"🔀 **{card.get('name') or order.get('name')}** — the thread says it's "
+                                     f"{'aged leads' if now_kind == 'aged' else 'a new agent'}, so the card's "
+                                     f"moved to {where}.\n{order.get('url', '')}", quiet=True)
+        except Exception:
+            log.warning("Couldn't move the card to its list", exc_info=True)
     if card.get("shots"):
         try:
             more = await asyncio.to_thread(partial(jobs.order_card_attach, bot.config, order["card_id"], card["shots"],

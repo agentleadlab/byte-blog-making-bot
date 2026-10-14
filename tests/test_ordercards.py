@@ -1899,3 +1899,22 @@ def test_recheck_reads_an_invoice_the_card_was_made_without(order, monkeypatch):
     asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
     assert "Payra invoice note: 50 VET FL TX" in order.reads[-1]
     assert ordercards.load()["900"]["extra_notes"] == ["Payra invoice note: 50 VET FL TX"]
+
+
+def test_a_card_that_turns_out_aged_moves_to_aged_leads_order_done(order, monkeypatch):
+    """Declan Connolly: a Zelle post, gavelled before the thread said aged -
+    made in In Que, parked in Franklin (Admin), then renamed Aged Leads."""
+    order.kind = "fresh"
+    message = _message("New Payment | Zelle\nNAME: Declan Connolly\nAMOUNT: $400.00\nPRODUCT: — (match to their order)")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert ordercards.load()["900"]["kind"] == "fresh"
+    moved = []
+    monkeypatch.setattr(jobs, "order_card_move", lambda config, card_id, kind: moved.append((card_id, kind)) or
+                        "Aged Leads Order Done")
+    monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("updated", []))
+    order.kind = "aged"
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert moved == [("card1", "aged")] and ordercards.load()["900"]["kind"] == "aged"
+    assert any("moved to Aged Leads Order Done" in said for said, _v in order.responder.sent)
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert len(moved) == 1, "moved again"
