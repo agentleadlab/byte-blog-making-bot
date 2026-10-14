@@ -213,9 +213,32 @@ def _codes(text: str) -> list[str]:
     return [one.upper() for one in _CODE.findall(str(text or "")) if one.upper() in US_STATES]
 
 
+def _apart(one: str, other: str) -> int:
+    """How many letters to change to make one the other."""
+    before = list(range(len(other) + 1))
+    for i, a in enumerate(one, 1):
+        now = [i]
+        for j, b in enumerate(other, 1):
+            now.append(min(before[j] + 1, now[j - 1] + 1, before[j - 1] + (a != b)))
+        before = now
+    return before[-1]
+
+
 def _said_state(code: str, source: str) -> bool:
     upper = str(source or "").upper()
-    return bool(re.search(rf"(?<![A-Z]){code}(?![A-Z])", upper)) or US_STATES[code] in str(source or "").casefold()
+    name = US_STATES[code]
+    # A whole word: "Kansas" isn't in "Arkansas".
+    if (re.search(rf"(?<![A-Z]){code}(?![A-Z])", upper)
+            or re.search(rf"(?<![a-z]){name}(?![a-z])", str(source or "").casefold())):
+        return True
+    # Spelled wrong - Simon Aleman's "Illinoi". A letter or two off, by how
+    # long the name is: "Utah" has to be "Utah".
+    slack = 0 if len(name) <= 4 else 1 if len(name) <= 7 else 2
+    if not slack:
+        return False
+    words = re.findall(r"[a-z]+", str(source or "").casefold())
+    size = len(name.split())
+    return any(_apart(" ".join(words[at:at + size]), name) <= slack for at in range(len(words) - size + 1))
 
 
 def _state_lines(source: str) -> list[str]:

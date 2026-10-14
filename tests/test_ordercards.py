@@ -1528,3 +1528,14 @@ def test_update_card_reads_the_thread_again(monkeypatch):
     assert refreshed == [("950", 0)] and "Nothing new" in sent[-1]
     asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "update card https://discord.com/channels/1/700/4"))
     assert "haven't made a card" in sent[-1]
+
+
+def test_a_state_spelled_wrong_in_the_order_is_still_said():
+    """Simon Aleman: "Illinoi" in the order held up IL on the card."""
+    source = ("Lead Type: Text-Verified Veteran Leads\nStates Leads In: Florida, North Carolina, West Virginia, "
+              "California, Hawaii, Ohio, Iowa, Illinoi, Texas, Pensylvania")
+    assert ordercards._said_state("IL", source)
+    assert ordercards._said_state("PA", source)
+    assert not ordercards._said_state("UT", "Utha")  # short names have to be right
+    assert not ordercards._said_state("KS", "Arkansas")
+    assert not ordercards._said_state("NY", source)
