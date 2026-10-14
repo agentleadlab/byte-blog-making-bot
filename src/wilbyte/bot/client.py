@@ -9705,20 +9705,36 @@ async def order_sweep_loop(bot: "WilByteBot") -> None:
         await asyncio.sleep(ORDER_SWEEP_SECONDS)
 
 
+def _order_named(held: dict, said: str) -> tuple[str, dict] | None:
+    """The order "recheck Louis Mordecai" means: its link, or the newest
+    made card with that name on it."""
+    found = _MESSAGE_LINK.search(said or "")
+    if found:
+        key = found.group(3)
+        return (key, held[key]) if key in held else None
+    wanted = " ".join(re.sub(r"[^\w\s'-]", " ", str(said or "")).casefold().split())
+    if not wanted:
+        return None
+    named = [(str(one.get("made_at") or ""), key, one) for key, one in held.items()
+             if isinstance(one, dict) and one.get("status") == "made" and not one.get("merged")
+             and wanted in " ".join(f"{one.get('client', '')} {one.get('name', '')}".casefold().split())]
+    if not named:
+        return None
+    _when, key, one = max(named)
+    return key, one
+
+
 async def _order_update_now(bot, responder: Responder, said: str) -> None:
-    """"@Ryte update card <the order's link>" - its card re-read now."""
+    """"@Ryte recheck Louis Mordecai" - the order's thread read onto its card now."""
     from .. import ordercards
 
-    found = _MESSAGE_LINK.search(said or "")
-    if not found:
-        await responder.send("Send the order's link: right-click the payment post → **Copy Message Link**.")
+    found = _order_named(ordercards.load(), said)
+    if found is None or found[1].get("status") != "made":
+        await responder.send(f"I haven't made a card for “{said}” — `@Ryte recheck <agent's name>` or "
+                             f"`@Ryte recheck <the order's link>`.")
         return
-    key = found.group(3)
-    order = ordercards.load().get(key) or {}
-    if order.get("status") != "made":
-        await responder.send("I haven't made a card for that order - gavel it, or `@Ryte order <link>`.")
-        return
-    await responder.send(f"📝 Reading {order.get('name') or 'the order'} again…")
+    key, order = found
+    await responder.send(f"📝 Reading {order.get('name') or 'the order'}'s thread again…")
     done = await _order_refresh(bot, key, settle=0)
     if done == "same":
         await responder.send(f"Nothing new for the card — it already says what the order says.\n{order.get('url', '')}")
@@ -9762,7 +9778,7 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
         if responder is not None and fails == 1:
             try:
                 await responder.send(f"⚠ Couldn't update **{order.get('name') or 'an order card'}** from the new notes: "
-                                     f"{_readable(exc)}\n{order.get('url', '')}\n-# `@Ryte update card <the order's link>` "
+                                     f"{_readable(exc)}\n{order.get('url', '')}\n-# `@Ryte recheck <agent's name>` "
                                      f"tries again.")
             except Exception:
                 pass

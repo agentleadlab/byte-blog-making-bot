@@ -1501,7 +1501,7 @@ def test_a_failed_update_is_said_once_and_given_up_after_three_tries(monkeypatch
     bot = SimpleNamespace(config=CONFIG, get_channel=broken)
     for _ in range(3):
         assert asyncio.run(client._order_refresh(bot, "950", settle=0)) == "failed"
-    assert len(sent) == 1 and "Couldn't update **Aged Leads - 950**" in sent[0] and "update card" in sent[0]
+    assert len(sent) == 1 and "Couldn't update **Aged Leads - 950**" in sent[0] and "recheck" in sent[0]
     assert ordercards.load()["950"]["fails"] == 3
 
     async def refresh(bot, key, *, settle=None):
@@ -1515,14 +1515,21 @@ def test_a_failed_update_is_said_once_and_given_up_after_three_tries(monkeypatch
     assert asyncio.run(client._order_sweep(SimpleNamespace())) == ["950"]
 
 
-def test_update_card_reads_the_thread_again(monkeypatch):
+def test_recheck_reads_the_thread_again(monkeypatch):
+    """"youll mess this up if you use same command" - "update" is RYTE
+    updating itself; reading an order again is "recheck"."""
     from wilbyte.bot import mentions
 
     link = "https://discord.com/channels/1/700/950"
-    assert mentions.parse(f"update card {link}").action == "orderrefresh"
-    assert mentions.parse(f"refresh order {link}").action == "orderrefresh"
+    assert mentions.parse("update").action == "update"
+    assert mentions.parse("update card").action != "orderrefresh"
+    assert mentions.parse(f"recheck {link}").action == "orderrefresh"
+    assert mentions.parse("recheck Louis Mordecai").action == "orderrefresh"
+    assert mentions.parse("recheck the card for Louis Mordecai").brief == "Louis Mordecai"
     assert mentions.parse(f"order {link}").action == "orderlink"
-    ordercards.save({"950": _made("950")})
+    ordercards.save({"950": _made("950", client="Louis Mordecai", made_at="2026-10-14T15:00:00+00:00"),
+                     "940": _made("940", client="Louis Mordecai", made_at="2026-10-01T15:00:00+00:00"),
+                     "941": _made("941", client="Louis Mordecai", merged=True, made_at="2026-10-14T16:00:00+00:00")})
     sent, refreshed = [], []
 
     class Responder:
@@ -1534,10 +1541,12 @@ def test_update_card_reads_the_thread_again(monkeypatch):
         return "same"
 
     monkeypatch.setattr(client, "_order_refresh", refresh)
-    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), f"update card {link}"))
-    assert refreshed == [("950", 0)] and "Nothing new" in sent[-1]
-    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "update card https://discord.com/channels/1/700/4"))
-    assert "haven't made a card" in sent[-1]
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), link))
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "louis mordecai"))
+    assert refreshed == [("950", 0), ("950", 0)] and "Nothing new" in sent[-1]
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "https://discord.com/channels/1/700/4"))
+    asyncio.run(client._order_update_now(SimpleNamespace(), Responder(), "Nobody Here"))
+    assert "haven't made a card" in sent[-1] and "haven't made a card" in sent[-2]
 
 
 def test_a_state_spelled_wrong_in_the_order_is_still_said():

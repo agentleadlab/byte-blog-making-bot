@@ -896,10 +896,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if template:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
-    # "update card <link>" - an order's thread read again onto its card.
-    if re.match(r"\s*(?:update|refresh|re-?read)\s+(?:the\s+)?(?:order\s+)?(?:card|order)\s+(?:for\s+)?<?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+",
-                text, re.IGNORECASE):
-        return MentionRequest(action="orderrefresh", brief=text)
+    # "recheck Louis Mordecai" / "recheck <link>" - an order's thread read
+    # again onto its card. Not "update": that's RYTE updating itself.
+    recheck = re.match(r"\s*(?:re-?check|re-?read)\s+(?:the\s+)?(?:order\s+|card\s+)*(?:for\s+)?(.+?)\s*[.?!]*\s*$",
+                       text, re.IGNORECASE)
+    if recheck:
+        return MentionRequest(action="orderrefresh", brief=recheck.group(1))
     if re.match(r"\s*(?:order|gavel|make\s+(?:the\s+)?card)\s+(?:for\s+)?<?https?://(?:\w+\.)?discord(?:app)?\.com/channels/\d+/\d+/\d+", text, re.IGNORECASE):
         return MentionRequest(action="orderlink", brief=text)
     # The people are tagged, and tags are gone from `text` - the handler
