@@ -1781,7 +1781,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "teamtasks":
-                await _team_list(responder)
+                await _team_list(responder, bot)
                 return
 
             if request.action == "setupthreads":
@@ -8541,6 +8541,22 @@ def _where_said(channel) -> str:
     return name + (f" under #{parent.name}" if parent is not None else "")
 
 
+async def _where_with_context(channel) -> str:
+    """Where it was said, and in a thread what the thread hangs off - the
+    payment post naming the client. "Set delivery schedule: Mon-Fri 8am-10pm"
+    in Killian Cooper's thread is Killian Cooper's schedule."""
+    where = _where_said(channel)
+    parent = getattr(channel, "parent", None)
+    if parent is None:
+        return where
+    try:
+        starter = await parent.fetch_message(channel.id)
+    except Exception:
+        return where
+    said = " ".join(_all_of_it(starter).split())[:400]
+    return f"{where} (the thread hangs off this post: {said})" if said else where
+
+
 async def _team_message(bot, message) -> None:
     """One message in the Growth server: a job for somebody, or a job done."""
     from .. import teamtasks
@@ -8573,7 +8589,7 @@ async def _team_task_from(bot, message, people, text, images, *, forced=False) -
     asker = str(getattr(message.author, "display_name", "") or getattr(message.author, "name", ""))
     got = await asyncio.to_thread(partial(
         jobs.read_team_request, bot.config, asker=asker, asked=[one["name"] for one in people],
-        text=text, images=images, where=_where_said(message.channel), forced=forced))
+        text=text, images=images, where=await _where_with_context(message.channel), forced=forced))
     if not got["task"]:
         return None
     task = {
@@ -8793,6 +8809,10 @@ async def _team_hub_check(bot, responder: Responder) -> None:
     """"@Ryte hub tasks" - every open request checked on the hub, now."""
     from .. import hub, teamtasks
 
+    try:
+        await _team_tasks_from_card(bot)
+    except Exception:
+        log.warning("Couldn't read the Ryte Checklist card", exc_info=True)
     if not teamtasks.open_ones(teamtasks.load()):
         await responder.send("Nothing asked of the team is open. ✅")
         return
@@ -8821,6 +8841,10 @@ async def team_tasks_loop(bot: "WilByteBot") -> None:
     await asyncio.sleep(90)
     while not bot.is_closed():
         try:
+            try:
+                await _team_tasks_from_card(bot)
+            except Exception:
+                log.warning("Couldn't read the Ryte Checklist card", exc_info=True)
             await _team_tasks_catch_up(bot)
             try:
                 await _team_tasks_on_hub(bot)
@@ -8875,10 +8899,43 @@ async def _team_track(bot, responder: Responder, said: str, author) -> None:
                          f"-# Ticked when {who} reacts to it or says it's done.")
 
 
-async def _team_list(responder: Responder) -> None:
+async def _team_tasks_from_card(bot) -> list[dict]:
+    """"most of these are done" - ticked on the Ryte Checklist card by hand.
+    The card is the record: an item ticked there is done, one deleted there
+    is no longer tracked. The ones closed this way."""
+    from .. import teamtasks
+
+    states = await asyncio.to_thread(jobs.ryte_card_items, bot.config)
+    closed = []
+    async with _TEAM_LOCK:
+        held = await asyncio.to_thread(teamtasks.load)
+        for task in teamtasks.open_ones(held):
+            item = str(task.get("item_id") or "")
+            if not item:
+                continue
+            state = states.get(item)
+            if state == "complete":
+                task["done_by"] = "ticked on the card"
+            elif state is None:
+                task["done_by"] = "taken off the card"
+            else:
+                continue
+            task["done_at"] = datetime.now(timezone.utc).isoformat(timespec="minutes")
+            closed.append(task)
+        if closed:
+            await asyncio.to_thread(teamtasks.save, held)
+    return closed
+
+
+async def _team_list(responder: Responder, bot=None) -> None:
     """"@Ryte team tasks" - what's still open."""
     from .. import teamtasks
 
+    try:
+        if bot is not None:
+            await _team_tasks_from_card(bot)
+    except Exception:
+        log.warning("Couldn't read the Ryte Checklist card", exc_info=True)
     held = await asyncio.to_thread(teamtasks.load)
     open_now = teamtasks.open_ones(held)
     if not open_now:

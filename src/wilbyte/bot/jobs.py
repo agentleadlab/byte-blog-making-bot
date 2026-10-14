@@ -11966,7 +11966,8 @@ def read_team_request(config: Config, *, asker: str, asked: list[str], text: str
                 "title": {"type": "string", "description": (
                     "The job in under 12 words, the client's name first when there is one: "
                     "'Michael Greff - set a 10/day cap', 'Lauren Huddleston - add TX to states'. "
-                    "Read the screenshots for what's being asked.")},
+                    "When the message doesn't name them, the post a thread hangs off usually does "
+                    "(a payment's NAME). Read the screenshots for what's being asked.")},
             },
             "required": ["task", "about_agent", "title"],
         },
@@ -12017,6 +12018,21 @@ def team_task_add(config: Config, task: dict) -> str:
         _card_id, tasks = _tasks_list(client, config)
         item = client.add_check_item(str(tasks["id"]), teamtasks.item_name(task))
         return str(item["id"])
+    finally:
+        client.close()
+
+
+def ryte_card_items(config: Config) -> dict:
+    """{item id: "complete" | "incomplete"} for every item on the Ryte
+    Checklist card - what the card says, ticked by hand or not."""
+    client = open_trello(config)
+    try:
+        card, _lists = _ryte_card(client, config)
+        found = {}
+        for checklist in client.card_checklists(str(card["id"])):
+            for item in checklist.get("checkItems") or []:
+                found[str(item.get("id") or "")] = str(item.get("state") or "")
+        return found
     finally:
         client.close()
 

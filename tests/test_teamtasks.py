@@ -405,3 +405,54 @@ def test_no_hub_key_no_check(card):
 @pytest.mark.parametrize("said", ["<@1> hub tasks", "<@1> check the hub for the tasks", "<@1> check tasks on the hub"])
 def test_hub_tasks_command(said):
     assert mentions.parse(said).action == "hubtasks"
+
+
+# ------------------------------------------------------------- the card says
+
+def test_ticked_or_deleted_on_the_card_is_done(card, monkeypatch):
+    """"You are not tracking these correctly, most of these are done"."""
+    teamtasks.save({
+        "1": {"id": "1", "title": "Marcelino Jabr - set delivery hours", "item_id": "i1", "made": NOW.isoformat(),
+              "assignees": [{"id": "22", "name": "Nicole"}]},
+        "2": {"id": "2", "title": "Ian Adams - set up new payment", "item_id": "i2", "made": NOW.isoformat(),
+              "assignees": []},
+        "3": {"id": "3", "title": "Izick Ruiz - set up 25 veteran leads", "item_id": "i3", "made": NOW.isoformat(),
+              "assignees": []},
+    })
+    monkeypatch.setattr(jobs, "ryte_card_items", lambda config: {"i1": "complete", "i2": "incomplete"})
+    closed = asyncio.run(client._team_tasks_from_card(BOT))
+    assert {one["id"] for one in closed} == {"1", "3"}
+    held = teamtasks.load()
+    assert held["1"]["done_by"] == "ticked on the card" and held["3"]["done_by"] == "taken off the card"
+    assert not held["2"].get("done_at")
+    assert card.ticked == [], "the card was written to for what the card already said"
+
+
+def test_the_list_and_the_hub_check_read_the_card_first(card, monkeypatch):
+    teamtasks.save({"1": {"id": "1", "title": "Marcelino Jabr - set delivery hours", "item_id": "i1",
+                          "made": NOW.isoformat(), "assignees": []}})
+    monkeypatch.setattr(jobs, "ryte_card_items", lambda config: {"i1": "complete"})
+    sent = []
+
+    class Goat:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    asyncio.run(client._team_list(Goat(), BOT))
+    assert sent == ["Nothing asked of the team is open. ✅"]
+
+
+def test_a_thread_request_is_named_from_the_post_it_hangs_off():
+    starter = SimpleNamespace(content="", embeds=[SimpleNamespace(title="New Payment | Payra",
+                              description="NAME: Killian Cooper\nPRODUCT: VET", fields=[], url=None,
+                              footer=None, author=None)])
+
+    class Parent:
+        name = "new-payment"
+
+        async def fetch_message(self, i):
+            return starter
+
+    thread = SimpleNamespace(id=5, name="@here", parent=Parent())
+    where = asyncio.run(client._where_with_context(thread))
+    assert "NAME: Killian Cooper" in where and "@here" in where
