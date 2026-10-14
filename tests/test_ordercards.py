@@ -1134,11 +1134,46 @@ def test_an_aged_payment_with_an_invoice_note_gets_its_card_with_no_gavel(order,
     assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "already"
 
 
-def test_no_note_no_card_and_the_gavel_still_works(order, monkeypatch):
+def test_no_note_the_card_is_made_from_the_thread_anyway(order, monkeypatch):
+    """"aged leads should be automatic add with states, thread or no thread
+    while relying on invoice if it has no states/thread added" - Jackson
+    Ruehl's invoice had no note; Kharyl's thread had his states."""
     monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
     message = _aged_post()
-    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "no note"
-    assert order.made == []
+    message.thread = _notes("can i get 10 of the aged vets 30-90 days. OK,TX,AZ,MO,AL", "uprise")
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
+    assert [one[0] for one in order.made] == ["aged"]
+    assert "OK,TX,AZ,MO,AL" in order.reads[0] and "Payra invoice note" not in order.reads[0]
+    assert ordercards.load()["950"]["extra_notes"] == []
+
+
+def test_the_invoice_note_stays_on_the_card_when_the_thread_updates_it(order, monkeypatch):
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "AGED IUL in IL, SC")
+    message = _aged_post()
+    asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
+    assert ordercards.load()["950"]["extra_notes"] == ["Payra invoice note: AGED IUL in IL, SC"]
+    monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("same", []))
+    order.reads.clear()
+    asyncio.run(client._order_refresh(_bot(message), "950", settle=0))
+    assert "Payra invoice note: AGED IUL in IL, SC" in order.reads[0]
+
+
+def test_a_thread_started_after_the_card_still_updates_it(monkeypatch):
+    ordercards.save({"950": {"status": "made", "thread_id": "", "card_id": "c"},
+                     "951": {"status": "made", "thread_id": "", "merged": True, "card_id": "c2"}})
+    started = []
+
+    class Loop:
+        def create_task(self, coroutine):
+            started.append(coroutine)
+            coroutine.close()
+            return SimpleNamespace(cancel=lambda: None)
+
+    bot = SimpleNamespace(loop=Loop())
+    client._order_note_posted(bot, SimpleNamespace(channel=SimpleNamespace(id=950)))
+    client._order_note_posted(bot, SimpleNamespace(channel=SimpleNamespace(id=951)))
+    assert len(started) == 1, "a merged payment's thread rewrote the card it was put on"
+    client._ORDER_PENDING.clear()
 
 
 def test_from_a_note_its_aged_or_nothing(order, monkeypatch):
@@ -1196,3 +1231,47 @@ def test_invoice_note_shows_every_note_field_as_payra_has_it(order, monkeypatch)
     said = order.responder.sent[-1][0]
     assert "**#INV-19860 · $103.5**" in said and "`internal_note`: AGED IUL 180+" in said
     assert mentions.parse("<@1> invoice note Aiden Larsen").action == "invoicenote"
+
+
+
+def test_an_aged_payment_missed_while_down_gets_its_card_on_start(order, monkeypatch):
+    now = datetime(2026, 10, 14, 16, 30, tzinfo=timezone.utc)
+    paid = _aged_post(960)
+    paid.created_at, paid.reactions = datetime(2026, 10, 14, 16, 10, tzinfo=timezone.utc), []
+    morning = _aged_post(961)
+    morning.created_at, morning.reactions = datetime(2026, 10, 14, 14, 45, tzinfo=timezone.utc), []
+
+    class Place:
+        id = 700
+        last_message_id = int(((now.timestamp() - 60) * 1000 - 1420070400000)) << 22
+
+        def history(self, **kw):
+            async def gen():
+                for one in (paid, morning):
+                    yield one
+            return gen()
+
+    async def threads():
+        return []
+
+    guild = SimpleNamespace(id=1, text_channels=[Place()], active_threads=threads)
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: guild)
+    made = []
+
+    async def making(bot, message, *, wait=None):
+        made.append((message.id, wait))
+        return "made"
+
+    async def no_wait(_s):
+        return None
+
+    monkeypatch.setattr(client, "_aged_from_invoice", making)
+    monkeypatch.setattr(client.asyncio, "sleep", no_wait)
+
+    async def run():
+        done = await client._catch_up_gavels(_bot(paid), now=now)
+        await asyncio.sleep(0)
+        return done
+
+    done = asyncio.run(run())
+    assert done == ["960"] and made == [(960, 0.0)], "this morning's may have a card made by hand"

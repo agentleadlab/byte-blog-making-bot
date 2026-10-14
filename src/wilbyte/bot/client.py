@@ -9141,6 +9141,17 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
             pass
         try:
             async for message in place.history(after=since, limit=300):
+                # An aged payment with no card - posted while RYTE was down,
+                # or its two minutes cut short by a restart.
+                if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
+                        and message.created_at >= AGED_AUTO_FROM and _aged_payment(message)
+                        and str(message.id) not in _ORDER_ACTIVE
+                        and not (await asyncio.to_thread(ordercards.load)).get(str(message.id))):
+                    waited = (now - message.created_at).total_seconds()
+                    _also_running(asyncio.get_running_loop().create_task(_aged_from_invoice(
+                        bot, message, wait=max(0.0, AGED_INVOICE_WAIT_SECONDS - waited))))
+                    done.append(str(message.id))
+                    continue
                 for reaction in getattr(message, "reactions", None) or []:
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
@@ -9188,8 +9199,12 @@ def _gavel_counts(bot, payload) -> bool:
 #: aged payment posted in #new-payment whose Payra invoice has a note gets
 #: its card at once, no thread or gavel.
 AGED_FROM_INVOICE = True
-#: How long after the payment's post the invoice is looked for.
-AGED_INVOICE_WAIT_SECONDS = 20
+#: How long after an aged payment's post its card is made - time for the
+#: team to start the thread with the states. Notes after that update it.
+AGED_INVOICE_WAIT_SECONDS = 120
+#: Aged payments posted from here on get their card by themselves - Jackson
+#: Ruehl's at 12:05 the first. Earlier ones may have a card made by hand.
+AGED_AUTO_FROM = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)
 
 
 def _aged_payment(message) -> bool:
@@ -9223,14 +9238,14 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
     except Exception:
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
         return "failed"
-    if not note:
-        log.info("No invoice note for %s's aged order - left for the thread and the gavel", name)
-        return "no note"
-    log.info("Making %s's aged card from the invoice note", name)
+    # "aged leads should be automatic add with states, thread or no thread
+    # while relying on invoice if it has no states/thread added": the thread
+    # first, the invoice's note beside it, and the card made either way.
+    log.info("Making %s's aged card%s", name, " with the invoice note" if note else "")
     await _order_gavelled(bot, SimpleNamespace(
         message_id=message.id, channel_id=message.channel.id, user_id=0,
         guild_id=getattr(getattr(message, "guild", None), "id", None), member=None,
-        extra_notes=(f"Payra invoice note: {note}",), aged_only=True))
+        extra_notes=(f"Payra invoice note: {note}",) if note else (), aged_only=True))
     return "made"
 
 
@@ -9407,6 +9422,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             log.warning("Couldn't put the screenshots on the card", exc_info=True)
     await _order_note(key, status="made", kind=kind, card_id=made["id"], url=made["url"], name=card["name"],
                       fields=card.get("fields") or {}, launch_iso=card.get("launch_iso") or "",
+                      extra_notes=list(getattr(payload, "extra_notes", ()) or ()),
                       made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       written=card["desc"], client=card["client"], link=link, attached=attached,
                       thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id))
@@ -9511,7 +9527,10 @@ def _order_note_posted(bot, message) -> None:
         return
     where = str(getattr(message.channel, "id", ""))
     for key, order in held.items():
-        if order.get("status") == "made" and where and where == order.get("thread_id"):
+        # A thread started from the post has the post's own id - so one
+        # started after the card was made is still this order's.
+        if (order.get("status") == "made" and not order.get("merged")
+                and where and where in (order.get("thread_id"), key)):
             waiting = _ORDER_PENDING.pop(key, None)
             if waiting is not None:
                 waiting.cancel()
@@ -9535,7 +9554,8 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
             since = datetime.fromisoformat(order["made_at"]) if order.get("made_at") else None
         except ValueError:
             since = None
-        card, _examples, _thread = await _order_read(bot, message, since=since)
+        card, _examples, _thread = await _order_read(bot, message, since=since,
+                                                     extra=tuple(order.get("extra_notes") or ()))
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))
