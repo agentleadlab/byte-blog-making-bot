@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -207,9 +208,20 @@ def order(monkeypatch):
     def reading(config, *, text, images, today, notes=()):
         held.reads.append(text)
         held.notes = list(notes)
-        return {"kind": held.kind, "client": "Cole Petersen", "name": f"{held.kind} - Cole Petersen",
+        # What an aged card can't be made without, there to be read - unless
+        # a test takes it away.
+        product = re.search(r"PRODUCT:\s*([^\n]*)", text)
+        fields = dict({"states": "AZ, TX", "leads": "25",
+                       "package": product.group(1) if product and not product.group(1).startswith("—") else "Aged MTG"}
+                      if held.kind == "aged" else {}, **held.fields)
+        read = {"kind": held.kind, "client": "Cole Petersen", "name": f"{held.kind} - Cole Petersen",
                 "desc": f"Name: Cole Petersen\nread {len(held.reads)}", "due": "2026-10-14",
                 "missing": ["States"]}
+        if fields:
+            read.update(fields=fields, source=text + "\nAZ TX 25")
+        return read
+
+    held.fields = {}
 
     def making(config, kind, card, list_name=""):
         held.made.append((kind, card["name"], card["desc"], "new"))
@@ -1138,6 +1150,7 @@ def _aged_post(i=950):
 def test_an_aged_payment_with_an_invoice_note_gets_its_card_with_no_gavel(order, monkeypatch):
     """"ryte will just immediately create the card"."""
     monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "AGED IUL\n180+\nin states IL, SC, AZ, and TX")
+    order.fields = {"states": "IL, SC, AZ, TX"}
     message = _aged_post()
     assert client._aged_payment(message)
     assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
@@ -1154,6 +1167,7 @@ def test_no_note_the_card_is_made_from_the_thread_anyway(order, monkeypatch):
     monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
     message = _aged_post()
     message.thread = _notes("can i get 10 of the aged vets 30-90 days. OK,TX,AZ,MO,AL", "uprise")
+    order.fields = {"states": "OK, TX, AZ, MO, AL", "leads": "10"}
     assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
     assert [one[0] for one in order.made] == ["aged"]
     assert "OK,TX,AZ,MO,AL" in order.reads[0] and "Payra invoice note" not in order.reads[0]
@@ -2109,3 +2123,52 @@ def test_a_post_with_no_thread_isnt_asked_about_every_sweep(monkeypatch):
     asyncio.run(client._order_thread(bot, "950", {}))
     assert asked == [950, 950], "a thread started later is looked for again"
     client._NO_THREAD.clear()
+
+
+
+def test_an_aged_order_with_no_states_or_count_isnt_made_on_its_own(order, monkeypatch):
+    """Matt DeFuria: an Aged Leads card with no states and no lead count,
+    made on its own - and Aged Leads Order Done sends it."""
+    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    order.fields = {"states": "", "leads": ""}
+    message = _aged_post()
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
+    assert order.made == []
+    held = ordercards.load()["950"]
+    assert held["status"] == "waiting" and held["gaps"] == ["the states", "how many leads"]
+    said = [one for one, _v in order.responder.sent if "No card yet" in str(one)]
+    assert len(said) == 1 and "the states or how many leads" in said[0]
+    # Tried again, still nothing: not said twice.
+    asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
+    assert len([one for one, _v in order.responder.sent if "No card yet" in str(one)]) == 1
+    # The thread says it: the card's made.
+    order.fields = {}
+    message.thread = _notes("25 aged IUL, AZ TX")
+    asyncio.run(client._order_retry(_bot(message), "950", settle=0))
+    assert [one[0] for one in order.made] == ["aged"] and ordercards.load()["950"]["status"] == "made"
+
+
+def test_a_gavelled_aged_order_with_no_states_is_held_for_a_person(order):
+    order.fields = {"states": ""}
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.made == []
+    [(said, view)] = [one for one in _said(order) if "Not made yet" in str(one[0])]
+    assert "the states" in said and view is not None
+
+
+def test_the_sweep_tries_a_waiting_aged_order_again(monkeypatch):
+    now = datetime.now(timezone.utc)
+    ordercards.save({"950": {"status": "waiting", "message_channel_id": "700", "gaps": ["the states"],
+                             "waiting_since": (now - timedelta(hours=1)).isoformat(),
+                             "tried_at": (now - timedelta(minutes=31)).isoformat()},
+                     "951": {"status": "waiting", "message_channel_id": "700",
+                             "waiting_since": (now - timedelta(hours=1)).isoformat(),
+                             "tried_at": (now - timedelta(minutes=5)).isoformat()}})
+    tried = []
+
+    async def retry(bot, key, *, settle=30):
+        tried.append(key)
+
+    monkeypatch.setattr(client, "_order_retry", retry)
+    asyncio.run(client._order_sweep(SimpleNamespace()))
+    assert tried == ["950"]

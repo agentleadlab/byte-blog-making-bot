@@ -9251,7 +9251,7 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
 
     await asyncio.sleep(AGED_INVOICE_WAIT_SECONDS if wait is None else wait)
     key = str(message.id)
-    if ordercards.load().get(key) or key in _ORDER_ACTIVE:
+    if (ordercards.load().get(key) or {}).get("status") not in (None, "waiting") or key in _ORDER_ACTIVE:
         return "already"
     said = _all_of_it(message)
     name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
@@ -9361,7 +9361,10 @@ async def _order_gavelled(bot, payload) -> None:
         if (held.get(key) or {}).get("status") == "made" or key in _ORDER_ACTIVE:
             return
         _ORDER_ACTIVE.add(key)
-        held[key] = {"status": "reading", "channel_id": str(payload.channel_id), "by": str(payload.user_id)}
+        # A waiting aged order keeps what it's waited for and whether that
+        # was said - it's said once.
+        before = held.get(key) if (held.get(key) or {}).get("status") == "waiting" else {}
+        held[key] = {**before, "status": "reading", "channel_id": str(payload.channel_id), "by": str(payload.user_id)}
         await asyncio.to_thread(ordercards.save, held)
     try:
         await _order_make(bot, payload, key, responder)
@@ -9472,6 +9475,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     # "Be Sure to not fail here": what was read, held up against the order.
     # Anything that doesn't add up and the card waits for a person.
     wrong, missing = ordercards.doubts(card, today=_today(bot.config))
+    # An aged card goes out as soon as it's in Aged Leads Order Done - Matt
+    # DeFuria's was made with no states and no lead count. Without those
+    # (and a lead type) it isn't made: made on its own, it waits for them;
+    # gavelled, it's held for a person.
+    gaps = _aged_gaps(card) if kind == "aged" else []
+    if gaps and not getattr(payload, "confirmed", False):
+        if getattr(payload, "aged_only", False):
+            await _order_wait_for_info(bot, payload, key, card, gaps, link, responder)
+            return
+        wrong = list(wrong) + [f"Not in the order: {', '.join(gaps)} — an aged card goes out as soon as it's made"]
     if wrong and not getattr(payload, "confirmed", False):
         # Waited on apart from the gavel, so gavelling it again once the
         # thread is fixed isn't taken for this one still going.
@@ -9569,6 +9582,78 @@ PARKED_LIST = "Franklin (Admin)"
 #: How often a held card's payment is looked at, and for how long.
 BANK_CHECK_SECONDS = 10 * 60
 BANK_WATCH_DAYS = 14
+
+
+def _aged_gaps(card: dict) -> list[str]:
+    """What an aged order can't go out without, that it doesn't say."""
+    fields = card.get("fields") or {}
+    gaps = []
+    if not str(fields.get("states") or "").strip():
+        gaps.append("the states")
+    if not re.search(r"\d", str(fields.get("leads") or "")):
+        gaps.append("how many leads")
+    if not str(fields.get("package") or "").strip():
+        gaps.append("the lead type")
+    return gaps
+
+
+#: How long an aged order waits for its states and lead count to be posted.
+AGED_WAIT_DAYS = 2
+#: How often a waiting aged order's invoice is looked at again.
+AGED_RETRY_EVERY = timedelta(minutes=30)
+
+
+async def _order_wait_for_info(bot, payload, key, card, gaps, link, responder) -> None:
+    """An aged order made on its own that doesn't say enough: no card, said
+    once, and tried again when its thread or invoice says more."""
+    from .. import ordercards
+
+    before = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    await _order_note(key, status="waiting", gaps=gaps, client=card.get("client") or "",
+                      message_channel_id=str(payload.channel_id), link=link, tried_at=now,
+                      waiting_since=before.get("waiting_since") or now, said=before.get("said") or False)
+    ack = _ORDER_ACKS.pop(key, None)
+    if before.get("said") or responder is None:
+        if ack is not None and hasattr(ack, "delete"):
+            try:
+                await ack.delete()
+            except Exception:
+                pass
+        return
+    await _order_note(key, said=True)
+    said = (f"⏳ **{card.get('client') or 'An aged order'}** — aged leads, but I can't find {' or '.join(gaps)} "
+            f"in the payment, its Payra invoice note or a thread. **No card yet**: an aged card goes out as soon "
+            f"as it's made. I'll make it when they're posted in a thread on the payment or put in the invoice "
+            f"note — or gavel it once they're there.\n{link}")
+    try:
+        if ack is not None and hasattr(ack, "edit"):
+            await ack.edit(content=said)
+        else:
+            await responder.send(said)
+    except Exception:
+        log.warning("Couldn't say the aged order is waiting", exc_info=True)
+
+
+async def _order_retry(bot, key: str, *, settle: float = 30) -> str:
+    """A waiting aged order tried again - a note in its thread, or the
+    invoice looked at again."""
+    from .. import ordercards
+
+    await asyncio.sleep(settle)
+    _ORDER_PENDING.pop(key, None)
+    order = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if order.get("status") != "waiting":
+        return "gone"
+    try:
+        channel = bot.get_channel(int(order["message_channel_id"])) or \
+            await bot.fetch_channel(int(order["message_channel_id"]))
+        message = await channel.fetch_message(int(key))
+    except Exception:
+        log.warning("Couldn't fetch the waiting aged order", exc_info=True)
+        return "failed"
+    await _order_note(key, tried_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return await _aged_from_invoice(bot, message, wait=0)
 
 
 async def _order_invoice_note(bot, message) -> str:
@@ -9820,6 +9905,11 @@ def _order_note_posted(bot, message) -> None:
             if waiting is not None:
                 waiting.cancel()
             _ORDER_PENDING[key] = bot.loop.create_task(_order_refresh(bot, key))
+        elif order.get("status") == "waiting" and where and where in (order.get("thread_id"), key):
+            waiting = _ORDER_PENDING.pop(key, None)
+            if waiting is not None:
+                waiting.cancel()
+            _ORDER_PENDING[key] = bot.loop.create_task(_order_retry(bot, key))
 
 
 #: {channel id: when Discord last said there's no such thread} - most aged
@@ -9884,6 +9974,15 @@ async def _order_sweep(bot) -> list[str]:
     now = datetime.now(timezone.utc)
     due = []
     for key, order in held.items():
+        if isinstance(order, dict) and order.get("status") == "waiting" and key not in _ORDER_PENDING:
+            try:
+                since = datetime.fromisoformat(str(order.get("waiting_since") or ""))
+                tried = datetime.fromisoformat(str(order.get("tried_at") or ""))
+            except ValueError:
+                continue
+            if now - since <= timedelta(days=AGED_WAIT_DAYS) and now - tried >= AGED_RETRY_EVERY:
+                await _order_retry(bot, key, settle=0)
+            continue
         if not isinstance(order, dict) or order.get("status") != "made" or order.get("merged"):
             continue
         try:
@@ -10260,6 +10359,9 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
         return "ok", f"✋ **{name}** ({bits}) — somebody pressed Leave it: <{post.jump_url}>"
     if status == "asked":
         return "waiting", f"⏳ **{name}** ({bits}) — waiting on a button in Ryte The Goat: <{post.jump_url}>"
+    if status == "waiting":
+        return "waiting", (f"⏳ **{name}** ({bits}) — aged, no card until somebody posts "
+                           f"{' and '.join(order.get('gaps') or ['the details'])}: <{post.jump_url}>")
     # A card for them on the board, archived or not, or one RYTE made for
     # another of their payments - Keegan Sundberg's $79.18 after his $1,240.
     found = jobs.has_new_agent_card(name, cards)
