@@ -267,6 +267,12 @@ _LAUNCH_WORD = re.compile(
     r"deliver\w*|send(?:ing)?\s+leads|leads?\s+(?:on|from|begin|start))\b", re.IGNORECASE)
 
 
+#: "Same states last time", "same states as before", "states same as last".
+SAME_STATES = re.compile(
+    r"\bsame\s+states?\b|\bstates?\s+(?:are\s+)?(?:the\s+)?same\b|"
+    r"\bstates?\b[^\n]{0,25}\b(?:last\s+time|as\s+before|previous|last\s+order)\b", re.IGNORECASE)
+
+
 def says_when(source: str) -> bool:
     """Whether the order says when they launch: a launch word and a day or
     date - leaving out the time each message was posted, which RYTE adds as
@@ -344,11 +350,14 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
 
     # Contact.
     email = str(fields.get("email") or "").strip().casefold()
+    # Said, not held for: a phone read off a screenshot of the client's
+    # texts (Mohammad Kanan's) isn't in the words, and a card's contact
+    # details don't set up anybody's leads.
     if email and email not in source.casefold():
-        wrong.append(f"Email: {email} isn't in the order")
+        missing.append(f"check the email ({email}) - not in the order's text")
     phone = re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:]
     if len(phone) == 10 and phone not in re.sub(r"\D", "", source):
-        wrong.append(f"Phone: {fields.get('phone')} isn't in the order")
+        missing.append(f"check the phone ({fields.get('phone')}) - not in the order's text, maybe off a screenshot")
 
     # When.
     launch = str(card.get("launch_iso") or "")

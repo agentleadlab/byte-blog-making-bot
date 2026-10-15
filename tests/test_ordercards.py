@@ -1327,12 +1327,20 @@ def test_a_card_that_matches_the_order_passes():
     ({"package": "Text-Verified Veteran"}, "the payment post says “Text-Verified Trucker IUL”"),
     ({"leads": "25"}, "25 isn't in the order"),
     ({"leads": "No cap (ad spend)"}, "doesn't say Phoenix"),
-    ({"email": "someone@example.com"}, "someone@example.com isn't in the order"),
-    ({"phone": "+15550001111"}, "isn't in the order"),
 ])
 def test_what_doesnt_match_the_order_is_caught(fields, said):
     wrong, _missing = ordercards.doubts(_checked(**fields), today=date(2026, 10, 14))
     assert any(said in one for one in wrong), wrong
+
+
+@pytest.mark.parametrize("fields, said", [
+    ({"email": "someone@example.com"}, "check the email (someone@example.com)"),
+    ({"phone": "+15550001111"}, "check the phone"),
+])
+def test_contact_details_not_in_the_text_are_said_not_held_for(fields, said):
+    """Mohammad Kanan's phone was read off a screenshot of his texts."""
+    wrong, missing = ordercards.doubts(_checked(**fields), today=date(2026, 10, 14))
+    assert wrong == [] and any(said in one for one in missing), missing
 
 
 def test_aged_read_as_fresh_and_a_far_launch_are_caught():
@@ -1400,7 +1408,8 @@ def test_held_and_left_makes_nothing_and_can_be_gavelled_again(order, monkeypatc
             await asyncio.sleep(0.01)
 
     asyncio.run(run())
-    assert order.made == [] and "900" not in ordercards.load() and "900" not in client._ORDER_ACTIVE
+    assert order.made == [] and "900" not in client._ORDER_ACTIVE
+    assert (ordercards.load().get("900") or {}).get("status") in (None, "held")
 
 
 
@@ -2280,3 +2289,63 @@ def test_a_weekly_subscription_charge_isnt_waiting_on_a_card():
                  "PRODUCT: First week of leads (starts Tuesday, Oct 20)\nsubscription")
     assert client._audit_line(renewal, {}, [])[0] == "subs"
     assert client._audit_line(first, {}, [])[0] == "waiting"
+
+
+def test_same_states_last_time_takes_their_last_cards_states(order, monkeypatch):
+    """Mohammad Kanan: "200 Aged Vets / Same states last time / 30-90"."""
+    looked = []
+
+    def previous(config, names, *, before):
+        looked.append(names)
+        return "AZ, TX, FL", "Aged Leads - Mohammad Kanan", "https://trello.com/c/last"
+
+    monkeypatch.setattr(jobs, "previous_states", previous)
+    order.fields = {"states": "", "leads": "200"}
+    message = _message("New Payment | Zelle\nNAME: Kanan Kapital Llc\nAMOUNT: $1,000.00\nPRODUCT: Aged Leads (VET)",
+                       thread=_notes("200 Aged Vets\nSame states last time\n30-90"))
+
+    def reading(config, *, text, images, today, notes=()):
+        order.reads.append(text)
+        return {"kind": "aged", "client": "Mohammad Kanan", "name": "Aged Leads - Mohammad Kanan", "desc": "d",
+                "fields": {"name": "Mohammad Kanan", "states": "", "leads": "200", "package": "Aged Leads (VET)"},
+                "source": text + "\n200", "missing": ["States"]}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert looked == [["Mohammad Kanan", "Kanan Kapital Llc"]]
+    [(kind, name, desc, _new)] = order.made
+    assert "States: AZ, TX, FL" in desc and "States same as last time — AZ, TX, FL" in desc
+
+
+def test_saying_the_same_states_is_recognised():
+    for said in ("Same states last time", "same states as before", "states same as last order",
+                 "States: same as last time"):
+        assert ordercards.SAME_STATES.search(said), said
+    assert not ordercards.SAME_STATES.search("States: TX, FL")
+
+
+def test_their_last_card_is_found_archived_and_by_whole_name(monkeypatch):
+    from datetime import datetime, timezone
+
+    def cid(when):
+        return f"{int(when.timestamp()):08x}" + "0" * 16
+
+    old = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    newer = datetime(2026, 10, 1, tzinfo=timezone.utc)
+
+    class Cards(Board):
+        def board_cards(self, board_id, archived=False):
+            assert archived
+            return [{"id": cid(old), "name": "AGED LEAD - Mohammad Kanan", "desc": "States: OH", "closed": True},
+                    {"id": cid(newer), "name": "Aged Leads - Mohammad Kanan", "desc": "Name: x\nStates: AZ, TX",
+                     "shortUrl": "https://trello.com/c/new"},
+                    {"id": cid(newer), "name": "Aged Leads - Mohammad Kananson", "desc": "States: CA"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Cards())
+    assert jobs.previous_states(CONFIG, ["Mohammad Kanan"], before=datetime(2026, 10, 15, tzinfo=timezone.utc)) == (
+        "AZ, TX", "Aged Leads - Mohammad Kanan", "https://trello.com/c/new")
+    assert jobs.previous_states(CONFIG, ["Mohammad Kanan"], before=datetime(2026, 9, 25, tzinfo=timezone.utc))[0] == "OH"
+    assert jobs.previous_states(CONFIG, ["Nobody Here"], before=datetime(2026, 10, 15, tzinfo=timezone.utc)) == ("", "", "")

@@ -9237,7 +9237,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
                     held = (await asyncio.to_thread(ordercards.load)).get(str(message.id)) or {}
-                    if held.get("status") in ("made", "left") or str(message.id) in _ORDER_ACTIVE:
+                    if held.get("status") in ("made", "left", "held") or str(message.id) in _ORDER_ACTIVE:
                         break
                     async for person in reaction.users():
                         if not getattr(person, "bot", False) and (
@@ -9468,6 +9468,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         if responder is not None:
             await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)}")
         return
+    await _order_same_states(bot, message, card)
     kind, link = card["kind"], str(getattr(message, "jump_url", "") or "")
     if getattr(payload, "aged_only", False) and (kind != "aged" or not AGED_ORDERS_ON):
         # Made from an invoice note with nobody's gavel: aged only, or nothing.
@@ -9638,6 +9639,35 @@ PARKED_LIST = "Franklin (Admin)"
 #: How often a held card's payment is looked at, and for how long.
 BANK_CHECK_SECONDS = 10 * 60
 BANK_WATCH_DAYS = 14
+
+
+async def _order_same_states(bot, message, card: dict) -> None:
+    """"Same states last time" (Mohammad Kanan): the states off their last
+    card, onto this one - said where they came from, in the notes and in
+    what the card is checked against."""
+    from .. import ordercards
+
+    fields = card.get("fields") or {}
+    if str(fields.get("states") or "").strip() or not ordercards.SAME_STATES.search(str(card.get("source") or "")):
+        return
+    paid_name = (_PAID_NAME.search(_all_of_it(message)) or [None, ""])[1].strip(" *")
+    names = [one for one in dict.fromkeys((card.get("client") or "", paid_name)) if one]
+    try:
+        states, title, url = await asyncio.to_thread(partial(
+            jobs.previous_states, bot.config, names,
+            before=datetime.now(timezone.utc) - timedelta(minutes=5)))
+    except Exception:
+        log.warning("Couldn't look up their last card's states", exc_info=True)
+        return
+    if not states:
+        return
+    said = f"States same as last time — {states} (from {title}: {url})"
+    fields["states"] = states
+    fields["notes"] = (str(fields.get("notes") or "").rstrip() + "\n" + said).strip()
+    card["fields"] = fields
+    card["source"] = str(card.get("source") or "") + "\n" + said
+    card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
+    card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
 
 
 def _aged_gaps(card: dict) -> list[str]:
@@ -9855,6 +9885,9 @@ async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
         await ack.edit(content=said[:1950], view=view)
     except Exception:
         await responder.send(said[:1950], view=view)
+    # Remembered as held, so a restart's catch-up doesn't hold it again - it
+    # said "Not made yet" twice for Mohammad Kanan. A fresh gavel still reads it.
+    await _order_note(key, status="held", message_channel_id=str(payload.channel_id))
     await view.wait()
     if not view.confirmed:
         return
