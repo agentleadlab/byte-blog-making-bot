@@ -43,12 +43,23 @@ def said_done(text: str) -> bool:
     return not _NOT_YET.search(said)
 
 
+#: The team's clock - "done by the hub 10/15 3:48pm" was UTC at 11:48am.
+ZONE = "America/New_York"
+
+
+def _local(stamp: str) -> datetime:
+    from zoneinfo import ZoneInfo
+
+    when = datetime.fromisoformat(stamp)
+    return when.astimezone(ZoneInfo(ZONE)) if when.tzinfo else when
+
+
 def item_name(task: dict) -> str:
     """"Michael Greff - set a 10/day cap · @Nicole (asked by Faith 10/13)"."""
     who = ", ".join(one.get("name", "") for one in task.get("assignees") or [] if one.get("name"))
     when = ""
     try:
-        when = f" {datetime.fromisoformat(task['made']):%m/%d}"
+        when = f" {_local(task['made']):%m/%d}"
     except (KeyError, ValueError, TypeError):
         pass
     asker = task.get("asker") or "?"
@@ -59,7 +70,7 @@ def done_name(task: dict) -> str:
     """The item once it's done: who did it and when, for the record."""
     when = ""
     try:
-        when = f" {datetime.fromisoformat(task['done_at']):%m/%d %-I:%M%p}".lower()
+        when = f" {_local(task['done_at']):%m/%d %-I:%M%p}".lower()
     except (KeyError, ValueError, TypeError):
         pass
     return f"{item_name(task)} — done by {task.get('done_by') or '?'}{when}"

@@ -37,7 +37,8 @@ def test_the_item_says_the_job_who_and_who_asked():
     task = {"title": "Michael Greff - set a 10/day cap", "assignees": [{"id": "1", "name": "Nicole"}],
             "asker": "Faith", "made": "2026-10-13T19:34+00:00"}
     assert teamtasks.item_name(task) == "Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13)"
-    task.update(done_by="Nicole", done_at="2026-10-13T20:05+00:00")
+    task.update(done_by="Nicole", done_at="2026-10-14T00:05+00:00")
+    # Eastern, not UTC: "done by the hub 10/15 3:48pm" at 11:48am.
     assert teamtasks.done_name(task).endswith("— done by Nicole 10/13 8:05pm")
 
 
@@ -137,7 +138,7 @@ def test_nicoles_done_in_the_thread_ticks_it_and_nobody_elses_does(card):
     asyncio.run(client._team_message(BOT, message(6, NICOLE_P, "will do")))
     assert card.ticked == []
     asyncio.run(client._team_message(BOT, message(7, NICOLE_P, "done, capped at 10", when=NOW + timedelta(minutes=31))))
-    assert card.ticked == ["Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13) — done by Nicole 10/13 8:05pm"]
+    assert card.ticked == ["Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13) — done by Nicole 10/13 4:05pm"]
     asyncio.run(client._team_message(BOT, message(8, NICOLE_P, "done")))
     assert len(card.ticked) == 1
 
@@ -218,7 +219,7 @@ def test_on_the_card_under_concerns_and_ticked_only_by_its_own_id(monkeypatch):
     assert board.names("general") == {}
     assert board.names("concerns") == {
         "Call Payra": "incomplete",
-        "Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13) — done by Nicole 10/13 8:05pm": "complete",
+        "Michael Greff - set a 10/day cap · Nicole (asked by Faith 10/13) — done by Nicole 10/13 4:05pm": "complete",
     }
 
 

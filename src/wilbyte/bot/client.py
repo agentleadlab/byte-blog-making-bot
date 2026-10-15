@@ -8868,6 +8868,7 @@ async def team_tasks_loop(bot: "WilByteBot") -> None:
     on the card for him."""
     from .. import teamtasks
 
+    teamtasks.ZONE = bot.config.schedule.timezone or teamtasks.ZONE
     await asyncio.sleep(90)
     while not bot.is_closed():
         try:
