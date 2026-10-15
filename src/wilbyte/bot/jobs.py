@@ -4576,14 +4576,29 @@ def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
                         "states, lead types, replacements, campaigns. ops: client setup systems - CRM, Ringy, "
                         "Twilio SID / token, A2P, Google Sheets, Zapier, Discord channels. general: anything else.")},
                     "task": {"type": "string", "description": (
-                        "The task in one short line, as an instruction to the team - from the words and what "
-                        "the screenshot shows, e.g. 'Cap Michael Greff at 10/day'. Names, numbers and states "
-                        "kept.")}}, "required": ["card", "task"]}}
+                        "What the tagged teammate has to do, in one line, as an instruction. Read the whole "
+                        "screenshot first: in a conversation with a client the task is what the CLIENT asks for "
+                        "help with and what the team promised to do about it - not the last thing said, and not a "
+                        "side topic like a payment unless the payment is the ask. E.g. a client saying 'We are "
+                        "switching CRM once more... I need to update CRM and take care of lead flow... anyone "
+                        "available to help today?' and the team replying 'I will have Therese reach out' is "
+                        "'Matt is switching CRM - help him update the CRM and lead flow today (reach out in his "
+                        "Discord channel)'. Names, numbers, states and deadlines kept.")}}, "required": ["card", "task"]}}
         content = [{"type": "text", "text": f"Added to Trello by the team:\n{said or '(only a screenshot)'}"}]
         content += [{"type": "image", "source": {"type": "url", "url": url}} for url in list(pictures)[:3]]
-        response = client.messages.create(
-            model=ORDER_MODEL, max_tokens=300, tools=[tool], tool_choice={"type": "tool", "name": "place"},
-            messages=[{"role": "user", "content": content}])
+        response = None
+        # The careful model first: Matt Odierno's CRM ask was read by the
+        # quick one as the $1,200 ad spend line above it.
+        for model in dict.fromkeys((config.copy.model, ORDER_MODEL)):
+            try:
+                response = client.messages.create(
+                    model=model, max_tokens=400, tools=[tool], tool_choice={"type": "tool", "name": "place"},
+                    messages=[{"role": "user", "content": content}])
+                break
+            except Exception:
+                logging.getLogger("wilbyte.bot").warning("Reading the Trello ask with %s failed", model, exc_info=True)
+        if response is None:
+            raise RuntimeError("Claude didn't answer")
         got = _tool_input(response, "place")
         card = got.get("card") if got.get("card") in ("general", "ads", "ops") else by_words
         return card, " ".join(str(got.get("task") or said).split())
