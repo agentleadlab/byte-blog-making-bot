@@ -2401,3 +2401,19 @@ def test_an_agency_the_order_doesnt_name_is_caught():
     assert any("the card says PHNX" in one for one in wrong)
     card["fields"]["package"] = "Ascend Plus"
     assert not any("Lead type" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
+
+
+def test_the_order_saying_more_than_the_payment_line_isnt_another_product():
+    """Leonardo Lopez: "Aged Leads (IUL)" paid, "50 Aged IUL Spanish (30-90)"
+    on his invoice - flagged as "which one did they buy?"."""
+    card = {"kind": "aged", "source": "New Payment | Payra\nNAME: Leonardo Lopez\nPRODUCT: Aged Leads (IUL)\n"
+                                      "Payra invoice note: 50 Aged IUL Spanish (30-90) TX",
+            "fields": {"states": "TX", "leads": "50", "package": "50 Aged IUL Spanish (30-90)"}}
+    assert not any("Lead type" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
+    card["fields"]["package"] = "50 Aged VET"
+    assert any("which one did they buy" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
+
+
+def test_an_aged_card_isnt_told_it_has_no_launch_date(order):
+    asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
+    assert not any("No launch date" in str(one) for one, _v in order.responder.sent)

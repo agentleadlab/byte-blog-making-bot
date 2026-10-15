@@ -9603,7 +9603,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                 # Ads and Ops checklists - Bram's card sat in Franklin (Admin).
                 + ("\n⚠ **No launch date in the order** — the card won't go on the Ads and Ops checklists until "
                    "one's posted in the thread (or put on the card)."
-                   if not (card.get("fields") or {}).get("launch") and "launch" in (card.get("fields") or {}) else "")
+                   if kind == "fresh" and not (card.get("fields") or {}).get("launch") else "")
                 + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
                    f"posted in the thread." if card.get("missing") else ""))
         ack = _ORDER_ACKS.pop(key, None)

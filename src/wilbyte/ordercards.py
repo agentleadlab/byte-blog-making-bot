@@ -362,7 +362,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         # A split order - "50 Aged VET 180+ + 50 Aged Mortgage Protection" -
         # is right when one of its parts is what the payment line names.
         parts = [one for one in re.split(r"\s+\+\s+|\s*&\s*|\s+and\s+|,\s*(?=\d)", package) if one.strip()]
-        if package and all(setupcheck.same_product(one, product) is False for one in parts or [package]):
+        # Against what the payment says, not the other way: "Aged Leads
+        # (IUL)" paid and "50 Aged IUL Spanish (30-90)" written is the order
+        # being more exact, not another product (Leonardo Lopez).
+        if package and all(setupcheck.same_product(product, one) is False for one in parts or [package]):
             wrong.append(f"Lead type: the payment post says “{product}” but the order"
                          + (" (its Payra invoice)" if "payra invoice note" in source.casefold() else "")
                          + f" says “{package}” — which one did they buy?")
