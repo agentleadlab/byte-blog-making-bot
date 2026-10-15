@@ -7603,3 +7603,37 @@ def test_tagged_in_any_growth_channel_ryte_answers(config, monkeypatch):
     assert handled == []
     asyncio.run(bot_client.handle_mention(bot, said_in(growth)))
     assert handled == ["cap him"]
+
+
+def test_and_tag_therese_comes_out_and_the_screenshot_goes_on(monkeypatch):
+    """"add to trello and tag Therese <SID> <token> There you go" - the card
+    said "and tag Therese ..." and the screenshot was left behind."""
+    import asyncio
+
+    from wilbyte import dailyops
+    from wilbyte.bot import client as bot_client
+
+    known = {"therese": "thereseguba", "therese guba": "thereseguba"}
+    said, handles = dailyops.tag_phrase_out("and tag Therese SID123 tok456 There you go", known)
+    assert said == "SID123 tok456 There you go" and handles == ["thereseguba"]
+    assert dailyops.tag_phrase_out("tag the card as done", known) == ("tag the card as done", [])
+
+    posted, attached = [], []
+    monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
+                        lambda config, **kw: posted.append(kw) or ("General 10/15/26", "https://trello.com/c/kWszDolJ/x", []))
+    monkeypatch.setattr(bot_client.jobs, "order_card_attach",
+                        lambda config, card_id, urls: attached.append((card_id, urls)) or ["k"])
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    shot = SimpleNamespace(url="https://cdn.discordapp.com/x/shot.png", content_type="image/png")
+    message = SimpleNamespace(content="<@999> add to trello and tag Therese SID123", embeds=[], attachments=[shot],
+                              message_snapshots=[], mentions=[], guild=None, reference=None)
+    config = SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York"))
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 10, 15))
+    asyncio.run(bot_client._comment_on_card(Responder(), config, "and tag Therese SID123", message))
+    assert attached == [("kWszDolJ", ["https://cdn.discordapp.com/x/shot.png"])]
+    assert "1 screenshot(s) attached" in sent[-1]

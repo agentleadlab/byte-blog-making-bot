@@ -4483,6 +4483,12 @@ def comment_on_daily(
         members = client.board_members(config.secrets.trello_board_id)
         known = dailyops.who_is_known(members)
         said, handles, strangers = dailyops.tag_asked(text, known)
+        # "and tag Therese" on a line of its own, with the thing to say after
+        # it - the words out, Therese tagged.
+        said, more = dailyops.tag_phrase_out(said, known)
+        for who in more:
+            if who not in handles:
+                handles.append(who)
         # "if they mention any name, @ them on trello" - a teammate named in
         # what's said is tagged as well as one asked for.
         for who in dailyops.people_named(said, members):

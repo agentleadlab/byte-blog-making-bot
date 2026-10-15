@@ -3080,8 +3080,13 @@ async def _comment_on_card(
     # put on the board - the reply RYTE receives carries none of its words.
     guessed = False
     tag: list[str] = []
+    # Screenshots with it - Faith's Ringy SID and token came with the text
+    # message they were in - go on the card as attachments.
+    pictures = _request_bits(message)[1] if message is not None else []
     if not text and message is not None:
         replied = await _replied_to(message)
+        if replied is not None:
+            pictures += _request_bits(replied)[1]
         if replied is not None and (replied.content or "").strip():
             text = _as_somebody_said(replied)
             tag = _tagged_in(replied, bot_id=getattr(getattr(message, "guild", None), "me", None))
@@ -3132,6 +3137,15 @@ async def _comment_on_card(
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
     note = f"Said it on **{title}** — <{url}>"
+    if pictures:
+        from .. import ordercards
+
+        try:
+            put = await asyncio.to_thread(jobs.order_card_attach, config, ordercards.card_id_of(url), pictures)
+            problems.append(f"✅ {len(put)} screenshot(s) attached to the card" if put else
+                            "Couldn't attach the screenshot(s)")
+        except Exception as exc:
+            problems.append(f"Couldn't attach the screenshot(s): {_readable(exc)}")
     done = [one for one in problems if one.startswith("✅")]
     problems = [one for one in problems if not one.startswith("✅")]
     if done:

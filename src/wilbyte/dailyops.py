@@ -442,6 +442,48 @@ def who_is_known(members) -> dict:
     return found
 
 
+_TAG_WORD = re.compile(r"(?:(?<=\s)|^)(?:and\s+|&\s+)?(?:please\s+|pls\s+)?tag\s+", re.IGNORECASE)
+
+
+def tag_phrase_out(text: str, known) -> tuple[str, list[str]]:
+    """"add to trello and tag Therese <the SID and token>" - the "and tag
+    Therese" taken out of what's said, the names as handles. Names are read
+    one, two or three words at a time against `known`, joined by "and" or a
+    comma, and stop at the first word that isn't one: what follows on the
+    same line is the thing being said. Nothing recognised, nothing changed."""
+    said = str(text or "")
+    handles: list[str] = []
+    for found in reversed(list(_TAG_WORD.finditer(said))):
+        rest = said[found.end():]
+        words = list(re.finditer(r"[^\s,&]+|,|&", rest))
+        at, end, names = 0, None, []
+        while at < len(words):
+            if names and words[at].group(0).casefold() in (",", "&", "and"):
+                at += 1
+                continue
+            took = None
+            for size in (3, 2, 1):
+                if at + size > len(words):
+                    continue
+                name = " ".join(one.group(0).lstrip("@").strip(".:;!?") for one in words[at:at + size])
+                if (known or {}).get(name.casefold()):
+                    took = (size, known[name.casefold()])
+                    break
+            if took is None:
+                break
+            names.append(took[1])
+            at += took[0]
+            end = words[at - 1].end()
+        if not names:
+            continue
+        tail = rest[end:]
+        said = (said[:found.start()].rstrip(" ,") + (" " if tail[:1] not in ("\n", "") else "") + tail.lstrip(" :,-–—")).strip()
+        for one in reversed(names):
+            if one not in handles:
+                handles.insert(0, one)
+    return said, handles
+
+
 def people_named(text: str, members) -> list[str]:
     """The Trello usernames of team members a sentence names - "Nicole needs
     to cap Michael Greff at 10/day" names Nicole. "if they mention any name,
