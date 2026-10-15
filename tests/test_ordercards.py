@@ -2459,3 +2459,28 @@ def test_phx_plus_two_point_oh_is_one_order_phoenix_plus():
     assert agents.tier_of("PHX +") == "plus" and agents.tier_of("Phoenix+") == "plus"
     assert agents.order_parts("15 OTP VETS + 15 OTP FEX") == ["15 OTP VETS", "15 OTP FEX"]
     assert agents.tier_of("Phoenix Standard") == "standard"
+
+
+def test_an_edited_note_updates_the_card_too(monkeypatch):
+    """Trey Autry: "LIVE TOM, OCT 16" added to Kharyl's note by editing it,
+    after the card was made - the card never heard."""
+    ordercards.save({"950": {"status": "made", "thread_id": "950", "card_id": "c"}})
+    started = []
+
+    class Loop:
+        def create_task(self, coroutine):
+            started.append(coroutine)
+            coroutine.close()
+            return SimpleNamespace(cancel=lambda: None)
+
+    growth = SimpleNamespace(id=1)
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, guild: guild is growth)
+    fake = SimpleNamespace(user=SimpleNamespace(id=RYTE), loop=Loop(), get_guild=lambda i: growth,
+                           get_channel=lambda i: SimpleNamespace(id=950, parent=object(), name="@here"))
+    asyncio.run(client.WilByteBot.on_raw_message_edit(fake, SimpleNamespace(
+        guild_id=1, channel_id=950, message_id=7, data={"author": {"id": "5", "bot": False}})))
+    assert len(started) == 1
+    asyncio.run(client.WilByteBot.on_raw_message_edit(fake, SimpleNamespace(
+        guild_id=1, channel_id=950, message_id=8, data={"author": {"id": str(RYTE), "bot": True}})))
+    assert len(started) == 1, "RYTE's own edits aren't notes"
+    client._ORDER_PENDING.clear()

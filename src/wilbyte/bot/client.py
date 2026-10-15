@@ -457,6 +457,24 @@ class WilByteBot(discord.Client):
         except Exception:
             log.exception("Couldn't tick off that request")
 
+    async def on_raw_message_edit(self, payload) -> None:
+        """A note in an order's thread edited after its card was made: the card
+        brought up to date the same as for a new note - Kharyl added "LIVE
+        TOM, OCT 16" to Trey Autry's by editing, and the card never heard."""
+        author = (getattr(payload, "data", None) or {}).get("author") or {}
+        if author.get("bot") or (self.user is not None and str(author.get("id")) == str(self.user.id)):
+            return
+        guild = self.get_guild(payload.guild_id) if getattr(payload, "guild_id", None) else None
+        if not _in_setup_guild(self, guild):
+            return
+        channel = self.get_channel(payload.channel_id)
+        if channel is None:
+            return
+        try:
+            _order_note_posted(self, SimpleNamespace(channel=channel))
+        except Exception:
+            log.exception("Couldn't follow up an edited note")
+
     async def on_message(self, message: discord.Message) -> None:
         if self.user is not None and message.author.id == self.user.id:
             return
