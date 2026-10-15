@@ -2417,3 +2417,33 @@ def test_the_order_saying_more_than_the_payment_line_isnt_another_product():
 def test_an_aged_card_isnt_told_it_has_no_launch_date(order):
     asyncio.run(client._order_gavelled(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), GAVEL))
     assert not any("No launch date" in str(one) for one, _v in order.responder.sent)
+
+
+def test_paid_but_not_gavelled_is_said_with_the_unticked_reminder(monkeypatch):
+    """"do it when we do unticked reminder"."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 15, 21, 30, tzinfo=timezone.utc)
+
+    def post(i, text, at, gavel=False):
+        return SimpleNamespace(id=i, created_at=at, jump_url=f"https://discord.com/channels/1/700/{i}", content=text,
+                               embeds=[], message_snapshots=[], author=SimpleNamespace(bot=True),
+                               reactions=[SimpleNamespace(emoji=SimpleNamespace(name="leadlab_hammertime"))] if gavel else [])
+
+    posts = [post(1, "New Payment | Payra\nNAME: Matthew Haines\nAMOUNT: $828", datetime(2026, 10, 15, 16, 51, tzinfo=timezone.utc)),
+             post(2, "New Payment | Payra\nNAME: Seth Moler\nAMOUNT: $362.25", datetime(2026, 10, 15, 20, 43, tzinfo=timezone.utc)),
+             post(3, "New Payment | Payra\nNAME: Mark Medina\nPRODUCT: 1 × Lead Subscription\nsubscription",
+                  datetime(2026, 10, 15, 14, 7, tzinfo=timezone.utc)),
+             post(4, "New Payment | Payra\nNAME: Jace Jensen\nAMOUNT: $2036.88", datetime(2026, 10, 15, 14, 33, tzinfo=timezone.utc))]
+
+    async def payments(bot, day):
+        return posts
+
+    monkeypatch.setattr(client, "_payments_on", payments)
+    monkeypatch.setattr(jobs, "order_cards_since", lambda config, since: [])
+    ordercards.save({"4": {"status": "made", "url": "https://trello.com/c/jace"}})
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York")))
+    monkeypatch.setattr(client, "_today", lambda cfg: date(2026, 10, 15))
+    said = asyncio.run(client._ungavelled_note(bot, now=now))
+    assert "Matthew Haines" in said and "Seth Moler" not in said, "under two hours old"
+    assert "Mark Medina" not in said and "Jace Jensen" not in said

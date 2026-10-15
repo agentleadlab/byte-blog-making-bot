@@ -5611,6 +5611,15 @@ async def _board_step(bot: "WilByteBot", step: str, today, *, day=None) -> None:
                 found, step=step, days=dailyops.days_chased(_today(bot.config)),
             ) if found else None
             top_ups = found or None
+            # "do it when we do unticked reminder" - payments with no gavel
+            # and no card, a couple of hours old, with the same chase.
+            try:
+                waiting = await _ungavelled_note(bot)
+            except Exception:
+                log.warning("Couldn't list the payments nobody's gavelled", exc_info=True)
+                waiting = ""
+            if waiting:
+                note = (note + "\n" if note else (_unmarked_ping(bot.config) + "\n" if _unmarked_ping(bot.config) else "")) + waiting
         elif step == "link_setup":
             added, problems = await asyncio.to_thread(jobs.link_setup_on_day, bot.config)
             note = (
@@ -10557,6 +10566,37 @@ async def _payments_on(bot, day: date) -> list:
         if getattr(one.author, "bot", False) and "new payment" in text.casefold() and "name:" in text.casefold():
             found.append(one)
     return found
+
+
+#: A payment this old with no gavel is chased with the unticked reminder.
+UNGAVELLED_AFTER = timedelta(hours=2)
+
+
+async def _ungavelled_note(bot, *, now: datetime | None = None) -> str:
+    """Today's payments nobody has gavelled and that have no card, two hours
+    old or more - "paid but not gavelled yet", said with the unticked
+    reminder. "" when there are none."""
+    from .. import ordercards
+
+    now = now or datetime.now(timezone.utc)
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    posts = [one for one in await _payments_on(bot, _today(bot.config))
+             if now - one.created_at >= UNGAVELLED_AFTER]
+    if not posts:
+        return ""
+    since = datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=2)
+    cards = await asyncio.to_thread(jobs.order_cards_since, bot.config, since)
+    held = await asyncio.to_thread(ordercards.load)
+    lines = []
+    for post in posts:
+        how, line = _audit_line(post, held, cards, zone)
+        if how == "waiting" and "not gavelled yet" in line:
+            lines.append(line.replace(" — not gavelled yet, no card", ""))
+    if not lines:
+        return ""
+    shown = lines[:20]
+    return ("🔨 **Paid, but nobody's gavelled them yet** (no card):\n" + "\n".join(shown)
+            + (f"\n-# …and {len(lines) - len(shown)} more — `@Ryte order audit`." if len(lines) > len(shown) else ""))
 
 
 def _audit_days(said: str, today: date) -> list[date]:
