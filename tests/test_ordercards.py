@@ -1869,7 +1869,7 @@ def test_the_invoice_is_read_for_a_gavelled_new_agent(order, monkeypatch):
     order.kind = "fresh"
     looked = []
 
-    def note(config, *, name, email="", amount="", now=None):
+    def note(config, *, name, email="", amount="", product="", now=None):
         looked.append((name, amount))
         return "50 VET, FL TX GA, launch Fri 10/16"
 
@@ -2025,3 +2025,46 @@ def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
     assert client._audit_days("order audit", today) == [today]
     assert client._audit_days("order audit yesterday", today) == [date(2026, 10, 14)]
     assert client._audit_days("order audit 3 days", today) == [date(2026, 10, 13), date(2026, 10, 14), today]
+
+
+def test_ryan_leachs_vet_payment_isnt_his_iul_order(monkeypatch):
+    """Two $103.50 aged orders at 7:31 and 7:35 - VET and IUL. The VET
+    payment was read off the IUL invoice and put on the IUL card."""
+    from wilbyte import payraapi
+
+    now = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)
+
+    class Payra:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            who = {"first_name": "Ryan", "last_name": "Leach", "email": "ryan@example.com"}
+            return {"records": [
+                {"_id": "vet", "customer": who, "totals": {"total": 103.5}, "notes": "Aged VET 180+ in PA, NV",
+                 "created_at": "2026-10-14T23:30:00Z"},
+                {"_id": "iul", "customer": who, "totals": {"total": 103.5},
+                 "notes": "Lead Type: Aged IUL - 180+ days [AGED - $1/Lead]\nStates Leads In: PA,NV",
+                 "created_at": "2026-10-14T23:34:00Z"}]}
+
+    monkeypatch.setattr(payraapi, "PayraClient", Payra)
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    vet = jobs.payra_invoice_note(config, name="Ryan Leach", email="ryan@example.com", amount="103.5",
+                                  product="Aged Leads (VET)", now=now)
+    iul = jobs.payra_invoice_note(config, name="Ryan Leach", email="ryan@example.com", amount="103.5",
+                                  product="Aged Leads (IUL)", now=now)
+    assert "VET" in vet and "IUL" not in vet
+    assert "IUL" in iul
+    # Not "another payment for this order" when the post says another product.
+    board = Board(desc="Name: Ryan Leach\nLead Type: Aged Leads (IUL) - Aged IUL 180+ days\nStates: PA, NV")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    card = {"fields": {"package": ""}, "source": "New Payment | Payra\nNAME: Ryan Leach\nPRODUCT: Aged Leads (VET)"}
+    assert jobs.same_order(CONFIG, {"id": "c1"}, card) is False
+    card["source"] = card["source"].replace("(VET)", "(IUL)")
+    assert jobs.same_order(CONFIG, {"id": "c1"}, card) is True

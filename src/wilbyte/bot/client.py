@@ -9257,9 +9257,10 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
     name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
     email = (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *")
     amount = (_AMOUNT.search(said) or [None, ""])[1]
+    product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
         note = await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
-                                               amount=amount))
+                                               amount=amount, product=product))
     except Exception:
         # Payra down is no reason for no card: made from the payment and the
         # thread, and said - a silent "failed" left nothing to see.
@@ -9578,9 +9579,10 @@ async def _order_invoice_note(bot, message) -> str:
     name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
     email = (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *")
     amount = (_AMOUNT.search(said) or [None, ""])[1]
+    product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
         return await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
-                                               amount=amount))
+                                               amount=amount, product=product))
     except Exception:
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
         return ""

@@ -12570,7 +12570,8 @@ def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
 
 
 
-def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: str = "", now=None) -> str:
+def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
+                       now=None) -> str:
     """The note on the Payra invoice behind a payment just posted - "can ryte
     access agents state for aged leads on summit pay invoice internal note".
     Payra read now, so the invoice paid a minute ago is there. Matched by
@@ -12616,12 +12617,25 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
         made = made if made.tzinfo else made.replace(tzinfo=timezone.utc)
         if now - made > timedelta(days=2):
             continue
+        # Not one for something else they bought: Ryan Leach's VET and IUL
+        # invoices were both $103.50, and the VET payment got the IUL note.
+        if product and _other_product(product, invoice_said(invoice)):
+            continue
         same = wanted is not None and payraapi._cents(invoice.get("total")) == wanted
         found.append((same, made, invoice))
     if not found:
         return ""
     found.sort(key=lambda one: (one[0], one[1]), reverse=True)
     return invoice_said(found[0][2])
+
+
+def _other_product(paid_for: str, invoice: str) -> bool:
+    """Whether an invoice is for a different lead type than the payment."""
+    from .. import setupcheck
+
+    if re.match(r"^[—\-–(]", paid_for.strip()):
+        return False
+    return setupcheck.same_product(paid_for, invoice) is False and setupcheck.same_product(invoice, paid_for) is False
 
 
 def invoice_said(invoice: dict) -> str:
@@ -12705,9 +12719,15 @@ def same_order(config: Config, existing: dict, card: dict) -> bool:
         client.close()
     fields = card.get("fields") or {}
     had_type = _desc_field(desc, r"Lead Type/Package Selected", r"Lead Type")
-    if had_type and fields.get("package") and setupcheck.same_product(fields["package"], had_type) is False \
-            and setupcheck.same_product(had_type, fields["package"]) is False:
-        return False
+    # What the payment post says was bought, as well as what was read: Ryan
+    # Leach's VET payment was read off his IUL invoice and went on the IUL
+    # card as "another payment for this order".
+    paid_for = re.search(r"PRODUCT:\**\s*([^\n]*)", str(card.get("source") or ""), re.IGNORECASE)
+    paid_for = " ".join(paid_for.group(1).split()) if paid_for else ""
+    for said in (fields.get("package") or "", paid_for):
+        if had_type and said and setupcheck.same_product(said, had_type) is False \
+                and setupcheck.same_product(had_type, said) is False:
+            return False
     had_launch = _month_day(_desc_field(desc, r"Launch Date"))
     new_launch = _month_day(fields.get("launch") or "") or _month_day(card.get("launch_iso", "")[5:].replace("-", "/"))
     if had_launch and new_launch and had_launch != new_launch:
