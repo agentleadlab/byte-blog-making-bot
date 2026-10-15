@@ -2068,3 +2068,15 @@ def test_ryan_leachs_vet_payment_isnt_his_iul_order(monkeypatch):
     assert jobs.same_order(CONFIG, {"id": "c1"}, card) is False
     card["source"] = card["source"].replace("(VET)", "(IUL)")
     assert jobs.same_order(CONFIG, {"id": "c1"}, card) is True
+
+
+def test_ordering_a_merged_payment_by_its_link_gives_it_its_own_card(order, monkeypatch):
+    ordercards.save({"900": {"status": "made", "merged": True, "url": "https://trello.com/c/iul"}})
+    order.existing = {"id": "iul", "name": "Aged Leads - Cole Petersen", "url": "https://trello.com/c/iul"}
+    author = SimpleNamespace(id=FRANKLIN)
+    monkeypatch.setattr(ordercards, "may_gavel", lambda who, config: True)
+    asyncio.run(client._order_from_link(_bot(_message(thread=_notes("25 aged MTG, states AZ TX"))), order.responder,
+                                        "order https://discord.com/channels/1/700/900", author))
+    assert len(order.made) == 1 and order.comments == []
+    held = ordercards.load()["900"]
+    assert held["status"] == "made" and not held.get("merged")

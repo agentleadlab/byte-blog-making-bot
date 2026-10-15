@@ -10058,13 +10058,22 @@ async def _order_from_link(bot, responder: Responder, said: str, author) -> None
         await responder.send("Only the gavel's owner can make order cards — see `@Ryte order check`.")
         return
     guild_id, channel_id, message_id = (int(one) for one in found.groups())
-    if (ordercards.load().get(str(message_id)) or {}).get("status") == "made":
-        made = ordercards.load()[str(message_id)]
+    made = ordercards.load().get(str(message_id)) or {}
+    separate = bool(made.get("merged"))
+    if made.get("status") == "made" and not separate:
         await responder.send(f"That one's card is already made — {made.get('url', '')}")
         return
-    await responder.send("🔨 On it — the card goes where gavelled orders go.")
+    if separate:
+        # Put on somebody's card as another payment - Ryan Leach's VET on his
+        # IUL card. Asked for by its link: a card of its own.
+        await _order_forget_made(str(message_id))
+        await responder.send(f"🔨 That payment went on {made.get('url', 'a card')} as another payment — making it "
+                             f"a card of its own.")
+    else:
+        await responder.send("🔨 On it — the card goes where gavelled orders go.")
     await _order_gavelled(bot, SimpleNamespace(message_id=message_id, channel_id=channel_id,
-                                               user_id=author.id, guild_id=guild_id, member=author))
+                                               user_id=author.id, guild_id=guild_id, member=author,
+                                               separate=separate))
 
 
 async def _gavel_allow(bot, responder: Responder, message, *, allowed: bool) -> None:
