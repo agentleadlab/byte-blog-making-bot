@@ -1975,3 +1975,40 @@ def test_notes_dont_repeat_the_fields_above_them():
         "Can I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet")
     aged = "Payra invoice note: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
     assert jobs.order_fields({}, [aged])["notes"] == "AGED IUL / 180+ / in states IL, SC, AZ, and TX"
+
+
+def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
+    """"did ryte created all of the cards that he can create already? did he
+    not miss anything?"."""
+    from datetime import datetime, timezone
+
+    at = datetime(2026, 10, 14, 19, 0, tzinfo=timezone.utc)
+
+    def post(i, text, gavel=False):
+        return SimpleNamespace(id=i, created_at=at, jump_url=f"https://discord.com/channels/1/700/{i}",
+                               content=text, embeds=[], message_snapshots=[],
+                               author=SimpleNamespace(bot=True),
+                               reactions=[SimpleNamespace(emoji=SimpleNamespace(name="leadlab_hammertime"))] if gavel else [])
+
+    posts = [
+        post(1, "New Payment | Payra\nNAME: Emilie Cruz\nAMOUNT: $900\nPRODUCT: VET", gavel=True),
+        post(2, "New Payment | Payra\nNAME: Blake Settle\nAMOUNT: $500\nPRODUCT: VET", gavel=True),
+        post(3, "New Payment | Payra\nNAME: Ryan Leach\nAMOUNT: $100\nPRODUCT: Aged Leads (VET)"),
+        post(4, "New Payment | Payra\nNAME: Tee Lam\nAMOUNT: $300\nPRODUCT: IUL"),
+        post(5, "New Payment | Zelle\nNAME: Declan Connolly\nAMOUNT: $400\nPRODUCT: — (match to their order)"),
+        post(6, "New Payment | Payra\nNAME: Bram Gutierrez\nAMOUNT: $372\nPRODUCT: Trucker", gavel=True),
+    ]
+    ordercards.save({"1": {"status": "made", "url": "https://trello.com/c/emilie"},
+                     "6": {"status": "made", "merged": True, "url": "https://trello.com/c/bram"}})
+    cards = {"fresh": [], "aged": [{"name": "Aged Leads - Declan Connolly", "url": "https://trello.com/c/declan"}]}
+    lines = {i: client._audit_line(one, ordercards.load(), cards) for i, one in enumerate(posts, 1)}
+    assert lines[1][0] == "ok" and "trello.com/c/emilie" in lines[1][1]
+    assert lines[2][0] == "missing" and "gavelled, **no card**" in lines[2][1]
+    assert lines[3][0] == "missing" and "aged" in lines[3][1]
+    assert lines[4][0] == "waiting" and "not gavelled yet" in lines[4][1]
+    assert lines[5][0] == "ok" and "not made by me" in lines[5][1]
+    assert lines[6][0] == "ok" and "another payment" in lines[6][1]
+    today = date(2026, 10, 15)
+    assert client._audit_days("order audit", today) == [today]
+    assert client._audit_days("order audit yesterday", today) == [date(2026, 10, 14)]
+    assert client._audit_days("order audit 3 days", today) == [date(2026, 10, 13), date(2026, 10, 14), today]

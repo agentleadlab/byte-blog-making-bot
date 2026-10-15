@@ -1771,6 +1771,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _gavel_allow(bot, responder, message, allowed=request.action == "gavelallow")
                 return
 
+            if request.action == "orderaudit":
+                await _order_audit(bot, responder, request.brief or "")
+                return
+
             if request.action == "orderbackfill":
                 await _order_backfill(bot, responder, getattr(message, "author", None))
                 return
@@ -10190,6 +10194,96 @@ async def _payments_on(bot, day: date) -> list:
         if getattr(one.author, "bot", False) and "new payment" in text.casefold() and "name:" in text.casefold():
             found.append(one)
     return found
+
+
+def _audit_days(said: str, today: date) -> list[date]:
+    """"order audit", "... yesterday", "... 3 days" - the days, oldest first."""
+    said = str(said or "").casefold()
+    if "yesterday" in said:
+        return [today - timedelta(days=1)]
+    many = re.search(r"(\d+)\s*days?", said)
+    n = min(max(int(many.group(1)), 1), 7) if many else 1
+    return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
+
+
+def _audit_line(post, held: dict, cards: dict, zone=timezone.utc) -> tuple[str, str]:
+    """(how it stands - "ok", "waiting", "missing" - the line for it)."""
+    from .. import ordercards
+
+    said = _all_of_it(post)
+    name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *") or "?"
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    product = " ".join(((_PRODUCT.search(said) or [None, ""])[1]).split())
+    aged = bool(re.search(r"\baged\b", product, re.IGNORECASE))
+    zelle = "zelle" in said.casefold()
+    bits = " · ".join(bit for bit in (f"${amount}" if amount else "", product or ("Zelle" if zelle else ""),
+                                      f"{post.created_at.astimezone(zone):%-I:%M%p}".lower()) if bit)
+    order = held.get(str(post.id)) or {}
+    status = order.get("status")
+    if status == "made" and order.get("merged"):
+        return "ok", f"➕ **{name}** ({bits}) — on their card as another payment: <{order.get('url', '')}>"
+    if status == "made":
+        hold = " · 🏦 waiting on the bank" if order.get("bank_hold") is True else ""
+        return "ok", f"✅ **{name}** ({bits}) — <{order.get('url', '')}>{hold}"
+    if status == "left":
+        return "ok", f"✋ **{name}** ({bits}) — somebody pressed Leave it: <{post.jump_url}>"
+    found = jobs.has_new_agent_card(name, cards["aged" if aged else "fresh"]) or \
+        jobs.has_new_agent_card(name, cards["fresh" if aged else "aged"])
+    if found:
+        return "ok", f"✅ **{name}** ({bits}) — has a card, not made by me: <{found['url']}>"
+    gavelled = any(ordercards.is_gavel(one.emoji) for one in getattr(post, "reactions", None) or [])
+    if status == "asked":
+        return "waiting", f"⏳ **{name}** ({bits}) — waiting on a button in here: <{post.jump_url}>"
+    if gavelled:
+        return "missing", f"❌ **{name}** ({bits}) — gavelled, **no card**: <{post.jump_url}>"
+    if aged and "payra" in said.casefold():
+        return "missing", f"❌ **{name}** ({bits}) — aged, **no card** (should have been made on its own): <{post.jump_url}>"
+    return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
+
+
+async def _order_audit(bot, responder: Responder, said: str) -> None:
+    """"did ryte created all of the cards that he can create already? did
+    he not miss anything?" - every payment posted in #new-payment, and its
+    card: made, on a card already, left, or missing. Nothing read by Claude
+    and nothing made - it's a list to look at."""
+    from .. import ordercards
+
+    days = _audit_days(said, _today(bot.config))
+    await responder.send(f"🔎 Checking every payment in #new-payment "
+                         f"{'today' if days == [_today(bot.config)] else 'from ' + f'{days[0]:%a %m/%d}'}…")
+    posts = []
+    for day in days:
+        posts += await _payments_on(bot, day)
+    if not posts:
+        await responder.send("No payments in #new-payment for that - or I can't find the channel.")
+        return
+    try:
+        cards = {kind: await asyncio.to_thread(jobs.new_agent_cards, bot.config, kind) for kind in ("fresh", "aged")}
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read the board: {_readable(exc)}")
+        return
+    held = await asyncio.to_thread(ordercards.load)
+    sorted_out = {"missing": [], "waiting": [], "ok": []}
+    for post in posts:
+        how, line = _audit_line(post, held, cards, ZoneInfo(bot.config.schedule.timezone))
+        sorted_out[how].append(line)
+    head = (f"🔎 **{len(posts)} payment(s)** — {len(sorted_out['ok'])} with a card, "
+            f"{len(sorted_out['waiting'])} waiting on a gavel or a button, **{len(sorted_out['missing'])} missing**.")
+    lines = [head]
+    for how, title in (("missing", "**Missing — should have a card:**"), ("waiting", "**Waiting:**"),
+                       ("ok", "**Done:**")):
+        if sorted_out[how]:
+            lines += ["", title] + sorted_out[how]
+    if not sorted_out["missing"]:
+        lines.insert(1, "✅ Nothing missed.")
+    chunk = ""
+    for line in lines:
+        if len(chunk) + len(line) > 1900:
+            await responder.send(chunk, quiet=True)
+            chunk = ""
+        chunk += line + "\n"
+    if chunk.strip():
+        await responder.send(chunk, quiet=True)
 
 
 async def _order_backfill(bot, responder: Responder, author) -> None:
