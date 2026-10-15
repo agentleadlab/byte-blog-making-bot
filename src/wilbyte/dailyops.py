@@ -442,6 +442,37 @@ def who_is_known(members) -> dict:
     return found
 
 
+def people_named(text: str, members) -> list[str]:
+    """The Trello usernames of team members a sentence names - "Nicole needs
+    to cap Michael Greff at 10/day" names Nicole. "if they mention any name,
+    @ them on trello". Full names, or a first name only one member has; not
+    a first name followed by a capitalised word that isn't their surname -
+    "Michael Greff" is an agent, not Michael on the team."""
+    said = " ".join(str(text or "").split())
+    found: list[str] = []
+    firsts: dict[str, list] = {}
+    for one in members or []:
+        username = str((one or {}).get("username") or "").strip()
+        full = " ".join(str((one or {}).get("fullName") or "").split())
+        if not username or not full:
+            continue
+        firsts.setdefault(full.split()[0].casefold(), []).append((username, full))
+        if re.search(rf"(?<![\w@]){re.escape(full)}(?!\w)", said, re.IGNORECASE) and username not in found:
+            found.append(username)
+    for first, who in firsts.items():
+        if len(who) != 1 or who[0][0] in found or len(first) < 3:
+            continue
+        username, full = who[0]
+        surname = full.split()[1] if len(full.split()) > 1 else ""
+        for hit in re.finditer(rf"(?<![\w@]){re.escape(first)}(?!\w)\s*(\S*)", said, re.IGNORECASE):
+            after = hit.group(1)
+            if after[:1].isupper() and after.casefold().strip(".,:;!?") != surname.casefold():
+                continue
+            found.append(username)
+            break
+    return found
+
+
 def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:
     """(what is left to say, who to tag, who was not recognised).
 

@@ -6586,6 +6586,12 @@ def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
         def add_comment(self, card_id, text):
             posted["text"] = text
 
+        def card_checklists(self, card_id):
+            return [{"id": "n", "name": "Nicole"}, {"id": "f", "name": "Faith"}]
+
+        def add_check_item(self, checklist_id, name):
+            posted["item"] = (checklist_id, name)
+
         def close(self):
             pass
 
@@ -6600,8 +6606,9 @@ def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
         text="and tag nicole: https://a https://b",
     )
 
-    assert not problems, problems
+    assert problems == ["✅ On **Nicole**'s checklist"], problems
     assert posted["text"] == "@nic0l3\nhttps://a https://b"
+    assert posted["item"] == ("n", "https://a https://b")
     assert url == "https://trello.com/c/C"
 
 
@@ -7360,16 +7367,23 @@ def test_the_tagged_name_is_tagged_on_trello(monkeypatch):
         def add_comment(self, card_id, text):
             said.append(text)
 
+        def card_checklists(self, card_id):
+            return [{"id": "fr", "name": "Franklin"}]
+
+        def add_check_item(self, checklist_id, name):
+            items.append((checklist_id, name))
+
         def close(self):
             pass
 
-    said = []
+    said, items = [], []
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
     _title, url, problems = jobs.comment_on_daily(
         SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), kind="general",
         day=date(2026, 9, 14), text="K2: @Franklin collate all logins", tag=["Franklin", "Nobody Here"])
     assert said == ["@franklinmay\nK2: @Franklin collate all logins"]
-    assert problems == ["Nobody on the board is called Nobody Here — not tagged."]
+    assert problems == ["Nobody on the board is called Nobody Here — not tagged.", "✅ On **Franklin**'s checklist"]
+    assert items == [("fr", "K2: @Franklin collate all logins")]
 
 
 def test_todays_with_an_apostrophe_is_still_today():
@@ -7519,3 +7533,42 @@ def test_an_agent_filed_for_tomorrow_after_the_1130_linking_gets_it_linked(confi
     assert linked == [1] and "Tomorrow's setup card is on Ads 10/14/26 · Nicole now" in str(said)
     at(9, 0)
     assert linked == [1], "linked again before the 11:30 step has even run"
+
+
+def test_a_teammate_named_is_tagged_and_gets_it_on_their_checklist(monkeypatch):
+    """"if they mention any name, @ them on trello and put it on their
+    respective checklist" - General, today, unless said."""
+    posted, items = [], []
+
+    class Client:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "C", "name": "💎 General 10/15/26", "url": "https://trello.com/c/C"}]
+
+        def board_members(self, board_id):
+            return [{"username": "nic0l3", "fullName": "Nicole Ramos"},
+                    {"username": "therese3", "fullName": "Therese Guba"},
+                    {"username": "mike", "fullName": "Michael Dunn"}]
+
+        def add_comment(self, card_id, text):
+            posted.append(text)
+
+        def card_checklists(self, card_id):
+            return [{"id": "n", "name": "Nicole"}, {"id": "t", "name": "Therese 3.0"}, {"id": "m", "name": "Michael"}]
+
+        def add_check_item(self, checklist_id, name):
+            items.append((checklist_id, name))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="B"))
+    _t, _u, problems = jobs.comment_on_daily(config, kind="general", day=date(2026, 10, 15),
+                                             text="Nicole and therese please cap Michael Greff at 10/day")
+    assert posted == ["@nic0l3 @therese3\nNicole and therese please cap Michael Greff at 10/day"]
+    assert items == [("n", "Nicole and therese please cap Michael Greff at 10/day"),
+                     ("t", "Nicole and therese please cap Michael Greff at 10/day")]
+    assert problems == ["✅ On **Nicole**'s checklist", "✅ On **Therese**'s checklist"]

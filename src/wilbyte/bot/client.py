@@ -3086,6 +3086,13 @@ async def _comment_on_card(
                 # landed on, so a wrong one is one line away from being right.
                 kind, guessed = dailyops.FALLBACK_CARD, True
 
+    # The people tagged on Discord in the ask itself - "@Ryte add to trello
+    # @Nicole cap Michael at 10" - tagged on Trello and on their checklists.
+    if message is not None:
+        for name in _tagged_in(message, bot_id=getattr(getattr(message, "guild", None), "me", None)):
+            if name not in tag:
+                tag.append(name)
+        text = re.sub(r"<@!?\d+>", "", text or "").strip(" -–—:,")
     if not kind and text:
         # "@Ryte add to trello / put on board tho let's collate all logins" -
         # something to say and no card named. General, said rather than
@@ -3120,6 +3127,10 @@ async def _comment_on_card(
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
     note = f"Said it on **{title}** — <{url}>"
+    done = [one for one in problems if one.startswith("✅")]
+    problems = [one for one in problems if not one.startswith("✅")]
+    if done:
+        note += "\n" + "\n".join(done)
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     if guessed:
@@ -3146,7 +3157,7 @@ def _tagged_in(message, *, bot_id=None) -> list[str]:
     me = getattr(bot_id, "id", bot_id)
     found = []
     for one in getattr(message, "mentions", None) or []:
-        if me is not None and getattr(one, "id", None) == me:
+        if (me is not None and getattr(one, "id", None) == me) or getattr(one, "bot", False):
             continue
         name = _plain_name(one)
         if name and name not in found:

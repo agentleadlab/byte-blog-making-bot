@@ -4480,8 +4480,14 @@ def comment_on_daily(
             named = dailyops.CARD_KINDS.get(kind, kind)
             return "", "", [f"No {named} card dated {day:%m/%d/%y} anywhere on the board."]
 
-        known = dailyops.who_is_known(client.board_members(config.secrets.trello_board_id))
+        members = client.board_members(config.secrets.trello_board_id)
+        known = dailyops.who_is_known(members)
         said, handles, strangers = dailyops.tag_asked(text, known)
+        # "if they mention any name, @ them on trello" - a teammate named in
+        # what's said is tagged as well as one asked for.
+        for who in dailyops.people_named(said, members):
+            if who not in handles:
+                handles.append(who)
         # Whoever was tagged on Discord in the message being put on the board,
         # tagged on Trello too - "@K2: @Franklin put on board tho let's
         # collate all logins" reaches Franklin's checklist only as a tag.
@@ -4495,13 +4501,22 @@ def comment_on_daily(
             said = " ".join(f"@{one}" for one in handles) + ("\n" + said if said else "")
 
         title = str(card.get("name") or "")
+        body = said.split("\n", 1)[1] if handles and "\n" in said else ("" if handles else said)
         try:
             client.add_comment(str(card.get("id") or ""), said)
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
-        return title, str(card.get("url") or ""), [
-            f"Nobody on the board is called {one} — not tagged." for one in strangers
-        ]
+        problems = [f"Nobody on the board is called {one} — not tagged." for one in strangers]
+        # "...and put it on their respective checklist": each person tagged
+        # gets it on their own checklist on the card, by their first name.
+        full_of = {str(one.get("username") or ""): " ".join(str(one.get("fullName") or "").split())
+                   for one in members or []}
+        for who in handles:
+            first = (full_of.get(who) or who).split()[0]
+            line = _onto_checklist(client, str(card.get("id") or ""), first, body or said)
+            problems.append(f"✅ On **{first}**'s checklist" if line.startswith("✅")
+                            else f"Not on {first}'s checklist: {line}")
+        return title, str(card.get("url") or ""), problems
     finally:
         client.close()
 
