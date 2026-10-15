@@ -98,6 +98,7 @@ class Board:
 
     def create_card(self, list_id, name, *, position="top"):
         self.made.append(dict(list=list_id, name=name))
+        self.positions = getattr(self, "positions", []) + [position]
         return {"id": f"c{len(self.made)}", "shortUrl": f"https://trello.com/c/new{len(self.made)}"}
 
     def card_full(self, card_id):
@@ -1956,7 +1957,7 @@ def test_a_503_making_a_card_is_tried_again_without_making_two(monkeypatch):
         def __init__(self, made_anyway):
             self.tries, self.made_anyway = 0, made_anyway
 
-        def create_card(self, list_id, name):
+        def create_card(self, list_id, name, position="top"):
             self.tries += 1
             if self.tries == 1:
                 raise trello.TrelloError("POST /cards -> HTTP 503: ")
@@ -1974,7 +1975,7 @@ def test_a_503_making_a_card_is_tried_again_without_making_two(monkeypatch):
     assert there.tries == 1, "made a second card"
 
     class Refused(Flaky):
-        def create_card(self, list_id, name):
+        def create_card(self, list_id, name, position="top"):
             raise trello.TrelloError("POST /cards -> HTTP 400: invalid")
 
     with pytest.raises(trello.TrelloError):
@@ -2314,3 +2315,13 @@ def test_saying_the_same_states_is_recognised():
                  "States: same as last time"):
         assert ordercards.SAME_STATES.search(said), said
     assert not ordercards.SAME_STATES.search("States: TX, FL")
+
+
+def test_a_new_aged_card_goes_at_the_bottom_of_its_list(monkeypatch):
+    """"when creating a new aged leads card, JUST THE AGED LEADS, put them
+    below the list"."""
+    board = Board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    jobs.order_card_make(CONFIG, "aged", {"name": "Aged Leads - Cole Petersen", "desc": "d"})
+    jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Cole Petersen", "desc": "d"})
+    assert board.positions == ["bottom", "top"]

@@ -12465,7 +12465,10 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
         if where is None:
             raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
                              + (f" called “{wanted}”" if wanted else "") + ".")
-        made = _create_once(client, str(where["id"]), card["name"])
+        # "when creating a new aged leads card, JUST THE AGED LEADS, put them
+        # below the list" - new agents stay on top.
+        made = _create_once(client, str(where["id"]), card["name"],
+                            position="bottom" if kind == "aged" and not list_name else "top")
         card_id = str(made.get("id") or "")
         if card.get("desc"):
             client.set_description(card_id, card["desc"])
@@ -12479,7 +12482,7 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
 CREATE_PAUSES = (5.0, 15.0, 30.0)
 
 
-def _create_once(client, list_id: str, name: str, *, now=None) -> dict:
+def _create_once(client, list_id: str, name: str, *, now=None, position: str = "top") -> dict:
     """A card made, through Trello's "having a moment": Blake Settle's came
     back HTTP 503 and wasn't made. A 5xx can still have made it, so the list
     is looked at for it before asking again - one card, never two."""
@@ -12490,7 +12493,7 @@ def _create_once(client, list_id: str, name: str, *, now=None) -> dict:
     started = (now or datetime.now(timezone.utc)) - timedelta(seconds=30)
     for pause in (*CREATE_PAUSES, None):
         try:
-            return client.create_card(list_id, name)
+            return client.create_card(list_id, name, position=position)
         except trello.TrelloError as exc:
             if pause is None or not re.search(r"HTTP 5\d\d", str(exc)):
                 raise
@@ -12516,7 +12519,7 @@ def order_card_move(config: Config, card_id: str, kind: str) -> str:
         where = ordercards.list_for(kind, client.board_lists(config.secrets.trello_board_id), wanted=wanted)
         if where is None:
             raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board.")
-        client.move_card(card_id, str(where["id"]))
+        client.move_card(card_id, str(where["id"]), position="bottom" if kind == "aged" else "top")
         return str(where.get("name") or "")
     finally:
         client.close()
@@ -13003,7 +13006,7 @@ def order_bank_settled(config: Config, card_id: str, text: str) -> str:
         here = str(client.card_full(card_id).get("idList") or "")
         moved = parked is not None and here == str(parked.get("id") or "")
         if moved:
-            client.move_card(card_id, str(aged["id"]))
+            client.move_card(card_id, str(aged["id"]), position="bottom")
         client.add_comment(card_id, text if moved else text.split(" — ", 1)[0] + ".")
         return "moved" if moved else "left"
     finally:
