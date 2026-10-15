@@ -4456,7 +4456,7 @@ def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
 
 
 def comment_on_daily(
-    config: Config, *, kind: str, day: date, text: str, tag=(),
+    config: Config, *, kind: str, day: date, text: str, tag=(), pictures=(),
 ) -> tuple[str, str, list[str]]:
     """Say something on one of the four dated cards. (title, url, problems).
 
@@ -4469,7 +4469,7 @@ def comment_on_daily(
     board's member list is already open - because posting the words tags
     nobody and the tag is the whole reason for saying it.
     """
-    from .. import dailyops
+    from .. import agents, dailyops
 
     client = open_trello(config)
     try:
@@ -4508,23 +4508,63 @@ def comment_on_daily(
 
         title = str(card.get("name") or "")
         body = said.split("\n", 1)[1] if handles and "\n" in said else ("" if handles else said)
+        # "the image has to be attached on the same comment": uploaded to the
+        # card - not as its cover - and shown in the comment itself.
+        shown, missed = _pictures_onto(client, str(card.get("id") or ""), pictures)
+        if shown:
+            said = (said + "\n\n" + "\n".join(f"![screenshot]({one})" for one in shown)).strip()
         try:
             client.add_comment(str(card.get("id") or ""), said)
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
         problems = [f"Nobody on the board is called {one} — not tagged." for one in strangers]
+        if shown:
+            problems.append(f"✅ {len(shown)} screenshot(s) in the comment")
+        if missed:
+            problems.append(f"{missed} screenshot(s) couldn't be put on the card")
         # "...and put it on their respective checklist": each person tagged
         # gets it on their own checklist on the card, by their first name.
         full_of = {str(one.get("username") or ""): " ".join(str(one.get("fullName") or "").split())
                    for one in members or []}
+        ops = dailyops.cards_covering(every, day).get("ops") if kind != "ops" else None
         for who in handles:
             first = (full_of.get(who) or who).split()[0]
             line = _onto_checklist(client, str(card.get("id") or ""), first, body or said)
             problems.append(f"✅ On **{first}**'s checklist" if line.startswith("✅")
                             else f"Not on {first}'s checklist: {line}")
+            # "therese checklist should be on OPS Card also" - Ops people's
+            # checklist on the day's Ops card gets it as well.
+            if ops is not None and first.casefold() in {one.casefold() for one in agents.OPS_PEOPLE}:
+                line = _onto_checklist(client, str(ops.get("id") or ""), first, body or said)
+                problems.append(f"✅ On **{first}**'s checklist on {ops.get('name')}" if line.startswith("✅")
+                                else f"Not on {first}'s Ops checklist: {line}")
         return title, str(card.get("url") or ""), problems
     finally:
         client.close()
+
+
+def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:
+    """Discord pictures uploaded to a card, not as its cover. (their Trello
+    links, how many couldn't be)."""
+    import httpx
+
+    shown, missed = [], 0
+    for at, url in enumerate(urls or (), start=1):
+        try:
+            got = httpx.get(url, timeout=30, follow_redirects=True)
+            got.raise_for_status()
+            if len(got.content) > ORDER_SHOT_MOST_BYTES:
+                raise ValueError("too big")
+            mime = got.headers.get("content-type", "image/png").split(";")[0]
+            name = shot_key(url).rsplit("/", 1)[-1] or f"screenshot-{at}.png"
+            made = client.attach_file(card_id, name, got.content, mime, cover=False)
+            if made.get("url"):
+                shown.append(str(made["url"]))
+            else:
+                missed += 1
+        except Exception:
+            missed += 1
+    return shown, missed
 
 
 def spread_to_lead_order(

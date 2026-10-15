@@ -384,10 +384,15 @@ class TrelloClient:
             params["due"] = due
         return self._request("POST", "/cards", params=params)
 
-    def attach_file(self, card_id: str, name: str, data: bytes, mime: str = "image/png") -> dict:
+    def attach_file(self, card_id: str, name: str, data: bytes, mime: str = "image/png", *,
+                    cover: bool = True) -> dict:
         """A file uploaded onto a card - kept by Trello, so it outlives the link
-        it came from."""
-        return self._request("POST", f"/cards/{card_id}/attachments", params={"name": name},
+        it came from. `cover=False` keeps a picture from becoming the card's
+        cover - a screenshot in a comment on the General card took it over."""
+        params = {"name": name}
+        if not cover:
+            params["setCover"] = "false"
+        return self._request("POST", f"/cards/{card_id}/attachments", params=params,
                              files={"file": (name, data, mime)})
 
     def clear_due(self, card_id: str) -> dict:

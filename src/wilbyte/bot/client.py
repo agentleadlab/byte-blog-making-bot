@@ -3124,7 +3124,7 @@ async def _comment_on_card(
 
     try:
         title, url, problems = await asyncio.to_thread(
-            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag)
+            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures)
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
@@ -3137,15 +3137,6 @@ async def _comment_on_card(
         await responder.send(embed=embeds.error("\n".join(problems)))
         return
     note = f"Said it on **{title}** — <{url}>"
-    if pictures:
-        from .. import ordercards
-
-        try:
-            put = await asyncio.to_thread(jobs.order_card_attach, config, ordercards.card_id_of(url), pictures)
-            problems.append(f"✅ {len(put)} screenshot(s) attached to the card" if put else
-                            "Couldn't attach the screenshot(s)")
-        except Exception as exc:
-            problems.append(f"Couldn't attach the screenshot(s): {_readable(exc)}")
     done = [one for one in problems if one.startswith("✅")]
     problems = [one for one in problems if not one.startswith("✅")]
     if done:

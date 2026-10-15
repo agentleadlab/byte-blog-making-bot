@@ -4489,7 +4489,7 @@ def _putting(monkeypatch, said, *, answering=None):
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=()):
+    def comment(config, *, kind, day, text, tag=(), pictures=()):
         posted.update({"kind": kind, "day": day, "text": text, "tag": list(tag)})
         return f"💎 General {day:%m/%d/%y}", "https://trello.com/c/AAA", []
 
@@ -4616,7 +4616,7 @@ def _telling_the_room(monkeypatch, *, where="", answering=None, before=None,
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=()):
+    def comment(config, *, kind, day, text, tag=(), pictures=()):
         posted.update({"kind": kind, "day": day, "text": text})
         return "💻 Ops 09/14/26", "https://trello.com/c/AAA", []
 
@@ -7618,11 +7618,9 @@ def test_and_tag_therese_comes_out_and_the_screenshot_goes_on(monkeypatch):
     assert said == "SID123 tok456 There you go" and handles == ["thereseguba"]
     assert dailyops.tag_phrase_out("tag the card as done", known) == ("tag the card as done", [])
 
-    posted, attached = [], []
+    posted = []
     monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
                         lambda config, **kw: posted.append(kw) or ("General 10/15/26", "https://trello.com/c/kWszDolJ/x", []))
-    monkeypatch.setattr(bot_client.jobs, "order_card_attach",
-                        lambda config, card_id, urls: attached.append((card_id, urls)) or ["k"])
     sent = []
 
     class Responder:
@@ -7635,5 +7633,58 @@ def test_and_tag_therese_comes_out_and_the_screenshot_goes_on(monkeypatch):
     config = SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York"))
     monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 10, 15))
     asyncio.run(bot_client._comment_on_card(Responder(), config, "and tag Therese SID123", message))
-    assert attached == [("kWszDolJ", ["https://cdn.discordapp.com/x/shot.png"])]
-    assert "1 screenshot(s) attached" in sent[-1]
+    assert posted[0]["pictures"] == ["https://cdn.discordapp.com/x/shot.png"]
+
+
+def test_the_screenshot_is_in_the_comment_and_therese_gets_the_ops_card_too(monkeypatch):
+    """"therese checklist should be on OPS Card also, the image has to be
+    attached on the same comment"."""
+    posted, items, attached = [], [], []
+
+    class Client:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "G", "name": "💎 General 10/15/26", "url": "https://trello.com/c/G"},
+                    {"id": "O", "name": "💻 Ops 10/15/26", "url": "https://trello.com/c/O"}]
+
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"}]
+
+        def attach_file(self, card_id, name, data, mime="image/png", *, cover=True):
+            attached.append((card_id, name, cover))
+            return {"url": f"https://trello.com/1/cards/{card_id}/attachments/a1/download/{name}"}
+
+        def add_comment(self, card_id, text):
+            posted.append((card_id, text))
+
+        def card_checklists(self, card_id):
+            return [{"id": f"{card_id}-t", "name": "Therese 3.0"}]
+
+        def add_check_item(self, checklist_id, name):
+            items.append((checklist_id, name))
+
+        def close(self):
+            pass
+
+    class Got:
+        content, headers = b"png", {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            pass
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: Got())
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="B"))
+    _t, _u, problems = jobs.comment_on_daily(config, kind="general", day=date(2026, 10, 15),
+                                             text="and tag Therese SID123 tok456",
+                                             pictures=["https://cdn.discordapp.com/x/shot.png"])
+    assert attached == [("G", "shot.png", False)], "a cover, or on another card"
+    [(card, text)] = posted
+    assert card == "G" and text.startswith("@thereseguba\nSID123 tok456")
+    assert "![screenshot](https://trello.com/1/cards/G/attachments/a1/download/shot.png)" in text
+    assert items == [("G-t", "SID123 tok456"), ("O-t", "SID123 tok456")]
+    assert "✅ On **Therese**'s checklist on 💻 Ops 10/15/26" in problems
