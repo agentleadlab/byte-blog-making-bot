@@ -10482,6 +10482,11 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
             return "check", (f"🕘 **{name}** ({bits}) — before I made aged cards on my own, and no card on the "
                              f"board: <{post.jump_url}>")
         return "missing", f"❌ **{name}** ({bits}) — aged, **no card** (should have been made on its own): <{post.jump_url}>"
+    # A weekly subscription's charge - eight came in at 10:07 on 10/15 - is
+    # an agent already set up being billed again, not an order. A first
+    # week ("First week of leads (starts ...)") still waits for a gavel.
+    if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said, re.IGNORECASE):
+        return "subs", f"🔁 **{name}** ({bits}): <{post.jump_url}>"
     return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
 
 
@@ -10509,17 +10514,20 @@ async def _order_audit(bot, responder: Responder, said: str) -> None:
         await responder.send(f"⚠ Couldn't read the board: {_readable(exc)}")
         return
     held = await asyncio.to_thread(ordercards.load)
-    sorted_out = {"missing": [], "check": [], "waiting": [], "ok": []}
+    sorted_out = {"missing": [], "check": [], "waiting": [], "subs": [], "ok": []}
     for post in posts:
         how, line = _audit_line(post, held, cards, zone)
         sorted_out[how].append(line)
     head = (f"🔎 **{len(posts)} payment(s)** — {len(sorted_out['ok'])} with a card, "
             f"{len(sorted_out['waiting'])} waiting on a gavel or a button, **{len(sorted_out['missing'])} missing**"
-            + (f", {len(sorted_out['check'])} to check by hand" if sorted_out["check"] else "") + ".")
+            + (f", {len(sorted_out['check'])} to check by hand" if sorted_out["check"] else "")
+            + (f", {len(sorted_out['subs'])} subscription charge(s)" if sorted_out["subs"] else "") + ".")
     lines = [head]
     for how, title in (("missing", "**Missing — should have a card:**"),
                        ("check", "**From before aged cards were automatic — no card found, check by hand:**"),
-                       ("waiting", "**Waiting — nobody's gavelled these:**"), ("ok", "**Done:**")):
+                       ("waiting", "**Waiting — nobody's gavelled these:**"),
+                       ("subs", "**Subscription charges — weekly billing, no card unless somebody gavels one:**"),
+                       ("ok", "**Done:**")):
         if sorted_out[how]:
             lines += ["", title] + sorted_out[how]
     if not sorted_out["missing"]:

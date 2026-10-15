@@ -2264,3 +2264,19 @@ def test_reach_out_tomorrow_isnt_a_launch_date():
     assert ordercards.says_when(thread + "\nLaunch Date: Friday 10/16")
     assert ordercards.says_when("First week of leads (starts Tuesday, Oct 20)")
     assert not ordercards.says_when("call him Monday")
+
+
+def test_a_weekly_subscription_charge_isnt_waiting_on_a_card():
+    from datetime import datetime, timezone
+
+    def post(text):
+        return SimpleNamespace(id=1, created_at=datetime(2026, 10, 15, 14, 7, tzinfo=timezone.utc),
+                               jump_url="https://discord.com/channels/1/700/1", content=text, embeds=[],
+                               message_snapshots=[], author=SimpleNamespace(bot=True), reactions=[])
+
+    renewal = post("New Payment | Spark\nNAME: Mark Medina\nAMOUNT: $350.00\n"
+                   "PRODUCT: 1 × Lead Subscription (at $350.00 / week)\nsubscription")
+    first = post("New Payment | Spark\nNAME: Colin Briner\nAMOUNT: $700.00\n"
+                 "PRODUCT: First week of leads (starts Tuesday, Oct 20)\nsubscription")
+    assert client._audit_line(renewal, {}, [])[0] == "subs"
+    assert client._audit_line(first, {}, [])[0] == "waiting"
