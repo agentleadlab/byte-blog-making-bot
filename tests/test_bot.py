@@ -7572,3 +7572,34 @@ def test_a_teammate_named_is_tagged_and_gets_it_on_their_checklist(monkeypatch):
     assert items == [("n", "Nicole and therese please cap Michael Greff at 10/day"),
                      ("t", "Nicole and therese please cap Michael Greff at 10/day")]
     assert problems == ["✅ On **Nicole**'s checklist", "✅ On **Therese**'s checklist"]
+
+
+def test_tagged_in_any_growth_channel_ryte_answers(config, monkeypatch):
+    """Faith's "@Ryte add to Trello @Therese ..." in #internal-team got
+    nothing - the channel wasn't on the list. The Growth server is the
+    team's own; elsewhere a channel not on it stays silent."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    secrets = replace(config.secrets, discord_channel_ids=("999",))
+    growth, other = SimpleNamespace(id=1), SimpleNamespace(id=2)
+    monkeypatch.setattr(bot_client, "_in_setup_guild", lambda bot, guild: guild is growth)
+    handled = []
+
+    async def comment(responder, cfg, said, message=None):
+        handled.append(said)
+
+    monkeypatch.setattr(bot_client, "_comment_on_card", comment)
+
+    def said_in(guild):
+        return SimpleNamespace(content="<@999> add to Trello cap him", embeds=[], attachments=[], mentions=[BOT_USER],
+                               role_mentions=[], mention_everyone=False, reference=None, guild=guild,
+                               channel=SimpleNamespace(id="222", name="internal-team"),
+                               author=SimpleNamespace(id=7, bot=False, roles=[]), reply=lambda *a, **k: None)
+
+    bot = SimpleNamespace(config=replace(config, secrets=secrets), user=BOT_USER, run_lock=None)
+    asyncio.run(bot_client.handle_mention(bot, said_in(other)))
+    assert handled == []
+    asyncio.run(bot_client.handle_mention(bot, said_in(growth)))
+    assert handled == ["cap him"]

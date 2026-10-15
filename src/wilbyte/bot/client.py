@@ -1360,6 +1360,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
         channel_name=str(getattr(message.channel, "name", "") or ""),
         guild_id=getattr(getattr(message, "guild", None), "id", None),
     )
+    if not allowed and "channel" in reason and not untagged and _in_setup_guild(bot, getattr(message, "guild", None)):
+        # The Growth server is the team's own: tagged in any channel of it,
+        # RYTE answers. Faith's "@Ryte add to Trello @Therese ..." in
+        # #internal-team went unanswered - the channel wasn't on the list.
+        allowed = True
     if not allowed:
         # Silent where a channel allowlist exists, because RYTE now sits in a
         # server it is only there to read - an announcements feed with clients
