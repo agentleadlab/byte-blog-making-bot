@@ -4514,10 +4514,14 @@ def comment_on_daily(
         if shown:
             said = (said + "\n\n" + "\n".join(f"![{one.rsplit('/', 1)[-1]}]({one})" for one in shown)).strip()
         try:
-            client.add_comment(str(card.get("id") or ""), said)
+            posted = client.add_comment(str(card.get("id") or ""), said) or {}
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
         problems = [f"Nobody on the board is called {one} — not tagged." for one in strangers]
+        # "why are you creating multiple checklist bro" - the board's own
+        # automation turns a comment that tags someone into a checklist item
+        # linking back to it. Where it does, RYTE's own would be a second.
+        trello_does_it = bool(handles) and _tags_become_items(client, card, str(posted.get("id") or ""))
         if shown:
             problems.append(f"✅ {len(shown)} screenshot(s) in the comment")
         if missed:
@@ -4529,9 +4533,12 @@ def comment_on_daily(
         ops = dailyops.cards_covering(every, day).get("ops") if kind != "ops" else None
         for who in handles:
             first = (full_of.get(who) or who).split()[0]
-            line = _onto_checklist(client, str(card.get("id") or ""), first, body or said)
-            problems.append(f"✅ On **{first}**'s checklist" if line.startswith("✅")
-                            else f"Not on {first}'s checklist: {line}")
+            if trello_does_it:
+                problems.append(f"✅ Trello's automation puts it on **{first}**'s checklist")
+            else:
+                line = _onto_checklist(client, str(card.get("id") or ""), first, body or said)
+                problems.append(f"✅ On **{first}**'s checklist" if line.startswith("✅")
+                                else f"Not on {first}'s checklist: {line}")
             # "therese checklist should be on OPS Card also" - Ops people's
             # checklist on the day's Ops card gets it as well.
             if ops is not None and first.casefold() in {one.casefold() for one in agents.OPS_PEOPLE}:
@@ -4605,6 +4612,38 @@ def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
     except Exception:
         logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
         return by_words, said
+
+
+#: How long to give the board's automation to make its checklist item from
+#: a comment before RYTE makes one itself.
+TAG_AUTOMATION_WAIT = 8
+
+
+def _tags_become_items(client, card: dict, comment_id: str) -> bool:
+    """Whether the board turns this card's tagging comments into checklist
+    items itself: an item already linking to one of its comments ("...#comment-
+    6ad106bd..."), or one linking to the comment just posted, once it's had a
+    few seconds."""
+    import time
+
+    from .. import ordercards
+
+    card_id = str(card.get("id") or "")
+    short = ordercards.card_id_of(str(card.get("url") or card.get("shortUrl") or "")) or card_id
+
+    def names():
+        try:
+            return [str(item.get("name") or "") for one in client.card_checklists(card_id)
+                    for item in one.get("checkItems") or []]
+        except Exception:
+            return []
+
+    if any(f"{short}#comment-" in one for one in names()):
+        return True
+    if not comment_id:
+        return False
+    time.sleep(TAG_AUTOMATION_WAIT)
+    return any(comment_id in one for one in names())
 
 
 def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:
