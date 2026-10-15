@@ -3103,6 +3103,15 @@ async def _comment_on_card(
             if name not in tag:
                 tag.append(name)
         text = re.sub(r"<@!?\d+>", "", text or "").strip(" -–—:,")
+    if not kind and (text or pictures):
+        # Nobody named a card: "this is ads related so checklist is on ads".
+        # Ads work on Ads, setup systems on Ops, the rest on General - and an
+        # ask that's only a tag and a screenshot gets its task read off it.
+        bare = re.sub(r"@\S+", "", text or "").strip()
+        kind, line = await asyncio.to_thread(partial(jobs.trello_ask_kind, config, text or "", pictures))
+        guessed = True
+        if len(bare.split()) < 3 and line:
+            text = (text + "\n" + line).strip() if text else line
     if not kind and text:
         # "@Ryte add to trello / put on board tho let's collate all logins" -
         # something to say and no card named. General, said rather than
@@ -3144,7 +3153,8 @@ async def _comment_on_card(
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     if guessed:
-        note += "\n-# Nobody said which card. `on ops`, `on ads` or `on lead order` puts it there instead."
+        note += ("\n-# Nobody said which card, so it went where it reads as belonging. `on general`, `on ops`, "
+                 "`on ads` or `on lead order` puts it there instead.")
     await responder.send(note)
 
 

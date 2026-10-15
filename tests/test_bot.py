@@ -7685,6 +7685,37 @@ def test_the_screenshot_is_in_the_comment_and_therese_gets_the_ops_card_too(monk
     assert attached == [("G", "shot.png", False)], "a cover, or on another card"
     [(card, text)] = posted
     assert card == "G" and text.startswith("@thereseguba\nSID123 tok456")
-    assert "![screenshot](https://trello.com/1/cards/G/attachments/a1/download/shot.png)" in text
+    assert "![shot.png](https://trello.com/1/cards/G/attachments/a1/download/shot.png)" in text
     assert items == [("G-t", "SID123 tok456"), ("O-t", "SID123 tok456")]
     assert "✅ On **Therese**'s checklist on 💻 Ops 10/15/26" in problems
+
+
+def test_an_ask_with_no_card_goes_where_it_belongs(monkeypatch):
+    """"this is ads related so checklist is on ads remember!?" - and a tag
+    with only a screenshot gets its task read off the screenshot."""
+    config = SimpleNamespace(secrets=SimpleNamespace(require=lambda name: (_ for _ in ()).throw(RuntimeError("no key"))))
+    assert jobs.trello_ask_kind(config, "@Nicole widows eod 1 cap for Heather")[0] == "ads"
+    assert jobs.trello_ask_kind(config, "@Therese here's the Ringy SID and token for Tom")[0] == "ops"
+    assert jobs.trello_ask_kind(config, "let's collate all logins please team")[0] == "general"
+
+
+def test_a_tag_and_a_screenshot_gets_a_task_and_the_ads_card(monkeypatch):
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    monkeypatch.setattr(bot_client.jobs, "trello_ask_kind", lambda config, text, pictures: ("ads", "Cap Heather at 1/day"))
+    posted = []
+    monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
+                        lambda config, **kw: posted.append(kw) or ("📊 Ads 10/15/26", "https://trello.com/c/A/x", []))
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            pass
+
+    shot = SimpleNamespace(url="https://cdn.discordapp.com/x/shot.png", content_type="image/png")
+    message = SimpleNamespace(content="<@999> add to trello @Nicole", embeds=[], attachments=[shot],
+                              message_snapshots=[], mentions=[], guild=None, reference=None)
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 10, 15))
+    asyncio.run(bot_client._comment_on_card(Responder(), SimpleNamespace(), "@Nicole", message))
+    assert posted[0]["kind"] == "ads" and posted[0]["text"] == "@Nicole\nCap Heather at 1/day"

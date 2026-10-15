@@ -4512,7 +4512,7 @@ def comment_on_daily(
         # card - not as its cover - and shown in the comment itself.
         shown, missed = _pictures_onto(client, str(card.get("id") or ""), pictures)
         if shown:
-            said = (said + "\n\n" + "\n".join(f"![screenshot]({one})" for one in shown)).strip()
+            said = (said + "\n\n" + "\n".join(f"![{one.rsplit('/', 1)[-1]}]({one})" for one in shown)).strip()
         try:
             client.add_comment(str(card.get("id") or ""), said)
         except Exception as exc:
@@ -4543,6 +4543,55 @@ def comment_on_daily(
         client.close()
 
 
+#: What goes on the Ads card - "this is ads related so checklist is on ads".
+_ADS_WORDS = re.compile(
+    r"\b(?:caps?|capped|daily\s+cap|leads?\s+(?:per|a)\s+day|/\s*day|pause[ds]?|unpause|resume|turn\s+(?:on|off)|"
+    r"schedule|drip|ads?|campaigns?|budget|spend|pixel|meta|facebook|fb|widows?|vets?|fex|iul|trucker|mtg|otp|"
+    r"states?|replacement|replace)\b", re.IGNORECASE)
+#: What goes on the Ops card.
+_OPS_WORDS = re.compile(r"\b(?:ringy|crm|sid|token|twilio|a2p|sheet|zap|zapier|webhook|discord\s+channel|"
+                        r"sms|text\s+line|number\s+port)\b", re.IGNORECASE)
+
+
+def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
+    """Which day card an "add to trello" with no card named belongs on, and a
+    one-line task for the checklists. ("general" | "ads" | "ops", the line).
+    Ads work - caps, pausing, schedules, states, lead types, replacements -
+    on Ads; CRM / Ringy / Twilio / sheets / zaps on Ops; the rest General.
+    Read by Claude when there's a screenshot or the words don't say; by the
+    words alone when Claude can't be asked."""
+    said = " ".join(str(text or "").split())
+    by_words = "ads" if _ADS_WORDS.search(said) else "ops" if _OPS_WORDS.search(said) else "general"
+    if not pictures and len(re.sub(r"@\S+", "", said).split()) >= 3:
+        return by_words, said
+    try:
+        from anthropic import Anthropic
+
+        config.secrets.require("anthropic_api_key")
+        client = Anthropic(api_key=config.secrets.anthropic_api_key)
+        tool = {"name": "place", "description": "Where this task goes on the team's Trello board.",
+                "input_schema": {"type": "object", "properties": {
+                    "card": {"type": "string", "enum": ["general", "ads", "ops"], "description": (
+                        "ads: lead delivery and ads work - caps, pausing or resuming leads, schedules / hours, "
+                        "states, lead types, replacements, campaigns. ops: client setup systems - CRM, Ringy, "
+                        "Twilio SID / token, A2P, Google Sheets, Zapier, Discord channels. general: anything else.")},
+                    "task": {"type": "string", "description": (
+                        "The task in one short line, as an instruction to the team - from the words and what "
+                        "the screenshot shows, e.g. 'Cap Michael Greff at 10/day'. Names, numbers and states "
+                        "kept.")}}, "required": ["card", "task"]}}
+        content = [{"type": "text", "text": f"Added to Trello by the team:\n{said or '(only a screenshot)'}"}]
+        content += [{"type": "image", "source": {"type": "url", "url": url}} for url in list(pictures)[:3]]
+        response = client.messages.create(
+            model=ORDER_MODEL, max_tokens=300, tools=[tool], tool_choice={"type": "tool", "name": "place"},
+            messages=[{"role": "user", "content": content}])
+        got = _tool_input(response, "place")
+        card = got.get("card") if got.get("card") in ("general", "ads", "ops") else by_words
+        return card, " ".join(str(got.get("task") or said).split())
+    except Exception:
+        logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
+        return by_words, said
+
+
 def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:
     """Discord pictures uploaded to a card, not as its cover. (their Trello
     links, how many couldn't be)."""
@@ -4557,9 +4606,14 @@ def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:
                 raise ValueError("too big")
             mime = got.headers.get("content-type", "image/png").split(";")[0]
             name = shot_key(url).rsplit("/", 1)[-1] or f"screenshot-{at}.png"
-            made = client.attach_file(card_id, name, got.content, mime, cover=False)
-            if made.get("url"):
-                shown.append(str(made["url"]))
+            made = client.attach_file(card_id, name, got.content, mime, cover=False) or {}
+            # The download link Trello shows a picture in a comment by -
+            # built from the ids when the answer doesn't carry it.
+            link = str(made.get("url") or "")
+            if not link and made.get("id"):
+                link = f"https://trello.com/1/cards/{made.get('idCard') or card_id}/attachments/{made['id']}/download/{name}"
+            if link:
+                shown.append(link)
             else:
                 missed += 1
         except Exception:
