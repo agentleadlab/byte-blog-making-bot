@@ -1998,7 +1998,7 @@ async def updater_loop(bot: "WilByteBot") -> None:
         if not waiting:
             continue
 
-        if bot.run_lock.locked():
+        if bot.run_lock.locked() or _clearing_out():
             log.info("Update %s is waiting, but a run is open - leaving it", waiting)
             continue
 
@@ -2085,10 +2085,12 @@ async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
             return
         await responder.send(f"Already on the latest — {here}.")
         return
-    if bot.run_lock.locked():
+    if bot.run_lock.locked() or _clearing_out():
         await responder.send(
-            f"There's an update ({waiting}), but a run is open — I'll take it as soon "
-            "as that's done."
+            f"There's an update ({waiting}), but "
+            + ("a clear-out is open - its buttons wouldn't work after a restart. " if _clearing_out()
+               else "a run is open — ")
+            + "I'll take it as soon as that's done."
         )
         return
     await responder.send(f"🔄 Updating myself — back in a moment.\n-# {waiting}")
@@ -3753,7 +3755,30 @@ async def _what_i_noticed(responder: Responder, config: Config, said: str) -> No
     )
 
 
+#: Clear-outs open now - an update waits for them. A restart in the middle
+#: of one left its Delete button saying "The application didn't respond in
+#: time": buttons live in RYTE's memory and don't outlast it.
+_CLEAROUTS_OPEN = 0
+
+
+def _clearing_out() -> bool:
+    return _CLEAROUTS_OPEN > 0 or _QUIET_RUNNING
+
+
 async def _clear_out(
+    bot: "WilByteBot", responder: Responder, config: Config, name: str,
+    *, run: tuple[int, int] | None = None, auto: bool = False,
+) -> str:
+    global _CLEAROUTS_OPEN
+
+    _CLEAROUTS_OPEN += 1
+    try:
+        return await _clear_out_one(bot, responder, config, name, run=run, auto=auto)
+    finally:
+        _CLEAROUTS_OPEN -= 1
+
+
+async def _clear_out_one(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
     *, run: tuple[int, int] | None = None, auto: bool = False,
 ) -> str:

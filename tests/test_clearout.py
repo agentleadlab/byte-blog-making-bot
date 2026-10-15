@@ -4044,7 +4044,7 @@ def test_small_print_is_not_marked_twice(monkeypatch):
 
     from wilbyte.bot import client
 
-    source = inspect.getsource(client._clear_out)
+    source = inspect.getsource(client._clear_out_one)
     assert 'one if one.startswith("-#") else f"-# {one}"' in source
 
 
@@ -4633,3 +4633,24 @@ def test_a_channel_collected_again_isnt_written_twice(monkeypatch):
     one_left = []
     _collecting(monkeypatch, titles=["Ryte Collection"], also=["https://other"], every=one_left, existing=first[:1])
     assert len(one_left) == 1 and "https://other" in one_left[0]
+
+
+def test_an_update_waits_for_an_open_clear_out(monkeypatch):
+    """A restart mid clear-out left its Delete button saying "The application
+    didn't respond in time"."""
+    import asyncio
+
+    from wilbyte import version
+    from wilbyte.bot import client as bot_client
+
+    said = []
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(version, "update_waiting", lambda: "abc123")
+    monkeypatch.setattr(bot_client, "_CLEAROUTS_OPEN", 1)
+    bot = SimpleNamespace(run_lock=asyncio.Lock())
+    asyncio.run(bot_client._update_now(bot, Heard()))
+    assert "a clear-out is open" in said[-1]
