@@ -990,6 +990,8 @@ def test_another_payment_for_this_weeks_order_goes_on_its_card(order):
     order.kind, order.pressed = "fresh", False
     order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
                       "url": "https://trello.com/c/bram"}
+    # His first payment, moments before this one, made the card.
+    ordercards.save({"800": {"status": "made", "card_id": "5f0000000000000000000001"}})
     message = _message("New Payment | Payra\nNAME: Bram Gutierrez\nAMOUNT: $372.6\nPRODUCT: Text-Verified Trucker IUL")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
     assert order.made == [], "a second card for the same order"
@@ -1005,6 +1007,7 @@ def test_a_separate_card_when_its_a_new_order_after_all(order):
     order.kind, order.pressed = "fresh", True
     order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
                       "url": "https://trello.com/c/bram"}
+    ordercards.save({"800": {"status": "made", "card_id": "5f0000000000000000000001"}})
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert len(order.comments) == 1 and [one[0] for one in order.made] == ["fresh"]
     assert ordercards.load()["900"].get("merged") is None and ordercards.load()["900"]["card_id"] == "card1"
@@ -2354,3 +2357,22 @@ def test_counts_on_one_line_add_up_too():
     card["fields"]["leads"] = "10"
     assert any("10 isn't in the order" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0]), \
         "3 + 7 from the list of what's available counted as the order"
+
+
+def test_paid_separately_is_a_card_of_its_own(order):
+    """"Always make seprate card for now, unless its paid at the same time. if
+    paid separately. create card"."""
+    import discord
+
+    order.kind = "fresh"
+    order.existing = {"id": "5f0000000000000000000001", "name": "New Agent - Bram Gutierrez",
+                      "url": "https://trello.com/c/bram"}
+    an_hour_later = discord.utils.time_snowflake(discord.utils.snowflake_time(900) + timedelta(hours=1))
+    ordercards.save({str(an_hour_later): {"status": "made", "card_id": "5f0000000000000000000001"}})
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.comments == [] and [one[0] for one in order.made] == ["fresh"]
+    # A card RYTE didn't make from a payment isn't one to put another on.
+    ordercards.save({})
+    order.made.clear()
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert order.comments == []

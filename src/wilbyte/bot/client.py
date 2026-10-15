@@ -9519,6 +9519,10 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't look for their card", exc_info=True)
             existing = None
+        if existing is not None and not _paid_together(existing, key):
+            # "Always make seprate card for now, unless its paid at the same
+            # time. if paid separately. create card"
+            existing = None
         if existing is not None:
             # Their card, but is it this order? A different lead type or live
             # date is a new order of theirs, with a card of its own.
@@ -9845,6 +9849,33 @@ async def bank_hold_loop(bot: "WilByteBot") -> None:
         except Exception:
             log.exception("Checking the bank payments failed; trying again next time")
         await asyncio.sleep(BANK_CHECK_SECONDS)
+
+
+#: Payments this close together are one order paid in parts (Bram's two
+#: $372.60s five minutes apart); further apart, each gets a card.
+PAID_TOGETHER = timedelta(minutes=15)
+
+
+def _paid_together(existing: dict, key: str) -> bool:
+    """Whether this payment came at the same time as one RYTE already put on
+    `existing` - within PAID_TOGETHER of it, by the posts' own times. A card
+    RYTE didn't make from a payment isn't one to put another on."""
+    from .. import ordercards
+
+    try:
+        this = discord.utils.snowflake_time(int(key))
+    except (TypeError, ValueError):
+        return False
+    for other, order in ordercards.load().items():
+        if other == key or not isinstance(order, dict) or order.get("card_id") != existing.get("id"):
+            continue
+        try:
+            then = discord.utils.snowflake_time(int(other))
+        except (TypeError, ValueError):
+            continue
+        if abs(this - then) <= PAID_TOGETHER:
+            return True
+    return False
 
 
 def _payload_copy(payload, **changed):
