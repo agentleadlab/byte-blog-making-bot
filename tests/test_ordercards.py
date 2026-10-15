@@ -2172,3 +2172,82 @@ def test_the_sweep_tries_a_waiting_aged_order_again(monkeypatch):
     monkeypatch.setattr(client, "_order_retry", retry)
     asyncio.run(client._order_sweep(SimpleNamespace()))
     assert tried == ["950"]
+
+
+def _thread_said(i, name, starter_text, starter_bot=False, history=()):
+    starter = SimpleNamespace(id=i, content=starter_text, embeds=[], attachments=[], message_snapshots=[],
+                              author=SimpleNamespace(display_name="Kharyl", name="kharyl", bot=starter_bot),
+                              created_at=WHEN)
+
+    class Parent:
+        async def fetch_message(self, mid):
+            return starter
+
+    class Thread:
+        def __init__(self):
+            self.id, self.name, self.parent, self.last_message_id = i, name, Parent(), 99
+
+        def history(self, **kw):
+            async def gen():
+                for at, text in enumerate(history):
+                    yield SimpleNamespace(id=at, content=text, embeds=[], attachments=[], message_snapshots=[],
+                                          author=SimpleNamespace(display_name="Faith", name="faith", bot=False),
+                                          created_at=WHEN)
+            return gen()
+    return Thread()
+
+
+def test_a_new_thread_about_an_agent_is_read_onto_their_card(order, monkeypatch):
+    """"there are new thread on cards that are already setup that ryte didnt
+    udpdate - ava and zach for example"."""
+    made = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ordercards.save({"900": {"status": "made", "client": "Ava Lindqvist", "made_at": made, "card_id": "c1",
+                             "message_channel_id": "700", "url": "https://trello.com/c/ava"},
+                     "901": {"status": "made", "client": "Zach Moreno", "made_at": made, "card_id": "c2"}})
+    thread = _thread_said(5000, "Ava Lindqvist - add CA", "Ava Lindqvist wants CA added", history=["also no Sundays"])
+    refreshed = []
+
+    async def refresh(bot, key, *, settle=None):
+        refreshed.append(key)
+
+    monkeypatch.setattr(client, "_order_refresh", refresh)
+    bot = _bot(_message())
+    bot.loop = asyncio.new_event_loop()
+    try:
+        assert bot.loop.run_until_complete(client._order_link_thread(bot, thread)) == "900"
+        bot.loop.run_until_complete(asyncio.sleep(0))
+    finally:
+        bot.loop.close()
+    assert ordercards.load()["900"]["threads"] == ["5000"] and refreshed == ["900"]
+    assert any("New thread" in str(one) for one, _v in order.responder.sent)
+    # Read with the order: the thread's first message and what's said in it.
+    found = {"5000": thread}
+
+    async def get(bot_, key, o):
+        return found.get(key)
+
+    monkeypatch.setattr(client, "_order_thread", get)
+    _t, _i, _tid, notes = asyncio.run(client._order_said(bot, _message(), threads=("5000",)))
+    assert notes == ["Ava Lindqvist wants CA added", "also no Sundays"]
+
+
+def test_a_payment_posts_own_thread_isnt_taken_for_an_older_card(order):
+    """Same person, another payment - its thread is that order's, not a note
+    on the card they already have."""
+    made = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ordercards.save({"900": {"status": "made", "client": "Ryan Leach", "made_at": made, "card_id": "c1"}})
+    thread = _thread_said(5001, "Ryan Leach", "New Payment | Payra\nNAME: Ryan Leach\nPRODUCT: Aged Leads (VET)",
+                          starter_bot=True)
+    assert asyncio.run(client._order_link_thread(_bot(_message()), thread)) is None
+    assert not ordercards.load()["900"].get("threads")
+
+
+def test_a_thread_names_their_newest_card_and_needs_their_whole_name():
+    now = datetime.now(timezone.utc)
+    held = {"1": {"status": "made", "client": "Zach Moreno", "made_at": (now - timedelta(days=3)).isoformat()},
+            "2": {"status": "made", "client": "Zach Moreno", "made_at": (now - timedelta(days=1)).isoformat()},
+            "3": {"status": "made", "client": "Zach Moreno", "made_at": now.isoformat(), "merged": True},
+            "4": {"status": "made", "client": "Pasha", "made_at": now.isoformat()}}
+    assert client._order_named_thread(held, "Zach Moreno - schedule change") == "2"
+    assert client._order_named_thread(held, "Zach - schedule") is None
+    assert client._order_named_thread(held, "Pasha") is None

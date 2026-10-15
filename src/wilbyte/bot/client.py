@@ -9010,10 +9010,12 @@ def _said_line(message) -> str:
     return f"[{message.created_at:%m/%d %I:%M%p}] {who}: {text}"
 
 
-async def _order_said(bot, message, *, since: datetime | None = None) -> tuple[str, list[str], int | None, list[str]]:
+async def _order_said(bot, message, *, since: datetime | None = None,
+                      threads: tuple = ()) -> tuple[str, list[str], int | None, list[str]]:
     """The order: the gavelled message - forwards and screenshots too - and
-    every note in its thread. (text, images, the thread's id or None, the
-    team's own notes in the thread as they wrote them)."""
+    every note in its thread, and in `threads` (ids of other threads found
+    to be about it). (text, images, the thread's id or None, the team's own
+    notes in the thread as they wrote them)."""
     from .. import ordercards
 
     lines, images, notes = [], [], []
@@ -9036,9 +9038,32 @@ async def _order_said(bot, message, *, since: datetime | None = None) -> tuple[s
         images += _request_bits(message)[1]
         guild = getattr(message, "guild", None)
         thread = getattr(message, "thread", None) or (guild.get_thread(message.id) if guild is not None else None)
-    if thread is not None:
+        if thread is None and hasattr(bot, "fetch_channel"):
+            # Not in Discord's cache - archived for going quiet, or RYTE
+            # restarted since: Ava's and Zach's notes went unread that way.
+            thread = await _order_thread(bot, str(message.id), {})
+    more = []
+    for wanted in threads or ():
+        if thread is not None and str(wanted) == str(thread.id):
+            continue
+        found = await _order_thread(bot, str(wanted), {})
+        if found is None:
+            continue
+        more.append(found)
+        # A thread started from somebody's own message: that message is the
+        # first note in it.
         try:
-            async for one in thread.history(limit=100, oldest_first=True):
+            starter = await found.parent.fetch_message(found.id)
+        except Exception:
+            starter = None
+        if starter is not None and not getattr(starter.author, "bot", False):
+            lines.append(_said_line(starter))
+            said = _note_without_tags(_request_bits(starter)[0]).strip()
+            if said:
+                notes.append(said)
+    for reading in ([thread] if thread is not None else []) + more:
+        try:
+            async for one in reading.history(limit=100, oldest_first=True):
                 if getattr(one.author, "bot", False) and not getattr(one, "embeds", None):
                     continue
                 lines.append(_said_line(one))
@@ -9099,8 +9124,8 @@ async def _order_examples(config) -> dict:
 
 
 async def _order_read(bot, message, *, since: datetime | None = None,
-                      extra: tuple = ()) -> tuple[dict, dict, int | None]:
-    text, images, thread_id, notes = await _order_said(bot, message, since=since)
+                      extra: tuple = (), threads: tuple = ()) -> tuple[dict, dict, int | None]:
+    text, images, thread_id, notes = await _order_said(bot, message, since=since, threads=threads)
     # The Payra invoice's note, for an aged order made from it: read with the
     # order, and on the card first in Additional Notes.
     if extra:
@@ -9896,11 +9921,19 @@ def _order_note_posted(bot, message) -> None:
         return
     where = str(getattr(message.channel, "id", ""))
     _NO_THREAD.pop(where, None)
+    linked = any(isinstance(order, dict) and where in (order.get("thread_id"), key, *(order.get("threads") or ()))
+                 for key, order in held.items())
+    if not linked and getattr(message.channel, "parent", None) is not None and getattr(bot, "loop", None):
+        # A new thread about an agent whose card is made - not on the payment
+        # post: Ava's and Zach's. Theirs by the thread's name.
+        if _order_named_thread(held, str(getattr(message.channel, "name", "") or "")) is not None:
+            _also_running(bot.loop.create_task(_order_link_thread(bot, message.channel)))
+        return
     for key, order in held.items():
         # A thread started from the post has the post's own id - so one
         # started after the card was made is still this order's.
         if (order.get("status") == "made" and not order.get("merged")
-                and where and where in (order.get("thread_id"), key)):
+                and where and where in (order.get("thread_id"), key, *(order.get("threads") or ()))):
             waiting = _ORDER_PENDING.pop(key, None)
             if waiting is not None:
                 waiting.cancel()
@@ -9917,6 +9950,70 @@ def _order_note_posted(bot, message) -> None:
 #: asking. Asked again after half an hour.
 _NO_THREAD: dict = {}
 NO_THREAD_RECHECK = timedelta(minutes=30)
+
+
+#: How recent a card has to be for a new thread with its agent's name to be
+#: taken as about it.
+THREAD_LINK_DAYS = 14
+
+
+async def _order_link_thread(bot, thread) -> str | None:
+    """A thread named for an agent with a card, taken as about that card and
+    read onto it - unless it hangs off a payment post: that's a payment of
+    its own, a new order maybe, not a note on the old one."""
+    from .. import ordercards
+
+    try:
+        starter = await thread.parent.fetch_message(thread.id)
+    except Exception:
+        starter = None
+    if starter is not None and getattr(starter.author, "bot", False) and \
+            "new payment" in _all_of_it(starter).casefold():
+        return None
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        key = _order_named_thread(held, str(getattr(thread, "name", "") or ""))
+        if key is None or str(thread.id) in (held[key].get("threads") or []):
+            return key
+        held[key]["threads"] = list(held[key].get("threads") or []) + [str(thread.id)]
+        await asyncio.to_thread(ordercards.save, held)
+    order = held[key]
+    responder = _order_responder(bot)
+    if responder is not None:
+        try:
+            await responder.send(f"🧵 New thread “{thread.name}” — it's about **{order.get('client')}**, so it's "
+                                 f"read onto their card from now on.\n{order.get('url', '')}", quiet=True)
+        except Exception:
+            pass
+    waiting = _ORDER_PENDING.pop(key, None)
+    if waiting is not None:
+        waiting.cancel()
+    _ORDER_PENDING[key] = bot.loop.create_task(_order_refresh(bot, key))
+    return key
+
+
+def _order_named_thread(held: dict, title: str) -> str | None:
+    """The made order a new thread is about, by the agent's whole name in
+    its title - their newest card when there's more than one."""
+    from .. import clearout
+
+    if not title.strip():
+        return None
+    now = datetime.now(timezone.utc)
+    found = []
+    for key, order in held.items():
+        if not isinstance(order, dict) or order.get("status") != "made" or order.get("merged"):
+            continue
+        client = str(order.get("client") or "")
+        if len(client.split()) < 2 or clearout.name_match(client, title) < 2:
+            continue
+        try:
+            made = datetime.fromisoformat(str(order.get("made_at") or ""))
+        except ValueError:
+            continue
+        if now - made <= timedelta(days=THREAD_LINK_DAYS):
+            found.append((made, key))
+    return max(found)[1] if found else None
 
 
 async def _order_thread(bot, key: str, order: dict):
@@ -9938,10 +10035,13 @@ async def _order_thread(bot, key: str, order: dict):
 
 
 async def _order_last(bot, key: str, order: dict) -> str:
-    """The newest message in an order's thread - "" without one."""
-    thread = await _order_thread(bot, key, order)
-    last = getattr(thread, "last_message_id", None) if thread is not None else None
-    return str(last or "")
+    """The newest message in an order's threads - "" without one."""
+    newest = 0
+    for one in [None] + list(order.get("threads") or []):
+        thread = await (_order_thread(bot, key, order) if one is None else _order_thread(bot, str(one), {}))
+        last = getattr(thread, "last_message_id", None) if thread is not None else None
+        newest = max(newest, int(last or 0))
+    return str(newest or "")
 
 
 async def _order_seen(bot, key: str) -> None:
@@ -9960,7 +10060,7 @@ ORDER_SWEEP_TRIES = 3
 #: How often order threads are looked through for notes a card missed.
 ORDER_SWEEP_SECONDS = 5 * 60
 #: How long an order's thread is watched after its card is made.
-ORDER_SWEEP_DAYS = 3
+ORDER_SWEEP_DAYS = 7
 
 
 async def _order_sweep(bot) -> list[str]:
@@ -10084,7 +10184,8 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
             if note:
                 extra = (f"Payra invoice note: {note}",)
                 await _order_note(key, extra_notes=list(extra))
-        card, _examples, _thread = await _order_read(bot, message, since=since, extra=extra)
+        card, _examples, _thread = await _order_read(bot, message, since=since, extra=extra,
+                                                     threads=tuple(order.get("threads") or ()))
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))
