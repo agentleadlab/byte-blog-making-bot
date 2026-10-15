@@ -12128,6 +12128,36 @@ _AD_SPEND = re.compile(r"\b(?:phx|phoenix)\b|\bad\s*spend\b", re.IGNORECASE)
 NO_CAP = "No cap (ad spend)"
 
 
+#: A line that is one of the card's own fields - "Email: ...", "States Leads
+#: In: ...", "Number of Requested Leads: 50" - or the invoice's product blurb.
+_FIELD_LINE = re.compile(
+    r"^\s*(?:payra invoice note:\s*)?(?:name|e-?mail|phone(?:\s*number)?|lead\s*type(?:\s*/\s*package(?:\s*selected)?)?|"
+    r"package(?:\s*selected)?|states?(?:\s*leads?\s*in)?|number\s*of\s*(?:requested\s*)?leads(?:\s*requested)?|"
+    r"leads\s*requested|launch\s*date|agency|lines|description)\s*:", re.IGNORECASE)
+
+
+def _beyond_fields(note: str, fields: dict) -> str:
+    """A note less what the card says above it already - Jad Nour Samman's
+    Additional Notes were his invoice twice over, every field again. Lines
+    that are a field ("Email: ..."), or just his name, email or phone, go;
+    what's left is the note."""
+    def bare(text):
+        return re.sub(r"[^a-z0-9@.]", "", str(text or "").casefold())
+
+    known = {bare(fields.get(key)) for key in ("name", "email") if fields.get(key)}
+    phone = re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:]
+    kept = []
+    for line in str(note or "").splitlines():
+        text = re.sub(r"^\s*payra invoice note:\s*", "", line, flags=re.IGNORECASE)
+        if _FIELD_LINE.match(line) or (text.strip() and bare(text) in known):
+            continue
+        digits = re.sub(r"\D", "", text)
+        if phone and len(digits) >= 10 and digits[-10:] == phone and not re.search(r"[a-z]{3}", text, re.IGNORECASE):
+            continue
+        kept.append(text)
+    return "\n".join(kept).strip()
+
+
 def order_fields(got: dict, notes: list[str] = ()) -> dict:
     """Claude's reading of an order, tidied: nothing that only says it doesn't
     know, an ad-spend package's lead count as no cap, and Additional Notes as
@@ -12139,6 +12169,11 @@ def order_fields(got: dict, notes: list[str] = ()) -> dict:
         fields[key] = "" if value.casefold().strip(" .") in _SAYS_NOTHING else value
     if _AD_SPEND.search(fields["package"]) and not re.search(r"\d", fields["leads"]):
         fields["leads"] = NO_CAP
+    given = bool(notes)
+    notes = [kept for kept in (_beyond_fields(one, fields) for one in notes or ()) if kept]
+    if given and not notes:
+        # Every note only said what the fields do - nothing to add.
+        fields["notes"] = ""
     if notes:
         said = "\n".join(str(one).strip() for one in notes if str(one).strip())
         # "they sometimes add screenshot as additional notes" - each one as

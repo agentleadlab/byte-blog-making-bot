@@ -1956,3 +1956,22 @@ def test_a_503_making_a_card_is_tried_again_without_making_two(monkeypatch):
 
     with pytest.raises(trello.TrelloError):
         jobs._create_once(Refused(False), "q", "x", now=now)
+
+
+def test_notes_dont_repeat_the_fields_above_them():
+    """Jad Nour Samman: "why the too much repitative" - his invoice, twice,
+    under Additional Notes."""
+    invoice = ("Payra invoice note: Name: Jad Nour Samman\nEmail: jsamman19@example.com\nPhone Number: +15550100019\n"
+               "Lead Type: Text-Verified Veteran Leads [FRESH - $45/Lead]\nStates Leads In: Arizona (AZ) Arkansas (AR)\n"
+               "Number of Requested Leads: 50\nLines: This package focuses on generating high-intent leads × 50 @ $45.00")
+    thread = ("Name: Jad Nour Samman\nEmail: jsamman19@example.com\nPhone Number: +15550100019\n"
+              "Lead Type: Text-Verified Veteran Leads [FRESH - $45/Lead]\nNumber of Requested Leads: 50")
+    got = {"name": "Jad Nour Samman", "email": "jsamman19@example.com", "phone": "+15550100019",
+           "package": "Text-Verified Veteran Leads", "leads": "50", "states": "AZ, AR"}
+    assert jobs.order_fields(dict(got, notes="Name: Jad Nour Samman ..."), [invoice, thread])["notes"] == ""
+    declan = "Declan Connolly\n(555) 010-3388\nCan I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet"
+    got = {"name": "Declan Connolly", "phone": "(555) 010-3388"}
+    assert jobs.order_fields(got, [declan])["notes"] == (
+        "Can I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet")
+    aged = "Payra invoice note: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
+    assert jobs.order_fields({}, [aged])["notes"] == "AGED IUL / 180+ / in states IL, SC, AZ, and TX"
