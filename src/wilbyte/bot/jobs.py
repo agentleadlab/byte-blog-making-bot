@@ -12503,6 +12503,27 @@ def new_agent_cards(config: Config, kind: str = "fresh") -> list[dict]:
             for one in cards if re.match(_CARD_TITLE[kind], str(one.get("name") or ""), re.IGNORECASE)]
 
 
+def order_cards_since(config: Config, since) -> list[dict]:
+    """Every New Agent and Aged Leads card made since `since`, archived ones
+    too - an aged card's ticked and archived by evening, and the audit
+    took Boston Farr's for missing. {"id", "name", "url", "closed"}."""
+    client = open_trello(config)
+    try:
+        cards = client.board_cards(config.secrets.trello_board_id, archived=True)
+    finally:
+        client.close()
+    found = []
+    for one in cards:
+        name = str(one.get("name") or "")
+        made = card_made_at(str(one.get("id") or ""))
+        if made is None or made < since:
+            continue
+        if any(re.match(pattern, name, re.IGNORECASE) for pattern in _CARD_TITLE.values()):
+            found.append({"id": str(one.get("id") or ""), "name": name, "closed": bool(one.get("closed")),
+                          "url": str(one.get("shortUrl") or one.get("url") or "")})
+    return found
+
+
 def card_made_at(card_id: str):
     """When a Trello card was made - its id starts with the time, in seconds."""
     try:

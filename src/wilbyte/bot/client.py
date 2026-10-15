@@ -10206,9 +10206,10 @@ def _audit_days(said: str, today: date) -> list[date]:
     return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
 
 
-def _audit_line(post, held: dict, cards: dict, zone=timezone.utc) -> tuple[str, str]:
-    """(how it stands - "ok", "waiting", "missing" - the line for it)."""
-    from .. import ordercards
+def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, str]:
+    """(how it stands - "ok", "check", "waiting", "missing" - the line for
+    it). `cards`: the board's New Agent and Aged Leads cards, archived too."""
+    from .. import clearout, ordercards
 
     said = _all_of_it(post)
     name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *") or "?"
@@ -10227,16 +10228,25 @@ def _audit_line(post, held: dict, cards: dict, zone=timezone.utc) -> tuple[str, 
         return "ok", f"✅ **{name}** ({bits}) — <{order.get('url', '')}>{hold}"
     if status == "left":
         return "ok", f"✋ **{name}** ({bits}) — somebody pressed Leave it: <{post.jump_url}>"
-    found = jobs.has_new_agent_card(name, cards["aged" if aged else "fresh"]) or \
-        jobs.has_new_agent_card(name, cards["fresh" if aged else "aged"])
-    if found:
-        return "ok", f"✅ **{name}** ({bits}) — has a card, not made by me: <{found['url']}>"
-    gavelled = any(ordercards.is_gavel(one.emoji) for one in getattr(post, "reactions", None) or [])
     if status == "asked":
-        return "waiting", f"⏳ **{name}** ({bits}) — waiting on a button in here: <{post.jump_url}>"
+        return "waiting", f"⏳ **{name}** ({bits}) — waiting on a button in Ryte The Goat: <{post.jump_url}>"
+    # A card for them on the board, archived or not, or one RYTE made for
+    # another of their payments - Keegan Sundberg's $79.18 after his $1,240.
+    found = jobs.has_new_agent_card(name, cards)
+    if found is None:
+        mine = [one for one in held.values() if isinstance(one, dict) and one.get("status") == "made"
+                and clearout.name_match(name, str(one.get("client") or "")) >= 2]
+        found = {"url": mine[-1].get("url", "")} if mine else None
+    if found:
+        put_away = " (archived)" if found.get("closed") else ""
+        return "ok", f"✅ **{name}** ({bits}) — has a card{put_away}: <{found['url']}>"
+    gavelled = any(ordercards.is_gavel(one.emoji) for one in getattr(post, "reactions", None) or [])
     if gavelled:
         return "missing", f"❌ **{name}** ({bits}) — gavelled, **no card**: <{post.jump_url}>"
     if aged and "payra" in said.casefold():
+        if post.created_at < AGED_AUTO_FROM:
+            return "check", (f"🕘 **{name}** ({bits}) — before I made aged cards on my own, and no card on the "
+                             f"board: <{post.jump_url}>")
         return "missing", f"❌ **{name}** ({bits}) — aged, **no card** (should have been made on its own): <{post.jump_url}>"
     return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
 
@@ -10257,21 +10267,25 @@ async def _order_audit(bot, responder: Responder, said: str) -> None:
     if not posts:
         await responder.send("No payments in #new-payment for that - or I can't find the channel.")
         return
+    zone = ZoneInfo(bot.config.schedule.timezone)
+    since = datetime(days[0].year, days[0].month, days[0].day, tzinfo=zone) - timedelta(days=2)
     try:
-        cards = {kind: await asyncio.to_thread(jobs.new_agent_cards, bot.config, kind) for kind in ("fresh", "aged")}
+        cards = await asyncio.to_thread(jobs.order_cards_since, bot.config, since)
     except Exception as exc:
         await responder.send(f"⚠ Couldn't read the board: {_readable(exc)}")
         return
     held = await asyncio.to_thread(ordercards.load)
-    sorted_out = {"missing": [], "waiting": [], "ok": []}
+    sorted_out = {"missing": [], "check": [], "waiting": [], "ok": []}
     for post in posts:
-        how, line = _audit_line(post, held, cards, ZoneInfo(bot.config.schedule.timezone))
+        how, line = _audit_line(post, held, cards, zone)
         sorted_out[how].append(line)
     head = (f"🔎 **{len(posts)} payment(s)** — {len(sorted_out['ok'])} with a card, "
-            f"{len(sorted_out['waiting'])} waiting on a gavel or a button, **{len(sorted_out['missing'])} missing**.")
+            f"{len(sorted_out['waiting'])} waiting on a gavel or a button, **{len(sorted_out['missing'])} missing**"
+            + (f", {len(sorted_out['check'])} to check by hand" if sorted_out["check"] else "") + ".")
     lines = [head]
-    for how, title in (("missing", "**Missing — should have a card:**"), ("waiting", "**Waiting:**"),
-                       ("ok", "**Done:**")):
+    for how, title in (("missing", "**Missing — should have a card:**"),
+                       ("check", "**From before aged cards were automatic — no card found, check by hand:**"),
+                       ("waiting", "**Waiting — nobody's gavelled these:**"), ("ok", "**Done:**")):
         if sorted_out[how]:
             lines += ["", title] + sorted_out[how]
     if not sorted_out["missing"]:

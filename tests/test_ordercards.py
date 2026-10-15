@@ -1984,7 +1984,7 @@ def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
 
     at = datetime(2026, 10, 14, 19, 0, tzinfo=timezone.utc)
 
-    def post(i, text, gavel=False):
+    def post(i, text, gavel=False, at=at):
         return SimpleNamespace(id=i, created_at=at, jump_url=f"https://discord.com/channels/1/700/{i}",
                                content=text, embeds=[], message_snapshots=[],
                                author=SimpleNamespace(bot=True),
@@ -2000,14 +2000,27 @@ def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
     ]
     ordercards.save({"1": {"status": "made", "url": "https://trello.com/c/emilie"},
                      "6": {"status": "made", "merged": True, "url": "https://trello.com/c/bram"}})
-    cards = {"fresh": [], "aged": [{"name": "Aged Leads - Declan Connolly", "url": "https://trello.com/c/declan"}]}
+    cards = [{"name": "Aged Leads - Declan Connolly", "url": "https://trello.com/c/declan"}]
     lines = {i: client._audit_line(one, ordercards.load(), cards) for i, one in enumerate(posts, 1)}
     assert lines[1][0] == "ok" and "trello.com/c/emilie" in lines[1][1]
     assert lines[2][0] == "missing" and "gavelled, **no card**" in lines[2][1]
     assert lines[3][0] == "missing" and "aged" in lines[3][1]
     assert lines[4][0] == "waiting" and "not gavelled yet" in lines[4][1]
-    assert lines[5][0] == "ok" and "not made by me" in lines[5][1]
+    assert lines[5][0] == "ok" and "trello.com/c/declan" in lines[5][1]
     assert lines[6][0] == "ok" and "another payment" in lines[6][1]
+    # Boston Farr: aged, paid before aged cards were made automatically.
+    early = post(7, "New Payment | Payra\nNAME: Boston Farr\nAMOUNT: $445.05\nPRODUCT: Aged Leads (VET)",
+                 at=datetime(2026, 10, 14, 14, 23, tzinfo=timezone.utc))
+    assert client._audit_line(early, ordercards.load(), cards)[0] == "check"
+    archived = [{"name": "AGED LEADS - Boston Farr", "url": "https://trello.com/c/boston", "closed": True}]
+    how, line = client._audit_line(early, ordercards.load(), archived)
+    assert how == "ok" and "(archived)" in line
+    # Keegan Sundberg's $79.18 after the $1,240 that has its card.
+    ordercards.save(dict(ordercards.load(), **{"8": {"status": "made", "client": "Keegan Sundberg",
+                                                      "url": "https://trello.com/c/keegan"}}))
+    second = post(9, "New Payment | Payra\nNAME: Keegan Sundberg\nAMOUNT: $79.18\nPRODUCT: Text-Verified Trucker IUL")
+    how, line = client._audit_line(second, ordercards.load(), [])
+    assert how == "ok" and "trello.com/c/keegan" in line
     today = date(2026, 10, 15)
     assert client._audit_days("order audit", today) == [today]
     assert client._audit_days("order audit yesterday", today) == [date(2026, 10, 14)]
