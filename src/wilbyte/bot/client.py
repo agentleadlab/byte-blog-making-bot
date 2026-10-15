@@ -9810,6 +9810,7 @@ def _order_note_posted(bot, message) -> None:
     except Exception:
         return
     where = str(getattr(message.channel, "id", ""))
+    _NO_THREAD.pop(where, None)
     for key, order in held.items():
         # A thread started from the post has the post's own id - so one
         # started after the card was made is still this order's.
@@ -9821,14 +9822,25 @@ def _order_note_posted(bot, message) -> None:
             _ORDER_PENDING[key] = bot.loop.create_task(_order_refresh(bot, key))
 
 
+#: {channel id: when Discord last said there's no such thread} - most aged
+#: orders have none, and asking about each every five minutes is a lot of
+#: asking. Asked again after half an hour.
+_NO_THREAD: dict = {}
+NO_THREAD_RECHECK = timedelta(minutes=30)
+
+
 async def _order_thread(bot, key: str, order: dict):
     """The thread under an order's post - its id is the post's - or None."""
+    now = datetime.now(timezone.utc)
     for wanted in dict.fromkeys(one for one in (str(order.get("thread_id") or ""), key) if one):
         found = bot.get_channel(int(wanted))
         if found is None:
+            if now - _NO_THREAD.get(wanted, now - NO_THREAD_RECHECK) < NO_THREAD_RECHECK:
+                continue
             try:
                 found = await bot.fetch_channel(int(wanted))
             except Exception:
+                _NO_THREAD[wanted] = now
                 found = None
         if found is not None and getattr(found, "parent", None) is not None:
             return found
@@ -10002,6 +10014,13 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     # renamed Aged Leads but sat in In Que, and was parked in Franklin
     # (Admin) for having no launch date. Its list follows what it is.
     now_kind = card.get("kind") or order.get("kind")
+    # Only when the payment itself doesn't say: a Payra post's PRODUCT of
+    # "Aged Leads (VET)" is aged and "VET" isn't, whatever one reading of
+    # the thread made of it - a misread mustn't carry a card off.
+    paid_for = " ".join(((_PRODUCT.search(_all_of_it(message)) or [None, ""])[1]).split())
+    settled_by_post = bool(paid_for) and not re.match(r"^[—\-–(]", paid_for)
+    if settled_by_post:
+        now_kind = order.get("kind")
     if now_kind in ("fresh", "aged") and now_kind != order.get("kind") and order.get("bank_hold") is not True:
         try:
             where = await asyncio.to_thread(jobs.order_card_move, bot.config, order["card_id"], now_kind)

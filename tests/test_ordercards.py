@@ -2080,3 +2080,32 @@ def test_ordering_a_merged_payment_by_its_link_gives_it_its_own_card(order, monk
     assert len(order.made) == 1 and order.comments == []
     held = ordercards.load()["900"]
     assert held["status"] == "made" and not held.get("merged")
+
+
+def test_a_misread_doesnt_move_a_card_the_payment_says_is_aged(order, monkeypatch):
+    message = _message("New Payment | Payra\nNAME: Cole Petersen\nAMOUNT: $103.5\nPRODUCT: Aged Leads (VET)",
+                       thread=_notes("25 aged VET, states AZ TX"))
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    monkeypatch.setattr(jobs, "order_card_move", lambda *a, **k: (_ for _ in ()).throw(AssertionError("moved")))
+    monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("same", []))
+    order.kind = "fresh"
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert ordercards.load()["900"]["kind"] == "aged"
+
+
+def test_a_post_with_no_thread_isnt_asked_about_every_sweep(monkeypatch):
+    asked = []
+
+    async def fetch(i):
+        asked.append(i)
+        raise RuntimeError("404 Unknown Channel")
+
+    client._NO_THREAD.clear()
+    bot = SimpleNamespace(get_channel=lambda i: None, fetch_channel=fetch)
+    assert asyncio.run(client._order_thread(bot, "950", {})) is None
+    assert asyncio.run(client._order_thread(bot, "950", {})) is None
+    assert asked == [950]
+    client._order_note_posted(SimpleNamespace(loop=None), SimpleNamespace(channel=SimpleNamespace(id=950)))
+    asyncio.run(client._order_thread(bot, "950", {}))
+    assert asked == [950, 950], "a thread started later is looked for again"
+    client._NO_THREAD.clear()
