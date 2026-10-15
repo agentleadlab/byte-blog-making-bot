@@ -298,6 +298,9 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     states = str(fields.get("states") or "").strip()
     if not states:
         missing.append("no states in the order yet")
+    elif SAME_STATES.search(states) and SAME_STATES.search(source):
+        # "Same states last time" - taken as written.
+        pass
     elif _ALL_BUT.search(states):
         left_out = _codes(_ALL_BUT.split(states, maxsplit=1)[-1])
         for code in left_out:

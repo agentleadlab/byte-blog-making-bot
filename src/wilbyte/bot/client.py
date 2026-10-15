@@ -9633,32 +9633,23 @@ BANK_WATCH_DAYS = 14
 
 
 async def _order_same_states(bot, message, card: dict) -> None:
-    """"Same states last time" (Mohammad Kanan): the states off their last
-    card, onto this one - said where they came from, in the notes and in
-    what the card is checked against."""
+    """"if it said same states as last time, just put it as is and accept it
+    as states" (Mohammad Kanan) - the line as the team wrote it, in States."""
     from .. import ordercards
 
     fields = card.get("fields") or {}
-    if str(fields.get("states") or "").strip() or not ordercards.SAME_STATES.search(str(card.get("source") or "")):
+    states = str(fields.get("states") or "").strip()
+    if states and ordercards.SAME_STATES.search(states) is None and re.search(r"\b[A-Z]{2}\b|\ball\b", states, re.IGNORECASE):
         return
-    paid_name = (_PAID_NAME.search(_all_of_it(message)) or [None, ""])[1].strip(" *")
-    names = [one for one in dict.fromkeys((card.get("client") or "", paid_name)) if one]
-    try:
-        states, title, url = await asyncio.to_thread(partial(
-            jobs.previous_states, bot.config, names,
-            before=datetime.now(timezone.utc) - timedelta(minutes=5)))
-    except Exception:
-        log.warning("Couldn't look up their last card's states", exc_info=True)
-        return
-    if not states:
-        return
-    said = f"States same as last time — {states} (from {title}: {url})"
-    fields["states"] = states
-    fields["notes"] = (str(fields.get("notes") or "").rstrip() + "\n" + said).strip()
-    card["fields"] = fields
-    card["source"] = str(card.get("source") or "") + "\n" + said
-    card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
-    card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
+    for line in str(card.get("source") or "").splitlines():
+        line = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line).strip()
+        found = ordercards.SAME_STATES.search(line)
+        if found:
+            fields["states"] = line if len(line) <= 60 else found.group(0)
+            card["fields"] = fields
+            card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
+            card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
+            return
 
 
 def _aged_gaps(card: dict) -> list[str]:

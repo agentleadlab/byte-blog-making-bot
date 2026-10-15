@@ -2291,16 +2291,9 @@ def test_a_weekly_subscription_charge_isnt_waiting_on_a_card():
     assert client._audit_line(first, {}, [])[0] == "waiting"
 
 
-def test_same_states_last_time_takes_their_last_cards_states(order, monkeypatch):
-    """Mohammad Kanan: "200 Aged Vets / Same states last time / 30-90"."""
-    looked = []
-
-    def previous(config, names, *, before):
-        looked.append(names)
-        return "AZ, TX, FL", "Aged Leads - Mohammad Kanan", "https://trello.com/c/last"
-
-    monkeypatch.setattr(jobs, "previous_states", previous)
-    order.fields = {"states": "", "leads": "200"}
+def test_same_states_last_time_goes_on_as_written(order, monkeypatch):
+    """"if it said same states as last time, just put it as is and accept
+    it as states" - Mohammad Kanan's card was held for having no states."""
     message = _message("New Payment | Zelle\nNAME: Kanan Kapital Llc\nAMOUNT: $1,000.00\nPRODUCT: Aged Leads (VET)",
                        thread=_notes("200 Aged Vets\nSame states last time\n30-90"))
 
@@ -2312,9 +2305,8 @@ def test_same_states_last_time_takes_their_last_cards_states(order, monkeypatch)
 
     monkeypatch.setattr(jobs, "read_order", reading)
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    assert looked == [["Mohammad Kanan", "Kanan Kapital Llc"]]
     [(kind, name, desc, _new)] = order.made
-    assert "States: AZ, TX, FL" in desc and "States same as last time — AZ, TX, FL" in desc
+    assert kind == "aged" and "States: Same states last time" in desc
 
 
 def test_saying_the_same_states_is_recognised():
@@ -2322,30 +2314,3 @@ def test_saying_the_same_states_is_recognised():
                  "States: same as last time"):
         assert ordercards.SAME_STATES.search(said), said
     assert not ordercards.SAME_STATES.search("States: TX, FL")
-
-
-def test_their_last_card_is_found_archived_and_by_whole_name(monkeypatch):
-    from datetime import datetime, timezone
-
-    def cid(when):
-        return f"{int(when.timestamp()):08x}" + "0" * 16
-
-    old = datetime(2026, 9, 20, tzinfo=timezone.utc)
-    newer = datetime(2026, 10, 1, tzinfo=timezone.utc)
-
-    class Cards(Board):
-        def board_cards(self, board_id, archived=False):
-            assert archived
-            return [{"id": cid(old), "name": "AGED LEAD - Mohammad Kanan", "desc": "States: OH", "closed": True},
-                    {"id": cid(newer), "name": "Aged Leads - Mohammad Kanan", "desc": "Name: x\nStates: AZ, TX",
-                     "shortUrl": "https://trello.com/c/new"},
-                    {"id": cid(newer), "name": "Aged Leads - Mohammad Kananson", "desc": "States: CA"}]
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Cards())
-    assert jobs.previous_states(CONFIG, ["Mohammad Kanan"], before=datetime(2026, 10, 15, tzinfo=timezone.utc)) == (
-        "AZ, TX", "Aged Leads - Mohammad Kanan", "https://trello.com/c/new")
-    assert jobs.previous_states(CONFIG, ["Mohammad Kanan"], before=datetime(2026, 9, 25, tzinfo=timezone.utc))[0] == "OH"
-    assert jobs.previous_states(CONFIG, ["Nobody Here"], before=datetime(2026, 10, 15, tzinfo=timezone.utc)) == ("", "", "")

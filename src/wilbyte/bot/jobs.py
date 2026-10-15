@@ -12760,38 +12760,6 @@ def _month_day(said: str):
     return int(found.group(3)), int(found.group(4))
 
 
-def previous_states(config: Config, names: list[str], *, before) -> tuple[str, str, str]:
-    """"Same states last time" - the states on their last card. (states, the
-    card's title, its link), or ("", "", "") when there's none. Every New
-    Agent and Aged Leads card on the board, archived too, with their whole
-    name in the title, made before `before`; the newest with states on it."""
-    from .. import clearout
-
-    client = open_trello(config)
-    try:
-        cards = client.board_cards(config.secrets.trello_board_id, archived=True)
-        theirs = []
-        for one in cards:
-            title = str(one.get("name") or "")
-            if not any(re.match(pattern, title, re.IGNORECASE) for pattern in _CARD_TITLE.values()):
-                continue
-            who = re.sub(r"^\s*(?:new\s*agent|aged\s*leads?)\s*[-–—:]*\s*", "", title, flags=re.IGNORECASE)
-            if not any(name and clearout.name_match(name, who) >= 2 for name in names):
-                continue
-            made = card_made_at(str(one.get("id") or ""))
-            if made is None or made >= before:
-                continue
-            theirs.append((made, one))
-        for _made, one in sorted(theirs, key=lambda pair: pair[0], reverse=True):
-            desc = str(one.get("desc") or "") or str(client.card_detail(str(one["id"])).get("desc") or "")
-            states = _desc_field(desc, r"States", r"States Leads In")
-            if states:
-                return states, str(one.get("name") or ""), str(one.get("shortUrl") or one.get("url") or "")
-        return "", "", ""
-    finally:
-        client.close()
-
-
 def _desc_field(desc: str, *labels: str) -> str:
     for label in labels:
         found = re.search(rf"^\s*{label}\s*:[ \t]*(.*)$", str(desc or ""), re.IGNORECASE | re.MULTILINE)
