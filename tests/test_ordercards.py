@@ -2251,3 +2251,16 @@ def test_a_thread_names_their_newest_card_and_needs_their_whole_name():
     assert client._order_named_thread(held, "Zach Moreno - schedule change") == "2"
     assert client._order_named_thread(held, "Zach - schedule") is None
     assert client._order_named_thread(held, "Pasha") is None
+
+
+def test_reach_out_tomorrow_isnt_a_launch_date():
+    """Emilie Cruz: "@Therese @Nicole @Faith reach out tomorrow" - her card
+    said Launch Date: Thursday, October 15."""
+    thread = ("[10/14 07:44PM] LeadLab: New Payment | Payra\nNAME: Emilie Cruz\nPRODUCT: VET\n"
+              "[10/14 07:46PM] Tre Tarpley: Name: Emilie Cruz\nNumber of Requested Leads: 25\n"
+              "States Leads In: Illinois, South Carolina, Michigan\nreach out tomorrow")
+    assert not ordercards.says_when(thread)
+    assert ordercards.says_when(thread + "\nlive tomorrow")
+    assert ordercards.says_when(thread + "\nLaunch Date: Friday 10/16")
+    assert ordercards.says_when("First week of leads (starts Tuesday, Oct 20)")
+    assert not ordercards.says_when("call him Monday")

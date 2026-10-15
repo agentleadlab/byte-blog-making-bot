@@ -260,10 +260,19 @@ _WHEN = re.compile(
     re.IGNORECASE)
 
 
+#: Words that make a date a launch date. "reach out tomorrow" is a call to
+#: make, not a launch - Emilie Cruz's card said Thursday from it.
+_LAUNCH_WORD = re.compile(
+    r"\b(?:live|launch\w*|start\w*|begin\w*|go[\s-]*live|golive|turn(?:ed|ing)?\s+on|activat\w*|"
+    r"deliver\w*|send(?:ing)?\s+leads|leads?\s+(?:on|from|begin|start))\b", re.IGNORECASE)
+
+
 def says_when(source: str) -> bool:
-    """Whether the order says anything about when - leaving out the time
-    each message was posted, which RYTE adds as it reads them."""
-    return bool(_WHEN.search(_STAMP.sub("", str(source or ""))))
+    """Whether the order says when they launch: a launch word and a day or
+    date - leaving out the time each message was posted, which RYTE adds as
+    it reads them."""
+    said = _STAMP.sub("", str(source or ""))
+    return bool(_WHEN.search(said)) and bool(_LAUNCH_WORD.search(said))
 
 
 def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
