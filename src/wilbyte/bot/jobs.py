@@ -6106,6 +6106,15 @@ def sheet_titles(config: Config, links) -> dict:
     return found
 
 
+def _collection_key(row) -> tuple:
+    """A Ryte Collection row less its date - the same channel and sheet on
+    another day is the same row."""
+    return tuple(
+        " ".join(str(cell).split()).casefold() for cell in row or []
+        if str(cell).strip() and not re.fullmatch(r"\d{1,4}[/-]\d{1,2}[/-]\d{1,4}", str(cell).strip())
+    )
+
+
 def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
     """Put one line in the Ryte Collection tab. (what tab it went on, problems).
 
@@ -6159,12 +6168,18 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
             # A row for each sheet kept - "or just save both sheet".
             from dataclasses import replace
 
-            where = client.append(
-                sheet_id, tab,
-                [clearout.row_for(plan, when=when, headings=headings)]
-                + [clearout.row_for(replace(plan, sheet=other, also_sheets=[]), when=when, headings=headings)
-                   for other in getattr(plan, "also_sheets", []) or []],
-            )
+            rows = ([clearout.row_for(plan, when=when, headings=headings)]
+                    + [clearout.row_for(replace(plan, sheet=other, also_sheets=[]), when=when, headings=headings)
+                       for other in getattr(plan, "also_sheets", []) or []])
+            # Not twice: a clear-out stopped after its rows went in and run
+            # again wrote conor_mckenna-vet's two rows a second time. A row
+            # whose channel and sheet are already there, whatever the day,
+            # isn't written again.
+            have = {_collection_key(one) for one in client.rows(sheet_id, f"'{tab}'!A:Z") or []}
+            rows = [one for one in rows if _collection_key(one) not in have]
+            if not rows:
+                return tab, []
+            where = client.append(sheet_id, tab, rows)
             # A row appended under a heading row arrives wearing the heading's
             # clothes - bold and centred - and the sheet link wraps to six
             # lines, which takes the whole row with it.

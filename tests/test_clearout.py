@@ -1259,7 +1259,8 @@ def test_the_small_note_is_on_a_line_of_its_own():
     assert any(line.startswith("-#") for line in said.splitlines())
 
 
-def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, link="x", also=(), every=None):
+def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, link="x", also=(), every=None,
+                existing=()):
     """One `collect_client`, with Sheets stubbed. Returns (tab, rows, problems)."""
     from wilbyte import gsheets
     from wilbyte.bot import jobs
@@ -1280,7 +1281,8 @@ def _collecting(monkeypatch, *, titles, gid_tab="Masterlist", headings=None, lin
             return gid_tab
 
         def rows(self, sheet_id, span):
-            return [list(headings)] if headings else []
+            top = [list(headings)] if headings else []
+            return top + [list(one) for one in existing] if span.endswith("A:Z") else top
 
         def append(self, sheet_id, tab, rows):
             written.append((tab, rows[0]))
@@ -4615,3 +4617,19 @@ def test_a_clear_out_that_took_them_by_their_whole_name_is_not_listed(monkeypatc
     asyncio.run(client._check_clearouts(None, here, None))
 
     assert said[0].startswith("✅")
+
+
+def test_a_channel_collected_again_isnt_written_twice(monkeypatch):
+    """conor_mckenna-vet had four rows in Ryte Collection - two sheets,
+    written by two runs."""
+    first = []
+    _collecting(monkeypatch, titles=["Ryte Collection"], also=["https://other"], every=first)
+    assert len(first) == 2
+    again = []
+    _, _written, problems, _styled = _collecting(
+        monkeypatch, titles=["Ryte Collection"], also=["https://other"], every=again,
+        existing=[[cell if cell != "2026-09-15" else "13/10/2026" for cell in row] for row in first])
+    assert again == [] and problems == []
+    one_left = []
+    _collecting(monkeypatch, titles=["Ryte Collection"], also=["https://other"], every=one_left, existing=first[:1])
+    assert len(one_left) == 1 and "https://other" in one_left[0]
