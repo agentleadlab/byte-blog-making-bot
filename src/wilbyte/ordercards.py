@@ -273,21 +273,29 @@ SAME_STATES = re.compile(
     r"\bstates?\b[^\n]{0,25}\b(?:last\s+time|as\s+before|previous|last\s+order)\b", re.IGNORECASE)
 
 
-#: "50 Aged VET 180+", "50 Aged Mortgage Protection" - a count before what
-#: it's of. Not "$1,000", "180+", "30-90" or a phone number.
-_COUNT_OF = re.compile(r"(?<![\d$.,\-/])(\d{1,4})(?![\d.,+\-/%])\s+(?:x\s+)?(?=[A-Za-z])")
+#: "50 Aged VET 180+", "25 LA" - a count before what it's of. Not "$1,000",
+#: "180+", "30-90", a phone number, or "3 available" from a list of what's
+#: on hand.
+_COUNT_OF = re.compile(r"(?<![\d$.,\-/:])(\d{1,4})(?![\d.,+\-/%])\s+(?:x\s+)?(?!avail|left\b|remaining\b|in\s+stock)(?=[A-Za-z])",
+                       re.IGNORECASE)
 
 
 def _adds_up_to(total: int, source: str) -> bool:
-    """Whether two or more of the order's counts on lines of their own add up
-    to `total` - Gabriela Samaan's 50 VET and 50 Mortgage Protection are 100."""
+    """Whether the order's counts add up to `total`: two or more on one line
+    - Kurtis Kunz's "25 LA and 25 PA" is 50 - or one at the start of each of
+    two or more lines - Gabriela Samaan's 50 VET and 50 Mortgage Protection
+    are 100."""
     said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", str(source or ""), flags=re.MULTILINE)
-    counts = []
+    starts = []
     for line in said.splitlines():
-        found = _COUNT_OF.match(line.strip())
-        if found:
-            counts.append(int(found.group(1)))
-    return len(counts) >= 2 and sum(counts) == total
+        line = line.strip()
+        counts = [int(one.group(1)) for one in _COUNT_OF.finditer(line)]
+        if len(counts) >= 2 and sum(counts) == total:
+            return True
+        first = _COUNT_OF.match(line)
+        if first:
+            starts.append(int(first.group(1)))
+    return len(starts) >= 2 and sum(starts) == total
 
 
 def says_when(source: str) -> bool:
@@ -364,7 +372,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # How many.
     leads = str(fields.get("leads") or "")
     count = re.search(r"\d+", leads)
-    if count and not re.search(rf"(?<![\d$.]){count.group(0)}(?![\d.])", source) \
+    # In the words, not in the times RYTE stamps on them: "[10/15 01:38PM]"
+    # had 10 in the order whatever it said.
+    words = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:", "", source, flags=re.MULTILINE)
+    if count and not re.search(rf"(?<![\d$./:]){count.group(0)}(?![\d./:])", words) \
             and not _adds_up_to(int(count.group(0)), source):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
     if "no cap" in leads.casefold() and not re.search(r"\bphx\b|phoenix|ad\s*spend", source, re.IGNORECASE):

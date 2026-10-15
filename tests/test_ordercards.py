@@ -2340,3 +2340,17 @@ def test_a_split_order_adds_up_and_either_lead_type_is_the_payments():
     assert any("120 isn't in the order" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
     card["fields"].update(leads="100", package="50 Aged FEX + 50 Aged IUL")
     assert any("which one did they buy" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
+
+
+def test_counts_on_one_line_add_up_too():
+    """Kurtis Kunz: "25 LA and 25 PA 90-180 day" held as "50 isn't in the order"."""
+    source = ("[10/15 01:38PM] LeadLab: New Payment | Payra\nNAME: Kurtis Kunz\nAMOUNT: $51.75\n"
+              "PRODUCT: Aged Leads (VET)\n[10/15 01:39PM] Kharyl: 25 LA and 25 PA 90-180 day\n180+ DAYS:\n"
+              "District of Columbia · EverLife agency VET 180+: 3 available\nNew Mexico · EverLife agency VET 180+: "
+              "7 available\nTotal: 15\nEVERLIFE")
+    card = {"kind": "aged", "source": source,
+            "fields": {"states": "LA, PA", "leads": "50", "package": "Aged Leads (VET)"}}
+    assert ordercards.doubts(card, today=date(2026, 10, 15))[0] == []
+    card["fields"]["leads"] = "10"
+    assert any("10 isn't in the order" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0]), \
+        "3 + 7 from the list of what's available counted as the order"
