@@ -231,3 +231,39 @@ def test_only_their_line_moves_never_somebody_elses(monkeypatch):
     _move(monkeypatch, board)
     assert ("old-vets", "o2") not in board.removed
     assert all("somebodyelse" not in name for _where, name, _ticked in board.added)
+
+
+def test_one_button_moves_every_list_theyre_on(monkeypatch):
+    """"did ryte just add emilie on one checklist?" - three lists, three
+    messages, three buttons; one was pressed."""
+    import asyncio
+    from dataclasses import replace
+
+    from wilbyte.bot import client
+
+    labels, said, moved = [], [], []
+
+    class Button:
+        def __init__(self, **kw):
+            labels.append(kw["label"])
+            self.confirmed = True
+
+        async def wait(self):
+            return None
+
+    class Heard:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(client.views, "ConfirmView", Button)
+    monkeypatch.setattr(jobs, "move_live_line",
+                        lambda config, one: moved.append(one.checklist) or ([f"✅ {one.checklist}: moved"], []))
+    lines = [replace(_eric_moved(), checklist=who, checklist_id=f"old-{who}", item_id=f"i-{who}")
+             for who in ("Nicole", "Kathleen", "Therese")]
+    groups = client._by_agent(lines)
+    assert len(groups) == 1
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
+    asyncio.run(client._offer_to_move(Heard(), config, groups[0]))
+    assert labels == ["Move to Tue Oct 06"] and moved == ["Nicole", "Kathleen", "Therese"]
+    assert said[0].count("Live date changed after filing") == 1
+    assert "Nicole, Kathleen, Therese's lists" in said[0] and "all 3 of their setup lines" in said[0]

@@ -8144,10 +8144,12 @@ async def live_moved_loop(bot: "WilByteBot") -> None:
                     ping = _unmarked_ping(bot.config)
                     if ping:
                         await responder.send(ping)
-                    # Each with its own button, and let go of: a button waits
-                    # hours, and the loop shouldn't.
-                    for one in fresh:
-                        _also_running(asyncio.create_task(_offer_to_move(responder, bot.config, one)))
+                    # One message and one button per agent, whatever lists
+                    # they're on - Emilie Cruz's three lists got three
+                    # buttons, and one press moved one line. Let go of: a
+                    # button waits hours, and the loop shouldn't.
+                    for group in _by_agent(fresh):
+                        _also_running(asyncio.create_task(_offer_to_move(responder, bot.config, group)))
                 if problems:
                     log.warning("Live-date check: %s", "; ".join(problems))
         except asyncio.CancelledError:
@@ -8205,31 +8207,50 @@ async def _live_moved_now(responder: Responder, config: Config) -> None:
             ("📅 Every agent on the coming week's setup cards still goes live on that card's day."
              if not problems else "") + "".join(f"\n⚠ {one}" for one in problems))
         return
-    await asyncio.gather(*(_offer_to_move(responder, config, one) for one in found))
+    await asyncio.gather(*(_offer_to_move(responder, config, group) for group in _by_agent(found)))
     if problems:
         await responder.send("⚠ " + "\n⚠ ".join(problems))
 
 
-async def _offer_to_move(responder: Responder, config: Config, one) -> None:
-    """One agent whose day moved, with a button that moves their line -
-    "yes add the button to move it"."""
+def _by_agent(found: list) -> list[list]:
+    """The moved lines grouped by agent and new day, in the order found."""
+    groups: dict = {}
+    for one in found:
+        groups.setdefault(one.key(), []).append(one)
+    return list(groups.values())
+
+
+async def _offer_to_move(responder: Responder, config: Config, group) -> None:
+    """One agent whose day moved, with one button that moves every line of
+    theirs - each list they're on - "yes add the button to move it"."""
     from .. import livemoved
 
+    group = group if isinstance(group, list) else [group]
+    first = group[0]
+    lists = [one.checklist for one in group if one.checklist]
     view = views.ConfirmView(
         requester_id=None,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Move to {one.live:%a %b %d}",
+        label=f"Move to {first.live:%a %b %d}",
         emoji="📅",
     )
+    line = livemoved.one_line(first).split("\n", 1)[-1]
+    if len(lists) > 1:
+        line = line.replace(f" ({first.checklist}'s list)", f" ({', '.join(lists)}'s lists)")
     await responder.send(
-        "📅 **Live date changed after filing:**\n" + livemoved.one_line(one)
-        + "\n-# The button moves their setup line - and their Lead Order line, if it's been spread.",
+        "📅 **Live date changed after filing:**\n" + line
+        + f"\n-# The button moves {'all ' + str(len(group)) + ' of their setup lines' if len(group) > 1 else 'their setup line'}"
+        " - and their Lead Order line, if it's been spread.",
         view=view, quiet=True,
     )
     await view.wait()
     if not view.confirmed:
         return
-    done, problems = await asyncio.to_thread(jobs.move_live_line, config, one)
+    done, problems = [], []
+    for one in group:
+        moved, trouble = await asyncio.to_thread(jobs.move_live_line, config, one)
+        done += moved
+        problems += trouble
     await responder.send("\n".join(done + [f"⚠ {problem}" for problem in problems])
                          or "Nothing needed moving.")
 
