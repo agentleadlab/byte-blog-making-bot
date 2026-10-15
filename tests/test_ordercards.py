@@ -2376,3 +2376,28 @@ def test_paid_separately_is_a_card_of_its_own(order):
     order.made.clear()
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert order.comments == []
+
+
+@pytest.mark.parametrize("said, amount, package", [
+    ("$1000 ad spend\n1 week only\nLiftoff Ascend\nLive Friday Oct 16", "1000", "Ascend Plus"),
+    ("PHX Standard 350 a week", "362.25", "PHNX Standard"),
+    ("Spark ad spend $500/week", "517.50", "Spark Standard"),
+    ("Phoenix $1,500 ad spend", "1552.50", "PHNX Plus"),
+    ("ad spend, starts monday", "700", ""),
+])
+def test_ad_spend_is_the_agency_and_its_tier(said, amount, package):
+    """"for people who's doing ad spend they are usually from Phnx,
+    Ascend/Liftoff, and spark ... less than 1000 usd per week ... Standard ...
+    1000 and above, it will be plus"."""
+    assert jobs.ad_spend_package(said, amount) == package
+
+
+def test_an_agency_the_order_doesnt_name_is_caught():
+    """Matthew Odierno's card said Phoenix; his order said Liftoff Ascend."""
+    card = {"kind": "fresh", "launch_iso": "2026-10-16",
+            "source": "New Payment | Payra\nNAME: Matthew Odierno\nPRODUCT: —\n$1000 ad spend\nLiftoff Ascend\nlive Friday",
+            "fields": {"states": "", "package": "Phoenix ad spend ($1000, 1 week)", "leads": "No cap (ad spend)"}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 15))
+    assert any("the card says PHNX" in one for one in wrong)
+    card["fields"]["package"] = "Ascend Plus"
+    assert not any("Lead type" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])

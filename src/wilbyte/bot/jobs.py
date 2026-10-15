@@ -12308,8 +12308,38 @@ _SAYS_NOTHING = {"unknown", "<unknown>", "n/a", "na", "none", "not provided", "n
 
 #: Packages bought as ad spend - "Phx Standard 350" - with no lead count and
 #: no cap: "it doesnt have nymber of leads because its ads spend".
-_AD_SPEND = re.compile(r"\b(?:phx|phoenix)\b|\bad\s*spend\b", re.IGNORECASE)
+_AD_SPEND = re.compile(r"\b(?:phx|phnx|phoenix)\b|\bad\s*spend\b", re.IGNORECASE)
 NO_CAP = "No cap (ad spend)"
+
+#: The agencies that buy ad spend, as the card names them - "Ascend now is
+#: lifoff but yes its ascend".
+AD_AGENCIES = (("PHNX", re.compile(r"\b(?:phx|phnx|phoenix)\b", re.IGNORECASE)),
+               ("Ascend", re.compile(r"\b(?:ascend|lift\s*off)\b", re.IGNORECASE)),
+               ("Spark", re.compile(r"\bspark\b", re.IGNORECASE)))
+#: A week's ad spend from this much up is Plus; under it, Standard.
+AD_PLUS_FROM = 1000
+
+
+def ad_spend_package(source: str, amount: str = "") -> str:
+    """"PHNX Standard", "Ascend Plus", "Spark Standard" - the agency the order
+    names and the tier its weekly ad spend puts it in ("less than 1000 usd
+    per week ... standard ... 1000usd and above, it will be plus"). "" when
+    the order names no agency: Matthew Odierno's card said Phoenix when the
+    order said Liftoff Ascend."""
+    said = str(source or "")
+    agency = next((name for name, pattern in AD_AGENCIES if pattern.search(said)), "")
+    if not agency:
+        return ""
+    spend = re.search(r"\$\s*([\d,]+(?:\.\d+)?)\s*(?:ad\s*spend|/\s*w(?:ee)?k|per\s+week|a\s+week|weekly)", said,
+                      re.IGNORECASE) or re.search(r"\b(?:ad\s*spend|phx|phnx|phoenix|ascend|spark)\D{0,20}\$\s*([\d,]+)", said,
+                                                  re.IGNORECASE)
+    try:
+        weekly = float((spend.group(1) if spend else amount or "").replace(",", ""))
+    except ValueError:
+        weekly = None
+    if weekly is None:
+        return f"{agency} (ad spend)"
+    return f"{agency} {'Plus' if weekly >= AD_PLUS_FROM else 'Standard'}"
 
 
 #: A line that is one of the card's own fields - "Email: ...", "States Leads
@@ -12410,7 +12440,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         "package": {"type": "string", "description": (
             "The lead type / package bought, e.g. 'Text-Verified Trucker IUL (OTP)'. The notes win over the "
             "payment's product line when they're more exact. An order split across lead types names each with "
-            "its count: '50 Aged VET 180+ + 50 Aged Mortgage Protection 180+'.")},
+            "its count: '50 Aged VET 180+ + 50 Aged Mortgage Protection 180+'. Ad spend is bought through an "
+            "agency - PHNX (Phoenix), Ascend (also called Liftoff) or Spark: the agency the order names and "
+            "the tier, 'Ascend Plus' at $1,000 a week or more, 'PHNX Standard' under it. Never name an agency "
+            "the order doesn't.")},
         "leads": {"type": "string", "description": (
             "How many leads, just the number: '20'. A split order: the total with the split, '100 (50 + 50)'. "
             "Ad-spend packages (Phoenix / 'Phx Standard 350' and the like) buy ad spend, not a lead count: put "
@@ -12467,6 +12500,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         response = asking(config.copy.model, content[:1])
     got = _tool_input(response, "order")
     fields = order_fields(got, notes)
+    if fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
+        # Ad spend: the agency the order names, and Standard or Plus.
+        paid = re.search(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+        named = ad_spend_package(text, paid.group(1) if paid else "")
+        if named:
+            fields["package"] = named
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
     client_name = fields["name"]
     launch_iso = str(got.get("launch_iso") or "")[:10]

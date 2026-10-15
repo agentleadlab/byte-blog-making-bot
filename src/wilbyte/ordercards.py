@@ -378,7 +378,13 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     if count and not re.search(rf"(?<![\d$./:]){count.group(0)}(?![\d./:])", words) \
             and not _adds_up_to(int(count.group(0)), source):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
-    if "no cap" in leads.casefold() and not re.search(r"\bphx\b|phoenix|ad\s*spend", source, re.IGNORECASE):
+    # An agency on the card the order doesn't name - Matthew Odierno's said
+    # Phoenix; his order said Liftoff Ascend.
+    for agency, said in (("PHNX", r"\bphx\b|\bphnx\b|phoenix"), ("Ascend", r"ascend|lift\s*off"),
+                         ("Spark", r"\bspark\b")):
+        if re.search(said, str(fields.get("package") or ""), re.IGNORECASE) and not re.search(said, source, re.IGNORECASE):
+            wrong.append(f"Lead type: the card says {agency} but the order doesn't name {agency}")
+    if "no cap" in leads.casefold() and not re.search(r"\bphx\b|\bphnx\b|phoenix|ad\s*spend", source, re.IGNORECASE):
         wrong.append("Number of leads: “No cap (ad spend)” but the order doesn't say Phoenix / ad spend")
     if not leads:
         missing.append("no number of leads")
