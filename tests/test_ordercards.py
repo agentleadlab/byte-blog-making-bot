@@ -2325,3 +2325,18 @@ def test_a_new_aged_card_goes_at_the_bottom_of_its_list(monkeypatch):
     jobs.order_card_make(CONFIG, "aged", {"name": "Aged Leads - Cole Petersen", "desc": "d"})
     jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Cole Petersen", "desc": "d"})
     assert board.positions == ["bottom", "top"]
+
+
+def test_a_split_order_adds_up_and_either_lead_type_is_the_payments():
+    """Gabriela Samaan: "50 Aged VET 180+ / 50 Aged Mortgage Protection 180+"
+    held as "100 isn't in the order"."""
+    source = ("[10/15 01:30PM] LeadLab: New Payment | Payra\nNAME: Gabriela Samaan\nAMOUNT: $103.5\n"
+              "PRODUCT: Aged Leads (MTG)\n[10/15 01:31PM] Kharyl: 50 Aged VET 180+\n50 Aged Mortgage Protection 180+\nIL")
+    card = {"kind": "aged", "source": source,
+            "fields": {"states": "IL", "leads": "100 (50 + 50)",
+                       "package": "50 Aged VET 180+ + 50 Aged Mortgage Protection 180+"}}
+    assert ordercards.doubts(card, today=date(2026, 10, 15))[0] == []
+    card["fields"]["leads"] = "120"
+    assert any("120 isn't in the order" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])
+    card["fields"].update(leads="100", package="50 Aged FEX + 50 Aged IUL")
+    assert any("which one did they buy" in one for one in ordercards.doubts(card, today=date(2026, 10, 15))[0])

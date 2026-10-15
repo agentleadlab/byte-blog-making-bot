@@ -12370,10 +12370,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         "states": {"type": "string", "description": "The states, as two-letter codes separated by commas: 'TX, AL, CA'."},
         "package": {"type": "string", "description": (
             "The lead type / package bought, e.g. 'Text-Verified Trucker IUL (OTP)'. The notes win over the "
-            "payment's product line when they're more exact.")},
+            "payment's product line when they're more exact. An order split across lead types names each with "
+            "its count: '50 Aged VET 180+ + 50 Aged Mortgage Protection 180+'.")},
         "leads": {"type": "string", "description": (
-            "How many leads, just the number: '20'. Ad-spend packages (Phoenix / 'Phx Standard 350' and the "
-            "like) buy ad spend, not a lead count: put 'No cap (ad spend)'. Empty if it isn't said.")},
+            "How many leads, just the number: '20'. A split order: the total with the split, '100 (50 + 50)'. "
+            "Ad-spend packages (Phoenix / 'Phx Standard 350' and the like) buy ad spend, not a lead count: put "
+            "'No cap (ad spend)'. Empty if it isn't said.")},
         "launch": {"type": "string", "description": (
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
             "when the note was written. Only a date the order gives for going live / launching / starting "

@@ -273,6 +273,23 @@ SAME_STATES = re.compile(
     r"\bstates?\b[^\n]{0,25}\b(?:last\s+time|as\s+before|previous|last\s+order)\b", re.IGNORECASE)
 
 
+#: "50 Aged VET 180+", "50 Aged Mortgage Protection" - a count before what
+#: it's of. Not "$1,000", "180+", "30-90" or a phone number.
+_COUNT_OF = re.compile(r"(?<![\d$.,\-/])(\d{1,4})(?![\d.,+\-/%])\s+(?:x\s+)?(?=[A-Za-z])")
+
+
+def _adds_up_to(total: int, source: str) -> bool:
+    """Whether two or more of the order's counts on lines of their own add up
+    to `total` - Gabriela Samaan's 50 VET and 50 Mortgage Protection are 100."""
+    said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", str(source or ""), flags=re.MULTILINE)
+    counts = []
+    for line in said.splitlines():
+        found = _COUNT_OF.match(line.strip())
+        if found:
+            counts.append(int(found.group(1)))
+    return len(counts) >= 2 and sum(counts) == total
+
+
 def says_when(source: str) -> bool:
     """Whether the order says when they launch: a launch word and a day or
     date - leaving out the time each message was posted, which RYTE adds as
@@ -334,7 +351,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         family, _subtypes = setupcheck.product_of(product)
         if not aged_paid and kind == "aged" and family:
             wrong.append(f"Lead type: the payment is for “{product}” - not aged - but this reads as an aged order")
-        if package and setupcheck.same_product(package, product) is False:
+        # A split order - "50 Aged VET 180+ + 50 Aged Mortgage Protection" -
+        # is right when one of its parts is what the payment line names.
+        parts = [one for one in re.split(r"\s+\+\s+|\s*&\s*|\s+and\s+|,\s*(?=\d)", package) if one.strip()]
+        if package and all(setupcheck.same_product(one, product) is False for one in parts or [package]):
             wrong.append(f"Lead type: the payment post says “{product}” but the order"
                          + (" (its Payra invoice)" if "payra invoice note" in source.casefold() else "")
                          + f" says “{package}” — which one did they buy?")
@@ -344,7 +364,8 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # How many.
     leads = str(fields.get("leads") or "")
     count = re.search(r"\d+", leads)
-    if count and not re.search(rf"(?<![\d$.]){count.group(0)}(?![\d.])", source):
+    if count and not re.search(rf"(?<![\d$.]){count.group(0)}(?![\d.])", source) \
+            and not _adds_up_to(int(count.group(0)), source):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
     if "no cap" in leads.casefold() and not re.search(r"\bphx\b|phoenix|ad\s*spend", source, re.IGNORECASE):
         wrong.append("Number of leads: “No cap (ad spend)” but the order doesn't say Phoenix / ad spend")
