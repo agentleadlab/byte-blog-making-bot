@@ -229,7 +229,9 @@ STANDARD = re.compile(r"\bstandards?\b|\bbasics?\b|\bstndr?ds?\b|\bvolume\b", re
 # that use a version number instead of a word. Not preceded by a dollar sign,
 # so a price never reads as a tier.
 PLUS = re.compile(
-    r"\bplus\b|\btext[\s-]*verified\b|\botp\b|(?<!\$)\b2\.0\b|\bhigh[\s-]*intent\b",
+    r"\bplus\b|\btext[\s-]*verified\b|\botp\b|(?<!\$)\b2\.0\b|\bhigh[\s-]*intent\b"
+    # "PHX +", "Phoenix+" - the plus sign as the tier's name.
+    r"|\b(?:phx|phnx|pho?e?nix|ascend|uprise)\s*\+(?!\s*\d+\s*[a-z])",
     re.IGNORECASE,
 )
 
@@ -1116,6 +1118,10 @@ def just_a_day(text: str) -> bool:
     return bool(said) and bool(_HAS_A_DAY.search(said)) and bool(_ONLY_DAYS.fullmatch(said))
 
 
+#: A piece of a line that names a tier and nothing else - "2.0", "plus".
+_ONLY_A_TIER = re.compile(r"\s*(?:(?<!\$)2\.0|plus|standards?|stndr?ds?|basics?)\s*", re.IGNORECASE)
+
+
 def order_parts(label: str) -> list[str]:
     """A checklist line back into the orders it names.
 
@@ -1128,6 +1134,17 @@ def order_parts(label: str) -> list[str]:
     by hand is left exactly as it was typed.
     """
     parts = [part.strip() for part in (label or "").split(ORDER_JOIN) if part.strip()]
+    # "PHX + 2.0" is one order - Phoenix Plus, the version number for the
+    # tier - not "PHX" and "2.0": Samuel Riggins was left off the Lead Order
+    # card as two halves neither of which said enough. A part that's only a
+    # tier goes back onto the order before it.
+    joined: list[str] = []
+    for part in parts:
+        if joined and _ONLY_A_TIER.fullmatch(part):
+            joined[-1] = f"{joined[-1]} {part}"
+        else:
+            joined.append(part)
+    parts = joined
     # A day is dropped whether or not there is an order beside it. Unlike an
     # unreadable line, there is nothing to report: the setup card said when,
     # the Lead Order card is filed by what, and no wording of Monday will ever

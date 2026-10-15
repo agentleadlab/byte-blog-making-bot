@@ -2447,3 +2447,15 @@ def test_paid_but_not_gavelled_is_said_with_the_unticked_reminder(monkeypatch):
     said = asyncio.run(client._ungavelled_note(bot, now=now))
     assert "Matthew Haines" in said and "Seth Moler" not in said, "under two hours old"
     assert "Mark Medina" not in said and "Jace Jensen" not in said
+
+
+def test_phx_plus_two_point_oh_is_one_order_phoenix_plus():
+    """Samuel Riggins' "PHX + 2.0" was left off the Lead Order card: "“PHX”
+    could be Phoenix Standard or Plus" and "“2.0” doesn't match any checklist"."""
+    from wilbyte import agents
+
+    assert agents.order_parts("PHX + 2.0") == ["PHX 2.0"]
+    assert agents.tier_of("PHX 2.0") == "plus"
+    assert agents.tier_of("PHX +") == "plus" and agents.tier_of("Phoenix+") == "plus"
+    assert agents.order_parts("15 OTP VETS + 15 OTP FEX") == ["15 OTP VETS", "15 OTP FEX"]
+    assert agents.tier_of("Phoenix Standard") == "standard"
