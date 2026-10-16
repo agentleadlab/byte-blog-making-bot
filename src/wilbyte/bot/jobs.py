@@ -4862,6 +4862,11 @@ def spread_to_lead_order(
         # printed the rest of the sentence as though it were the lead type.
         stuck: list[tuple[str, str, str]] = []
         placed: set[str] = set()
+        # What each placed agent was placed as. A line that couldn't be placed
+        # is only "the same order said another way" when it's the same kind of
+        # lead: Joseph Antonucci's "30 Mortgage Protection" was left quietly
+        # because his Vets, Blue Collar and Trucker lines had gone on.
+        placed_as: dict[str, set] = {}
         # The days this Lead Order card is for. An agent whose own card names a
         # different day does not belong on it, whichever setup card they were
         # written on - "THIS ARE SATURDAY LIVE? YOU PUT THEM FRIDAY".
@@ -4943,6 +4948,7 @@ def spread_to_lead_order(
                 continue
             added.append(f"{named.get(spread.url, spread.label)} — {shown_as}")
             placed.add(spread.url)
+            placed_as.setdefault(spread.url, set()).add(rules.family_of(spread.label))
 
             # Filed by the setup card's wording, which is sometimes thinner
             # than the agent's own card. Read after the write, not before: the
@@ -4973,8 +4979,17 @@ def spread_to_lead_order(
         # Said quietly, because the wording is still drifting and that is
         # worth knowing; but not under "something went wrong", which sends
         # somebody looking for an agent who is already there.
-        problems.extend(said for url, said, _ in stuck if url not in placed)
-        also = [label for url, _said, label in stuck if url in placed]
+        def placed_already(url: str, label: str) -> bool:
+            # A line with a count of its own and a kind of lead the agent
+            # wasn't placed as is another order. "ASCEND" on Nicole's copy of
+            # the line is the same order, said her way.
+            kind = rules.family_of(label)
+            other_order = bool(re.match(r"\s*\d", label or "")) and kind is not None \
+                and kind not in placed_as.get(url, set())
+            return url in placed and not other_order
+
+        problems.extend(said for url, said, label in stuck if not placed_already(url, label))
+        also = [label for url, _said, label in stuck if placed_already(url, label)]
         if also:
             problems.append(
                 f"{len(also)} line(s) I couldn't read were for agents already "

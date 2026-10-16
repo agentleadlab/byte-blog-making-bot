@@ -7786,3 +7786,19 @@ def test_ryte_never_makes_a_second_item_on_the_card_it_comments_on(monkeypatch):
                                              kind="ops", day=date(2026, 10, 16), text="and tag Therese Karli Kelley crm")
     assert comments == ["@thereseguba\nKarli Kelley crm"] and items == []
     assert "✅ Trello's automation puts it on **Therese**'s checklist" in problems
+
+
+def test_a_different_order_that_cant_be_placed_is_said_not_left(config, monkeypatch):
+    """Joseph Antonucci: Vets, Blue Collar and Trucker went on, and "30
+    Mortgage Protection" was left quietly as if it were the same order."""
+    board = SpreadBoard(
+        on_setup="30 Mortgage Protection, 30 Veteran, 30 Blue Collar IUL, 30 Trucker IUL",
+        their_card="Lead Type: Text-Verified",
+        checklists=("OTP MTG Standard", "OTP MTG Plus", "OTP VET Plus", "OTP Blue Collar IUL", "OTP TRUCKER"),
+    )
+
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+
+    assert {checklist for checklist, _name in board.written} == {"c2", "c3", "c4"}
+    assert any("Mortgage Protection" in one and "doesn't say which" in one for one in problems)
+    assert not any("already placed" in one for one in problems)
