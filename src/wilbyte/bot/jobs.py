@@ -12585,6 +12585,10 @@ def agency_said(text: str, agencies=()) -> str:
         said = " ".join(said.strip(" *_-–—:.,!").split()).casefold()
         if said in known:
             return known[said]
+        # "AEP LIVE  MON, OCT 19" - the agency, then when they go live.
+        for name, spelled in known.items():
+            if re.match(rf"{re.escape(name)}\s*[-–—:,]?\s+(?:is\s+)?(?:going\s+)?(?:live|launch\w*|start\w*)\b", said):
+                return spelled
     return ""
 
 

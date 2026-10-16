@@ -2683,6 +2683,8 @@ def test_an_agency_on_a_line_of_its_own_is_the_agency():
     assert jobs.agency_said("Agency: wolfpack") == "Wolfpack"
     assert jobs.agency_said("Navy Mutual", agencies=("Navy Mutual",)) == "Navy Mutual", "one #lead-lab has named"
     assert jobs.agency_said("100 aged vet\nSC,FL") == ""
+    assert jobs.agency_said("40 leads\n\nAEP LIVE  MON, OCT 19") == "AEP", "Collin Williams"
+    assert jobs.agency_said("Spark is great") == ""
     assert jobs.agency_said("he's with aep but wants ffl leads") == "", "only a line that's the name alone"
 
 
