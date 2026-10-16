@@ -6477,6 +6477,24 @@ def test_tag_nicole_becomes_a_mention_and_leaves_the_comment():
     assert handles == ["nic0l3"] and strangers == []
 
 
+def test_tag_nicole_tag_kath_is_nicole_and_kathleen():
+    """"@Ryte add to trello tag nicole, tag kath" - "Nobody on the board is
+    called tag kath". kath = kathleen."""
+    from wilbyte import dailyops
+
+    members = [
+        {"username": "nic0l3", "fullName": "Nicole Ramos"},
+        {"username": "kathleenmarie15", "fullName": "Kathleen Marie"},
+        {"username": "jenniferhashisaki2", "fullName": "Jennifer Hashisaki"},
+    ]
+    known = dailyops.who_is_known(members)
+    said, handles, strangers = dailyops.tag_asked("add to trello tag nicole, tag kath", known)
+    assert handles == ["nic0l3", "kathleenmarie15"] and strangers == []
+    assert known["jenn"] == "jenniferhashisaki2"
+    assert dailyops.tag_phrase_out("please tag kath and nicole", known)[1] == ["kathleenmarie15", "nic0l3"]
+    assert dailyops.people_named("kath can you cap him at 10", members) == ["kathleenmarie15"]
+
+
 def test_a_comment_with_the_word_tag_in_it_is_left_alone():
     """"tag the card as done" read "the card as done" as somebody's name and
     posted an empty comment. Names are checked against the board, not guessed

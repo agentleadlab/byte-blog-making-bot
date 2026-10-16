@@ -439,7 +439,18 @@ def who_is_known(members) -> dict:
     for first, who in firsts.items():
         if len(who) == 1 and first not in found:
             found[first] = next(iter(who))
+    # What the team calls each other - "kath = kathleen". A short name is
+    # whoever's first name it begins, when that's only one person.
+    for short, first in NICKNAMES.items():
+        who = firsts.get(first)
+        if short not in found and who and len(who) == 1:
+            found[short] = next(iter(who))
     return found
+
+
+#: Short names the team uses, and the first name each is short for.
+NICKNAMES = {"kath": "kathleen", "kat": "kathleen", "jen": "jennifer", "jenn": "jennifer",
+             "nic": "nicole", "nikki": "nicole", "frank": "franklin", "fran": "franklin"}
 
 
 _TAG_WORD = re.compile(r"(?:(?<=\s)|^)(?:and\s+|&\s+)?(?:please\s+|pls\s+)?tag\s+", re.IGNORECASE)
@@ -501,7 +512,10 @@ def people_named(text: str, members) -> list[str]:
         firsts.setdefault(full.split()[0].casefold(), []).append((username, full))
         if re.search(rf"(?<![\w@]){re.escape(full)}(?!\w)", said, re.IGNORECASE) and username not in found:
             found.append(username)
-    for first, who in firsts.items():
+    called = list(firsts.items()) + [
+        (short, firsts[first]) for short, first in NICKNAMES.items() if short not in firsts and first in firsts
+    ]
+    for first, who in called:
         if len(who) != 1 or who[0][0] in found or len(first) < 3:
             continue
         username, full = who[0]
@@ -534,8 +548,11 @@ def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:
     found = _TAG_ASKED.search(said)
     if not found:
         return text, [], []
+    # "tag nicole, tag kath" - the second "tag" is the asking again, not
+    # part of Kath's name.
     names = [
-        " ".join(one.split()) for one in _AND_ALSO.split(found.group("who"))
+        re.sub(r"^(?:please\s+|pls\s+)?tags?\s+", "", " ".join(one.split()), flags=re.IGNORECASE)
+        for one in _AND_ALSO.split(found.group("who"))
         if one and one.strip()
     ]
     handles, strangers = [], []
