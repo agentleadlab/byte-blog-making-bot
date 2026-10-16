@@ -2827,3 +2827,20 @@ def test_only_the_agency_comes_from_the_request(monkeypatch):
     card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16), request=request)
     assert card["fields"]["agency"] == "Symmetry"
     assert ordercards.doubts(card, today=date(2026, 10, 16))[0] == []
+
+
+def test_the_invoices_own_wording_doesnt_add_states():
+    """Collin Williams, held for "IN, MD, NC" - not in his thread."""
+    source = ("New Payment | Payra\nNAME: Collin Williams\nPRODUCT: VET\n"
+              "[10/16 04:10PM] Kharyl: can i please have 40 text verified fresh vets. Starting Monday the 19th at 8AM.\n"
+              "IA, KS, MO, IL, TX, TN, WV\n40 leads\n\nAEP LIVE  MON, OCT 19\n"
+              "Payra invoice note: 40 vets\nDescription: Veteran leads - IN, MD, NC and more\n"
+              "Lines: Text-Verified Veteran Leads IN, MD, NC")
+    card = {"kind": "fresh", "source": source, "launch_iso": "2026-10-19",
+            "fields": {"states": "IA, KS, MO, IL, TX, TN, WV", "package": "Text-Verified Fresh Vets", "leads": "40",
+                       "launch": "Monday, October 19"}}
+    assert not any("also says" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+    # An invoice note listing states, and nothing in the thread: it counts.
+    card["source"] = "New Payment | Payra\nPRODUCT: VET\nPayra invoice note: IA, KS, MO, IL, TX, TN, WV, NC"
+    said = ordercards.doubts(card, today=date(2026, 10, 16))[0]
+    assert any("also says NC" in one and "Payra invoice note" in one for one in said)

@@ -251,6 +251,34 @@ def _state_lines(source: str) -> list[str]:
     return found
 
 
+def _invoice_split(source: str) -> tuple[str, str]:
+    """(the order as posted and said in the thread, the Payra invoice's note
+    without its Description and Lines)."""
+    said = str(source or "")
+    found = re.search(r"^Payra invoice note:", said, re.MULTILINE)
+    if not found:
+        return said, ""
+    rest = said[found.start():]
+    ends = re.search(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\]", rest, re.MULTILINE)
+    block, after = (rest[:ends.start()], rest[ends.start():]) if ends else (rest, "")
+    kept = "\n".join(line for line in block.splitlines()
+                     if not re.match(r"\s*(?:Description|Lines)\s*:", line, re.IGNORECASE))
+    return said[:found.start()] + after, kept
+
+
+def _states_listed(source: str) -> tuple[list[str], dict]:
+    """The state codes the order's state lines list, and the line each is on."""
+    listed, where = [], {}
+    for line in _state_lines(source):
+        if _ALL_BUT.search(line) or re.search(r"\b(?:except|besides|excluding|not|no)\b", line, re.IGNORECASE):
+            continue
+        for code in _CODE.findall(line):
+            if code.upper() in US_STATES and code.isupper() and code.upper() not in where:
+                listed.append(code.upper())
+                where[code.upper()] = " ".join(line.split())
+    return listed, where
+
+
 _STAMP = re.compile(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\]\s*", re.MULTILINE)
 _WHEN = re.compile(
     r"\b(?:today|tonight|tomorrow|tmrw?|asap|live|launch\w*|start\w*|"
@@ -364,15 +392,19 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         for code in on_card:
             if not _said_state(code, source):
                 wrong.append(f"States: {code} is on the card but isn't in the order")
-        listed = set()
-        for line in _state_lines(source):
-            if _ALL_BUT.search(line) or re.search(r"\b(?:except|besides|excluding|not|no)\b", line, re.IGNORECASE):
-                continue
-            listed.update(code.upper() for code in _CODE.findall(line)
-                          if code.upper() in US_STATES and code.isupper())
-        left = sorted(listed - set(on_card))
+        # The team's own lines first. The Payra invoice's note only when the
+        # thread lists none, and never its Description or Lines - the
+        # product's own wording: Collin Williams' card was held for "IN, MD,
+        # NC" his thread never said.
+        team, invoice = _invoice_split(source)
+        listed, where = _states_listed(team)
+        if not listed:
+            listed, where = _states_listed(invoice)
+        left = sorted(set(listed) - set(on_card))
         if left and on_card:
-            wrong.append(f"States: the order also says {', '.join(left)} - not on the card")
+            shown = next((line for code in left for line in [where.get(code, "")] if line), "")
+            wrong.append(f"States: the order also says {', '.join(left)} - not on the card"
+                         + (f" (“{shown[:80]}”)" if shown else ""))
 
     # Lead type, against the payment's product line.
     product = re.search(r"PRODUCT:\**\s*([^\n]*)", source, re.IGNORECASE)
