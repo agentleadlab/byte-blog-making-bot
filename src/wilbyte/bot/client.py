@@ -10161,7 +10161,7 @@ async def _order_refresh_split(bot, key: str, order: dict, card: dict) -> str:
             jobs.order_card_update, bot.config, part["card_id"], written=part.get("written", ""),
             desc=sub["desc"], name=sub["name"], commented=tuple(part.get("commented") or ())))
         if done == "updated":
-            part.update(written=sub["desc"], fields=sub["fields"])
+            part.update(written=sub["desc"], fields=sub["fields"], package=sub["fields"].get("package", ""))
             updated.append(part)
         elif done == "commented":
             part["commented"] = list(part.get("commented") or []) + said
