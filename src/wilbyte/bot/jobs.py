@@ -12566,8 +12566,29 @@ def request_agency(post: str) -> str:
     return "" if said.casefold().strip(" .") in _SAYS_NOTHING else said
 
 
+#: Agencies the team names - and every agency a New Lead Request in
+#: #lead-lab has given, added as they're read.
+KNOWN_AGENCIES = ("AEP", "FFL", "Wolfpack", "Uprise", "Fearless", "PHNX", "Phoenix", "Ascend", "Liftoff", "Spark")
+
+
+def agency_said(text: str, agencies=()) -> str:
+    """The agency when the team writes it on a line of its own - Kharyl's
+    "aep" at the foot of Gavin Mathieu's notes, "AEP @Nicole" - as the
+    agency is spelled, or ""."""
+    known = {" ".join(str(one).split()).casefold(): " ".join(str(one).split())
+             for one in (*agencies, *KNOWN_AGENCIES) if str(one or "").strip()}
+    for line in reversed(str(text or "").splitlines()):
+        said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line)
+        said = re.sub(r"@\S+", "", said)
+        said = re.sub(r"(?i)\b(?:agency|imo)\b\s*[:-]?", "", said)
+        said = " ".join(said.strip(" *_-–—:.,!").split()).casefold()
+        if said in known:
+            return known[said]
+    return ""
+
+
 def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = (),
-               request: str = "") -> dict:
+               request: str = "", agencies=()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -
     read by Claude into the card's fields. {"kind": "fresh"|"aged", "client",
     "fields", "name", "desc", "missing": [labels not given]}."""
@@ -12609,7 +12630,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "asks for nothing, say in a few words what it shows. Empty when there are none.")},
         "launch_iso": {"type": "string", "description": "The launch date as YYYY-MM-DD, or empty."},
         "agency": {"type": "string", "description": (
-            "The agency or IMO they're with, when the notes say - 'UPRISE', 'FEARLESS'. Empty if not said.")},
+            "The agency or IMO they're with, when the notes say - 'UPRISE', 'FEARLESS', 'AEP', 'FFL'. A short "
+            "name on a line of its own at the end of the notes ('aep', 'AEP @Nicole') is the agency. Empty if "
+            "not said.")},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
@@ -12666,6 +12689,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    if not fields.get("agency"):
+        # "aep" on a line of its own in the notes is the agency - Gavin
+        # Mathieu's card went out with it blank.
+        fields["agency"] = agency_said("\n".join([text, *notes]), agencies)
     agency = request_agency(request)
     if agency and not fields.get("agency"):
         # Where the agency is said: the client's New Lead Request in

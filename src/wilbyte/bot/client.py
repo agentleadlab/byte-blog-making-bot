@@ -9268,10 +9268,15 @@ async def _order_read(bot, message, *, since: datetime | None = None,
         text += "\n" + "\n".join(extra)
         notes = list(extra) + list(notes)
     # The client's New Lead Request in #lead-lab, for the Agency.
-    request = jobs.lead_request_for(await _lead_requests(bot), text)
+    requests = await _lead_requests(bot)
+    request = jobs.lead_request_for(requests, text)
+    if not request:
+        log.info("No New Lead Request in #lead-lab for this order (%d posts read)", len(requests))
+    # Every agency #lead-lab has named, so one written alone in the notes is known.
+    agencies = tuple(dict.fromkeys(filter(None, (jobs.request_agency(one) for one in requests))))
     card = await asyncio.to_thread(partial(
         jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes,
-        **({"request": request} if request else {})))
+        **({"request": request} if request else {}), **({"agencies": agencies} if agencies else {})))
     # The team's screenshots - the first ones in `images`, one a marker.
     marked = sum(len(re.findall(r"\[screenshot \d+\]", one)) for one in notes)
     card["shots"] = images[:marked]
@@ -9298,6 +9303,7 @@ async def _lead_requests(bot) -> list[str]:
     try:
         channel = bot.get_channel(int(wanted)) if wanted.isdigit() else None
         if channel is None:
+            log.warning("Can't see #lead-lab (%s) - no agency from New Lead Requests", wanted or "not set")
             return []
         posts = [_all_text(one) async for one in channel.history(limit=LEAD_REQUESTS_READ)]
     except Exception:

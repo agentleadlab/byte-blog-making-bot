@@ -2673,3 +2673,36 @@ def test_lead_lab_is_read_once_for_a_few_minutes(monkeypatch):
     assert asyncio.run(client._lead_requests(bot)) == REQUESTS
     assert asyncio.run(client._lead_requests(bot)) == REQUESTS
     assert read == [client.LEAD_REQUESTS_READ]
+
+
+def test_an_agency_on_a_line_of_its_own_is_the_agency():
+    """"still no agency" - Gavin Mathieu's notes end "aep"."""
+    notes = "[10/16 03:10PM] Kharyl: 30-90 Aged Vet Leads\nSC,FL,AL,GA,LA\n100 aged vet\n\naep"
+    assert jobs.agency_said(notes) == "AEP"
+    assert jobs.agency_said("180+ days ALL\nAEP @Nicole") == "AEP"
+    assert jobs.agency_said("Agency: wolfpack") == "Wolfpack"
+    assert jobs.agency_said("Navy Mutual", agencies=("Navy Mutual",)) == "Navy Mutual", "one #lead-lab has named"
+    assert jobs.agency_said("100 aged vet\nSC,FL") == ""
+    assert jobs.agency_said("he's with aep but wants ffl leads") == "", "only a line that's the name alone"
+
+
+def test_the_card_gets_the_agency_the_notes_name_alone(monkeypatch):
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Gavin Mathieu", "states": "SC, FL, AL, GA, LA", "package": "Aged Vet Leads 30-90 days",
+        "leads": "100", "agency": ""})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    notes = ["30-90 Aged Vet Leads\nSC,FL,AL,GA,LA\n100 aged vet\n\naep"]
+    card = jobs.read_order(config, text="NAME: Gavin Mathieu\nPRODUCT: Aged Leads (VET)\n" + notes[0], images=[],
+                           today=date(2026, 10, 16), notes=notes, request=REQUESTS[0])
+    assert card["fields"]["agency"] == "AEP", "the team's word beats the request"
+    assert "Agency: AEP" in card["desc"]
+    assert not ordercards.doubts(card, today=date(2026, 10, 16))[0]
