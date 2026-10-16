@@ -387,6 +387,7 @@ class WilByteBot(discord.Client):
             # two minutes after one is posted loses its update otherwise.
             if getattr(self.config.secrets, "trello_key", None):
                 _also_running(self.loop.create_task(order_sweep_loop(self)))
+                _also_running(self.loop.create_task(agency_fill_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -9275,6 +9276,9 @@ async def _order_read(bot, message, *, since: datetime | None = None,
     requests = await _lead_requests(bot)
     request = jobs.lead_request_for(requests, text)
     if not request:
+        requests = await _lead_requests(bot, wait=15, fresh_within=LEAD_REQUESTS_RECHECK_SECONDS)
+        request = jobs.lead_request_for(requests, text)
+    if not request:
         log.info("No New Lead Request in #lead-lab for this order (%d posts read)", len(requests))
     # Every agency #lead-lab has named, so one written alone in the notes is known.
     agencies = tuple(dict.fromkeys(filter(None, (jobs.request_agency(one) for one in requests))))
@@ -9326,12 +9330,21 @@ async def _lead_thread_text(thread) -> str:
 _LEAD_READING: list = [None]
 #: How long a card waits for #lead-lab before going ahead with what's held.
 LEAD_REQUESTS_WAIT = 5.0
+#: ...and when nothing has been read yet.
+LEAD_REQUESTS_FIRST_WAIT = 20.0
+#: A request not found in a read older than this gets #lead-lab read again
+#: - it may have been posted a minute before the payment.
+LEAD_REQUESTS_RECHECK_SECONDS = 60
+#: How often #lead-lab is kept read, and blank Agencies filled in after.
+AGENCY_FILL_SECONDS = 240
+#: How long after a card is made its blank Agency is still looked for.
+AGENCY_FILL_DAYS = 2
 #: New threads opened per read - the rest on the next one, so the first
 #: read after a start isn't three hundred requests in a row.
 LEAD_THREADS_PER_READ = 40
 
 
-async def _lead_requests(bot, *, wait: float | None = None) -> list[str]:
+async def _lead_requests(bot, *, wait: float | None = None, fresh_within: float | None = None) -> list[str]:
     """#lead-lab's posts and request threads, newest first, as text - each
     client's New Lead Request, where the agency they're with is said.
 
@@ -9343,14 +9356,17 @@ async def _lead_requests(bot, *, wait: float | None = None) -> list[str]:
     import time
 
     held = _LEAD_REQUESTS[1]
-    if held and time.monotonic() - _LEAD_REQUESTS[0] < LEAD_REQUESTS_FRESH_SECONDS:
+    fresh = LEAD_REQUESTS_FRESH_SECONDS if fresh_within is None else fresh_within
+    if held and time.monotonic() - _LEAD_REQUESTS[0] < fresh:
         return held
+    # Nothing read yet - just after a start - is worth waiting longer for.
+    wait = wait if wait is not None else (LEAD_REQUESTS_WAIT if held else LEAD_REQUESTS_FIRST_WAIT)
     task = _LEAD_READING[0]
     if task is None or task.done():
         task = asyncio.ensure_future(_lead_requests_read(bot))
         _LEAD_READING[0] = task
     try:
-        return await asyncio.wait_for(asyncio.shield(task), LEAD_REQUESTS_WAIT if wait is None else wait)
+        return await asyncio.wait_for(asyncio.shield(task), wait)
     except asyncio.TimeoutError:
         log.info("#lead-lab still being read - going ahead with %d posts held", len(held))
         return held
@@ -9396,6 +9412,70 @@ async def _lead_requests_read(bot) -> list[str]:
     waiting = any(one.id not in _LEAD_THREADS for one in threads)
     _LEAD_REQUESTS[:] = [time.monotonic() - (LEAD_REQUESTS_FRESH_SECONDS - 30 if waiting else 0), posts]
     return posts
+
+
+def _order_who(order: dict) -> str:
+    """A made order's client, the way `lead_request_for` matches them."""
+    fields = order.get("fields") or {}
+    return "\n".join(f"{label}: {fields.get(key) or ''}" for key, label in
+                     (("name", "NAME"), ("email", "EMAIL"), ("phone", "PHONE")) if fields.get(key))
+
+
+async def _agency_fill(bot) -> list[str]:
+    """Blank Agencies on cards made in the last two days, filled in from
+    #lead-lab - Aidan Moskovitz's card was made while #lead-lab was still
+    being read, his request (Nonstop Financial) right there. ["name: agency"]."""
+    from .. import ordercards
+
+    posts = await _lead_requests(bot, wait=300)
+    if not posts:
+        return []
+    held = await asyncio.to_thread(ordercards.load)
+    now = datetime.now(timezone.utc)
+    filled = []
+    for key, order in list(held.items()):
+        fields = order.get("fields") or {}
+        if order.get("status") != "made" or not order.get("card_id") or fields.get("agency") \
+                or order.get("agency_filled") or "agency" not in fields:
+            continue
+        try:
+            made = datetime.fromisoformat(str(order.get("made_at") or ""))
+        except ValueError:
+            continue
+        if now - made > timedelta(days=AGENCY_FILL_DAYS):
+            continue
+        agency = jobs.request_agency(jobs.lead_request_for(posts, _order_who(order)))
+        if not agency:
+            continue
+        try:
+            done = await asyncio.to_thread(jobs.order_card_fill_agency, bot.config, order["card_id"], agency)
+        except Exception:
+            log.warning("Couldn't fill in %s's agency", order.get("client"), exc_info=True)
+            continue
+        # Still RYTE's writing, so new notes keep updating it.
+        await _order_note(key, agency_filled=agency, fields={**fields, "agency": agency},
+                          **({"written": done} if done and ordercards.same_text(
+                              str(order.get("written") or ""), re.sub(r"(?im)^([ \t]*Agency[ \t]*:)[ \t]*" + re.escape(agency) + r"[ \t]*$", r"\1", done)) else {}))
+        if done:
+            filled.append(f"{order.get('client') or order.get('name')}: {agency} — {order.get('url', '')}")
+    return filled
+
+
+async def agency_fill_loop(bot: "WilByteBot") -> None:
+    """#lead-lab kept read, so a card never waits on it, and a card made
+    before its request was read gets its Agency filled in after."""
+    await asyncio.sleep(30)
+    while not bot.is_closed():
+        try:
+            filled = await _agency_fill(bot)
+            responder = _order_responder(bot) if filled else None
+            if responder is not None:
+                await responder.send("🏢 **Agency filled in from #lead-lab:**\n" + "\n".join(f"• {one}" for one in filled))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Filling in agencies failed; trying again shortly")
+        await asyncio.sleep(AGENCY_FILL_SECONDS)
 
 
 async def _agency_lookup(bot, name: str) -> str:

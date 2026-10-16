@@ -12592,6 +12592,23 @@ def agency_said(text: str, agencies=()) -> str:
     return ""
 
 
+def order_card_fill_agency(config: Config, card_id: str, agency: str) -> str:
+    """"Agency:" left blank on a card, filled in. Only a blank one: an agency
+    somebody has written in is theirs. The new description, or "" when
+    there was no blank to fill."""
+    client = open_trello(config)
+    try:
+        desc = str(client.card_detail(card_id).get("desc") or "")
+        blank = re.search(r"^([ \t]*Agency[ \t]*:)[ \t]*$", desc, re.MULTILINE | re.IGNORECASE)
+        if not blank:
+            return ""
+        desc = desc[:blank.start()] + f"{blank.group(1)} {agency}" + desc[blank.end():]
+        client.set_description(card_id, desc)
+        return desc
+    finally:
+        client.close()
+
+
 def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = (),
                request: str = "", agencies=()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -

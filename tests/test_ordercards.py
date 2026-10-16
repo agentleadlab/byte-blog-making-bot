@@ -2794,6 +2794,7 @@ def test_a_slow_lead_lab_read_never_holds_a_card_up(monkeypatch):
 
     monkeypatch.setattr(client, "_lead_requests_read", slow)
     monkeypatch.setattr(client, "LEAD_REQUESTS_WAIT", 0.05)
+    monkeypatch.setattr(client, "LEAD_REQUESTS_FIRST_WAIT", 0.05)
 
     async def two_orders():
         return await asyncio.gather(client._lead_requests(None), client._lead_requests(None))
@@ -2844,3 +2845,43 @@ def test_the_invoices_own_wording_doesnt_add_states():
     card["source"] = "New Payment | Payra\nPRODUCT: VET\nPayra invoice note: IA, KS, MO, IL, TX, TN, WV, NC"
     said = ordercards.doubts(card, today=date(2026, 10, 16))[0]
     assert any("also says NC" in one and "Payra invoice note" in one for one in said)
+
+
+def test_a_blank_agency_is_filled_in_after(monkeypatch, tmp_path):
+    """Aidan Moskovitz: his card was made while #lead-lab was still being
+    read, and his request said Nonstop Financial."""
+    desc = ("Name: Aidan Moskovitz\nEmail: aidan@example.com\nLead Type: Aged IUL - 30-90 days\n"
+            "Number of Leads Requested: 50\nStates: FL, SC\nAgency:\nAdditional Notes:")
+    board = {"c1": desc}
+
+    class Board:
+        def card_detail(self, card_id):
+            return {"desc": board[card_id]}
+
+        def set_description(self, card_id, text):
+            board[card_id] = text
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    held = {"k": {"status": "made", "card_id": "c1", "client": "Aidan Moskovitz", "url": "u", "written": desc,
+                  "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "fields": {"name": "Aidan Moskovitz", "email": "aidan@example.com", "agency": ""}}}
+    monkeypatch.setattr(ordercards, "load", lambda: held)
+    monkeypatch.setattr(ordercards, "save", lambda data: held.update(data))
+    request = ("New Lead Request\nName: Aidan Moskovitz\nEmail: aidan@example.com\n"
+               "States Leads In: FL, SC\nAgency: Nonstop Financial\nDiscount Code: LABAGED30")
+
+    async def requests(bot, **kw):
+        return [request]
+
+    monkeypatch.setattr(client, "_lead_requests", requests)
+    filled = asyncio.run(client._agency_fill(SimpleNamespace(config=None)))
+    assert filled and "Nonstop Financial" in filled[0]
+    assert "Agency: Nonstop Financial\nAdditional Notes:" in board["c1"]
+    assert held["k"]["written"] == board["c1"], "still RYTE's writing"
+    assert asyncio.run(client._agency_fill(SimpleNamespace(config=None))) == [], "once"
+    # An agency somebody wrote in isn't changed.
+    board["c2"] = desc.replace("Agency:", "Agency: AEP")
+    assert jobs.order_card_fill_agency(None, "c2", "Nonstop Financial") == ""
