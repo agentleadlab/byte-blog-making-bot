@@ -99,3 +99,13 @@ def _shipped_words_only():
     agents.taught({})
     yield
     agents.taught({})
+
+
+@pytest.fixture(autouse=True)
+def _payra_read_afresh():
+    """No test sees another's Payra read, or its throttling."""
+    from wilbyte.bot import jobs
+
+    jobs._PAYRA_RECENT.clear()
+    yield
+    jobs._PAYRA_RECENT.clear()

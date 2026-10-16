@@ -12770,6 +12770,61 @@ def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
 
 
 
+#: Payra read straight for the last two days is kept this long and shared -
+#: every order card, recheck and bank check reading it afresh drew
+#: "HTTP 429: Access to this resource has been throttled".
+PAYRA_FRESH_SECONDS = 90
+#: After a 429, the saved copy for this long before asking Payra again.
+PAYRA_THROTTLED_SECONDS = 300
+_PAYRA_RECENT: dict = {}
+_PAYRA_RECENT_LOCK = threading.Lock()
+
+
+def payra_recent(config: Config, kind: str, *, now=None) -> dict:
+    """The last two days of Payra's `kind` ("invoices" / "payments"), slim,
+    by id - read now at most every PAYRA_FRESH_SECONDS, shared by everything
+    that asks, and the half-hourly saved copy while Payra says to wait."""
+    import time
+
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    saved = lambda: dict(payraapi.load().get(kind) or {})  # noqa: E731
+    if not (token and site):
+        return saved()
+    with _PAYRA_RECENT_LOCK:
+        held = _PAYRA_RECENT.get(kind)
+        if held and time.monotonic() - held[0] < PAYRA_FRESH_SECONDS:
+            return dict(held[1])
+        if time.monotonic() < _PAYRA_RECENT.get("_throttled", 0):
+            return saved()
+        now = now or datetime.now(timezone.utc)
+        slim = payraapi.SLIM[kind]
+        found = {}
+        try:
+            with payraapi.PayraClient(token, site, timeout=60.0) as client:
+                after = payraapi.when(now - timedelta(days=2))
+                for _page in range(5):
+                    got = client.changed(kind, after)
+                    for record in got.get("records") or []:
+                        one = slim(record)
+                        if one["id"]:
+                            found[one["id"]] = one
+                    onward = str(got.get("next_updated_after") or "")
+                    if not got.get("records") or not onward or onward == after:
+                        break
+                    after = onward
+        except Exception as exc:
+            if "429" in str(exc):
+                _PAYRA_RECENT["_throttled"] = time.monotonic() + PAYRA_THROTTLED_SECONDS
+            logging.getLogger("wilbyte.bot").warning("Couldn't read Payra's %s - the saved copy instead: %s",
+                                                     kind, _short(exc, 120))
+            return saved()
+        _PAYRA_RECENT[kind] = (time.monotonic(), found)
+        return dict(found)
+
+
 def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
                        now=None) -> str:
     """The note on the Payra invoice behind a payment just posted - "can ryte
@@ -12784,25 +12839,9 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
     if not (token and site):
         return ""
     now = now or datetime.now(timezone.utc)
-    # The last two days straight from Payra - quick, and current to the
-    # minute - rather than the saved copy, which the half-hourly read fills.
-    data = {"invoices": {}}
-    try:
-        with payraapi.PayraClient(token, site, timeout=60.0) as client:
-            after = payraapi.when(now - timedelta(days=2))
-            for _page in range(5):
-                got = client.changed("invoices", after)
-                for record in got.get("records") or []:
-                    one = payraapi.slim_invoice(record)
-                    if one["id"]:
-                        data["invoices"][one["id"]] = one
-                onward = str(got.get("next_updated_after") or "")
-                if not got.get("records") or not onward or onward == after:
-                    break
-                after = onward
-    except Exception:
-        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra for the invoice note", exc_info=True)
-        data = payraapi.load()
+    # The last two days from Payra - current to the minute and shared - rather
+    # than the saved copy alone, which the half-hourly read fills.
+    data = {"invoices": payra_recent(config, "invoices", now=now)}
     email = str(email or "").strip().casefold()
     wanted = payraapi._cents(amount)
     found = []
@@ -12984,23 +13023,7 @@ def payra_payment_for(config: Config, *, name: str, amount: str = "", now=None) 
     if not (token and site and name):
         return None
     now = now or datetime.now(timezone.utc)
-    payments = {}
-    try:
-        with payraapi.PayraClient(token, site, timeout=60.0) as client:
-            after = payraapi.when(now - timedelta(days=2))
-            for _page in range(5):
-                got = client.changed("payments", after)
-                for record in got.get("records") or []:
-                    one = payraapi.slim_payment(record)
-                    if one["id"]:
-                        payments[one["id"]] = one
-                onward = str(got.get("next_updated_after") or "")
-                if not got.get("records") or not onward or onward == after:
-                    break
-                after = onward
-    except Exception:
-        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra's payments", exc_info=True)
-        payments = dict(payraapi.load().get("payments") or {})
+    payments = payra_recent(config, "payments", now=now)
     wanted = payraapi._cents(amount)
     found = []
     for payment in payments.values():

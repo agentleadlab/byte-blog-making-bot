@@ -2496,3 +2496,42 @@ def test_payras_line_blurb_doesnt_make_an_invoice_another_product():
     assert jobs._other_product("Aged Leads (VET)", invoice)
     assert not jobs._other_product("Aged Leads (IUL)", "Lines: interested in Indexed Universal Life, Final Expense")
     assert jobs._other_product("Aged Leads (VET)", "Aged IUL 180+ in PA, NV")
+
+
+def test_payra_is_read_once_and_shared_and_left_alone_when_it_says_wait(monkeypatch):
+    """"HTTP 429: Access to this resource has been throttled" - every card,
+    recheck and bank check was reading Payra afresh."""
+    from wilbyte import payraapi
+
+    asked = []
+
+    class Payra:
+        throttled = False
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def changed(self, kind, after):
+            asked.append(kind)
+            if Payra.throttled:
+                raise payraapi.PayraError("Payra said HTTP 429: Access to this resource has been throttled.")
+            return {"records": []}
+
+    monkeypatch.setattr(payraapi, "PayraClient", Payra)
+    monkeypatch.setattr(payraapi, "load", lambda *a, **k: {"invoices": {"saved": {"id": "saved"}}})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    jobs.payra_recent(config, "invoices")
+    jobs.payra_recent(config, "invoices")
+    assert asked == ["invoices"], "read twice inside a minute and a half"
+    jobs._PAYRA_RECENT.clear()
+    Payra.throttled = True
+    assert jobs.payra_recent(config, "invoices") == {"saved": {"id": "saved"}}
+    Payra.throttled = False
+    assert jobs.payra_recent(config, "invoices") == {"saved": {"id": "saved"}}
+    assert asked == ["invoices", "invoices"], "asked again while Payra said to wait"

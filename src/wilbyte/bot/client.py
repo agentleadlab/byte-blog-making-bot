@@ -10337,10 +10337,13 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
         except ValueError:
             since = None
         extra = tuple(order.get("extra_notes") or ())
-        if not extra:
+        if not extra and not order.get("invoice_looked"):
             # Made before the invoice was read for every order - Blaze
             # Lubbers - or before its note was written: read now.
             note = await _order_invoice_note(bot, message)
+            # Looked once - not on every note in the thread, which is a lot of
+            # asking Payra for an invoice that has nothing on it.
+            await _order_note(key, invoice_looked=True)
             if note:
                 extra = (f"Payra invoice note: {note}",)
                 await _order_note(key, extra_notes=list(extra))
