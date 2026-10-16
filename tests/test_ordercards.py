@@ -2484,3 +2484,15 @@ def test_an_edited_note_updates_the_card_too(monkeypatch):
         guild_id=1, channel_id=950, message_id=8, data={"author": {"id": str(RYTE), "bot": True}})))
     assert len(started) == 1, "RYTE's own edits aren't notes"
     client._ORDER_PENDING.clear()
+
+
+def test_payras_line_blurb_doesnt_make_an_invoice_another_product():
+    """Frank Nocera: his FEX invoice's line said "The leads may include people
+    interested in Indexed Universal Life, Final Expense" and was taken for IUL."""
+    invoice = ("Name: frank nocera\nLead Type: Aged Final Expense - 180+ days [AGED - $1/Lead]\nStates Leads In: TX,FL\n"
+               "Number of Requested Leads: 100\nLines: This payment is for a list of aged leads provided by Agent Lead "
+               "Lab. The leads may include people interested in Indexed Universal Life, Final Expense × 100 @ $1.00")
+    assert not jobs._other_product("Aged Leads (FEX)", invoice)
+    assert jobs._other_product("Aged Leads (VET)", invoice)
+    assert not jobs._other_product("Aged Leads (IUL)", "Lines: interested in Indexed Universal Life, Final Expense")
+    assert jobs._other_product("Aged Leads (VET)", "Aged IUL 180+ in PA, NV")

@@ -12860,12 +12860,22 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
 
 
 def _other_product(paid_for: str, invoice: str) -> bool:
-    """Whether an invoice is for a different lead type than the payment."""
+    """Whether an invoice is for a different lead type than the payment - by
+    what it says was bought (its "Lead Type:" line, else its note), never by
+    Payra's line blurb: "The leads may include people interested in Indexed
+    Universal Life, Final Expense" read Frank Nocera's FEX invoice as IUL,
+    and his aged card was never made."""
     from .. import setupcheck
 
     if re.match(r"^[—\-–(]", paid_for.strip()):
         return False
-    return setupcheck.same_product(paid_for, invoice) is False and setupcheck.same_product(invoice, paid_for) is False
+    lines = [line.strip() for line in str(invoice or "").splitlines() if line.strip()]
+    said = [line for line in lines if re.match(r"(?:payra invoice note:\s*)?lead\s*type", line, re.IGNORECASE)]
+    said = said or [line for line in lines if not re.match(r"(?:lines|description)\s*:", line, re.IGNORECASE)]
+    if not said:
+        return False
+    text = "\n".join(said)
+    return setupcheck.same_product(paid_for, text) is False and setupcheck.same_product(text, paid_for) is False
 
 
 def invoice_said(invoice: dict) -> str:
