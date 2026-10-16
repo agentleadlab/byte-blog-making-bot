@@ -2946,3 +2946,65 @@ def _note_is(monkeypatch, note):
     monkeypatch.setattr(jobs, "payra_invoice_note", note)
     monkeypatch.setattr(jobs, "payra_invoice_pick", lambda config, **kw: (
         note(config, **{key: value for key, value in kw.items() if key != "taken"}), ""))
+
+
+def test_two_invoices_are_two_cards_even_paid_together(monkeypatch):
+    """"for ahmed, two cards"."""
+    held = {"1560750000000000000": {"status": "made", "card_id": "c1", "invoice_id": "i40"},
+            "1560750000000000001": {"invoice_id": "i39"},
+            "1560750000000000002": {"invoice_id": "i40"}}
+    monkeypatch.setattr(ordercards, "load", lambda: held)
+    assert client._own_invoice({"id": "c1"}, "1560750000000000001")
+    assert not client._own_invoice({"id": "c1"}, "1560750000000000002"), "the same invoice paid twice"
+    assert not client._own_invoice({"id": "c1"}, "1560750000000000009"), "no invoice known: as before"
+
+
+def test_a_reply_to_a_deleted_message_is_said_in_the_channel():
+    import discord as discord_lib
+
+    from wilbyte.bot.responders import MessageResponder
+
+    sent = []
+
+    class Gone(discord_lib.HTTPException):
+        def __init__(self):
+            self.code, self.status, self.text = 50035, 400, "In message_reference: Unknown message"
+
+        def __str__(self):
+            return self.text
+
+    async def reply(**kw):
+        raise Gone()
+
+    async def send(**kw):
+        sent.append(kw.get("content"))
+
+    message = SimpleNamespace(author=SimpleNamespace(id=1), channel=SimpleNamespace(id=2, send=send), reply=reply)
+    asyncio.run(MessageResponder(message).send("done"))
+    assert sent == ["done"]
+
+
+def test_lead_lab_is_read_whole_once_then_only_whats_new(monkeypatch):
+    asked = []
+
+    class Channel:
+        name, id = "lead-lab", 5
+
+        def history(self, limit=None, after=None):
+            asked.append((limit, getattr(after, "id", None)))
+
+            async def each():
+                if after is None:
+                    yield SimpleNamespace(id=10, created_at=None, content="", embeds=[
+                        SimpleNamespace(title="New Lead Request", description="Name: A B\\nAgency: FFL", fields=[],
+                                        url=None, footer=None, author=None)])
+                else:
+                    yield SimpleNamespace(id=11, created_at=None, content="Agency: AEP", embeds=[])
+            return each()
+
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_lead_request_channel_id="5")),
+                          get_channel=lambda one: Channel())
+    asyncio.run(client._lead_requests_read(bot))
+    posts = asyncio.run(client._lead_requests_read(bot))
+    assert asked == [(client.LEAD_REQUESTS_READ, None), (None, 10)]
+    assert len(posts) == 2

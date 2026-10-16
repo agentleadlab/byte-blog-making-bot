@@ -113,6 +113,7 @@ def _payra_read_afresh():
     client._LEAD_TROUBLE[0] = ""
     client._LEAD_READING[0] = None
     client._LEAD_THREADS.clear()
+    client._LEAD_POSTS.clear()
     yield
     jobs._PAYRA_RECENT.clear()
     client._LEAD_REQUESTS[:] = [0.0, []]

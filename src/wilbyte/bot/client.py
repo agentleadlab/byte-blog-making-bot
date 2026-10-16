@@ -9280,6 +9280,7 @@ async def _order_read(bot, message, *, since: datetime | None = None,
         request = jobs.lead_request_for(requests, text)
     if not request:
         log.info("No New Lead Request in #lead-lab for this order (%d posts read)", len(requests))
+        _log_near_miss(requests, text)
     # Every agency #lead-lab has named, so one written alone in the notes is known.
     agencies = tuple(dict.fromkeys(filter(None, (jobs.request_agency(one) for one in requests))))
     card = await asyncio.to_thread(partial(
@@ -9375,8 +9376,26 @@ async def _lead_requests(bot, *, wait: float | None = None, fresh_within: float 
         return held
 
 
+#: #lead-lab's posts as read: {message id: (posted at, text)}.
+_LEAD_POSTS: dict = {}
+
 #: Why #lead-lab couldn't be read, said once in Goat; "" when it's fine.
 _LEAD_TROUBLE: list = [""]
+
+
+def _log_near_miss(posts, text: str) -> None:
+    """A #lead-lab post that names the client but wasn't taken as their
+    request, as it reads - so what it looks like to RYTE can be seen."""
+    emails, phones, names = jobs._who_in(text)
+    keys = [one for one in (*emails, *names) if one] + list(phones)
+    for post in posts or ():
+        flat = " ".join(str(post).split()).casefold()
+        digits = re.sub(r"\D", "", str(post))
+        if any(key in flat for key in emails | names) or any(phone in digits for phone in phones):
+            log.info("#lead-lab post naming them, not taken (agency read: %r): %r",
+                     jobs.request_agency(post), str(post)[:600])
+            return
+    log.info("Nothing in #lead-lab names %s", ", ".join(sorted(keys)) or "them")
 
 
 def _lead_lab_channel(bot):
@@ -9404,8 +9423,17 @@ async def _lead_requests_read(bot) -> list[str]:
             _LEAD_TROUBLE[0] = "I can't find #lead-lab"
             log.warning("Can't see #lead-lab - no agency from New Lead Requests")
             return []
-        found = [(getattr(one, "created_at", None), _all_text(one))
-                 async for one in channel.history(limit=LEAD_REQUESTS_READ)]
+        # The whole channel once, then only what's new since - a full read
+        # each time took longer than a card waits ("still being read").
+        newest = max((one for one in _LEAD_POSTS if one > 0), default=None)
+        if newest is None:
+            got = [one async for one in channel.history(limit=LEAD_REQUESTS_READ)]
+        else:
+            got = [one async for one in channel.history(limit=None, after=discord.Object(id=newest))]
+        for one in got:
+            _LEAD_POSTS[getattr(one, "id", None) or -len(_LEAD_POSTS) - 1] = (
+                getattr(one, "created_at", None), _all_text(one))
+        found = list(_LEAD_POSTS.values())
     except Exception as exc:
         _LEAD_TROUBLE[0] = f"I can't read #lead-lab ({_readable(exc)})"
         log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
@@ -9895,7 +9923,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         except Exception:
             log.warning("Couldn't look for their card", exc_info=True)
             existing = None
-        if existing is not None and not _paid_together(existing, key):
+        if existing is not None and (not _paid_together(existing, key) or _own_invoice(existing, key)):
             # "Always make seprate card for now, unless its paid at the same
             # time. if paid separately. create card"
             existing = None
@@ -10279,6 +10307,22 @@ def _paid_together(existing: dict, key: str) -> bool:
         if abs(this - then) <= PAID_TOGETHER:
             return True
     return False
+
+
+def _own_invoice(existing: dict, key: str) -> bool:
+    """Whether this payment is for an invoice of its own, not the one on
+    `existing` - "for ahmed, two cards": INV-20039 and INV-20040 paid in one
+    charge are two cards, paid together or not."""
+    from .. import ordercards
+
+    held = ordercards.load()
+    mine = str((held.get(key) or {}).get("invoice_id") or "")
+    if not mine:
+        return False
+    theirs = {str(order.get("invoice_id") or "") for other, order in held.items()
+              if other != key and isinstance(order, dict) and order.get("card_id") == existing.get("id")}
+    theirs.discard("")
+    return bool(theirs) and mine not in theirs
 
 
 def _payload_copy(payload, **changed):

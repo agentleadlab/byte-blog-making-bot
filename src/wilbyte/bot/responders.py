@@ -127,7 +127,13 @@ class MessageResponder(Responder):
         # the rest as plain channel messages to avoid a wall of reply chips.
         if not self._replied:
             self._replied = True
-            return await self.message.reply(**payload, mention_author=False)
+            try:
+                return await self.message.reply(**payload, mention_author=False)
+            except discord.HTTPException as exc:
+                # The message asked about was deleted meanwhile: said in the
+                # channel instead of lost ("Unknown message").
+                if getattr(exc, "code", None) != 50035 and "Unknown message" not in str(exc):
+                    raise
         return await self.message.channel.send(**payload)
 
 
