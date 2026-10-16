@@ -2730,3 +2730,36 @@ def test_the_launch_days_name_comes_from_the_date(monkeypatch, iso):
                            notes=notes)
     assert card["fields"]["launch"] == "Saturday, October 17" and card["launch_iso"] == "2026-10-17"
     assert "Launch Date: Saturday, October 17" in card["desc"]
+
+
+def test_a_request_posted_as_a_thread_is_read_too(monkeypatch):
+    """Nova Cloud posts some requests as a thread - "Riley Noah · Aged IUL -
+    30-90 days [AGED - $8/Lead]" - with the details inside it."""
+    def history_of(posts):
+        def history(limit, oldest_first=False):
+            async def each():
+                for one in posts:
+                    yield SimpleNamespace(content=one, embeds=[])
+            return each()
+        return history
+
+    thread = SimpleNamespace(id=1481313804640981157 + 10, name="Riley Noah · Aged IUL - 30-90 days [AGED - $8/Lead]",
+                             history=history_of(["Email: riley@example.com\nAgency: Symmetry"]))
+
+    class Channel:
+        threads = [thread]
+        history = staticmethod(history_of(["Nova Cloud started a thread"]))
+
+        def archived_threads(self, limit):
+            async def each():
+                yield thread
+            return each()
+
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_lead_request_channel_id="123")),
+                          get_channel=lambda one: Channel())
+    monkeypatch.setattr(client, "_LEAD_THREADS", {})
+    posts = asyncio.run(client._lead_requests(bot))
+    assert len(posts) == 2
+    request = jobs.lead_request_for(posts, "NAME: Riley Noah\nPRODUCT: Aged Leads (IUL)")
+    assert jobs.request_agency(request) == "Symmetry"
+    assert jobs.request_agency(jobs.lead_request_for(posts, "EMAIL: RILEY@example.com")) == "Symmetry"

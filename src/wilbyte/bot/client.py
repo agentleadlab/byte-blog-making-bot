@@ -9277,6 +9277,7 @@ async def _order_read(bot, message, *, since: datetime | None = None,
     card = await asyncio.to_thread(partial(
         jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes,
         **({"request": request} if request else {}), **({"agencies": agencies} if agencies else {})))
+    card["lead_request"] = bool(request)
     # The team's screenshots - the first ones in `images`, one a marker.
     marked = sum(len(re.findall(r"\[screenshot \d+\]", one)) for one in notes)
     card["shots"] = images[:marked]
@@ -9287,14 +9288,39 @@ async def _order_read(bot, message, *, since: datetime | None = None,
 _LEAD_REQUESTS: list = [0.0, []]
 #: Read again after this long - a request is posted before the payment.
 LEAD_REQUESTS_FRESH_SECONDS = 300
-#: How many of its posts are looked through.
-LEAD_REQUESTS_READ = 500
+#: How many of its posts are looked through - a request can be weeks
+#: before the payment.
+LEAD_REQUESTS_READ = 1500
+#: How many of its archived threads - Nova Cloud posts some requests as a
+#: thread ("Riley Noah · Aged IUL - 30-90 days"), the details inside it.
+LEAD_THREADS_READ = 300
+#: A thread's opening, read once: {thread id: text}. It doesn't change.
+_LEAD_THREADS: dict = {}
+
+
+async def _lead_thread_text(thread) -> str:
+    """A request thread as text: its title, then its first few posts."""
+    held = _LEAD_THREADS.get(thread.id)
+    if held is not None:
+        return held
+    title = str(getattr(thread, "name", "") or "")
+    # "Riley Noah · Aged IUL - 30-90 days" - who it's for, before the dot.
+    parts = [title] + ([f"Name: {title.split('·')[0].strip()}"] if "·" in title else [])
+    try:
+        async for one in thread.history(limit=5, oldest_first=True):
+            parts.append(_all_text(one))
+    except Exception:
+        log.info("Couldn't read the #lead-lab thread %s", getattr(thread, "name", ""), exc_info=True)
+        return "\n".join(parts)
+    text = "\n".join(part for part in parts if part)
+    _LEAD_THREADS[thread.id] = text
+    return text
 
 
 async def _lead_requests(bot) -> list[str]:
-    """#lead-lab's posts, newest first, as text - each client's New Lead
-    Request, where the agency they're with is said. [] when it can't be
-    read: a card without an agency is still a card."""
+    """#lead-lab's posts and request threads, newest first, as text - each
+    client's New Lead Request, where the agency they're with is said. []
+    when it can't be read: a card without an agency is still a card."""
     import time
 
     if _LEAD_REQUESTS[1] and time.monotonic() - _LEAD_REQUESTS[0] < LEAD_REQUESTS_FRESH_SECONDS:
@@ -9305,10 +9331,25 @@ async def _lead_requests(bot) -> list[str]:
         if channel is None:
             log.warning("Can't see #lead-lab (%s) - no agency from New Lead Requests", wanted or "not set")
             return []
-        posts = [_all_text(one) async for one in channel.history(limit=LEAD_REQUESTS_READ)]
+        found = [(getattr(one, "created_at", None), _all_text(one))
+                 async for one in channel.history(limit=LEAD_REQUESTS_READ)]
     except Exception:
         log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
         return []
+    threads = list(getattr(channel, "threads", None) or [])
+    try:
+        if hasattr(channel, "archived_threads"):
+            threads += [one async for one in channel.archived_threads(limit=LEAD_THREADS_READ)]
+    except Exception:
+        log.info("Couldn't list #lead-lab's archived threads", exc_info=True)
+    seen = set()
+    for thread in threads:
+        if thread.id in seen:
+            continue
+        seen.add(thread.id)
+        found.append((discord.utils.snowflake_time(thread.id), await _lead_thread_text(thread)))
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    posts = [text for _when, text in sorted(found, key=lambda one: one[0] or oldest, reverse=True)]
     _LEAD_REQUESTS[:] = [time.monotonic(), posts]
     return posts
 
@@ -9747,7 +9788,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                    "one's posted in the thread (or put on the card)."
                    if kind == "fresh" and not (card.get("fields") or {}).get("launch") else "")
                 + (f"\n-# Not in the order yet: {', '.join(card['missing'][:8])}. I'll add them when they're "
-                   f"posted in the thread." if card.get("missing") else ""))
+                   f"posted in the thread." if card.get("missing") else "")
+                # Why the Agency is blank, so it can be put right.
+                + ("\n-# Agency blank — no New Lead Request in #lead-lab matches their email, phone or name, "
+                   "and the notes don't name one." if "agency" in (card.get("fields") or {})
+                   and not (card.get("fields") or {}).get("agency") and not card.get("lead_request") else ""))
         ack = _ORDER_ACKS.pop(key, None)
         try:
             if ack is None or not hasattr(ack, "edit"):

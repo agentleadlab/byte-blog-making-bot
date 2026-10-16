@@ -12548,10 +12548,11 @@ def _who_in(text: str) -> tuple[set, set, set]:
 
 def lead_request_for(posts, text: str) -> str:
     """The client's New Lead Request in #lead-lab - the first of `posts`
-    (newest first) with their email, phone or full name - or ""."""
+    (newest first) with their email, phone or full name and an agency
+    filled in - or ""."""
     emails, phones, names = _who_in(text)
     for post in posts or ():
-        if "lead request" not in str(post or "").casefold():
+        if not request_agency(post):
             continue
         their_emails, their_phones, their_names = _who_in(post)
         if emails & their_emails or phones & their_phones or names & their_names:
