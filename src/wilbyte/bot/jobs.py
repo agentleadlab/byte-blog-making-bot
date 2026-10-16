@@ -12515,6 +12515,19 @@ def order_desc(fields: dict, kind: str = "fresh") -> str:
     return "\n".join(lines)
 
 
+_ZELLE_POST = re.compile(r"new\s+payment\W{0,6}\|\W{0,6}zelle\b|\bmethod\W{0,6}:\W{0,6}zelle\b", re.IGNORECASE)
+_ZELLE_BANK = re.compile(r"\bmethod\W{0,6}:\W{0,6}zelle\s*\(([^)\n]{1,30})\)", re.IGNORECASE)
+
+
+def zelle_note(text: str) -> str:
+    """"Paid via Zelle (Chase)" when the payment post is a Zelle one - Nova's
+    "New Payment | Zelle ... METHOD: Zelle (Chase)" - else ""."""
+    if not _ZELLE_POST.search(str(text or "")):
+        return ""
+    bank = _ZELLE_BANK.search(str(text or ""))
+    return f"Paid via Zelle ({' '.join(bank.group(1).split())})" if bank else "Paid via Zelle"
+
+
 def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = ()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -
     read by Claude into the card's fields. {"kind": "fresh"|"aged", "client",
@@ -12614,6 +12627,11 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    zelle = zelle_note(text)
+    if zelle and zelle.casefold() not in str(fields.get("notes") or "").casefold():
+        # "add on additional notes on the cards both aged and fresh that if
+        # they are zelle payments".
+        fields["notes"] = "\n".join(one for one in (zelle, str(fields.get("notes") or "").strip()) if one)
     if kind == "aged" and not re.search(r"\d", str(fields.get("leads") or "")):
         # "180+ days ALL" over the stock list, and "37 leads" of the 90-180:
         # no total written down, so it was left blank and Alexis Lesme's

@@ -2577,3 +2577,31 @@ def test_all_of_whats_available_is_a_count_on_the_card(monkeypatch):
     assert card["fields"]["leads"] == "206"
     assert not any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
     assert ordercards.all_counted("25 VET leads\nTX, FL") is None, "nothing asked for ALL"
+
+
+@pytest.mark.parametrize("kind", ["fresh", "aged"])
+def test_a_zelle_payment_says_so_in_the_notes(monkeypatch, kind):
+    """"add on additional notes on the cards both aged and fresh that if they
+    are zelle payments"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": kind, "name": "Ramsey Traboulsi", "states": "MO", "package": "VET", "leads": "25"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/16 01:46PM] Nova: @Luna Zelle payment received — Ramsey Traboulsi $2,000.00\n"
+            "New Payment | Zelle 💰\n**NAME:** Ramsey Traboulsi\n**AMOUNT:** $2,000.00\n**METHOD:** Zelle (Chase)\n"
+            "**PRODUCT:** — (match to their order)")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16),
+                           notes=["he will send schedule"])
+    assert card["fields"]["notes"].startswith("Paid via Zelle (Chase)")
+    assert "he will send schedule" in card["fields"]["notes"]
+    assert "Paid via Zelle (Chase)" in card["desc"]
+    payra = text.replace("New Payment | Zelle", "New Payment | Payra").replace("**METHOD:** Zelle (Chase)\n", "")
+    assert "Zelle" not in jobs.read_order(config, text=payra, images=[], today=date(2026, 10, 16))["fields"].get("notes", "")
