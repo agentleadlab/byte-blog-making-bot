@@ -2798,3 +2798,30 @@ def test_a_slow_lead_lab_read_never_holds_a_card_up(monkeypatch):
 
     assert asyncio.run(asyncio.wait_for(two_orders(), 2)) == [[], []]
     assert started == [1], "one read, not one per order"
+
+
+def test_only_the_agency_comes_from_the_request(monkeypatch):
+    """Collin Williams: "States: the order also says IN, MD, NC - not on the
+    card" - those were in his #lead-lab request, not his order."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Collin Williams", "email": "collin@example.com", "phone": "+15155550341",
+        "states": "IA, KS, MO, IL, TX, TN, WV", "package": "Text-Verified Fresh Vets", "leads": "40",
+        "launch": "Monday, October 19", "launch_iso": "2026-10-19", "agency": ""})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("New Payment | Payra\nNAME: Collin Williams\nEMAIL: collin@example.com\nPRODUCT: VET\n"
+            "[10/16 04:10PM] Kharyl: can i please have 40 text verified fresh vets. Starting Monday the 19th at 8AM.\n"
+            "IA, KS, MO, IL, TX, TN, WV\n40 leads")
+    request = ("New Lead Request\nName: Collin Williams\nEmail: collin@example.com\n"
+               "States Leads In: IN, MD, NC\nAgency: Symmetry")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16), request=request)
+    assert card["fields"]["agency"] == "Symmetry"
+    assert ordercards.doubts(card, today=date(2026, 10, 16))[0] == []

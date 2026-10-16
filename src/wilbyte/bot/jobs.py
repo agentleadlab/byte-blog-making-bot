@@ -12721,7 +12721,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Where the agency is said: the client's New Lead Request in
         # #lead-lab - "he doesnt know where to get them".
         fields["agency"] = agency
-        source += "\n" + str(request)
+        # The agency only: the rest of the request is what they asked for
+        # once, not this order - Collin Williams' listed IN, MD and NC, and
+        # his card was held for states his order never named.
+        source += f"\nAgency: {agency}"
     zelle = zelle_note(text)
     if zelle and zelle.casefold() not in str(fields.get("notes") or "").casefold():
         # "add on additional notes on the cards both aged and fresh that if
