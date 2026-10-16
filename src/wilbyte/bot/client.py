@@ -9941,6 +9941,17 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             card["kind"] = "fresh"
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
+    # Aged leads and new-agent leads bought together: a card for each -
+    # Patrick Moreno's four aged lines on one Aged Leads card, each new-agent
+    # line on a New Agent card of its own.
+    subs = jobs.split_order(card)
+    if subs:
+        if getattr(payload, "aged_only", False):
+            # Made on its own from an invoice: new-agent cards wait for a gavel.
+            await _order_forget(key)
+            return
+        await _order_make_split(bot, payload, key, responder, message, card, subs, link, thread_id)
+        return
     # Another payment for an order that has its card already: on that card.
     if card.get("client") and not getattr(payload, "separate", False):
         try:
@@ -10046,6 +10057,123 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             await ack.edit(content=said)
         except Exception:
             await responder.send(said, quiet=True)
+
+
+async def _order_make_split(bot, payload, key, responder, message, card, subs, link, thread_id) -> None:
+    """An order split into its cards - "yes build it that way": checked line
+    by line, held for a person when a line doesn't add up, then made card by
+    card, the aged one held in Franklin (Admin) when the bank hasn't settled."""
+    wrong = jobs.split_doubts(subs)
+    if wrong and not getattr(payload, "confirmed", False):
+        preview = {"client": card.get("client"), "missing": [],
+                   "name": f"{card.get('client') or 'This order'} — split into {len(subs)} cards",
+                   "desc": "\n\n".join(f"── {one['name']} ──\n{one['desc']}" for one in subs)}
+        await _order_forget(key)
+        _also_running(asyncio.get_running_loop().create_task(
+            _order_held(bot, _payload_copy(payload), key, responder, preview, wrong, link)))
+        return
+    paid, _looked = await _order_payment(bot, message)
+    bank = jobs.payment_by_bank(paid)
+    parts, held_back, trouble = [], False, []
+    for one in subs:
+        hold = bank and one["kind"] == "aged" and BANK_HOLD_AGED and not jobs.payment_settled(paid)
+        try:
+            made = await asyncio.to_thread(partial(jobs.order_card_make, bot.config, one["kind"], one,
+                                                   list_name=PARKED_LIST if hold else ""))
+        except Exception as exc:
+            trouble.append(f"{one['name']} ({one['fields'].get('package')}): {_readable(exc)}")
+            continue
+        held_back = held_back or hold
+        if bank:
+            try:
+                await asyncio.to_thread(jobs.order_bank_comment, bot.config, made["id"], _bank_comment(paid, hold=hold))
+            except Exception:
+                log.warning("Couldn't say on the card that they paid by bank", exc_info=True)
+        attached = []
+        if card.get("shots"):
+            try:
+                attached = await asyncio.to_thread(jobs.order_card_attach, bot.config, made["id"], card["shots"])
+            except Exception:
+                log.warning("Couldn't put the screenshots on the card", exc_info=True)
+        parts.append({"kind": one["kind"], "card_id": made["id"], "url": made["url"], "name": one["name"],
+                      "list": made["list"], "written": one["desc"], "fields": one["fields"],
+                      "package": one["fields"].get("package", ""), "attached": attached, "hold": hold})
+    if not parts:
+        await _order_forget(key)
+        if responder is not None:
+            await responder.send("🔨 ⚠ Couldn't make the cards for " + (card.get("client") or "that order") + ": "
+                                 + "; ".join(trouble))
+        return
+    first = parts[0]
+    await _order_note(key, status="made", split=True, parts=parts, kind=first["kind"], card_id=first["card_id"],
+                      url=first["url"], name=first["name"], fields=first["fields"], written=first["written"],
+                      extra_notes=list(getattr(payload, "extra_notes", ()) or ()),
+                      made_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), client=card.get("client"),
+                      link=link, thread_id=str(thread_id or ""), message_channel_id=str(payload.channel_id),
+                      payment_id=str((paid or {}).get("id") or ""), bank=bank,
+                      bank_hold=bool(first.get("hold")))
+    try:
+        await _order_seen(bot, key)
+    except Exception:
+        log.warning("Couldn't see how far the order's thread goes", exc_info=True)
+    await _order_mark(bot, payload.channel_id, key)
+    if responder is None:
+        return
+    said = (f"🔨 ✅ **{card.get('client') or 'This order'}** buys aged leads and new-agent leads — "
+            f"split into {len(parts)} cards:\n"
+            + "\n".join(f"• {one['name']} · {one['package']} · {one['list']}\n  {one['url']}"
+                        + ("" if one["kind"] == "aged" or one["fields"].get("launch") else
+                           " — no launch date yet: it waits until one's posted")
+                        + ("" if one["kind"] == "aged" or one["fields"].get("states") else " — states to come")
+                        for one in parts)
+            + ("\n🏦 **Paid by bank — not settled yet.** The aged card waits in Franklin (Admin)." if held_back else
+               "\n🏦 Paid by bank — captured, not settled yet. Said in a comment on each card." if bank else "")
+            + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
+            + ("\n⚠ Not made: " + "; ".join(trouble) if trouble else ""))
+    ack = _ORDER_ACKS.pop(key, None)
+    try:
+        if ack is None or not hasattr(ack, "edit"):
+            raise LookupError
+        await ack.edit(content=said[:1950])
+    except Exception:
+        await responder.send(said[:1950], quiet=True)
+
+
+async def _order_refresh_split(bot, key: str, order: dict, card: dict) -> str:
+    """New notes on a split order: each of its cards brought up to date -
+    the 34 OTP Vets' card gets its states when they're posted."""
+    subs = jobs.split_order(card)
+    parts = [dict(one) for one in order.get("parts") or []]
+    await _order_seen(bot, key)
+    if not subs or [one["kind"] for one in subs] != [one["kind"] for one in parts]:
+        lines = len(subs)
+        if order.get("split_changed") != lines:
+            await _order_note(key, split_changed=lines)
+            responder = _order_responder(bot)
+            if responder is not None:
+                await responder.send(f"⚠ **{order.get('client') or 'A split order'}** — the new notes change the "
+                                     f"order's lines, so its cards are left as they are. Check them: "
+                                     + " · ".join(one.get("url", "") for one in parts))
+        return "changed"
+    updated = []
+    for part, sub in zip(parts, subs):
+        done, said = await asyncio.to_thread(partial(
+            jobs.order_card_update, bot.config, part["card_id"], written=part.get("written", ""),
+            desc=sub["desc"], name=sub["name"], commented=tuple(part.get("commented") or ())))
+        if done == "updated":
+            part.update(written=sub["desc"], fields=sub["fields"])
+            updated.append(part)
+        elif done == "commented":
+            part["commented"] = list(part.get("commented") or []) + said
+            updated.append(part)
+    if not updated:
+        return "same"
+    await _order_note(key, parts=parts, written=parts[0].get("written", ""), fields=parts[0].get("fields") or {})
+    responder = _order_responder(bot)
+    if responder is not None:
+        await responder.send(f"📝 {order.get('client') or 'A split order'} — updated from the new notes: "
+                             + " · ".join(f"{one['package']} {one['url']}" for one in updated), quiet=True)
+    return "updated"
 
 
 async def _order_mark(bot, channel_id, message_id) -> bool:
@@ -10762,6 +10890,8 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
                         f"belong to another order.\n{order.get('url', '')}")
             await _order_seen(bot, key)
             return "other person"
+        if order.get("split"):
+            return await _order_refresh_split(bot, key, order, card)
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))

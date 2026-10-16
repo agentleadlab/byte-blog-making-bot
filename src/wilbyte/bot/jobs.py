@@ -12664,6 +12664,21 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
+        "parts": {"type": "array", "description": (
+            "ONLY when one order buys both aged leads and new-agent leads (fresh / OTP / text-verified, set up "
+            "to go live): every line of the order, in the order written, each as its own part. Empty in every "
+            "other order - one lead type, or several of one kind."),
+            "items": {"type": "object", "properties": {
+                "kind": {"type": "string", "enum": ["fresh", "aged"]},
+                "package": {"type": "string", "description": "That line's lead type, as written: "
+                                                             "'Aged Vets 180+', '25 OTP IULs' without the count."},
+                "leads": {"type": "string", "description": "That line's count, just the number: '5659'."},
+                "states": {"type": "string", "description": (
+                    "That line's states as two-letter codes, 'Nationwide' when it says so, or empty when the "
+                    "states aren't given yet ('waiting for states').")},
+                "launch_iso": {"type": "string", "description": (
+                    "A fresh line's go-live date as YYYY-MM-DD when the order gives one for that line, else empty.")},
+            }, "required": ["kind", "package", "leads", "states", "launch_iso"]}},
     }
     tool = {"name": "order", "description": "The order's details for its Trello card.",
             "input_schema": {"type": "object", "properties": properties, "required": list(properties)}}
@@ -12679,7 +12694,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     import os
 
     def asking(model, said):
-        return client.messages.create(model=model, max_tokens=900, system=system, tools=[tool],
+        return client.messages.create(model=model, max_tokens=2000, system=system, tools=[tool],
                                       tool_choice={"type": "tool", "name": "order"},
                                       messages=[{"role": "user", "content": said}])
 
@@ -12769,11 +12784,111 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         counted = ordercards.all_counted(source)
         if counted:
             fields["leads"] = str(counted)
+    parts = [{key: " ".join(str((one or {}).get(key) or "").split())
+              for key in ("kind", "package", "leads", "states", "launch_iso")}
+             for one in got.get("parts") or [] if isinstance(one, dict)]
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
+            "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",
             "missing": [label for key, label in (AGED_FIELDS if kind == "aged" else ORDER_FIELDS)
                         if key not in ("notes", "agency") and not fields.get(key)]}
+
+
+def _count_of(said: str) -> int | None:
+    found = re.search(r"\d[\d,]*", str(said or ""))
+    return int(found.group(0).replace(",", "")) if found else None
+
+
+def split_order(card: dict, *, today=None) -> list[dict]:
+    """An order that buys aged leads and new-agent leads at once, as the
+    cards it is: one Aged Leads card with every aged line, and a New Agent
+    card for each new-agent line - "yes build it that way" (Patrick Moreno:
+    four aged lines delivered today, 34 OTP Vets waiting on states, 25 OTP
+    IULs live Sunday). [] when the order isn't one of those."""
+    from .. import ordercards
+
+    parts = card.get("parts") or []
+    if not {"aged", "fresh"} <= {one.get("kind") for one in parts}:
+        return []
+    base = dict(card.get("fields") or {})
+    client = card.get("client") or base.get("name") or "New client"
+    source = str(card.get("source") or "")
+    aged = [one for one in parts if one["kind"] == "aged"]
+    fresh = [one for one in parts if one["kind"] == "fresh"]
+
+    def line(one):
+        count = _count_of(one.get("leads"))
+        return (f"{count:,} " if count is not None else "") + one["package"] + (
+            f" — {one['states']}" if one.get("states") else " — states to come")
+
+    zelle = [bit for bit in str(base.get("notes") or "").splitlines() if bit.startswith("Paid via Zelle")]
+    out = []
+    fields = dict(base, launch="")
+    counts = [_count_of(one.get("leads")) for one in aged]
+    total = sum(one for one in counts if one is not None)
+    fields["package"] = " + ".join(one["package"] for one in aged)
+    fields["leads"] = (f"{total:,}" if len(aged) == 1 else
+                       f"{total:,} (" + " + ".join(f"{one:,}" for one in counts if one is not None) + ")")
+    places = list(dict.fromkeys(one.get("states") or "" for one in aged))
+    fields["states"] = places[0] if len(places) == 1 else "; ".join(
+        f"{one['package']}: {one.get('states') or 'to come'}" for one in aged)
+    also = [line(one) for one in fresh]
+    said = "\n".join(bit for bit in str(base.get("notes") or "").splitlines() if not bit.startswith("Paid via Zelle"))
+    fields["notes"] = "\n".join(
+        [*zelle, "Order lines:", *(f"• {line(one)}" for one in aged), "",
+         "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]
+        + (["", "From the thread:", said.strip()] if said.strip() else []))
+    out.append({"kind": "aged", "client": client, "fields": fields, "name": f"Aged Leads - {client}",
+                "desc": order_desc(fields, "aged"), "launch_iso": "", "source": source})
+    says_when = ordercards.says_when(source)
+    for one in fresh:
+        fields = dict(base)
+        count = _count_of(one.get("leads"))
+        fields["package"] = one["package"]
+        fields["leads"] = f"{count}" if count is not None else ""
+        codes = ordercards._codes(one.get("states") or "")
+        fields["states"] = ", ".join(codes) if codes else ""
+        when = ""
+        try:
+            when = date.fromisoformat(one.get("launch_iso") or "") if says_when else ""
+        except ValueError:
+            when = ""
+        fields["launch"] = f"{when:%A, %B} {when.day}" if when else ""
+        # Nothing of the other lines - no lead type, count or day: the filing
+        # reads a card's notes, and listing them made this one card read as
+        # three orders on two days.
+        fields["notes"] = "\n".join(
+            [*zelle, *([] if codes else ["No states yet - they'll be posted in the thread."]),
+             f"Part of a bigger order of {client}'s - the rest of it is on the Aged Leads card and its own "
+             f"New Agent cards."])
+        out.append({"kind": "fresh", "client": client, "fields": fields, "name": f"New Agent - {client}",
+                    "desc": order_desc(fields, "fresh"), "launch_iso": when.isoformat() if when else "",
+                    "source": source})
+    return out
+
+
+def split_doubts(cards: list[dict]) -> list[str]:
+    """What doesn't add up in a split order: each line's count and states
+    have to be in the order as written."""
+    from .. import ordercards
+
+    if not cards:
+        return []
+    source = str(cards[0].get("source") or "")
+    numbers = {int(one.replace(",", "")) for one in re.findall(r"\d[\d,]*", source)}
+    wrong = []
+    for card in cards:
+        fields = card.get("fields") or {}
+        counts = ([_count_of(bit) for bit in re.findall(r"[\d,]+", fields.get("leads") or "")]
+                  if card["kind"] == "aged" else [_count_of(fields.get("leads"))])
+        for count in counts[1:] if len(counts) > 1 else counts:
+            if count is not None and count not in numbers:
+                wrong.append(f"{card['name']}: {count:,} leads isn't in the order")
+        for code in ordercards._codes(fields.get("states") or ""):
+            if not ordercards._said_state(code, source):
+                wrong.append(f"{card['name']}: {code} isn't in the order")
+    return wrong
 
 
 def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "") -> dict:

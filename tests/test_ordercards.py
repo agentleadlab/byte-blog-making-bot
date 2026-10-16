@@ -3102,3 +3102,116 @@ def test_notes_about_somebody_else_dont_rewrite_the_card(order, monkeypatch):
     assert "about **Preston Bridges**, not Cole Petersen" in order.responder.sent[-1][0]
     asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
     assert sum("Preston Bridges" in one[0] for one in order.responder.sent) == 1, "said once"
+
+
+# ------------------------------------------------- aged and new-agent together
+
+PATRICK = ("[10/16 05:34PM] LeadLab: New Payment | Payra\nNAME: Patrick Moreno\nEMAIL: ops@example.com\n"
+           "AMOUNT: $12091.9\nPRODUCT: Text-Verified Trucker IUL\n"
+           "[10/16 06:35PM] Faith: Name: Patrick Moreno\nALL AGED VETS DELIVERED TODAY\n"
+           "Lead Type: 5,659 Aged Vets 180+\nStates: NationWide\nLead Type: 11,029 Aged IULs 180+\nStates: Nation Wide\n"
+           "Lead Type: 50 Aged Vets 30-90\nStates: TX\nLead Type: 100 Aged IULs 30-90\nStates: 25 NC 25 GA 25 FL 25 TX\n"
+           "OTP VETS - waiting for states\nLead Type: 34 OTP Vets\nStates: WAIT FOR STATES IN GROUP MESSAGE\n"
+           "Lead Type: 25 OTP IULs\nStates: AL AZ CA CO CT FL GA KY LA MA MD ME NC NM OH OK OR PA SC TN TX VA WA WI\n"
+           "Live on Sunday October 18\n@Nicole @Therese")
+PATRICK_PARTS = [
+    {"kind": "aged", "package": "Aged Vets 180+", "leads": "5659", "states": "Nationwide", "launch_iso": ""},
+    {"kind": "aged", "package": "Aged IULs 180+", "leads": "11029", "states": "Nationwide", "launch_iso": ""},
+    {"kind": "aged", "package": "Aged Vets 30-90", "leads": "50", "states": "TX", "launch_iso": ""},
+    {"kind": "aged", "package": "Aged IULs 30-90", "leads": "100", "states": "NC, GA, FL, TX", "launch_iso": ""},
+    {"kind": "fresh", "package": "OTP Vets", "leads": "34", "states": "", "launch_iso": ""},
+    {"kind": "fresh", "package": "OTP IULs", "leads": "25",
+     "states": "AL, AZ, CA, CO, CT, FL, GA, KY, LA, MA, MD, ME, NC, NM, OH, OK, OR, PA, SC, TN, TX, VA, WA, WI",
+     "launch_iso": "2026-10-18"},
+]
+
+
+def _patrick():
+    return {"kind": "fresh", "client": "Patrick Moreno", "source": PATRICK, "parts": [dict(one) for one in PATRICK_PARTS],
+            "fields": {"name": "Patrick Moreno", "email": "ops@example.com", "phone": "+13055550397",
+                       "agency": "", "notes": "ALL AGED VETS DELIVERED TODAY"}}
+
+
+def test_aged_and_new_agent_leads_split_into_their_cards():
+    """"yes build it that way" - one Aged Leads card with every aged line, a
+    New Agent card for each new-agent line."""
+    from wilbyte import agents
+
+    aged, vets, iuls = jobs.split_order(_patrick())
+    assert aged["kind"] == "aged" and aged["name"] == "Aged Leads - Patrick Moreno"
+    assert aged["fields"]["leads"] == "16,838 (5,659 + 11,029 + 50 + 100)"
+    assert "Aged Vets 30-90: TX" in aged["fields"]["states"]
+    assert "• 5,659 Aged Vets 180+ — Nationwide" in aged["desc"] and "34 OTP Vets — states to come" in aged["desc"]
+    assert "ALL AGED VETS DELIVERED TODAY" in aged["desc"]
+    assert vets["kind"] == "fresh" and vets["fields"]["leads"] == "34" and not vets["fields"]["states"]
+    assert not vets["fields"]["launch"], "waits for its states and its date"
+    assert "No states yet" in vets["desc"]
+    assert iuls["fields"]["launch"] == "Sunday, October 18" and iuls["fields"]["states"].startswith("AL, AZ")
+    assert "Sunday" not in vets["desc"], "the other line's date isn't this card's"
+    # Each New Agent card reads as the one order it is.
+    for one, wanted in ((vets, "OTP Vets"), (iuls, "OTP IULs")):
+        agent = agents.read_agent({"id": "5f0000000000000000000001", "name": one["name"], "desc": one["desc"],
+                                   "shortUrl": "u"}, text=one["desc"], today=date(2026, 10, 16))
+        assert agent.lead_type == wanted and agent.stated == wanted
+        assert len(agents.dated_orders(one["desc"], today=date(2026, 10, 16))) <= 1
+    assert agents.find_launch(iuls["desc"], today=date(2026, 10, 16)) == date(2026, 10, 18)
+    assert agents.find_launch(vets["desc"], today=date(2026, 10, 16)) is None
+    assert jobs.split_doubts([aged, vets, iuls]) == []
+
+
+def test_one_kind_isnt_split():
+    card = _patrick()
+    card["parts"] = [one for one in card["parts"] if one["kind"] == "aged"]
+    assert jobs.split_order(card) == []
+    card["parts"] = []
+    assert jobs.split_order(card) == []
+
+
+def test_a_split_line_that_isnt_in_the_order_is_held():
+    card = _patrick()
+    card["parts"][4]["leads"] = "43"
+    assert any("43 leads isn't in the order" in one for one in jobs.split_doubts(jobs.split_order(card)))
+
+
+def test_a_gavelled_split_order_makes_each_card(order, monkeypatch):
+    order.kind = "fresh"
+
+    def reading(config, **kw):
+        return {**_patrick(), "name": "New Agent - Patrick Moreno", "desc": "d", "missing": [], "launch_iso": ""}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert [one[0] for one in order.made] == ["aged", "fresh", "fresh"]
+    held = ordercards.load()["900"]
+    assert held["split"] and len(held["parts"]) == 3 and held["status"] == "made"
+    said = order.responder.sent[-1][0]
+    assert "split into 3 cards" in said and "states to come" in said
+
+
+def test_new_notes_on_a_split_order_update_each_card(order, monkeypatch):
+    """The 34 OTP Vets' states posted in the thread: onto their card."""
+    order.kind = "fresh"
+    reads = [_patrick()]
+
+    def reading(config, **kw):
+        return {**reads[-1], "name": "New Agent - Patrick Moreno", "desc": "d", "missing": [], "launch_iso": ""}
+
+    monkeypatch.setattr(jobs, "read_order", reading)
+    message = _message(thread=_notes("states for the vets: TX, FL"))
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    later = _patrick()
+    later["parts"][4]["states"] = "TX, FL"
+    later["source"] += "\nstates for the vets: TX, FL"
+    reads.append(later)
+    calls = []
+
+    def updating(config, card_id, *, written, desc, name="", commented=()):
+        calls.append(desc)
+        return ("updated", []) if written != desc else ("same", [])
+
+    monkeypatch.setattr(jobs, "order_card_update", updating)
+    assert asyncio.run(client._order_refresh(_bot(message), "900", settle=0)) == "updated"
+    assert len(calls) == 3
+    held = ordercards.load()["900"]
+    assert held["parts"][1]["fields"]["states"] == "TX, FL"
+    assert "OTP Vets" in order.responder.sent[-1][0]
