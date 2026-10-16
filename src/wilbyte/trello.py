@@ -15,6 +15,8 @@ Credentials come from https://trello.com/power-ups/admin (key, then token).
 
 from __future__ import annotations
 
+import re
+
 import time
 from typing import Any
 
@@ -233,7 +235,7 @@ class TrelloClient:
     def add_comment(self, card_id: str, text: str) -> dict:
         """Say something on a card, as whoever the token belongs to."""
         return self._request(
-            "POST", f"/cards/{card_id}/actions/comments", params={"text": text}
+            "POST", f"/cards/{card_id}/actions/comments", params={"text": no_secrets(text)}
         )
 
     def card_comments(self, card_id: str) -> list[str]:
@@ -337,7 +339,7 @@ class TrelloClient:
         send the old text back with the new part on the end, or somebody's
         notes go missing.
         """
-        return self._request("PUT", f"/cards/{card_id}", params={"desc": text})
+        return self._request("PUT", f"/cards/{card_id}", params={"desc": no_secrets(text)})
 
     def archive_card(self, card_id: str) -> dict:
         """Archive a card. Reversible - Trello keeps it and it can come back.
@@ -410,12 +412,13 @@ class TrelloClient:
         """Add an item, sending the name exactly as it was read.
 
         Verbatim on purpose: when the item is a linked card the name *is* the
-        URL, and anything that tidies or shortens it breaks the link.
+        URL, and anything that tidies or shortens it breaks the link. Links
+        are left alone by `no_secrets`; a key or a token is not.
         """
         return self._request(
             "POST",
             f"/checklists/{checklist_id}/checkItems",
-            params={"name": name, "checked": "true" if checked else "false"},
+            params={"name": no_secrets(name), "checked": "true" if checked else "false"},
         )
 
 
@@ -426,11 +429,33 @@ class TrelloClient:
         if done is not None:
             params["state"] = "complete" if done else "incomplete"
         if name is not None:
-            params["name"] = name
+            params["name"] = no_secrets(name)
         return self._request("PUT", f"/cards/{card_id}/checkItem/{item_id}", params=params)
 
 
 # ------------------------------------------------------------------ helpers
+
+#: What a key or a token looks like: one long run of letters and digits
+#: mixed - "There you go Auth and Sid" went on Therese's checklist on the
+#: General card with both in it. Links are skipped: a card's own id is in its
+#: URL, and a link that stops working is worse than one left alone.
+_TOKEN = re.compile(r"(?<![\w/#=.@-])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{24,}(?![\w/@.-])")
+#: "password: hunter2" - the word, and what follows it.
+_LABELLED = re.compile(r"(?i)\b(passwords?|passcode|pwd|api[\s_-]*key|secret(?:\s+key)?|auth[\s_-]*token|"
+                       r"access[\s_-]*token)(\s*[:=]\s*)(\S+)")
+HIDDEN = "[hidden — a key or token, kept off Trello]"
+
+
+def no_secrets(text: str) -> str:
+    """The text with anything that looks like a key, token or password taken
+    out - RYTE never puts one on the board. Links are left as they are."""
+    said = str(text or "")
+    parts = re.split(r"(https?://\S+)", said)
+    for at in range(0, len(parts), 2):
+        bit = _LABELLED.sub(lambda m: m.group(1) + m.group(2) + HIDDEN, parts[at])
+        parts[at] = _TOKEN.sub(HIDDEN, bit)
+    return "".join(parts)
+
 
 
 def find_list(lists: list[dict], name: str) -> dict | None:

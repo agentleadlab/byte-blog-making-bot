@@ -4317,3 +4317,17 @@ def test_the_trouble_is_said_once():
     assert "Jenn" in first
     assert client._ads_added_note([], ["📊 Ads 08/26/26 has no 'Jenn' checklist"], said_already=seen) == ""
     assert "Cody" in client._ads_added_note(["Cody Sturma → 📊 Ads 08/26/26 · Nicole"], [], said_already=seen)
+
+
+def test_keys_and_tokens_never_go_on_the_board():
+    """"where did this comment came from????" - an Auth token and SID on
+    Therese's checklist on the General card."""
+    from wilbyte.trello import HIDDEN, no_secrets
+
+    said = no_secrets('iS1rklum6oedbhfcci4f6czkomcc9qac" lq87y496a34il1575e772bh77duikfq4 There you go Auth and Sid')
+    assert "iS1rklum" not in said and "lq87y496" not in said and "Auth and Sid" in said
+    assert no_secrets("password: hunter2") == f"password: {HIDDEN}"
+    for kept in ("Remove this list https://trello.com/c/gzLEowl2#comment-6ad23810deb9b3f9780bac73",
+                 "Email: kharylmayecanizares12345@example.com", "Discord 1560746082621984979",
+                 "New Agent - Bram Gutierrez https://trello.com/c/HR9XzGG8 OTP VETS SATURDAY"):
+        assert no_secrets(kept) == kept
