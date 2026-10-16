@@ -439,18 +439,25 @@ def who_is_known(members) -> dict:
     for first, who in firsts.items():
         if len(who) == 1 and first not in found:
             found[first] = next(iter(who))
-    # What the team calls each other - "kath = kathleen". A short name is
-    # whoever's first name it begins, when that's only one person.
-    for short, first in NICKNAMES.items():
-        who = firsts.get(first)
-        if short not in found and who and len(who) == 1:
-            found[short] = next(iter(who))
+    # What the team calls each other, as Franklin wrote it down - these win
+    # over anything read off the member list.
+    # Only handles that are on the board: one that isn't can't be tagged.
+    on_board = set(found.values())
+    found.update({name: who for name, who in TEAM_HANDLES.items() if who in on_board})
     return found
 
 
-#: Short names the team uses, and the first name each is short for.
-NICKNAMES = {"kath": "kathleen", "kat": "kathleen", "jen": "jennifer", "jenn": "jennifer",
-             "nic": "nicole", "nikki": "nicole", "frank": "franklin", "fran": "franklin"}
+#: Every name the team goes by, and whose Trello handle it is.
+TEAM_HANDLES = {
+    "kc": "kharylmayecanizares", "kharyl": "kharylmayecanizares",
+    "kath": "kathleenmarie15", "kathleen": "kathleenmarie15",
+    "therese": "thereseguba",
+    "faith": "faithhannahcalla",
+    "nicole": "nic0l3", "nics": "nic0l3",
+    "arnold": "tretarpley", "tre": "tretarpley",
+    "jen": "jenniferhashisaki2", "jenn": "jenniferhashisaki2", "jennifer": "jenniferhashisaki2",
+    "kenneth": "kennethwalsh", "k2": "kennethwalsh",
+}
 
 
 _TAG_WORD = re.compile(r"(?:(?<=\s)|^)(?:and\s+|&\s+)?(?:please\s+|pls\s+)?tag\s+", re.IGNORECASE)
@@ -512,11 +519,10 @@ def people_named(text: str, members) -> list[str]:
         firsts.setdefault(full.split()[0].casefold(), []).append((username, full))
         if re.search(rf"(?<![\w@]){re.escape(full)}(?!\w)", said, re.IGNORECASE) and username not in found:
             found.append(username)
-    called = list(firsts.items()) + [
-        (short, firsts[first]) for short, first in NICKNAMES.items() if short not in firsts and first in firsts
-    ]
-    for first, who in called:
-        if len(who) != 1 or who[0][0] in found or len(first) < 3:
+    on_board = {str((one or {}).get("username") or "").strip() for one in members or []}
+    for first, who in firsts.items():
+        # A first name on Franklin's list is that person's, and read below.
+        if len(who) != 1 or who[0][0] in found or len(first) < 3 or TEAM_HANDLES.get(first) in on_board:
             continue
         username, full = who[0]
         surname = full.split()[1] if len(full.split()) > 1 else ""
@@ -526,7 +532,46 @@ def people_named(text: str, members) -> list[str]:
                 continue
             found.append(username)
             break
-    return found
+    # The names the team goes by - "kath can you cap him", "ask KC". Not a
+    # name followed by a capitalised word that isn't a surname: "Faith Smith"
+    # is somebody else.
+    lines = str(text or "")
+    for name, username in TEAM_HANDLES.items():
+        if username in found or username not in on_board:
+            continue
+        for hit in re.finditer(rf"(?<![\w@]){re.escape(name)}(?!\w)[ \t]*(\S*)", lines, re.IGNORECASE):
+            if hit.group(1)[:1].isupper() and not _a_surname_of(username, hit.group(1), members):
+                continue
+            # "K2: @Franklin collate all logins" - who said it, not who it's for.
+            at_line_start = lines[:hit.start()].rstrip(" \t")[-1:] in ("", "\n")
+            if at_line_start and lines[hit.start() + len(name):][:1] == ":":
+                continue
+            found.append(username)
+            break
+    return sorted(found, key=lambda who: _first_said(who, said, members))
+
+
+def _first_said(username: str, said: str, members) -> int:
+    """Where in what's said this person is first named - tags go in the
+    order the names were written."""
+    names = [name for name, who in TEAM_HANDLES.items() if who == username]
+    for one in members or []:
+        if str((one or {}).get("username") or "").strip() == username:
+            full = " ".join(str(one.get("fullName") or "").split())
+            names += [full, *full.split()[:1]]
+    at = [hit.start() for name in names if name
+          for hit in [re.search(rf"(?<![\w@]){re.escape(name)}(?!\w)", said, re.IGNORECASE)] if hit]
+    return min(at, default=len(said))
+
+
+def _a_surname_of(username: str, word: str, members) -> bool:
+    """Whether `word` is the surname the member with this handle goes by."""
+    word = word.casefold().strip(".,:;!?")
+    for one in members or []:
+        if str((one or {}).get("username") or "").strip() == username:
+            parts = " ".join(str(one.get("fullName") or "").split()).split()
+            return len(parts) > 1 and word in {part.casefold() for part in parts[1:]}
+    return False
 
 
 def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:

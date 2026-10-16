@@ -6489,6 +6489,16 @@ def test_tag_nicole_tag_kath_is_nicole_and_kathleen():
     ]
     known = dailyops.who_is_known(members)
     said, handles, strangers = dailyops.tag_asked("add to trello tag nicole, tag kath", known)
+    # Franklin's list, which wins over the member list: Tre is Arnold.
+    board = members + [{"username": "tretarpley", "fullName": "Arnold Tarpley"},
+                       {"username": "kennethwalsh", "fullName": "Kenneth Walsh"},
+                       {"username": "kharylmayecanizares", "fullName": "Kharyl Canizares"}]
+    team = dailyops.who_is_known(board)
+    assert (team["tre"], team["k2"], team["kc"], team["nics"]) == (
+        "tretarpley", "kennethwalsh", "kharylmayecanizares", "nic0l3")
+    assert dailyops.people_named("ask KC and K2 about it", board) == ["kharylmayecanizares", "kennethwalsh"]
+    assert dailyops.people_named("K2: @Franklin collate all logins", board) == []
+    assert "fakeuser" not in dailyops.who_is_known([{"username": "fakeuser", "fullName": "X Y"}]).get("tre", "")
     assert handles == ["nic0l3", "kathleenmarie15"] and strangers == []
     assert known["jenn"] == "jenniferhashisaki2"
     assert dailyops.tag_phrase_out("please tag kath and nicole", known)[1] == ["kathleenmarie15", "nic0l3"]
@@ -6512,12 +6522,12 @@ def test_a_first_name_two_people_share_is_not_a_way_of_naming_either():
     from wilbyte import dailyops
 
     known = dailyops.who_is_known([
-        {"username": "nic0l3", "fullName": "Nicole Ramos"},
-        {"username": "nicoleb", "fullName": "Nicole Barnes"},
+        {"username": "mariar", "fullName": "Maria Ramos"},
+        {"username": "mariab", "fullName": "Maria Barnes"},
     ])
 
-    assert "nicole" not in known
-    assert known["nicole ramos"] == "nic0l3"
+    assert "maria" not in known
+    assert known["maria ramos"] == "mariar"
 
 
 def test_an_unknown_name_does_not_hide_a_comment_that_posted(monkeypatch):
