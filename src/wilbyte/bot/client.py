@@ -9267,12 +9267,44 @@ async def _order_read(bot, message, *, since: datetime | None = None,
     if extra:
         text += "\n" + "\n".join(extra)
         notes = list(extra) + list(notes)
+    # The client's New Lead Request in #lead-lab, for the Agency.
+    request = jobs.lead_request_for(await _lead_requests(bot), text)
     card = await asyncio.to_thread(partial(
-        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes))
+        jobs.read_order, bot.config, text=text, images=images, today=_today(bot.config), notes=notes,
+        **({"request": request} if request else {})))
     # The team's screenshots - the first ones in `images`, one a marker.
     marked = sum(len(re.findall(r"\[screenshot \d+\]", one)) for one in notes)
     card["shots"] = images[:marked]
     return card, {}, thread_id
+
+
+#: #lead-lab as last read: (read at, posts newest first).
+_LEAD_REQUESTS: list = [0.0, []]
+#: Read again after this long - a request is posted before the payment.
+LEAD_REQUESTS_FRESH_SECONDS = 300
+#: How many of its posts are looked through.
+LEAD_REQUESTS_READ = 500
+
+
+async def _lead_requests(bot) -> list[str]:
+    """#lead-lab's posts, newest first, as text - each client's New Lead
+    Request, where the agency they're with is said. [] when it can't be
+    read: a card without an agency is still a card."""
+    import time
+
+    if _LEAD_REQUESTS[1] and time.monotonic() - _LEAD_REQUESTS[0] < LEAD_REQUESTS_FRESH_SECONDS:
+        return _LEAD_REQUESTS[1]
+    wanted = str(getattr(bot.config.secrets, "discord_lead_request_channel_id", "") or "").strip()
+    try:
+        channel = bot.get_channel(int(wanted)) if wanted.isdigit() else None
+        if channel is None:
+            return []
+        posts = [_all_text(one) async for one in channel.history(limit=LEAD_REQUESTS_READ)]
+    except Exception:
+        log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
+        return []
+    _LEAD_REQUESTS[:] = [time.monotonic(), posts]
+    return posts
 
 
 def _order_preview(card: dict) -> str:

@@ -12391,6 +12391,9 @@ ORDER_FIELDS = (
     ("package", "Lead Type/Package Selected"),
     ("leads", "Number of Leads Requested"),
     ("launch", "Launch Date"),
+    # "i want ryte to add them on the aged leads and fresh cards" - from the
+    # client's New Lead Request in #lead-lab when the team doesn't say.
+    ("agency", "Agency"),
     ("notes", "Additional Notes"),
 )
 
@@ -12528,7 +12531,43 @@ def zelle_note(text: str) -> str:
     return f"Paid via Zelle ({' '.join(bank.group(1).split())})" if bank else "Paid via Zelle"
 
 
-def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = ()) -> dict:
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"\+?\d[\d\s().-]{8,16}\d")
+_NAME_LINE = re.compile(r"^\W*name\W*:\**\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_AGENCY_LINE = re.compile(r"^\W*agency\W*:\**[ \t]*(.*?)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _who_in(text: str) -> tuple[set, set, set]:
+    """(emails, phones as their last ten digits, full names) a post gives."""
+    said = str(text or "")
+    emails = {one.casefold() for one in _EMAIL.findall(said)}
+    phones = {digits[-10:] for digits in (re.sub(r"\D", "", one) for one in _PHONE.findall(said)) if len(digits) >= 10}
+    names = {" ".join(one.replace("*", "").split()).casefold() for one in _NAME_LINE.findall(said)}
+    return emails, phones, {one for one in names if len(one.split()) >= 2}
+
+
+def lead_request_for(posts, text: str) -> str:
+    """The client's New Lead Request in #lead-lab - the first of `posts`
+    (newest first) with their email, phone or full name - or ""."""
+    emails, phones, names = _who_in(text)
+    for post in posts or ():
+        if "lead request" not in str(post or "").casefold():
+            continue
+        their_emails, their_phones, their_names = _who_in(post)
+        if emails & their_emails or phones & their_phones or names & their_names:
+            return str(post)
+    return ""
+
+
+def request_agency(post: str) -> str:
+    """"Agency: FFL" off a New Lead Request, or "" when it's blank."""
+    found = _AGENCY_LINE.search(str(post or ""))
+    said = " ".join((found.group(1) if found else "").replace("*", "").split())
+    return "" if said.casefold().strip(" .") in _SAYS_NOTHING else said
+
+
+def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = (),
+               request: str = "") -> dict:
     """An order as posted in Discord - the payment and the team's notes -
     read by Claude into the card's fields. {"kind": "fresh"|"aged", "client",
     "fields", "name", "desc", "missing": [labels not given]}."""
@@ -12627,6 +12666,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    agency = request_agency(request)
+    if agency and not fields.get("agency"):
+        # Where the agency is said: the client's New Lead Request in
+        # #lead-lab - "he doesnt know where to get them".
+        fields["agency"] = agency
+        source += "\n" + str(request)
     zelle = zelle_note(text)
     if zelle and zelle.casefold() not in str(fields.get("notes") or "").casefold():
         # "add on additional notes on the cards both aged and fresh that if

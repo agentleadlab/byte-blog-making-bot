@@ -132,7 +132,7 @@ def test_a_new_card_in_its_list_with_franklins_layout_and_no_due_date(monkeypatc
     desc = jobs.order_desc(fields)
     assert desc == ("Name: Gregory Stevens\nEmail: gregory@example.com\nPhone Number: (555) 010-0027\n"
                     "States: TX, AL, CA\nLead Type/Package Selected: Text-Verified Trucker IUL (OTP)\n"
-                    "Number of Leads Requested: 20\nLaunch Date: Tuesday, October 13\nAdditional Notes:")
+                    "Number of Leads Requested: 20\nLaunch Date: Tuesday, October 13\nAgency:\nAdditional Notes:")
     made = jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Gregory Stevens", "desc": desc, "due": "2026-10-13"})
     assert made == {"id": "c1", "url": "https://trello.com/c/new1", "list": "In Que"}
     assert board.made == [dict(list="q", name="New Agent - Gregory Stevens")], "copied, not made new"
@@ -143,7 +143,7 @@ def test_a_new_card_in_its_list_with_franklins_layout_and_no_due_date(monkeypatc
 def test_every_label_is_there_even_when_the_order_doesnt_say():
     assert jobs.order_desc({"name": "Gregory Stevens"}).splitlines() == [
         "Name: Gregory Stevens", "Email:", "Phone Number:", "States:", "Lead Type/Package Selected:",
-        "Number of Leads Requested:", "Launch Date:", "Additional Notes:"]
+        "Number of Leads Requested:", "Launch Date:", "Agency:", "Additional Notes:"]
 
 
 def test_new_notes_rewrite_rytes_description_but_only_comment_on_one_edited_by_hand(monkeypatch):
@@ -1074,7 +1074,7 @@ def test_an_aged_card_in_franklins_aged_layout():
     assert jobs.order_desc(fields, "aged") == (
         "Name: Ayden Escarrega\nEmail: ayden@example.com\nPhone Number: +15550104032\nLead Type: Aged Leads (MTG)\n"
         "Number of Leads Requested: 50\nStates: AZ\nAgency: UPRISE\nAdditional Notes:\n\n\u00a0\n\n50 aged MTG, AZ only")
-    assert "Agency" not in jobs.order_desc(fields, "fresh") and "Launch Date: Tuesday, October 13" in jobs.order_desc(fields)
+    assert "Agency: UPRISE\nAdditional Notes" in jobs.order_desc(fields, "fresh") and "Launch Date: Tuesday, October 13" in jobs.order_desc(fields)
 
 
 def test_an_aged_order_makes_its_card_in_aged_leads_order_done(order):
@@ -2605,3 +2605,71 @@ def test_a_zelle_payment_says_so_in_the_notes(monkeypatch, kind):
     assert "Paid via Zelle (Chase)" in card["desc"]
     payra = text.replace("New Payment | Zelle", "New Payment | Payra").replace("**METHOD:** Zelle (Chase)\n", "")
     assert "Zelle" not in jobs.read_order(config, text=payra, images=[], today=date(2026, 10, 16))["fields"].get("notes", "")
+
+
+# ------------------------------------------------------- agency from #lead-lab
+
+REQUESTS = [
+    "@Faith\nNew Lead Request\n**Name:** Cheikh Niang\n**Email:** cheikh@example.com\n**Phone Number:** +18435550912\n"
+    "**Lead Type:** Aged Final Expense - 90-180 days [AGED - $3/Lead]\n**Agency:** Wolfpack\n**Discount Code:** LABAGED30",
+    "@Faith\nNew Lead Request\n**Name:** alejandro jimenez\n**Email:** alejandro@example.com\n"
+    "**Phone Number:** +15205550342\n**Agency:** FFL\n**Discount Code:**",
+    "@Faith\nNew Lead Request\n**Name:** Talen Hinesley\n**Email:** talen@example.com\n**Agency:**\n",
+]
+
+
+def test_the_lead_request_is_found_by_email_phone_or_name():
+    """"its because he doesnt know where to get them ... they are here on
+    the lead lab channel"."""
+    by_email = "NAME: Somebody Else\nEMAIL: CHEIKH@example.com\nAMOUNT: $150"
+    assert jobs.request_agency(jobs.lead_request_for(REQUESTS, by_email)) == "Wolfpack"
+    by_phone = "NAME: A J\nPHONE: +1 (520) 555-0342"
+    assert jobs.request_agency(jobs.lead_request_for(REQUESTS, by_phone)) == "FFL"
+    by_name = "**NAME:** Alejandro  Jimenez\n**AMOUNT:** $300"
+    assert jobs.request_agency(jobs.lead_request_for(REQUESTS, by_name)) == "FFL"
+    assert jobs.lead_request_for(REQUESTS, "NAME: Nobody Here\nEMAIL: no@example.com") == ""
+    assert jobs.request_agency(jobs.lead_request_for(REQUESTS, "NAME: Talen Hinesley")) == "", "blank says nothing"
+
+
+@pytest.mark.parametrize("kind", ["fresh", "aged"])
+def test_the_agency_goes_on_the_card_from_the_request(monkeypatch, kind):
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    said = {"kind": kind, "name": "Cheikh Niang", "states": "SC", "package": "Aged FEX", "leads": "50", "agency": ""}
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: dict(said))
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = "New Payment | Payra\nNAME: Cheikh Niang\nEMAIL: cheikh@example.com\nAMOUNT: $150"
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16), request=REQUESTS[0])
+    assert card["fields"]["agency"] == "Wolfpack" and "Agency: Wolfpack" in card["desc"]
+    assert not any("gency" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+    # What the team wrote in the thread wins.
+    said["agency"] = "AEP"
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16), request=REQUESTS[0])
+    assert card["fields"]["agency"] == "AEP"
+
+
+def test_lead_lab_is_read_once_for_a_few_minutes(monkeypatch):
+    read = []
+
+    class Channel:
+        def history(self, limit):
+            read.append(limit)
+
+            async def posts():
+                for one in REQUESTS:
+                    yield SimpleNamespace(content=one, embeds=[])
+            return posts()
+
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_lead_request_channel_id="123")),
+                          get_channel=lambda one: Channel() if one == 123 else None)
+    monkeypatch.setattr(client, "_LEAD_REQUESTS", [0.0, []])
+    assert asyncio.run(client._lead_requests(bot)) == REQUESTS
+    assert asyncio.run(client._lead_requests(bot)) == REQUESTS
+    assert read == [client.LEAD_REQUESTS_READ]

@@ -106,6 +106,10 @@ def _payra_read_afresh():
     """No test sees another's Payra read, or its throttling."""
     from wilbyte.bot import jobs
 
+    from wilbyte.bot import client
+
     jobs._PAYRA_RECENT.clear()
+    client._LEAD_REQUESTS[:] = [0.0, []]
     yield
     jobs._PAYRA_RECENT.clear()
+    client._LEAD_REQUESTS[:] = [0.0, []]
