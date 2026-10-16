@@ -591,7 +591,7 @@ def despell(text: str) -> str:
 # it is: the count, the price, and the nouns for leads themselves.
 _SAYS_NOTHING = re.compile(
     r"^(?:\d+|\$[\d,.]+|leads?|lead|for|and|the|a|an|of|on|per|week|weekly|"
-    r"more|new|order|orders|package|selected|plan|campaign)$",
+    r"more|new|order|orders|package|selected|plan|campaign|protection)$",
     re.IGNORECASE,
 )
 
@@ -1134,6 +1134,18 @@ def order_parts(label: str) -> list[str]:
     by hand is left exactly as it was typed.
     """
     parts = [part.strip() for part in (label or "").split(ORDER_JOIN) if part.strip()]
+    # "30 Mortgage Protection, 30 Veteran, 30 Blue Collar IUL, 30 Trucker IUL"
+    # - Joseph Antonucci's four orders, written with commas: each piece a count
+    # and a lead type of its own goes on its own checklist. Only when every
+    # piece is one; a lead type with a comma in it is left whole.
+    split = []
+    for part in parts:
+        pieces = [one.strip() for one in re.split(r"\s*,\s*", part) if one.strip()]
+        if len(pieces) > 1 and all(re.match(r"\d[\d,]*\s+\S", one) and family_of(one) for one in pieces):
+            split.extend(pieces)
+        else:
+            split.append(part)
+    parts = split
     # "PHX + 2.0" is one order - Phoenix Plus, the version number for the
     # tier - not "PHX" and "2.0": Samuel Riggins was left off the Lead Order
     # card as two halves neither of which said enough. A part that's only a

@@ -4807,3 +4807,12 @@ def test_a_day_it_says_isnt_the_day_isnt_the_launch(said, wanted):
     """"why did it file for today even tho it said, not today?" - Jacob
     Holifield."""
     assert agents.find_launch(said, today=date(2026, 10, 16)) == wanted
+
+
+def test_orders_written_with_commas_are_each_their_own():
+    """"you know you should add them to all of the types right?" - Joseph
+    Antonucci's setup line."""
+    assert agents.order_parts("30 Mortgage Protection, 30 Veteran, 30 Blue Collar IUL, 30 Trucker IUL MONDAY") == [
+        "30 Mortgage Protection", "30 Veteran", "30 Blue Collar IUL", "30 Trucker IUL MONDAY"]
+    assert agents.order_parts("Text-Verified Final Expense, Vets") == ["Text-Verified Final Expense, Vets"]
+    assert agents.words_it_cannot_place("30 Mortgage Protection") == []
