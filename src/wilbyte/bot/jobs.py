@@ -12719,7 +12719,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
 
         stamps = r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*"
         when = None
-        for said in ("\n".join(str(one) for one in notes or ()), text):
+        # The team's notes first, the Payra invoice's after them: Michael
+        # Panza's thread said "Live Saturday October 17" and his card went out
+        # Monday, October 19.
+        team = [str(one) for one in notes or () if not str(one).startswith("Payra invoice note:")]
+        invoice = [str(one) for one in notes or () if str(one).startswith("Payra invoice note:")]
+        for said in ("\n".join(team), "\n".join(invoice), text):
             try:
                 when = agents.find_launch(re.sub(stamps, "", said, flags=re.MULTILINE), today=today)
             except Exception:

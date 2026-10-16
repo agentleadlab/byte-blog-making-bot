@@ -3008,3 +3008,26 @@ def test_lead_lab_is_read_whole_once_then_only_whats_new(monkeypatch):
     posts = asyncio.run(client._lead_requests_read(bot))
     assert asked == [(client.LEAD_REQUESTS_READ, None), (None, 10)]
     assert len(posts) == 2
+
+
+def test_the_teams_launch_day_beats_the_invoices(monkeypatch):
+    """"where did you get MONDAY???????" - Michael Panza's thread said "Live
+    Saturday October 17"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Michael Panza", "states": "AL, AZ", "package": "OTP IUL", "leads": "20",
+        "launch": "Monday, October 19", "launch_iso": "2026-10-19"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    notes = ["Payra invoice note: 20 OTP IUL - start date 10/19/2026",
+             "Michael Panza\n20 OTP IUL Leads\nStates: AL, AZ\n\nLive Saturday October 17"]
+    card = jobs.read_order(config, text="NAME: Michael Panza\n" + "\n".join(notes), images=[],
+                           today=date(2026, 10, 16), notes=notes)
+    assert card["fields"]["launch"] == "Saturday, October 17"
