@@ -12675,7 +12675,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 "leads": {"type": "string", "description": "That line's count, just the number: '5659'."},
                 "states": {"type": "string", "description": (
                     "That line's states as two-letter codes, 'Nationwide' when it says so, or empty when the "
-                    "states aren't given yet ('waiting for states').")},
+                    "states aren't given yet ('waiting for states'). When the line splits its count by state, "
+                    "keep each state's count: '25 NC, 25 GA, 25 FL, 25 TX'.")},
                 "launch_iso": {"type": "string", "description": (
                     "A fresh line's go-live date as YYYY-MM-DD when the order gives one for that line, else empty.")},
             }, "required": ["kind", "package", "leads", "states", "launch_iso"]}},

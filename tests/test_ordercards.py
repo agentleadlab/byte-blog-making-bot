@@ -3118,7 +3118,8 @@ PATRICK_PARTS = [
     {"kind": "aged", "package": "Aged Vets 180+", "leads": "5659", "states": "Nationwide", "launch_iso": ""},
     {"kind": "aged", "package": "Aged IULs 180+", "leads": "11029", "states": "Nationwide", "launch_iso": ""},
     {"kind": "aged", "package": "Aged Vets 30-90", "leads": "50", "states": "TX", "launch_iso": ""},
-    {"kind": "aged", "package": "Aged IULs 30-90", "leads": "100", "states": "NC, GA, FL, TX", "launch_iso": ""},
+    {"kind": "aged", "package": "Aged IULs 30-90", "leads": "100", "states": "25 NC, 25 GA, 25 FL, 25 TX",
+     "launch_iso": ""},
     {"kind": "fresh", "package": "OTP Vets", "leads": "34", "states": "", "launch_iso": ""},
     {"kind": "fresh", "package": "25 OTP IULs", "leads": "25",
      "states": "AL, AZ, CA, CO, CT, FL, GA, KY, LA, MA, MD, ME, NC, NM, OH, OK, OR, PA, SC, TN, TX, VA, WA, WI",
@@ -3144,6 +3145,7 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
     assert "Aged Vets 30-90: TX" in aged["fields"]["states"]
     assert "• 5,659 Aged Vets 180+ — Nationwide" in aged["desc"] and "34 OTP Vets — states to come" in aged["desc"]
     assert "ALL AGED VETS DELIVERED TODAY" in aged["desc"]
+    assert "• 100 Aged IULs 30-90 — 25 NC, 25 GA, 25 FL, 25 TX" in aged["desc"], "25 each, as Faith wrote it"
     assert "waiting for states" not in aged["desc"] and "Sunday" not in aged["desc"]
     assert "• 25 OTP IULs" in aged["desc"] and "25 25" not in aged["desc"]
     assert vets["kind"] == "fresh" and vets["fields"]["leads"] == "34" and not vets["fields"]["states"]
