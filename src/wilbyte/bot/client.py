@@ -1798,6 +1798,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_audit(bot, responder, request.brief or "")
                 return
 
+            if request.action == "agencylookup":
+                await responder.send(await _agency_lookup(bot, request.brief or ""))
+                return
+
             if request.action == "orderbackfill":
                 await _order_backfill(bot, responder, getattr(message, "author", None))
                 return
@@ -9352,6 +9356,35 @@ async def _lead_requests(bot) -> list[str]:
     posts = [text for _when, text in sorted(found, key=lambda one: one[0] or oldest, reverse=True)]
     _LEAD_REQUESTS[:] = [time.monotonic(), posts]
     return posts
+
+
+async def _agency_lookup(bot, name: str) -> str:
+    """"agency Heath McGalliard" - what #lead-lab holds for them, and the
+    agency a card of theirs would get."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        return "Who? `@Ryte agency <their name>`"
+    posts = await _lead_requests(bot)
+    if not posts:
+        return ("I can't read #lead-lab — check I can see it (View Channel and Read Message History) "
+                "and that DISCORD_LEAD_REQUEST_CHANNEL_ID is right.")
+    wanted = name.casefold()
+    naming = [one for one in posts if wanted in " ".join(one.split()).casefold()]
+    used = jobs.lead_request_for(posts, f"NAME: {name}")
+    lines = [f"🔎 **{name}** in #lead-lab ({len(posts)} posts and threads read):"]
+    if not naming:
+        lines.append("Nothing there names them — no request to take an Agency from. If the team writes it "
+                     "on its own line in the thread (\"AEP\"), I take it from there.")
+        return "\n".join(lines)
+    for one in naming[:3]:
+        agency = jobs.request_agency(one)
+        first = next((line for line in one.splitlines() if line.strip()), "")[:90]
+        lines.append(f"• {first} — Agency: **{agency or '(blank)'}**")
+    if len(naming) > 3:
+        lines.append(f"…and {len(naming) - 3} more.")
+    lines.append(f"A card for them gets **Agency: {jobs.request_agency(used)}**" if used else
+                 "None of them has the Agency filled in, so the card's stays blank unless the notes name one.")
+    return "\n".join(lines)
 
 
 def _order_preview(card: dict) -> str:

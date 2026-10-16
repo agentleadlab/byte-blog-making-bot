@@ -2763,3 +2763,18 @@ def test_a_request_posted_as_a_thread_is_read_too(monkeypatch):
     request = jobs.lead_request_for(posts, "NAME: Riley Noah\nPRODUCT: Aged Leads (IUL)")
     assert jobs.request_agency(request) == "Symmetry"
     assert jobs.request_agency(jobs.lead_request_for(posts, "EMAIL: RILEY@example.com")) == "Symmetry"
+
+
+def test_agency_lookup_says_what_lead_lab_has(monkeypatch):
+    """"then why isnt he adding the agency on new agent as well?" - ask."""
+    from wilbyte.bot import mentions
+
+    async def requests(bot):
+        return REQUESTS
+
+    monkeypatch.setattr(client, "_lead_requests", requests)
+    assert mentions.parse("agency Cheikh Niang").action == "agencylookup"
+    said = asyncio.run(client._agency_lookup(None, "Cheikh Niang"))
+    assert "Wolfpack" in said and "A card for them gets" in said
+    assert "Nothing there names them" in asyncio.run(client._agency_lookup(None, "Heath McGalliard"))
+    assert "(blank)" in asyncio.run(client._agency_lookup(None, "Talen Hinesley"))

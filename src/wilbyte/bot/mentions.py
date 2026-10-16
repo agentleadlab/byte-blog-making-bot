@@ -910,6 +910,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="gavelallow", brief=text)
     if re.match(r"\s*gavel\s+(?:remove|stop|disallow|revoke)\b", text, re.IGNORECASE):
         return MentionRequest(action="gavelremove", brief=text)
+    # "agency Heath McGalliard" - what #lead-lab says about their agency.
+    agency = re.match(r"\s*agency\s+(?:for\s+|of\s+)?(.+?)\s*[.?!]*\s*$", text, re.IGNORECASE)
+    if agency:
+        return MentionRequest(action="agencylookup", brief=agency.group(1))
     note = re.match(r"\s*(?:invoice|payra)\s+notes?\s+(?:for\s+)?(.+?)\s*[.?!]*\s*$", text, re.IGNORECASE)
     if note:
         return MentionRequest(action="invoicenote", brief=note.group(1))
@@ -1509,6 +1513,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
+> **agency <name>** — the New Lead Request in #lead-lab I'd take their Agency from, or why there isn't one.
 > **invoice note <name>** — the note fields on their Payra invoices, as an aged card reads them.
 > **going live today and tomorrow** (or **live list**) — names, lead type and states.
 > **hub tasks** — every open request on the card checked on the hub (reading only); done there, ticked.
