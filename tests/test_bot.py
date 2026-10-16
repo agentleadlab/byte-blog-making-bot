@@ -6606,9 +6606,9 @@ def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
         text="and tag nicole: https://a https://b",
     )
 
-    assert problems == ["✅ On **Nicole**'s checklist"], problems
+    assert problems == ["✅ Trello's automation puts it on **Nicole**'s checklist"], problems
     assert posted["text"] == "@nic0l3\nhttps://a https://b"
-    assert posted["item"] == ("n", "https://a https://b")
+    assert "item" not in posted, "the board's automation makes it"
     assert url == "https://trello.com/c/C"
 
 
@@ -7382,8 +7382,9 @@ def test_the_tagged_name_is_tagged_on_trello(monkeypatch):
         SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), kind="general",
         day=date(2026, 9, 14), text="K2: @Franklin collate all logins", tag=["Franklin", "Nobody Here"])
     assert said == ["@franklinmay\nK2: @Franklin collate all logins"]
-    assert problems == ["Nobody on the board is called Nobody Here — not tagged.", "✅ On **Franklin**'s checklist"]
-    assert items == [("fr", "K2: @Franklin collate all logins")]
+    assert problems == ["Nobody on the board is called Nobody Here — not tagged.",
+                        "✅ Trello's automation puts it on **Franklin**'s checklist"]
+    assert items == []
 
 
 def test_todays_with_an_apostrophe_is_still_today():
@@ -7569,9 +7570,9 @@ def test_a_teammate_named_is_tagged_and_gets_it_on_their_checklist(monkeypatch):
     _t, _u, problems = jobs.comment_on_daily(config, kind="general", day=date(2026, 10, 15),
                                              text="Nicole and therese please cap Michael Greff at 10/day")
     assert posted == ["@nic0l3 @therese3\nNicole and therese please cap Michael Greff at 10/day"]
-    assert items == [("n", "Nicole and therese please cap Michael Greff at 10/day"),
-                     ("t", "Nicole and therese please cap Michael Greff at 10/day")]
-    assert problems == ["✅ On **Nicole**'s checklist", "✅ On **Therese**'s checklist"]
+    assert items == []
+    assert problems == ["✅ Trello's automation puts it on **Nicole**'s checklist",
+                        "✅ Trello's automation puts it on **Therese**'s checklist"]
 
 
 def test_tagged_in_any_growth_channel_ryte_answers(config, monkeypatch):
@@ -7686,7 +7687,9 @@ def test_the_screenshot_is_in_the_comment_and_therese_gets_the_ops_card_too(monk
     [(card, text)] = posted
     assert card == "G" and text.startswith("@thereseguba\nSID123 tok456")
     assert "![shot.png](https://trello.com/1/cards/G/attachments/a1/download/shot.png)" in text
-    assert items == [("G-t", "SID123 tok456"), ("O-t", "SID123 tok456")]
+    # On General the board's automation makes Therese's item; on Ops, where
+    # nothing was commented, RYTE does.
+    assert items == [("O-t", "SID123 tok456")]
     assert "✅ On **Therese**'s checklist on 💻 Ops 10/15/26" in problems
 
 
@@ -7721,48 +7724,37 @@ def test_a_tag_and_a_screenshot_gets_a_task_and_the_ads_card(monkeypatch):
     assert posted[0]["kind"] == "ads" and posted[0]["text"] == "@Nicole\nCap Heather at 1/day"
 
 
-def test_where_trello_makes_the_checklist_item_ryte_doesnt_make_another(monkeypatch):
-    """"why are you creating multiple checklist bro" - the board turns a
-    comment that tags someone into an item linking to it."""
-    monkeypatch.setattr(jobs, "TAG_AUTOMATION_WAIT", 0)
+def test_ryte_never_makes_a_second_item_on_the_card_it_comments_on(monkeypatch):
+    """"why are you creating multiple checklist bro" / "still doing thisssss" -
+    the board turns a comment that tags someone into an item linking to it,
+    sometimes long after a few seconds."""
+    items, comments = [], []
 
-    def board(existing, automation):
-        items, comments = [], []
+    class Client:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
 
-        class Client:
-            def board_lists(self, board_id):
-                return [{"id": "L"}]
+        def list_cards(self, list_id):
+            return [{"id": "O", "name": "💻 Ops 10/16/26", "url": "https://trello.com/c/Vvudv62m/ops"}]
 
-            def list_cards(self, list_id):
-                return [{"id": "O", "name": "💻 Ops 10/15/26", "url": "https://trello.com/c/dOWRFNNX/ops"}]
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"}]
 
-            def board_members(self, board_id):
-                return [{"username": "thereseguba", "fullName": "Therese Guba"}]
+        def add_comment(self, card_id, text):
+            comments.append(text)
+            return {"id": "c99"}
 
-            def add_comment(self, card_id, text):
-                comments.append(text)
-                if automation:
-                    existing.append(f"Check the CRM https://trello.com/c/dOWRFNNX#comment-c99")
-                return {"id": "c99"}
+        def card_checklists(self, card_id):
+            return [{"id": "t", "name": "Therese", "checkItems": []}]
 
-            def card_checklists(self, card_id):
-                return [{"id": "t", "name": "Therese", "checkItems": [{"name": one} for one in existing]}]
+        def add_check_item(self, checklist_id, name):
+            items.append(name)
 
-            def add_check_item(self, checklist_id, name):
-                items.append(name)
+        def close(self):
+            pass
 
-            def close(self):
-                pass
-
-        monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
-        _t, _u, problems = jobs.comment_on_daily(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="B")),
-                                                 kind="ops", day=date(2026, 10, 15),
-                                                 text="and tag Therese Don Alimi's lead didn't land in his CRM")
-        return items, problems
-
-    items, problems = board([], automation=True)
-    assert items == [] and "✅ Trello's automation puts it on **Therese**'s checklist" in problems
-    items, _ = board(["Matthew O CRM https://trello.com/c/dOWRFNNX#comment-6ad106bd"], automation=False)
-    assert items == [], "the card already shows the automation at work"
-    items, _ = board([], automation=False)
-    assert items == ["Don Alimi's lead didn't land in his CRM"]
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Client())
+    _t, _u, problems = jobs.comment_on_daily(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="B")),
+                                             kind="ops", day=date(2026, 10, 16), text="and tag Therese Karli Kelley crm")
+    assert comments == ["@thereseguba\nKarli Kelley crm"] and items == []
+    assert "✅ Trello's automation puts it on **Therese**'s checklist" in problems

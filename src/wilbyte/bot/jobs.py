@@ -4518,10 +4518,12 @@ def comment_on_daily(
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
         problems = [f"Nobody on the board is called {one} — not tagged." for one in strangers]
-        # "why are you creating multiple checklist bro" - the board's own
-        # automation turns a comment that tags someone into a checklist item
-        # linking back to it. Where it does, RYTE's own would be a second.
-        trello_does_it = bool(handles) and _tags_become_items(client, card, str(posted.get("id") or ""))
+        # "why are you creating multiple checklist bro" / "still doing
+        # thisssss" - the board's own automation turns a comment that tags
+        # someone into a checklist item linking back to it, sometimes well
+        # after a few seconds. On the card the comment is on, RYTE never adds
+        # its own: that would always be the second.
+        trello_does_it = bool(handles)
         if shown:
             problems.append(f"✅ {len(shown)} screenshot(s) in the comment")
         if missed:
@@ -4612,38 +4614,6 @@ def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
     except Exception:
         logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
         return by_words, said
-
-
-#: How long to give the board's automation to make its checklist item from
-#: a comment before RYTE makes one itself.
-TAG_AUTOMATION_WAIT = 8
-
-
-def _tags_become_items(client, card: dict, comment_id: str) -> bool:
-    """Whether the board turns this card's tagging comments into checklist
-    items itself: an item already linking to one of its comments ("...#comment-
-    6ad106bd..."), or one linking to the comment just posted, once it's had a
-    few seconds."""
-    import time
-
-    from .. import ordercards
-
-    card_id = str(card.get("id") or "")
-    short = ordercards.card_id_of(str(card.get("url") or card.get("shortUrl") or "")) or card_id
-
-    def names():
-        try:
-            return [str(item.get("name") or "") for one in client.card_checklists(card_id)
-                    for item in one.get("checkItems") or []]
-        except Exception:
-            return []
-
-    if any(f"{short}#comment-" in one for one in names()):
-        return True
-    if not comment_id:
-        return False
-    time.sleep(TAG_AUTOMATION_WAIT)
-    return any(comment_id in one for one in names())
 
 
 def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:
