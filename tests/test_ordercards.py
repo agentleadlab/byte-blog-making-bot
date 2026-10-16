@@ -2885,3 +2885,30 @@ def test_a_blank_agency_is_filled_in_after(monkeypatch, tmp_path):
     # An agency somebody wrote in isn't changed.
     board["c2"] = desc.replace("Agency:", "Agency: AEP")
     assert jobs.order_card_fill_agency(None, "c2", "Nonstop Financial") == ""
+
+
+def test_lead_lab_is_found_by_name_when_the_id_doesnt_work():
+    """"what are we doing" - Roman Edwards' request (Agency: Genesis) was
+    right there and his card came out blank."""
+    lead_lab = SimpleNamespace(id=5, name="🧪┃lead-lab", history=lambda **kw: None)
+    other = SimpleNamespace(id=6, name="lead-order", history=lambda **kw: None)
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_lead_request_channel_id="999")),
+                          get_channel=lambda one: None,
+                          guilds=[SimpleNamespace(text_channels=[other, lead_lab])])
+    assert client._lead_lab_channel(bot) is lead_lab
+
+
+def test_posts_with_nothing_in_them_are_said(monkeypatch):
+    class Channel:
+        name, id = "lead-lab", 5
+
+        def history(self, limit):
+            async def each():
+                for _ in range(3):
+                    yield SimpleNamespace(content="", embeds=[])
+            return each()
+
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_lead_request_channel_id="5")),
+                          get_channel=lambda one: Channel())
+    asyncio.run(client._lead_requests_read(bot))
+    assert "Message Content" in client._LEAD_TROUBLE[0]

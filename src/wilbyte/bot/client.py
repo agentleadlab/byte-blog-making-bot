@@ -9375,20 +9375,46 @@ async def _lead_requests(bot, *, wait: float | None = None, fresh_within: float 
         return held
 
 
+#: Why #lead-lab couldn't be read, said once in Goat; "" when it's fine.
+_LEAD_TROUBLE: list = [""]
+
+
+def _lead_lab_channel(bot):
+    """#lead-lab - DISCORD_LEAD_REQUEST_CHANNEL_ID, else found by name in
+    any server RYTE is in."""
+    secrets = getattr(getattr(bot, "config", None), "secrets", None)
+    wanted = str(getattr(secrets, "discord_lead_request_channel_id", "") or "").strip()
+    channel = bot.get_channel(int(wanted)) if wanted.isdigit() and hasattr(bot, "get_channel") else None
+    if channel is not None and hasattr(channel, "history"):
+        return channel
+    for guild in getattr(bot, "guilds", None) or []:
+        for one in getattr(guild, "text_channels", None) or []:
+            if _plain_letters(getattr(one, "name", "")) == "leadlab":
+                log.info("#lead-lab found by name: %s (%s)", one.name, one.id)
+                return one
+    return None
+
+
 async def _lead_requests_read(bot) -> list[str]:
     import time
 
-    wanted = str(getattr(bot.config.secrets, "discord_lead_request_channel_id", "") or "").strip()
+    channel = _lead_lab_channel(bot)
     try:
-        channel = bot.get_channel(int(wanted)) if wanted.isdigit() else None
         if channel is None:
-            log.warning("Can't see #lead-lab (%s) - no agency from New Lead Requests", wanted or "not set")
+            _LEAD_TROUBLE[0] = "I can't find #lead-lab"
+            log.warning("Can't see #lead-lab - no agency from New Lead Requests")
             return []
         found = [(getattr(one, "created_at", None), _all_text(one))
                  async for one in channel.history(limit=LEAD_REQUESTS_READ)]
-    except Exception:
+    except Exception as exc:
+        _LEAD_TROUBLE[0] = f"I can't read #lead-lab ({_readable(exc)})"
         log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
         return _LEAD_REQUESTS[1]
+    _LEAD_TROUBLE[0] = ""
+    if found and not any("agency" in text.casefold() for _when, text in found):
+        # Posts, but none with a word of what's in them - no message content.
+        _LEAD_TROUBLE[0] = (f"#lead-lab reads as {len(found)} posts with nothing in them - "
+                            "I may be missing the Message Content permission")
     threads = list(getattr(channel, "threads", None) or [])
     try:
         if hasattr(channel, "archived_threads"):
@@ -9461,6 +9487,9 @@ async def _agency_fill(bot) -> list[str]:
     return filled
 
 
+_LEAD_TROUBLE_SAID: list = [""]
+
+
 async def agency_fill_loop(bot: "WilByteBot") -> None:
     """#lead-lab kept read, so a card never waits on it, and a card made
     before its request was read gets its Agency filled in after."""
@@ -9468,6 +9497,13 @@ async def agency_fill_loop(bot: "WilByteBot") -> None:
     while not bot.is_closed():
         try:
             filled = await _agency_fill(bot)
+            trouble = _LEAD_TROUBLE[0]
+            if trouble and trouble != _LEAD_TROUBLE_SAID[0]:
+                said_to = _order_responder(bot)
+                if said_to is not None:
+                    await said_to.send(f"🏢 ⚠ {trouble} — so no Agency from New Lead Requests. "
+                                       "Check I can see it (View Channel, Read Message History).")
+                _LEAD_TROUBLE_SAID[0] = trouble
             responder = _order_responder(bot) if filled else None
             if responder is not None:
                 await responder.send("🏢 **Agency filled in from #lead-lab:**\n" + "\n".join(f"• {one}" for one in filled))
@@ -9485,13 +9521,18 @@ async def _agency_lookup(bot, name: str) -> str:
     if not name:
         return "Who? `@Ryte agency <their name>`"
     posts = await _lead_requests(bot, wait=90)
+    channel = _lead_lab_channel(bot)
+    where = f"#{getattr(channel, 'name', 'lead-lab')} ({getattr(channel, 'id', '?')})" if channel else "#lead-lab"
     if not posts:
-        return ("I can't read #lead-lab — check I can see it (View Channel and Read Message History) "
-                "and that DISCORD_LEAD_REQUEST_CHANNEL_ID is right.")
+        return (f"{_LEAD_TROUBLE[0] or 'I can’t read #lead-lab'} — check I can see it (View Channel and Read "
+                "Message History) and that DISCORD_LEAD_REQUEST_CHANNEL_ID is right.")
+    with_agency = sum(1 for one in posts if jobs.request_agency(one))
     wanted = name.casefold()
     naming = [one for one in posts if wanted in " ".join(one.split()).casefold()]
     used = jobs.lead_request_for(posts, f"NAME: {name}")
-    lines = [f"🔎 **{name}** in #lead-lab ({len(posts)} posts and threads read):"]
+    lines = [f"🔎 **{name}** in {where} — {len(posts)} posts and threads read, {with_agency} with an Agency:"]
+    if _LEAD_TROUBLE[0]:
+        lines.append(f"⚠ {_LEAD_TROUBLE[0]}")
     if not naming:
         lines.append("Nothing there names them — no request to take an Agency from. If the team writes it "
                      "on its own line in the thread (\"AEP\"), I take it from there.")
