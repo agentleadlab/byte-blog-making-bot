@@ -2535,3 +2535,18 @@ def test_payra_is_read_once_and_shared_and_left_alone_when_it_says_wait(monkeypa
     Payra.throttled = False
     assert jobs.payra_recent(config, "invoices") == {"saved": {"id": "saved"}}
     assert asked == ["invoices", "invoices"], "asked again while Payra said to wait"
+
+
+def test_all_of_whats_available_adds_up():
+    """Alexis Lesme: "180+ days ALL" over the stock list, and 37 more 90-180."""
+    source = ("[10/16 12:18PM] LeadLab: New Payment | Payra\nNAME: Alexis Lesme\nAMOUNT: $308.95\nPRODUCT: Aged Leads (VET)\n"
+              "[10/16 12:23PM] Kharyl: Alexis Lesme\n180+ days ALL\nGeorgia · AEP agency VET 180+: 1 available\n"
+              "Texas · AEP agency VET 180+: 34 available\nMichigan · AEP agency VET 180+: 4 available\n"
+              "Mississippi · AEP agency VET 180+: 130 available\n\n90-180 days-- 37 leads fl, ga, tx, va, oh, mi, ms\nAEP")
+    card = {"kind": "aged", "source": source,
+            "fields": {"states": "GA, TX, MI, MS, FL, VA, OH", "leads": "206", "package": "Aged VET"}}
+    assert not any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+    card["fields"]["leads"] = "169"
+    assert not any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+    card["fields"]["leads"] = "300"
+    assert any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])

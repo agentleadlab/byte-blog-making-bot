@@ -295,7 +295,17 @@ def _adds_up_to(total: int, source: str) -> bool:
         first = _COUNT_OF.match(line)
         if first:
             starts.append(int(first.group(1)))
-    return len(starts) >= 2 and sum(starts) == total
+    if len(starts) >= 2 and sum(starts) == total:
+        return True
+    # "180+ days ALL" over a list of what's on hand - "Texas · AEP agency VET
+    # 180+: 34 available" and the rest - is all of them (Alexis Lesme), and
+    # with any other count said ("90-180 days-- 37 leads") added on.
+    if re.search(r"\ball\b", said, re.IGNORECASE):
+        on_hand = [int(one) for one in re.findall(r"(?<![\d.$])(\d{1,4})\s+available\b", said, re.IGNORECASE)]
+        others = [int(one.group(1)) for line in said.splitlines() for one in _COUNT_OF.finditer(line.strip())]
+        if on_hand and total in (sum(on_hand), sum(on_hand) + sum(others)):
+            return True
+    return False
 
 
 def says_when(source: str) -> bool:
