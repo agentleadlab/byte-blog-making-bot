@@ -12841,7 +12841,20 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     fields["states"] = places[0] if len(places) == 1 else "; ".join(
         f"{one['package']}: {one.get('states') or 'to come'}" for one in aged)
     also = [line(one) for one in fresh]
-    said = "\n".join(bit for bit in str(base.get("notes") or "").splitlines() if not bit.startswith("Paid via Zelle"))
+    # The team's notes, less what's about the new-agent lines - "OTP VETS -
+    # waiting for states", "Live on Sunday October 18" read on the aged card
+    # as if the aged leads went live Sunday.
+    theirs = {word.casefold() for one in fresh for word in re.findall(r"[A-Za-z]{3,}", one["package"])
+              if word.casefold() not in {"leads", "lead", "and", "the", "text", "verified"}}
+    # Only the words that are the new-agent lines' own: "Vets" is on both.
+    theirs -= {word.casefold() for one in aged for word in re.findall(r"[A-Za-z]{3,}", one["package"])}
+
+    def about_aged(bit: str) -> bool:
+        words = {word.casefold() for word in re.findall(r"[A-Za-z]{3,}", bit)}
+        return not (words & theirs) and not re.search(r"\b(?:live|launch\w*|go(?:es|ing)?\s+live)\b", bit, re.IGNORECASE)
+
+    said = "\n".join(bit for bit in str(base.get("notes") or "").splitlines()
+                     if not bit.startswith("Paid via Zelle") and about_aged(bit))
     fields["notes"] = "\n".join(
         [*zelle, "Order lines:", *(f"• {line(one)}" for one in aged), "",
          "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]

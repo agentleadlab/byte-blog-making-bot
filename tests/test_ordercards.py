@@ -3129,7 +3129,8 @@ PATRICK_PARTS = [
 def _patrick():
     return {"kind": "fresh", "client": "Patrick Moreno", "source": PATRICK, "parts": [dict(one) for one in PATRICK_PARTS],
             "fields": {"name": "Patrick Moreno", "email": "ops@example.com", "phone": "+13055550397",
-                       "agency": "", "notes": "ALL AGED VETS DELIVERED TODAY"}}
+                       "agency": "", "notes": "ALL AGED VETS DELIVERED TODAY\n\nOTP VETS - waiting for states\n\n"
+                                              "Live on Sunday October 18"}}
 
 
 def test_aged_and_new_agent_leads_split_into_their_cards():
@@ -3143,6 +3144,8 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
     assert "Aged Vets 30-90: TX" in aged["fields"]["states"]
     assert "• 5,659 Aged Vets 180+ — Nationwide" in aged["desc"] and "34 OTP Vets — states to come" in aged["desc"]
     assert "ALL AGED VETS DELIVERED TODAY" in aged["desc"]
+    assert "waiting for states" not in aged["desc"] and "Sunday" not in aged["desc"]
+    assert "• 25 OTP IULs" in aged["desc"] and "25 25" not in aged["desc"]
     assert vets["kind"] == "fresh" and vets["fields"]["leads"] == "34" and not vets["fields"]["states"]
     assert not vets["fields"]["launch"], "waits for its states and its date"
     assert "No states yet" in vets["desc"]
