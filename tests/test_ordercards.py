@@ -3120,7 +3120,7 @@ PATRICK_PARTS = [
     {"kind": "aged", "package": "Aged Vets 30-90", "leads": "50", "states": "TX", "launch_iso": ""},
     {"kind": "aged", "package": "Aged IULs 30-90", "leads": "100", "states": "NC, GA, FL, TX", "launch_iso": ""},
     {"kind": "fresh", "package": "OTP Vets", "leads": "34", "states": "", "launch_iso": ""},
-    {"kind": "fresh", "package": "OTP IULs", "leads": "25",
+    {"kind": "fresh", "package": "25 OTP IULs", "leads": "25",
      "states": "AL, AZ, CA, CO, CT, FL, GA, KY, LA, MA, MD, ME, NC, NM, OH, OK, OR, PA, SC, TN, TX, VA, WA, WI",
      "launch_iso": "2026-10-18"},
 ]

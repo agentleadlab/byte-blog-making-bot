@@ -12808,9 +12808,16 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     IULs live Sunday). [] when the order isn't one of those."""
     from .. import ordercards
 
-    parts = card.get("parts") or []
+    parts = [dict(one) for one in card.get("parts") or []]
     if not {"aged", "fresh"} <= {one.get("kind") for one in parts}:
         return []
+    for one in parts:
+        # "25 OTP IULs" is the count and the lead type: the count has its own
+        # field, and the lead type reads the same on every card without it.
+        bare = re.sub(r"^\s*\d[\d,]*\s+", "", one.get("package") or "")
+        if bare and bare != one["package"]:
+            one["leads"] = one.get("leads") or re.match(r"\s*([\d,]+)", one["package"]).group(1)
+            one["package"] = bare
     base = dict(card.get("fields") or {})
     client = card.get("client") or base.get("name") or "New client"
     source = str(card.get("source") or "")
