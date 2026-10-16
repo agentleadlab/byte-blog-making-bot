@@ -634,11 +634,35 @@ def test_taking_the_gavel_off_and_putting_it_back_makes_a_fresh_card(order):
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
     assert len(order.made) == 1
     asyncio.run(client._order_ungavelled(_bot(message), GAVEL))
-    assert "900" not in ordercards.load()
-    assert "put it back and I'll make a fresh card" in order.responder.sent[-1][0]
+    assert ordercards.load()["900"]["status"] == "off"
+    assert "update the card I made" in order.responder.sent[-1][0]
     assert "https://trello.com/c/new1" in order.responder.sent[-1][0]
-    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    assert len(order.made) == 2
+    # "why did you create two card for diego": put back, the same card is
+    # brought up to date - not a second one.
+    open_cards = {"card1"}
+    refreshed = []
+
+    async def refresh(bot, key, settle=None):
+        refreshed.append(key)
+        return "updated"
+
+    orig = client._order_refresh
+    client._order_refresh = refresh
+    jobs_open = jobs.order_card_open
+    jobs.order_card_open = lambda config, card_id: card_id in open_cards
+    try:
+        asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+        assert len(order.made) == 1 and refreshed == ["900"]
+        assert ordercards.load()["900"]["status"] == "made"
+        assert "brought it up to date instead of making another" in order.responder.sent[-1][0]
+        # The card deleted, then the gavel off and on again: a fresh one.
+        asyncio.run(client._order_ungavelled(_bot(message), GAVEL))
+        open_cards.clear()
+        asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+        assert len(order.made) == 2
+    finally:
+        client._order_refresh = orig
+        jobs.order_card_open = jobs_open
 
 
 def test_taking_off_a_gavel_that_made_nothing_says_nothing(order):

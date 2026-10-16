@@ -9779,12 +9779,17 @@ async def _order_ungavelled(bot, payload) -> None:
         order = held.pop(key, None)
         if not order:
             return
+        # The card it made is remembered: putting the gavel back updates that
+        # card rather than making a second - "why did you create two card for
+        # diego".
+        if order.get("status") == "made" and order.get("card_id"):
+            held[key] = {**order, "status": "off"}
         await asyncio.to_thread(ordercards.save, held)
     responder = _order_responder(bot)
     if responder is not None and order.get("status") == "made":
         await responder.send(f"🔨 Gavel taken off **{order.get('client') or order.get('name') or 'that order'}** — "
-                             f"put it back and I'll make a fresh card. The one I made stays as it is: "
-                             f"{order.get('url', '')}", quiet=True)
+                             f"put it back and I'll update the card I made with what's in the thread now (delete "
+                             f"the card first for a fresh one): {order.get('url', '')}", quiet=True)
 
 
 async def _order_gavel_refused(bot, payload) -> None:
@@ -9817,6 +9822,26 @@ async def _order_gavelled(bot, payload) -> None:
 
     key = str(payload.message_id)
     responder = _order_responder(bot)
+    off = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if off.get("status") == "off" and key not in _ORDER_ACTIVE:
+        # The gavel put back on an order whose card is still on the board:
+        # that card, brought up to date - not a second one.
+        try:
+            still = await asyncio.to_thread(jobs.order_card_open, bot.config, off["card_id"])
+        except Exception:
+            log.warning("Couldn't see whether %s's card is still there", off.get("client"), exc_info=True)
+            still = True
+        if still:
+            await _order_note(key, status="made")
+            done = await _order_refresh(bot, key, settle=0)
+            await _order_mark(bot, payload.channel_id, key)
+            if responder is not None:
+                await responder.send(f"🔨 **{off.get('client') or off.get('name') or 'That order'}** already has its "
+                                     f"card, so I've brought it up to date instead of making another"
+                                     + (" — nothing new in the thread" if done == "same" else "")
+                                     + f": {off.get('url', '')}", quiet=True)
+            return
+        await _order_forget_made(key)
     async with _ORDER_LOCK:
         held = await asyncio.to_thread(ordercards.load)
         if (held.get(key) or {}).get("status") == "made" or key in _ORDER_ACTIVE:
@@ -11038,6 +11063,8 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
     if status == "made":
         hold = " · 🏦 waiting on the bank" if order.get("bank_hold") is True else ""
         return "ok", f"✅ **{name}** ({bits}) — <{order.get('url', '')}>{hold}"
+    if status == "off":
+        return "check", f"🔨 **{name}** ({bits}) — gavel taken off; its card is still there: <{order.get('url', '')}>"
     if status == "left":
         return "ok", f"✋ **{name}** ({bits}) — somebody pressed Leave it: <{post.jump_url}>"
     if status == "asked":

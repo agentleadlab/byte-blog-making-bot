@@ -12895,6 +12895,21 @@ def order_card_attach(config: Config, card_id: str, urls: list[str], *, done: tu
     return attached
 
 
+def order_card_open(config: Config, card_id: str) -> bool:
+    """Whether a card is still on the board - not archived, not deleted."""
+    client = open_trello(config)
+    try:
+        try:
+            card = client._request("GET", f"/cards/{card_id}", params={"fields": "closed"})
+        except Exception as exc:
+            if "404" in str(exc) or "not found" in str(exc).casefold():
+                return False
+            raise
+        return not (card or {}).get("closed")
+    finally:
+        client.close()
+
+
 def order_card_update(config: Config, card_id: str, *, written: str, desc: str, name: str = "",
                       commented: tuple = ()) -> tuple[str, list[str]]:
     """New notes onto a card RYTE made. Its description is rewritten only when
