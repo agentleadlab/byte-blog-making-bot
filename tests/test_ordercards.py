@@ -2001,7 +2001,7 @@ def test_notes_dont_repeat_the_fields_above_them():
     assert jobs.order_fields(got, [declan])["notes"] == (
         "Can I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet")
     aged = "Payra invoice note: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
-    assert jobs.order_fields({}, [aged])["notes"] == "AGED IUL / 180+ / in states IL, SC, AZ, and TX"
+    assert jobs.order_fields({}, [aged])["notes"] == "From the Payra invoice: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
 
 
 def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):

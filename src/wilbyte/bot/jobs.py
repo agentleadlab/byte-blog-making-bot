@@ -12466,7 +12466,13 @@ def _beyond_fields(note: str, fields: dict) -> str:
         if phone and len(digits) >= 10 and digits[-10:] == phone and not re.search(r"[a-z]{3}", text, re.IGNORECASE):
             continue
         kept.append(text)
-    return "\n".join(kept).strip()
+    said = "\n".join(kept).strip()
+    # Said where it's from: Bryson Butt's card read "Launch Monday" over the
+    # team's "live thursday october 22" - two launch dates, one of them what
+    # he typed on the invoice before the team spoke to him.
+    if said and re.match(r"\s*payra invoice note:", str(note or ""), re.IGNORECASE):
+        said = f"From the Payra invoice: {said}"
+    return said
 
 
 def order_fields(got: dict, notes: list[str] = ()) -> dict:
