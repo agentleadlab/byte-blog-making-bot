@@ -10723,6 +10723,20 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
                 await _order_note(key, extra_notes=list(extra))
         card, _examples, _thread = await _order_read(bot, message, since=since, extra=extra,
                                                      threads=tuple(order.get("threads") or ()))
+        # Notes about somebody else don't make the card theirs: Tony
+        # Moderno's card was rewritten as Preston Bridges'.
+        was, now = str(order.get("client") or ""), str(card.get("client") or "")
+        if was and now and not ordercards.same_person(was, now):
+            if order.get("other_person") != now:
+                await _order_note(key, other_person=now)
+                responder = _order_responder(bot)
+                if responder is not None:
+                    await responder.send(
+                        f"⚠ **{order.get('name') or was}** — the new notes in its thread are about **{now}**, not "
+                        f"{was}. The card's left as it is: check whether {was} paid for {now}, or the notes "
+                        f"belong to another order.\n{order.get('url', '')}")
+            await _order_seen(bot, key)
+            return "other person"
         done, said = await asyncio.to_thread(partial(
             jobs.order_card_update, bot.config, order["card_id"], written=order.get("written", ""),
             desc=card["desc"], name=card["name"], commented=tuple(order.get("commented") or ())))

@@ -3043,3 +3043,38 @@ def test_states_in_brackets_dont_hold_a_card(bracket):
             "fields": {"states": states, "package": "Text-Verified Veteran", "leads": "27",
                        "launch": "Friday, October 16"}}
     assert not any("also says" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+
+
+def test_paid_by_somebody_else_is_held():
+    """"this was name tony moderno, but the notes said Preston bridges ... why
+    didnt ryte flag it"."""
+    source = ("[10/16 05:48PM] LeadLab: New Payment | Payra\nNAME: Tony Moderno\nEMAIL: tony@example.com\n"
+              "PRODUCT: MTG\n[10/16 05:50PM] Faith: Preston Bridges\nIL, UT, AZ\n54 OTP MTG Standard\nlive monday")
+    card = {"kind": "fresh", "source": source, "launch_iso": "2026-10-19",
+            "fields": {"name": "Preston Bridges", "states": "IL, UT, AZ", "package": "OTP MTG Standard",
+                       "leads": "54", "launch": "Monday, October 19"}}
+    wrong = ordercards.doubts(card, today=date(2026, 10, 16))[0]
+    assert any("paid by Tony Moderno" in one and "Preston Bridges" in one for one in wrong)
+    assert ordercards.same_person("Mike Smith", "Michael Smith")
+    assert ordercards.same_person("alejandro jimenez", "Alejandro Jimenez")
+    assert not ordercards.same_person("Tony Moderno", "Preston Bridges")
+
+
+def test_notes_about_somebody_else_dont_rewrite_the_card(order, monkeypatch):
+    """Tony Moderno's card was rewritten as Preston Bridges' from the notes."""
+    message = _message(thread=_notes("25 aged MTG"))
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    calls = []
+    monkeypatch.setattr(jobs, "order_card_update", lambda *a, **kw: calls.append(1) or ("updated", []))
+    reading = jobs.read_order
+
+    def somebody_else(config, **kw):
+        card = reading(config, **kw)
+        return {**card, "client": "Preston Bridges", "name": "New Agent - Preston Bridges"}
+
+    monkeypatch.setattr(jobs, "read_order", somebody_else)
+    assert asyncio.run(client._order_refresh(_bot(message), "900", settle=0)) == "other person"
+    assert calls == []
+    assert "about **Preston Bridges**, not Cole Petersen" in order.responder.sent[-1][0]
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert sum("Preston Bridges" in one[0] for one in order.responder.sent) == 1, "said once"

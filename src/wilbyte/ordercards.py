@@ -356,6 +356,24 @@ def all_counted(source: str) -> int | None:
     return found[0] if found else None
 
 
+_PAYER = re.compile(r"NAME:\**[ \t]*([^\n*]+)")
+
+
+def paid_by(source: str) -> str:
+    """The name on the payment post - "NAME: Tony Moderno", as Payra and
+    Zelle posts write it, in capitals - or ""."""
+    found = _PAYER.search(str(source or ""))
+    return " ".join(found.group(1).split()) if found else ""
+
+
+def same_person(one: str, other: str) -> bool:
+    """Whether two names share a name - "Mike Smith" and "Michael Smith" do,
+    "Tony Moderno" and "Preston Bridges" don't."""
+    words = lambda said: {word for word in re.findall(r"[a-z]+", str(said or "").casefold()) if len(word) >= 3}
+    first, second = words(one), words(other)
+    return not first or not second or bool(first & second)
+
+
 def says_when(source: str) -> bool:
     """Whether the order says when they launch: a launch word and a day or
     date - leaving out the time each message was posted, which RYTE adds as
@@ -376,6 +394,15 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     source = str(card.get("source") or "")
     kind = card.get("kind") or "fresh"
     wrong, missing = [], []
+
+    # Who paid, against who the card is for. Tony Moderno's payment went on a
+    # card for Preston Bridges - the thread's notes were about him - and was
+    # made without a word: somebody paying for them, or the wrong notes.
+    payer = paid_by(source)
+    named = " ".join(str(fields.get("name") or "").split())
+    if payer and named and not same_person(payer, named):
+        wrong.append(f"Name: paid by {payer}, but the order is for {named} - somebody paying for them, "
+                     f"or notes from another order?")
 
     # States.
     states = str(fields.get("states") or "").strip()
