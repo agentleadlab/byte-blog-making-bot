@@ -8018,6 +8018,7 @@ async def setup_check_loop(bot: "WilByteBot") -> None:
     """
     from .. import noticed, setupseen
 
+    backfilled = False
     while not bot.is_closed():
         try:
             responder = _board_responder(bot)
@@ -8049,11 +8050,41 @@ async def setup_check_loop(bot: "WilByteBot") -> None:
                     await asyncio.to_thread(setupseen.remember, marks)
                 if problems:
                     log.warning("Setup check: %s", "; ".join(problems))
+                # Set up and on nobody's Ads checklist - Cody Sturma's card
+                # had no launch date, so it never went on one. A week back
+                # the first time round, to pick up what was already missed.
+                hours = jobs.SETUP_HOURS if backfilled else jobs.ADS_BACKFILL_HOURS
+                added, trouble = await asyncio.to_thread(jobs.setups_onto_ads, bot.config, hours=hours)
+                backfilled = backfilled or not trouble
+                note = _ads_added_note(added, trouble, said_already=_ADS_TROUBLE_SAID)
+                if note:
+                    await responder.send(note)
         except asyncio.CancelledError:
             raise
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("Setup check failed; will try again shortly")
         await asyncio.sleep(SETUP_CHECK_SECONDS)
+
+
+#: Problems already said in Goat, so a missing checklist is said once and not
+#: every ten minutes.
+_ADS_TROUBLE_SAID: set[str] = set()
+
+
+def _ads_added_note(added, trouble, *, said_already: set[str]) -> str:
+    """What `setups_onto_ads` did, in a line or a few, or "" for nothing new."""
+    trouble = [one for one in trouble if one not in said_already]
+    said_already.update(trouble)
+    if not added and not trouble:
+        return ""
+    lines = []
+    if added:
+        lines.append("📊 **Set up but on no Ads checklist — added:**")
+        lines += [f"• {one}" for one in added[:UNMARKED_SHOWN]]
+        if len(added) > UNMARKED_SHOWN:
+            lines.append(f"…and {len(added) - UNMARKED_SHOWN} more.")
+    lines += [f"⚠ {one}" for one in trouble[:5]]
+    return "\n".join(lines)
 
 
 # Fifteen minutes. A line lands on a Lead Order card when somebody runs the

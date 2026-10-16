@@ -4060,6 +4060,130 @@ def wrong_setups(
     return found, problems
 
 
+#: The first pass after a restart looks back a week - "WHAT HAVE YOOU BEEN
+#: MISSING" - and every pass after it the usual two days.
+ADS_BACKFILL_HOURS = 7 * 24
+#: Ads and setup cards this many days either side of today are the ones an
+#: agent could already be on.
+ADS_LOOK_BACK_DAYS = 14
+
+
+def setups_onto_ads(
+    config: Config, *, day=None, hours: int = SETUP_HOURS
+) -> tuple[list[str], list[str]]:
+    """Set-up agents nobody put on the Ads checklists. (added, problems).
+
+    "why didnt you add this to nicole's checklist on ads card?" Cody Sturma's
+    card had no launch date, so it waited in Franklin (Admin) and never went
+    on a checklist - and Therese set him up anyway and he went to Done. Once
+    a setup is confirmed on the card, that agent is live work for Ads.
+
+    Only an agent who is on no Ads card and no setup card at all. One filed
+    the usual way is already on one of them - the setup card is linked onto
+    Ads - and gets nothing more. One launching after today is left to the
+    filing, which puts them on their own day's setup card, and so is one
+    still in In Que or Today, which the filing is about to pick up.
+
+    Onto today's Ads card, or the next working day's at the weekend, on the
+    checklists that are already there. Safe to run twice: the scan finds what
+    the last run added.
+    """
+    from .. import agents, dailyops, tagged, trello
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    added, problems = [], []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = _cards_of(client, config.secrets.trello_board_id, lists)
+        filing = {
+            str(bl.get("id") or "")
+            for bl in (trello.find_list(lists, name) for name in (agents.IN_QUE, agents.TODAY))
+            if bl is not None
+        }
+        fresh = _since(hours)
+        waiting = []
+        for card in every:
+            title = str(card.get("name", ""))
+            if not agents.is_agent_card(title) or str(card.get("dateLastActivity") or "") < fresh:
+                continue
+            short = trello.linked_card_id(str(card.get("shortUrl") or card.get("url") or ""))
+            if not short:
+                continue
+            card_id = str(card.get("id") or "")
+            try:
+                said = client.card_comments(card_id)
+                if not (agents.setup_said(said) or any(tagged.a_setup_confirmation(one) for one in said)):
+                    continue
+                detail = client.card_detail(card_id)
+            except Exception as exc:  # one bad card must not lose the rest
+                problems.append(f"{agents.agent_name(title)} — {_short(exc, 120)}")
+                continue
+            desc = str(detail.get("desc") or "")
+            agent = agents.read_agent({**card, **detail}, text=desc, comments=tuple(said), today=day)
+            launch = agent.launch if agent is not None else agents.find_launch(desc, today=day)
+            if launch is not None and (launch > day or str(card.get("idList") or "") in filing):
+                continue
+            label = (agent.stated or agent.lead_type) if agent is not None else ""
+            waiting.append((short, card, label or agents.setup_said(said)))
+        if not waiting:
+            return [], problems
+
+        # Everything an agent could already be on: the Ads cards and the setup
+        # cards of the last fortnight and the week ahead.
+        near = []
+        for card in every:
+            title = str(card.get("name", ""))
+            key = dailyops.parse_card_title(title)
+            when = key[1] if key and key[0] == "ads" else (
+                agents.setup_starts(title, day) if agents.is_setup_card(title) else None
+            )
+            if when is not None and -ADS_LOOK_BACK_DAYS <= (when - day).days <= dailyops.LOOK_AHEAD:
+                near.append(card)
+        on_already = {
+            trello.linked_card_id(str(item.get("name") or ""))
+            for card in near
+            for held in client.card_checklists(str(card.get("id") or ""))
+            for item in held.get("checkItems") or []
+        }
+        waiting = [one for one in waiting if one[0] not in on_already]
+        if not waiting:
+            return [], problems
+
+        ads, when = None, day
+        for ahead in range(dailyops.LOOK_AHEAD):
+            when = day + timedelta(days=ahead)
+            ads = dailyops.cards_covering(every, when).get("ads")
+            if ads is not None or when.weekday() < dailyops.SATURDAY:
+                break
+        if ads is None:
+            names = ", ".join(agents.agent_name(str(card.get("name", ""))) for _s, card, _l in waiting)
+            return [], problems + [f"No Ads card dated {day:%m/%d/%y} for {names}"]
+        held = {
+            " ".join(str(c.get("name") or "").split()).casefold(): c
+            for c in client.card_checklists(str(ads.get("id") or ""))
+        }
+        for _short_id, card, label in waiting:
+            name = agents.agent_name(str(card.get("name", "")))
+            item = agents.checklist_item(str(card.get("shortUrl") or card.get("url") or ""), label)
+            for person in agents.ADS_PEOPLE:
+                found = held.get(" ".join(person.split()).casefold())
+                if found is None:
+                    problems.append(f"{ads.get('name')} has no {person!r} checklist")
+                    continue
+                try:
+                    client.add_check_item(str(found.get("id") or ""), item)
+                except Exception as exc:
+                    problems.append(f"{name} · {person} — {_short(exc, 120)}")
+                    continue
+                added.append(f"{name} → {ads.get('name')} · {person}")
+    except Exception as exc:
+        problems.append(_short(exc, 160))
+    finally:
+        client.close()
+    return added, list(dict.fromkeys(problems))
+
+
 def _since(hours: int) -> str:
     """An ISO timestamp `hours` ago, to compare against dateLastActivity."""
     from datetime import timezone

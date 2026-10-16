@@ -4191,3 +4191,129 @@ def test_a_new_agent_card_in_the_aged_list_is_never_archived(monkeypatch, config
 
     jobs.archive_aged(config)
     assert board.archived == ["kene"]
+
+
+# ------------------- set up, and on nobody's Ads checklist
+
+
+class AdsBoard(SetupBoard):
+    """Descriptions, comments and checklists - and the items added stay on."""
+
+    def __init__(self, lists, desc=None, said=None, held=None):
+        super().__init__(lists, desc=desc, said=said)
+        self.held = held or {}
+        self.items = []
+
+    def card_checklists(self, card_id):
+        return self.held.get(card_id, [])
+
+    def add_check_item(self, checklist_id, name, *, checked=False):
+        self.items.append((checklist_id, name))
+        for lists in self.held.values():
+            for one in lists:
+                if one["id"] == checklist_id:
+                    one["checkItems"].append({"id": "new", "name": name})
+        return {}
+
+
+CODY_URL = "https://trello.com/c/yUjvihqU"
+CODY_DESC = (
+    "Name: Cody Sturma\nStates: WA, PA, SC, AZ, CO, IN, TX\n"
+    "Lead Type/Package Selected: Text-Verified Trucker IUL Leads [FRESH - $60/Lead]\n"
+    "Number of Leads Requested: 25\nLaunch Date:\nAdditional Notes:"
+)
+CODY_SAID = "✅ TEXT VERIFIED TRUCKER IUL ON DISTRO HUB setup is complete for CODY STURMA"
+
+
+def cody_board(*, where="Done", desc=CODY_DESC, said=(CODY_SAID,), extra=(), held=None,
+               ads="📊 Ads 08/26/26"):
+    return AdsBoard(
+        {where: [{"id": "c", "name": "New Agent - Cody Sturma", "shortUrl": CODY_URL,
+                  "dateLastActivity": FRESH}],
+         "Today ": [{"id": "ads", "name": ads}, *extra]},
+        desc={"c": desc}, said={"c": list(said)},
+        held=held or {"ads": person_lists("Jenn", "Kath", "Nicole")},
+    )
+
+
+def test_a_set_up_agent_on_no_checklist_goes_on_ads(monkeypatch, config):
+    """"why didnt you add this to nicole's checklist on ads card?" No launch
+    date, so it was never filed - and set up anyway."""
+    from wilbyte.bot import jobs
+
+    board = cody_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    added, problems = jobs.setups_onto_ads(config, day=WEDNESDAY)
+
+    assert problems == []
+    assert {cl for cl, _name in board.items} == {"cl-Jenn", "cl-Kath", "cl-Nicole"}
+    assert all(name.startswith(CODY_URL) and "Trucker" in name for _cl, name in board.items)
+    assert len(added) == 3 and "Cody Sturma" in added[0]
+
+
+def test_twice_is_once(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = cody_board()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    jobs.setups_onto_ads(config, day=WEDNESDAY)
+
+    assert jobs.setups_onto_ads(config, day=WEDNESDAY) == ([], [])
+    assert len(board.items) == 3
+
+
+def test_one_already_on_a_setup_card_gets_nothing(monkeypatch, config):
+    """Filed the usual way: on the setup card, which is linked onto Ads."""
+    from wilbyte.bot import jobs
+
+    board = cody_board(
+        extra=[{"id": "setup", "name": "Agent Setup Going Live Thursday 08/27"}],
+        held={"ads": person_lists("Jenn", "Kath", "Nicole"),
+              "setup": person_lists("Nicole", holding=[f"{CODY_URL} Trucker IUL"])},
+    )
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.setups_onto_ads(config, day=WEDNESDAY) == ([], [])
+    assert board.items == []
+
+
+def test_not_set_up_yet_is_left_alone(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = cody_board(said=("Waiting on the launch date",))
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.setups_onto_ads(config, day=WEDNESDAY) == ([], [])
+
+
+def test_launching_later_is_the_filings_job(monkeypatch, config):
+    """Their own day's setup card, when it exists - not today's Ads."""
+    from wilbyte.bot import jobs
+
+    board = cody_board(desc=CODY_DESC.replace("Launch Date:", "Launch Date: Friday, August 28"),
+                       where="Franklin (Admin)")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    assert jobs.setups_onto_ads(config, day=WEDNESDAY) == ([], [])
+
+
+def test_at_the_weekend_it_is_mondays(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = cody_board(ads="📊 Ads 08/31/26")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    added, problems = jobs.setups_onto_ads(config, day=date(2026, 8, 29))
+
+    assert problems == [] and len(added) == 3 and "08/31/26" in added[0]
+
+
+def test_the_trouble_is_said_once():
+    from wilbyte.bot import client
+
+    seen: set[str] = set()
+    first = client._ads_added_note([], ["📊 Ads 08/26/26 has no 'Jenn' checklist"], said_already=seen)
+    assert "Jenn" in first
+    assert client._ads_added_note([], ["📊 Ads 08/26/26 has no 'Jenn' checklist"], said_already=seen) == ""
+    assert "Cody" in client._ads_added_note(["Cody Sturma → 📊 Ads 08/26/26 · Nicole"], [], said_already=seen)
