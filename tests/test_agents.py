@@ -4789,3 +4789,21 @@ def test_sparks_words_go_on_the_line_as_the_team_says_them(spark, team, checklis
 @pytest.mark.parametrize("said", ["20 otp vets", "PHOENIX PLUS 2.0", "OTP VETS", "30 text verify fresh vets"])
 def test_the_teams_own_words_are_left_alone(said):
     assert agents.in_team_words(said) == said
+
+
+@pytest.mark.parametrize("said, wanted", [
+    ("launch not today", None),
+    ("Not going live today", None),
+    ("dont launch today", None),
+    ("no launch today", None),
+    ("not live today - waiting on schedule", None),
+    ("live not today but monday", date(2026, 10, 19)),
+    ("do not launch on friday, launch monday", date(2026, 10, 19)),
+    ("launch not until monday", date(2026, 10, 19)),
+    ("live no later than friday 10/23", date(2026, 10, 23)),
+    ("launch tomorrow", date(2026, 10, 17)),
+])
+def test_a_day_it_says_isnt_the_day_isnt_the_launch(said, wanted):
+    """"why did it file for today even tho it said, not today?" - Jacob
+    Holifield."""
+    assert agents.find_launch(said, today=date(2026, 10, 16)) == wanted

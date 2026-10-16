@@ -1845,7 +1845,7 @@ def find_launch(text: str, *, today: date) -> date | None:
     isn't, and the calendar date is the one that stays true - so every sentence
     is looked at for a real date before any of them is read for a relative one.
     """
-    text = spelled_out(text)
+    text = _not_these_days(spelled_out(text))
     said = [
         sentence
         for pattern in _WHEN_SAID
@@ -1878,6 +1878,26 @@ def find_launch(text: str, *, today: date) -> date | None:
     if ADD_TO_ORDER.search(text or ""):
         return today
     return None
+
+
+# A day somebody says it isn't: "launch not today", "not going live today",
+# "dont launch today". Jacob Holifield was filed as launching today off one.
+# Not "not until Monday" or "no later than Friday" - those name the day.
+_NOT_THAT_DAY = re.compile(
+    r"\b(?:not|no|don'?t|do\s+not|won'?t|will\s+not|isn'?t|can'?t|cannot|never)\b"
+    r"(?!\s+(?:until|till|til|before|later|sooner|earlier|after)\b)"
+    r"(?:[ \t]+(?!(?:until|till|til|but)\b)[A-Za-z']+){0,3}?[ \t]+"
+    r"(?:today|tonight|tomorrow|tmrw|tmr"
+    r"|(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?"
+    r"|\d{1,2}/\d{1,2}(?:/\d{2,4})?"
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _not_these_days(text: str) -> str:
+    """The text with every day it says isn't the day taken out."""
+    return _NOT_THAT_DAY.sub(" ", text or "")
 
 
 # Words somebody puts in front of a day they have not committed to. They make
