@@ -3031,3 +3031,15 @@ def test_the_teams_launch_day_beats_the_invoices(monkeypatch):
     card = jobs.read_order(config, text="NAME: Michael Panza\n" + "\n".join(notes), images=[],
                            today=date(2026, 10, 16), notes=notes)
     assert card["fields"]["launch"] == "Saturday, October 17"
+
+
+@pytest.mark.parametrize("bracket", ["(GA and NJ if available)", "(GA & NJ sold out)", "(GA, NJ"])
+def test_states_in_brackets_dont_hold_a_card(bracket):
+    """Marcus Uhrich: "States Leads In: FL, ... TX (GA ...". """
+    states = "FL, IA, ID, IL, IN, MA, MD, MI, MN, NC, OH, PA, SC, TN, TX"
+    card = {"kind": "fresh", "source": f"New Payment | Payra\nNAME: Marcus Uhrich\nStates Leads In: {states} {bracket}\n"
+                                       "Live today Friday October 16",
+            "launch_iso": "2026-10-16",
+            "fields": {"states": states, "package": "Text-Verified Veteran", "leads": "27",
+                       "launch": "Friday, October 16"}}
+    assert not any("also says" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])

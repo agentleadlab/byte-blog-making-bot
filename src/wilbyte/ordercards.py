@@ -272,7 +272,11 @@ def _states_listed(source: str) -> tuple[list[str], dict]:
     for line in _state_lines(source):
         if _ALL_BUT.search(line) or re.search(r"\b(?:except|besides|excluding|not|no)\b", line, re.IGNORECASE):
             continue
-        for code in _CODE.findall(line):
+        # States in brackets are said about, not ordered: Marcus Uhrich's
+        # "FL, IA, ... TX (GA & NJ ...)" was held for GA and NJ, which the
+        # card was right to leave off.
+        listed_part = re.sub(r"\([^)]*(?:\)|$)", " ", line)
+        for code in _CODE.findall(listed_part):
             if code.upper() in US_STATES and code.isupper() and code.upper() not in where:
                 listed.append(code.upper())
                 where[code.upper()] = " ".join(line.split())
@@ -404,7 +408,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         if left and on_card:
             shown = next((line for code in left for line in [where.get(code, "")] if line), "")
             wrong.append(f"States: the order also says {', '.join(left)} - not on the card"
-                         + (f" (“{shown[:80]}”)" if shown else ""))
+                         + (f" (“{shown[:160]}”)" if shown else ""))
 
     # Lead type, against the payment's product line.
     product = re.search(r"PRODUCT:\**\s*([^\n]*)", source, re.IGNORECASE)
