@@ -297,15 +297,31 @@ def _adds_up_to(total: int, source: str) -> bool:
             starts.append(int(first.group(1)))
     if len(starts) >= 2 and sum(starts) == total:
         return True
-    # "180+ days ALL" over a list of what's on hand - "Texas · AEP agency VET
-    # 180+: 34 available" and the rest - is all of them (Alexis Lesme), and
-    # with any other count said ("90-180 days-- 37 leads") added on.
-    if re.search(r"\ball\b", said, re.IGNORECASE):
-        on_hand = [int(one) for one in re.findall(r"(?<![\d.$])(\d{1,4})\s+available\b", said, re.IGNORECASE)]
-        others = [int(one.group(1)) for line in said.splitlines() for one in _COUNT_OF.finditer(line.strip())]
-        if on_hand and total in (sum(on_hand), sum(on_hand) + sum(others)):
-            return True
-    return False
+    return total in _all_of_it(said)
+
+
+def _all_of_it(said: str) -> tuple[int, ...]:
+    """"180+ days ALL" over a list of what's on hand - "Texas · AEP agency
+    VET 180+: 34 available" and the rest - is all of them (Alexis Lesme), and
+    with any other count said ("90-180 days-- 37 leads") added on. (all of
+    them with the others, all of them alone), or () when it doesn't say."""
+    if not re.search(r"\ball\b", said, re.IGNORECASE):
+        return ()
+    on_hand = [int(one) for one in re.findall(r"(?<![\d.$])(\d{1,4})\s+available\b", said, re.IGNORECASE)]
+    if not on_hand:
+        return ()
+    others = [int(one.group(1)) for line in said.splitlines() for one in _COUNT_OF.finditer(line.strip())]
+    return (sum(on_hand) + sum(others), sum(on_hand))
+
+
+def all_counted(source: str) -> int | None:
+    """How many leads an order asking for "ALL" of a stock list comes to,
+    with any other count in it added on - Alexis Lesme's 1 + 34 + 4 + 130
+    of the 180+ and 37 of the 90-180 are 206. None when it doesn't ask that
+    way."""
+    said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", str(source or ""), flags=re.MULTILINE)
+    found = _all_of_it(said)
+    return found[0] if found else None
 
 
 def says_when(source: str) -> bool:

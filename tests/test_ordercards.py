@@ -2550,3 +2550,30 @@ def test_all_of_whats_available_adds_up():
     assert not any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
     card["fields"]["leads"] = "300"
     assert any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+
+
+def test_all_of_whats_available_is_a_count_on_the_card(monkeypatch):
+    """"it says here 37 leads?" - and 169 more of the 180+: no total written
+    down, so the count was left blank and the card held."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Alexis Lesme", "states": "GA, TX, MI, MS, FL, VA, OH",
+        "package": "Aged Leads (VET) 180+ and 90-180 days", "leads": ""})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/16 12:18PM] LeadLab: New Payment | Payra\nNAME: Alexis Lesme\nPHONE: +15550100000\nAMOUNT: $308.95\n"
+            "PRODUCT: Aged Leads (VET)\n[10/16 12:23PM] Kharyl: Alexis Lesme\n180+ days ALL\n"
+            "Georgia · AEP agency VET 180+: 1 available\nTexas · AEP agency VET 180+: 34 available\n"
+            "Michigan · AEP agency VET 180+: 4 available\nMississippi · AEP agency VET 180+: 130 available\n\n"
+            "90-180 days-- 37 leads fl, ga, tx, va, oh, mi, ms\nAEP")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 16))
+    assert card["fields"]["leads"] == "206"
+    assert not any("Number of leads" in one for one in ordercards.doubts(card, today=date(2026, 10, 16))[0])
+    assert ordercards.all_counted("25 VET leads\nTX, FL") is None, "nothing asked for ALL"

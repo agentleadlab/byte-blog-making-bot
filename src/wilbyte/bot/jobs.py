@@ -12614,6 +12614,13 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    if kind == "aged" and not re.search(r"\d", str(fields.get("leads") or "")):
+        # "180+ days ALL" over the stock list, and "37 leads" of the 90-180:
+        # no total written down, so it was left blank and Alexis Lesme's
+        # card was held for want of a count. All of them is a number.
+        counted = ordercards.all_counted(source)
+        if counted:
+            fields["leads"] = str(counted)
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",
