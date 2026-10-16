@@ -2706,3 +2706,27 @@ def test_the_card_gets_the_agency_the_notes_name_alone(monkeypatch):
     assert card["fields"]["agency"] == "AEP", "the team's word beats the request"
     assert "Agency: AEP" in card["desc"]
     assert not ordercards.doubts(card, today=date(2026, 10, 16))[0]
+
+
+@pytest.mark.parametrize("iso", ["2026-10-17", "2026-10-16", ""])
+def test_the_launch_days_name_comes_from_the_date(monkeypatch, iso):
+    """"tomorrow is saturday" - "lets push for launch tomorrow" on Friday the
+    16th was written "Friday, October 17"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Nicolas Sanmiguel", "states": "TX", "package": "VET", "leads": "35",
+        "launch": "Friday, October 17", "launch_iso": iso})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    notes = ["figure out when he wants setup - lets push for launch tomorrow if possible"]
+    card = jobs.read_order(config, text="[10/16 03:30PM] Faith: " + notes[0], images=[], today=date(2026, 10, 16),
+                           notes=notes)
+    assert card["fields"]["launch"] == "Saturday, October 17" and card["launch_iso"] == "2026-10-17"
+    assert "Launch Date: Saturday, October 17" in card["desc"]

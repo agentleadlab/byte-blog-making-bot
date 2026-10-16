@@ -12689,6 +12689,28 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    if fields.get("launch"):
+        # The day worked out here, and its name from the date - Nicolas
+        # Sanmiguel's "push for launch tomorrow" on a Friday came out
+        # "Friday, October 17", and the 17th is a Saturday.
+        from .. import agents
+
+        stamps = r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*"
+        when = None
+        for said in ("\n".join(str(one) for one in notes or ()), text):
+            try:
+                when = agents.find_launch(re.sub(stamps, "", said, flags=re.MULTILINE), today=today)
+            except Exception:
+                when = None
+            if when:
+                break
+        if when is None and launch_iso:
+            try:
+                when = date.fromisoformat(launch_iso)
+            except ValueError:
+                when = None
+        if when is not None:
+            fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
     if not fields.get("agency"):
         # "aep" on a line of its own in the notes is the agency - Gavin
         # Mathieu's card went out with it blank.
