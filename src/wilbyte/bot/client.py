@@ -9693,8 +9693,7 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
     amount = (_AMOUNT.search(said) or [None, ""])[1]
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
-        note = await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
-                                               amount=amount, product=product))
+        note = await _invoice_for(bot, key, name=name, email=email, amount=amount, product=product)
     except Exception:
         # Payra down is no reason for no card: made from the payment and the
         # thread, and said - a silent "failed" left nothing to see.
@@ -10119,6 +10118,10 @@ async def _order_retry(bot, key: str, *, settle: float = 30) -> str:
     return await _aged_from_invoice(bot, message, wait=0)
 
 
+#: Picking an invoice for a payment and writing down that it's taken.
+_INVOICE_LOCK = asyncio.Lock()
+
+
 async def _order_invoice_note(bot, message) -> str:
     """The Payra invoice's note behind a payment post, or ""."""
     said = _all_of_it(message)
@@ -10129,11 +10132,30 @@ async def _order_invoice_note(bot, message) -> str:
     amount = (_AMOUNT.search(said) or [None, ""])[1]
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
-        return await asyncio.to_thread(partial(jobs.payra_invoice_note, bot.config, name=name, email=email,
-                                               amount=amount, product=product))
+        return await _invoice_for(bot, str(getattr(message, "id", "") or ""), name=name, email=email,
+                                  amount=amount, product=product)
     except Exception:
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
         return ""
+
+
+async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, product: str) -> str:
+    """The note on the invoice behind this payment post - one no other
+    payment has taken, written down as this one's. Raises when Payra can't be
+    read."""
+    from .. import ordercards
+
+    # One at a time, so two posts for one charge can't both take one invoice.
+    async with _INVOICE_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
+        taken = {str(one.get("invoice_id")) for other, one in held.items()
+                 if other != key and isinstance(one, dict) and one.get("invoice_id")}
+        note, invoice_id = await asyncio.to_thread(partial(
+            jobs.payra_invoice_pick, bot.config, name=name, email=email, amount=amount, product=product,
+            taken=taken))
+        if invoice_id and key:
+            await _order_note(key, invoice_id=invoice_id)
+        return note
 
 
 async def _order_payment(bot, message) -> tuple[dict | None, bool]:

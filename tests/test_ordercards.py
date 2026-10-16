@@ -1153,7 +1153,7 @@ def _aged_post(i=950):
 
 def test_an_aged_payment_with_an_invoice_note_gets_its_card_with_no_gavel(order, monkeypatch):
     """"ryte will just immediately create the card"."""
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "AGED IUL\n180+\nin states IL, SC, AZ, and TX")
+    _note_is(monkeypatch, lambda config, **kw: "AGED IUL\n180+\nin states IL, SC, AZ, and TX")
     order.fields = {"states": "IL, SC, AZ, TX"}
     message = _aged_post()
     assert client._aged_payment(message)
@@ -1168,7 +1168,7 @@ def test_no_note_the_card_is_made_from_the_thread_anyway(order, monkeypatch):
     """"aged leads should be automatic add with states, thread or no thread
     while relying on invoice if it has no states/thread added" - Jackson
     Ruehl's invoice had no note; Kharyl's thread had his states."""
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    _note_is(monkeypatch, lambda config, **kw: "")
     message = _aged_post()
     message.thread = _notes("can i get 10 of the aged vets 30-90 days. OK,TX,AZ,MO,AL", "uprise")
     order.fields = {"states": "OK, TX, AZ, MO, AL", "leads": "10"}
@@ -1179,7 +1179,7 @@ def test_no_note_the_card_is_made_from_the_thread_anyway(order, monkeypatch):
 
 
 def test_the_invoice_note_stays_on_the_card_when_the_thread_updates_it(order, monkeypatch):
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "AGED IUL in IL, SC")
+    _note_is(monkeypatch, lambda config, **kw: "AGED IUL in IL, SC")
     message = _aged_post()
     asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
     assert ordercards.load()["950"]["extra_notes"] == ["Payra invoice note: AGED IUL in IL, SC"]
@@ -1209,7 +1209,7 @@ def test_a_thread_started_after_the_card_still_updates_it(monkeypatch):
 
 def test_from_a_note_its_aged_or_nothing(order, monkeypatch):
     order.kind = "fresh"
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "25 OTP vets")
+    _note_is(monkeypatch, lambda config, **kw: "25 OTP vets")
     asyncio.run(client._aged_from_invoice(_bot(_aged_post()), _aged_post(), wait=0))
     assert order.made == [], "a New Agent card made with nobody's gavel"
 
@@ -1624,7 +1624,7 @@ def test_payra_down_still_makes_the_aged_card(order, monkeypatch):
     def down(config, **kw):
         raise RuntimeError("Payra is down")
 
-    monkeypatch.setattr(jobs, "payra_invoice_note", down)
+    _note_is(monkeypatch, down)
     assert asyncio.run(client._aged_from_invoice(_bot(_aged_post()), _aged_post(), wait=0)) == "made"
     assert len(order.made) == 1
     assert any("Couldn't read" in said for said, _view in _said(order))
@@ -1900,7 +1900,7 @@ def test_the_invoice_is_read_for_a_gavelled_new_agent(order, monkeypatch):
         looked.append((name, amount))
         return "50 VET, FL TX GA, launch Fri 10/16"
 
-    monkeypatch.setattr(jobs, "payra_invoice_note", note)
+    _note_is(monkeypatch, note)
     message = _message("New Payment | Payra\nNAME: Blaze Lubbers\nEMAIL: lubbersllc@example.com\nAMOUNT: $1966.5\n"
                        "PRODUCT: VET")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
@@ -1919,9 +1919,9 @@ def test_what_an_invoice_says_is_its_note_description_and_lines():
 def test_recheck_reads_an_invoice_the_card_was_made_without(order, monkeypatch):
     order.kind = "fresh"
     message = _message("New Payment | Payra\nNAME: Blaze Lubbers\nAMOUNT: $1966.5\nPRODUCT: VET")
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    _note_is(monkeypatch, lambda config, **kw: "")
     asyncio.run(client._order_gavelled(_bot(message), GAVEL))
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "50 VET FL TX")
+    _note_is(monkeypatch, lambda config, **kw: "50 VET FL TX")
     monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("updated", []))
     asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
     assert "Payra invoice note: 50 VET FL TX" in order.reads[-1]
@@ -2142,7 +2142,7 @@ def test_a_post_with_no_thread_isnt_asked_about_every_sweep(monkeypatch):
 def test_an_aged_order_with_no_states_or_count_isnt_made_on_its_own(order, monkeypatch):
     """Matt DeFuria: an Aged Leads card with no states and no lead count,
     made on its own - and Aged Leads Order Done sends it."""
-    monkeypatch.setattr(jobs, "payra_invoice_note", lambda config, **kw: "")
+    _note_is(monkeypatch, lambda config, **kw: "")
     order.fields = {"states": "", "leads": ""}
     message = _aged_post()
     assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
@@ -2912,3 +2912,37 @@ def test_posts_with_nothing_in_them_are_said(monkeypatch):
                           get_channel=lambda one: Channel())
     asyncio.run(client._lead_requests_read(bot))
     assert "Message Content" in client._LEAD_TROUBLE[0]
+
+
+def test_two_invoices_paid_in_one_charge_each_go_to_their_own_payment(monkeypatch):
+    """"not right!!!!" - Ahmed Ghazi's INV-20039 (225 leads, $815.06) and
+    INV-20040 (200 leads, $724.50), paid together; Payra posted $787.50 and
+    $724.5, and both cards read the 200."""
+    from wilbyte import payraapi
+
+    now = datetime(2026, 10, 16, 21, 0, tzinfo=timezone.utc)
+    data = {"invoices": {
+        "i39": {"id": "i39", "name": "Ahmed Ghazi", "email": "ahmed@example.com", "total": 815.06,
+                "notes": "Lead Type: Aged Veteran - 30-90 days\nNumber of Requested Leads: 225",
+                "created": "2026-10-16T20:30:00Z"},
+        "i40": {"id": "i40", "name": "Ahmed Ghazi", "email": "ahmed@example.com", "total": 724.50,
+                "notes": "Lead Type: Aged Veteran - 30-90 days\nNumber of Requested Leads: 200",
+                "created": "2026-10-16T20:31:00Z"}}}
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: data["invoices"])
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    note, first = jobs.payra_invoice_pick(config, name="Ahmed Ghazi", email="ahmed@example.com", amount="$787.50",
+                                          product="Aged Leads (VET)", now=now)
+    assert first == "i39" and "225" in note, "nearest total, not the newest"
+    note, second = jobs.payra_invoice_pick(config, name="Ahmed Ghazi", email="ahmed@example.com", amount="$724.5",
+                                           product="Aged Leads (VET)", now=now, taken={first})
+    assert second == "i40" and "200" in note
+    # Both taken: nothing, rather than one already on a card.
+    assert jobs.payra_invoice_pick(config, name="Ahmed Ghazi", email="ahmed@example.com", amount="$724.5",
+                                   now=now, taken={"i39", "i40"}) == ("", "")
+
+
+def _note_is(monkeypatch, note):
+    """The invoice note every payment gets, in a test."""
+    monkeypatch.setattr(jobs, "payra_invoice_note", note)
+    monkeypatch.setattr(jobs, "payra_invoice_pick", lambda config, **kw: (
+        note(config, **{key: value for key, value in kw.items() if key != "taken"}), ""))

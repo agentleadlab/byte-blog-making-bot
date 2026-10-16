@@ -13095,6 +13095,11 @@ def payra_recent(config: Config, kind: str, *, now=None) -> dict:
 
 def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
                        now=None) -> str:
+    return payra_invoice_pick(config, name=name, email=email, amount=amount, product=product, now=now)[0]
+
+
+def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
+                       now=None, taken=()) -> tuple[str, str]:
     """The note on the Payra invoice behind a payment just posted - "can ryte
     access agents state for aged leads on summit pay invoice internal note".
     Payra read now, so the invoice paid a minute ago is there. Matched by
@@ -13105,17 +13110,23 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
     token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
     site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
     if not (token and site):
-        return ""
+        return "", ""
     now = now or datetime.now(timezone.utc)
+    taken = {str(one) for one in taken or () if one}
     # The last two days from Payra - current to the minute and shared - rather
     # than the saved copy alone, which the half-hourly read fills.
     data = {"invoices": payra_recent(config, "invoices", now=now)}
     email = str(email or "").strip().casefold()
     wanted = payraapi._cents(amount)
     found = []
-    for invoice in (data.get("invoices") or {}).values():
+    for held_as, invoice in (data.get("invoices") or {}).items():
         theirs = (email and invoice.get("email") == email) or clearout.name_match(name, invoice.get("name", "")) >= 2
         if not theirs or not invoice_said(invoice):
+            continue
+        # One invoice, one payment: Ahmed Ghazi paid INV-20039 (225 leads)
+        # and INV-20040 (200) in one charge, and both cards read the 200.
+        invoice_id = str(invoice.get("id") or invoice.get("number") or held_as)
+        if invoice_id in taken:
             continue
         try:
             made = datetime.fromisoformat(str(invoice.get("created") or invoice.get("updated") or "").replace("Z", "+00:00"))
@@ -13128,12 +13139,16 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
         # invoices were both $103.50, and the VET payment got the IUL note.
         if product and _other_product(product, invoice_said(invoice)):
             continue
-        same = wanted is not None and payraapi._cents(invoice.get("total")) == wanted
-        found.append((same, made, invoice))
+        total = payraapi._cents(invoice.get("total"))
+        same = wanted is not None and total == wanted
+        # Nearest the payment when none is exact: Payra posts what was put on
+        # the invoice ($787.50), the total adds the dual-pricing fee ($815.06).
+        off = abs(total - wanted) if wanted is not None and total is not None else float("inf")
+        found.append((same, -off, made, invoice, invoice_id))
     if not found:
-        return ""
-    found.sort(key=lambda one: (one[0], one[1]), reverse=True)
-    return invoice_said(found[0][2])
+        return "", ""
+    found.sort(key=lambda one: (one[0], one[1], one[2]), reverse=True)
+    return invoice_said(found[0][3]), found[0][4]
 
 
 def _other_product(paid_for: str, invoice: str) -> bool:
