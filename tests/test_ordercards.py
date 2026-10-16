@@ -2769,7 +2769,7 @@ def test_agency_lookup_says_what_lead_lab_has(monkeypatch):
     """"then why isnt he adding the agency on new agent as well?" - ask."""
     from wilbyte.bot import mentions
 
-    async def requests(bot):
+    async def requests(bot, **kw):
         return REQUESTS
 
     monkeypatch.setattr(client, "_lead_requests", requests)
@@ -2778,3 +2778,23 @@ def test_agency_lookup_says_what_lead_lab_has(monkeypatch):
     assert "Wolfpack" in said and "A card for them gets" in said
     assert "Nothing there names them" in asyncio.run(client._agency_lookup(None, "Heath McGalliard"))
     assert "(blank)" in asyncio.run(client._agency_lookup(None, "Talen Hinesley"))
+
+
+def test_a_slow_lead_lab_read_never_holds_a_card_up(monkeypatch):
+    """"it stopped and now not filing cards" - the first read went through
+    hundreds of threads while every order waited."""
+    started = []
+
+    async def slow(bot):
+        started.append(1)
+        await asyncio.sleep(30)
+        return REQUESTS
+
+    monkeypatch.setattr(client, "_lead_requests_read", slow)
+    monkeypatch.setattr(client, "LEAD_REQUESTS_WAIT", 0.05)
+
+    async def two_orders():
+        return await asyncio.gather(client._lead_requests(None), client._lead_requests(None))
+
+    assert asyncio.run(asyncio.wait_for(two_orders(), 2)) == [[], []]
+    assert started == [1], "one read, not one per order"

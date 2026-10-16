@@ -9315,20 +9315,53 @@ async def _lead_thread_text(thread) -> str:
             parts.append(_all_text(one))
     except Exception:
         log.info("Couldn't read the #lead-lab thread %s", getattr(thread, "name", ""), exc_info=True)
-        return "\n".join(parts)
+        _LEAD_THREADS[thread.id] = "\n".join(parts)
+        return _LEAD_THREADS[thread.id]
     text = "\n".join(part for part in parts if part)
     _LEAD_THREADS[thread.id] = text
     return text
 
 
-async def _lead_requests(bot) -> list[str]:
+#: The read of #lead-lab under way, if one is: cards don't wait on it.
+_LEAD_READING: list = [None]
+#: How long a card waits for #lead-lab before going ahead with what's held.
+LEAD_REQUESTS_WAIT = 5.0
+#: New threads opened per read - the rest on the next one, so the first
+#: read after a start isn't three hundred requests in a row.
+LEAD_THREADS_PER_READ = 40
+
+
+async def _lead_requests(bot, *, wait: float | None = None) -> list[str]:
     """#lead-lab's posts and request threads, newest first, as text - each
-    client's New Lead Request, where the agency they're with is said. []
-    when it can't be read: a card without an agency is still a card."""
+    client's New Lead Request, where the agency they're with is said.
+
+    Never what holds a card up: "it stopped and now not filing cards" - the
+    first read after an update went through hundreds of threads while every
+    order waited on it. One read at a time, in the background; a card waits a
+    few seconds for it and otherwise goes ahead with the last read, or with
+    none - a card without an agency is still a card."""
     import time
 
-    if _LEAD_REQUESTS[1] and time.monotonic() - _LEAD_REQUESTS[0] < LEAD_REQUESTS_FRESH_SECONDS:
-        return _LEAD_REQUESTS[1]
+    held = _LEAD_REQUESTS[1]
+    if held and time.monotonic() - _LEAD_REQUESTS[0] < LEAD_REQUESTS_FRESH_SECONDS:
+        return held
+    task = _LEAD_READING[0]
+    if task is None or task.done():
+        task = asyncio.ensure_future(_lead_requests_read(bot))
+        _LEAD_READING[0] = task
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), LEAD_REQUESTS_WAIT if wait is None else wait)
+    except asyncio.TimeoutError:
+        log.info("#lead-lab still being read - going ahead with %d posts held", len(held))
+        return held
+    except Exception:
+        log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
+        return held
+
+
+async def _lead_requests_read(bot) -> list[str]:
+    import time
+
     wanted = str(getattr(bot.config.secrets, "discord_lead_request_channel_id", "") or "").strip()
     try:
         channel = bot.get_channel(int(wanted)) if wanted.isdigit() else None
@@ -9339,22 +9372,29 @@ async def _lead_requests(bot) -> list[str]:
                  async for one in channel.history(limit=LEAD_REQUESTS_READ)]
     except Exception:
         log.warning("Couldn't read #lead-lab for the agency", exc_info=True)
-        return []
+        return _LEAD_REQUESTS[1]
     threads = list(getattr(channel, "threads", None) or [])
     try:
         if hasattr(channel, "archived_threads"):
             threads += [one async for one in channel.archived_threads(limit=LEAD_THREADS_READ)]
     except Exception:
         log.info("Couldn't list #lead-lab's archived threads", exc_info=True)
-    seen = set()
-    for thread in threads:
+    seen, opened = set(), 0
+    # Newest first, so the ones a payment today is about are read first.
+    for thread in sorted(threads, key=lambda one: one.id, reverse=True):
         if thread.id in seen:
             continue
         seen.add(thread.id)
+        if thread.id not in _LEAD_THREADS:
+            if opened >= LEAD_THREADS_PER_READ:
+                continue
+            opened += 1
         found.append((discord.utils.snowflake_time(thread.id), await _lead_thread_text(thread)))
     oldest = datetime.min.replace(tzinfo=timezone.utc)
     posts = [text for _when, text in sorted(found, key=lambda one: one[0] or oldest, reverse=True)]
-    _LEAD_REQUESTS[:] = [time.monotonic(), posts]
+    # Read again soon while threads are still waiting to be opened.
+    waiting = any(one.id not in _LEAD_THREADS for one in threads)
+    _LEAD_REQUESTS[:] = [time.monotonic() - (LEAD_REQUESTS_FRESH_SECONDS - 30 if waiting else 0), posts]
     return posts
 
 
@@ -9364,7 +9404,7 @@ async def _agency_lookup(bot, name: str) -> str:
     name = " ".join(str(name or "").split())
     if not name:
         return "Who? `@Ryte agency <their name>`"
-    posts = await _lead_requests(bot)
+    posts = await _lead_requests(bot, wait=90)
     if not posts:
         return ("I can't read #lead-lab — check I can see it (View Channel and Read Message History) "
                 "and that DISCORD_LEAD_REQUEST_CHANNEL_ID is right.")
