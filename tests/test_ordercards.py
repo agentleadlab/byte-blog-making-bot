@@ -3220,3 +3220,14 @@ def test_new_notes_on_a_split_order_update_each_card(order, monkeypatch):
     held = ordercards.load()["900"]
     assert held["parts"][1]["fields"]["states"] == "TX, FL"
     assert "OTP Vets" in order.responder.sent[-1][0]
+
+
+def test_an_aged_payment_minutes_old_is_on_its_way_not_missing():
+    """Jaden Schomer: "missing" at 7:35 for a 7:34 payment."""
+    from datetime import datetime, timezone
+
+    just = SimpleNamespace(id=9, created_at=datetime.now(timezone.utc), jump_url="https://discord.com/channels/1/700/9",
+                           content="New Payment | Payra\nNAME: Jaden Schomer\nAMOUNT: $103.5\nPRODUCT: Aged Leads (IUL)",
+                           embeds=[], message_snapshots=[], author=SimpleNamespace(bot=True), reactions=[])
+    how, line = client._audit_line(just, {}, [])
+    assert how == "waiting" and "on its way" in line

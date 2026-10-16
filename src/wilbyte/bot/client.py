@@ -9719,6 +9719,8 @@ AGED_FROM_INVOICE = True
 #: How long after an aged payment's post its card is made - time for the
 #: team to start the thread with the states. Notes after that update it.
 AGED_INVOICE_WAIT_SECONDS = 120
+#: How long after an aged payment the audit still counts its card as on its way.
+AUDIT_GRACE = timedelta(minutes=10)
 #: Aged payments posted from here on get their card by themselves - Jackson
 #: Ruehl's at 12:05 the first. Earlier ones may have a card made by hand.
 AGED_AUTO_FROM = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)
@@ -11249,6 +11251,11 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
         if post.created_at < AGED_AUTO_FROM:
             return "check", (f"🕘 **{name}** ({bits}) — before I made aged cards on my own, and no card on the "
                              f"board: <{post.jump_url}>")
+        # Minutes old: its card is made a couple of minutes after the payment
+        # lands, once the invoice is read - Jaden Schomer's was "missing" at
+        # 7:35 for a 7:34 payment.
+        if datetime.now(timezone.utc) - post.created_at < AUDIT_GRACE:
+            return "waiting", f"⏳ **{name}** ({bits}) — paid minutes ago, its card is on its way: <{post.jump_url}>"
         return "missing", f"❌ **{name}** ({bits}) — aged, **no card** (should have been made on its own): <{post.jump_url}>"
     # A weekly subscription's charge - eight came in at 10:07 on 10/15 - is
     # an agent already set up being billed again, not an order. A first
