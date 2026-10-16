@@ -4331,3 +4331,37 @@ def test_keys_and_tokens_never_go_on_the_board():
                  "Email: kharylmayecanizares12345@example.com", "Discord 1560746082621984979",
                  "New Agent - Bram Gutierrez https://trello.com/c/HR9XzGG8 OTP VETS SATURDAY"):
         assert no_secrets(kept) == kept
+
+
+class BalanceBoard(LinkingChecklists):
+    def cards_in(self, board_id, lists):
+        return [card for name in self.lists for card in self.lists[name]]
+
+
+def test_the_setup_card_checklists_are_held_up_against_each_other(monkeypatch, config):
+    """"the division of this card doesnt make sense, what did we miss?" -
+    55/82 on a card that's three copies of one list."""
+    from wilbyte.bot import jobs
+
+    a, b = "https://trello.com/c/AAAAAAAA", "https://trello.com/c/BBBBBBBB"
+    board = BalanceBoard({
+        "Today": [{"id": "setup", "name": "Agent Setup Going Live Saturday-Monday 10/17-10/19",
+                   "shortUrl": "https://trello.com/c/SETUP"},
+                  {"id": "a", "name": "New Agent - Ann Able", "url": a},
+                  {"id": "b", "name": "New Agent - Bo Baker", "url": b}],
+    }, held={"setup": [
+        {"id": "cl-T", "name": "Therese", "checkItems": [{"name": f"{a} OTP VETS"}, {"name": f"{b} OTP IUL"}]},
+        {"id": "cl-K", "name": "Kathleen", "checkItems": [{"name": f"{a} OTP VETS"}]},
+        {"id": "cl-N", "name": "Nicole", "checkItems": [{"name": f"{a} OTP VETS"}, {"name": f"{a} OTP VETS"},
+                                                       {"name": f"{b} OTP IUL"}]},
+    ]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    (card,) = jobs.setup_balance(config, day=date(2026, 10, 16))
+    assert card["counts"] == {"Therese": 2, "Kathleen": 1, "Nicole": 3}
+    assert card["missing"] == [("Kathleen", "New Agent - Bo Baker", f"{b} OTP IUL")]
+    assert card["twice"] == [("Nicole", "New Agent - Ann Able")]
+    assert board.items == []
+
+    (card,) = jobs.setup_balance(config, day=date(2026, 10, 16), fix=True)
+    assert board.items == [("cl-K", f"{b} OTP IUL")] and card["added"] == [("Kathleen", "New Agent - Bo Baker")]

@@ -5001,6 +5001,75 @@ def spread_to_lead_order(
         client.close()
 
 
+def setup_balance(config: Config, *, day=None, fix: bool = False) -> list[dict]:
+    """Each upcoming setup card's person checklists held up against each
+    other - "the division of this card doesnt make sense, what did we miss?"
+    (55/82 on Saturday-Monday: three copies of one list don't come to 82).
+    Per card: {"name", "url", "counts": {person: lines}, "missing": [(person,
+    agent, line)], "twice": [(person, agent)], "loose": [(person, line)],
+    "added": [(person, agent)]}. With `fix`, a missing line is copied onto the
+    checklist it's missing from, as another person has it."""
+    from .. import agents as rules
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    found = []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = _cards_of(client, config.secrets.trello_board_id, lists)
+        named = _by_url(every)
+        names_by_key = {rules.card_key(url): title for url, title in named.items()}
+        for card in every:
+            title = str(card.get("name") or "")
+            if not rules.is_setup_card(title):
+                continue
+            starts = rules.setup_starts(title, day)
+            if starts is None or not (-1 <= (starts - day).days <= 7):
+                continue
+            held = client.card_checklists(str(card.get("id") or ""))
+            people = [one for one in held if " ".join(str(one.get("name") or "").split()).casefold()
+                      in {person.casefold() for person in rules.SETUP_PEOPLE}]
+            if not people:
+                continue
+            lines: dict[str, dict[str, str]] = {}
+            report = {"name": title, "url": str(card.get("shortUrl") or card.get("url") or ""),
+                      "counts": {}, "missing": [], "twice": [], "loose": [], "added": []}
+            for checklist in people:
+                person = str(checklist.get("name") or "")
+                mine: dict[str, str] = {}
+                items = checklist.get("checkItems") or []
+                report["counts"][person] = len(items)
+                for item in items:
+                    text = str(item.get("name") or "")
+                    url, _label = rules.split_item(text)
+                    if not url:
+                        report["loose"].append((person, text[:80]))
+                        continue
+                    key = rules.card_key(url)
+                    if key in mine:
+                        report["twice"].append((person, names_by_key.get(key) or url))
+                    mine.setdefault(key, text)
+                lines[person] = mine
+            everyone = {key: text for mine in lines.values() for key, text in mine.items()}
+            for checklist in people:
+                person = str(checklist.get("name") or "")
+                for key, text in everyone.items():
+                    if key in lines[person]:
+                        continue
+                    who = names_by_key.get(key) or text[:60]
+                    report["missing"].append((person, who, text))
+                    if fix:
+                        try:
+                            client.add_check_item(str(checklist.get("id") or ""), text)
+                            report["added"].append((person, who))
+                        except Exception as exc:
+                            report["loose"].append((person, f"couldn't add {who}: {_short(exc, 80)}"))
+            found.append(report)
+    finally:
+        client.close()
+    return found
+
+
 def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:
     """When the agent somebody named goes live. (found, problems). Reads only.
 

@@ -1799,6 +1799,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_audit(bot, responder, request.brief or "")
                 return
 
+            if request.action == "setupbalance":
+                await responder.send(await _setup_balance(bot, fix=bool(re.search(r"\bfix\b", request.brief or "", re.IGNORECASE))))
+                return
+
             if request.action == "agencylookup":
                 await responder.send(await _agency_lookup(bot, request.brief or ""))
                 return
@@ -9540,6 +9544,32 @@ async def agency_fill_loop(bot: "WilByteBot") -> None:
         except Exception:
             log.exception("Filling in agencies failed; trying again shortly")
         await asyncio.sleep(AGENCY_FILL_SECONDS)
+
+
+async def _setup_balance(bot, *, fix: bool = False) -> str:
+    """"setup check" - said."""
+    try:
+        found = await asyncio.to_thread(partial(jobs.setup_balance, bot.config, fix=fix))
+    except Exception as exc:
+        return f"⚠ Couldn't read the setup cards: {_readable(exc)}"
+    if not found:
+        return "No setup card for the coming days with Therese / Kathleen / Nicole checklists on it."
+    out = []
+    for card in found:
+        counts = " · ".join(f"{person} {count}" for person, count in card["counts"].items())
+        out.append(f"📋 **{card['name']}** — {counts}\n{card['url']}")
+        if not (card["missing"] or card["twice"] or card["loose"]):
+            out.append("✅ Every agent is on every checklist, once.")
+            continue
+        for person, who, _line in card["missing"][:20]:
+            out.append(f"• **{who}** — not on **{person}**'s" + (" → added" if (person, who) in card["added"] else ""))
+        for person, who in card["twice"][:10]:
+            out.append(f"• **{who}** — on **{person}**'s twice")
+        for person, line in card["loose"][:10]:
+            out.append(f"• {person}'s has a line that isn't an agent: “{line}”")
+        if card["missing"] and not fix:
+            out.append("-# `@Ryte setup check fix` copies the missing lines over, as the others have them.")
+    return "\n".join(out)[:1950]
 
 
 async def _agency_lookup(bot, name: str) -> str:

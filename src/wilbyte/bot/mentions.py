@@ -896,6 +896,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if template:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
+    # "setup check" - the setup card's checklists against each other: who's
+    # missing from whose ("the division of this card doesnt make sense").
+    if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?setup\s+cards?(?:\s+check)?|setup\s+(?:card\s+)?(?:check|balance))"
+                r"(?:\s+fix)?\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="setupbalance", brief=text)
     # "recheck Louis Mordecai" / "recheck <link>" - an order's thread read
     # again onto its card. Not "update": that's RYTE updating itself.
     recheck = re.match(r"\s*(?:re-?check|re-?read)\s+(?:the\s+)?(?:order\s+|card\s+)*(?:for\s+)?(.+?)\s*[.?!]*\s*$",
@@ -1513,6 +1518,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
+> **setup check** — each upcoming setup card's Therese / Kathleen / Nicole lists against each other: who's missing from whose, who's on twice. **setup check fix** copies the missing lines over.
 > **agency <name>** — the New Lead Request in #lead-lab I'd take their Agency from, or why there isn't one.
 > **invoice note <name>** — the note fields on their Payra invoices, as an aged card reads them.
 > **going live today and tomorrow** (or **live list**) — names, lead type and states.
