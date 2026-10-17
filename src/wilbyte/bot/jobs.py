@@ -4579,6 +4579,55 @@ def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
         client.close()
 
 
+#: How long the board's automation gets to turn a tag into a checklist item
+#: before RYTE looks, and adds it for whoever has none.
+TAG_ITEM_WAIT = 90
+_TAG_CHECKS: list = []
+_TAG_CHECKS_LOCK = threading.Lock()
+
+
+def tag_check_later(**check) -> None:
+    """A comment that tagged people, to look at again once the automation's had
+    its chance."""
+    import time
+
+    with _TAG_CHECKS_LOCK:
+        _TAG_CHECKS.append({**check, "at": time.time()})
+
+
+def tag_checks_due(now: float | None = None) -> list[dict]:
+    import time
+
+    now = time.time() if now is None else now
+    with _TAG_CHECKS_LOCK:
+        due = [one for one in _TAG_CHECKS if now - one["at"] >= TAG_ITEM_WAIT]
+        _TAG_CHECKS[:] = [one for one in _TAG_CHECKS if one not in due]
+    return due
+
+
+def tag_items_fill(config: Config, check: dict) -> list[str]:
+    """Each person the comment tagged, on their checklist on that card: left
+    alone when an item links the comment already (the automation's), added
+    by RYTE when none does. Who was added."""
+    client = open_trello(config)
+    added = []
+    try:
+        held = client.card_checklists(check["card_id"])
+        by_name = {" ".join(str(one.get("name") or "").split()).casefold(): one for one in held}
+        for first in check.get("people") or []:
+            found = by_name.get(" ".join(str(first).split()).casefold())
+            if found is None:
+                continue
+            if any(check["comment_id"] in str(item.get("name") or "") for item in found.get("checkItems") or []):
+                continue
+            line = f"{check.get('text') or 'See the comment'} {check.get('link') or ''}".strip()
+            client.add_check_item(str(found.get("id") or ""), line)
+            added.append(first)
+    finally:
+        client.close()
+    return added
+
+
 def comment_on_daily(
     config: Config, *, kind: str, day: date, text: str, tag=(), pictures=(),
 ) -> tuple[str, str, list[str]]:
@@ -4657,10 +4706,21 @@ def comment_on_daily(
         full_of = {str(one.get("username") or ""): " ".join(str(one.get("fullName") or "").split())
                    for one in members or []}
         ops = dailyops.cards_covering(every, day).get("ops") if kind != "ops" else None
+        if trello_does_it and posted.get("id"):
+            # "why didnt you add this to NICOLE'S CHECKKIST" - a comment with
+            # only the tags and a screenshot got no item from the board's
+            # automation. Looked at again in a minute and a half; whoever's
+            # still without one gets it from RYTE.
+            short = str(card.get("shortUrl") or card.get("url") or "")
+            tag_check_later(card_id=str(card.get("id") or ""), comment_id=str(posted["id"]),
+                            link=f"{short}#comment-{posted['id']}" if short else "",
+                            people=[(full_of.get(who) or who).split()[0] for who in handles],
+                            text=" ".join(str(body or "").split()))
         for who in handles:
             first = (full_of.get(who) or who).split()[0]
             if trello_does_it:
-                problems.append(f"✅ Trello's automation puts it on **{first}**'s checklist")
+                problems.append(f"✅ On **{first}**'s checklist — Trello's automation, or me in a minute and a half "
+                                f"if it doesn't")
             else:
                 line = _onto_checklist(client, str(card.get("id") or ""), first, body or said)
                 problems.append(f"✅ On **{first}**'s checklist" if line.startswith("✅")

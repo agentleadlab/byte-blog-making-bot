@@ -4365,3 +4365,23 @@ def test_the_setup_card_checklists_are_held_up_against_each_other(monkeypatch, c
 
     (card,) = jobs.setup_balance(config, day=date(2026, 10, 16), fix=True)
     assert board.items == [("cl-K", f"{b} OTP IUL")] and card["added"] == [("Kathleen", "New Agent - Bo Baker")]
+
+
+def test_a_tag_the_automation_left_without_an_item_gets_one(monkeypatch, config):
+    """"why didnt you add this to NICOLE'S CHECKKIST" - tags and a screenshot,
+    no words, and no item from the board's automation."""
+    from wilbyte.bot import jobs
+
+    board = LinkingChecklists({"Today": []}, held={"ads": [
+        {"id": "cl-Nicole", "name": "Nicole", "checkItems": []},
+        {"id": "cl-Therese", "name": "Therese", "checkItems": [
+            {"id": "i", "name": "add to his order https://trello.com/c/ADS#comment-c1"}]},
+    ]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    jobs._TAG_CHECKS.clear()
+    jobs.tag_check_later(card_id="ads", comment_id="c1", link="https://trello.com/c/ADS#comment-c1",
+                         people=["Nicole", "Therese"], text="")
+    assert jobs.tag_checks_due() == [], "the automation gets its minute and a half first"
+    (check,) = jobs.tag_checks_due(now=10 ** 12)
+    assert jobs.tag_items_fill(config, check) == ["Nicole"]
+    assert board.items == [("cl-Nicole", "See the comment https://trello.com/c/ADS#comment-c1")]

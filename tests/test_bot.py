@@ -6634,7 +6634,7 @@ def test_the_mention_is_what_actually_goes_on_the_card(monkeypatch):
         text="and tag nicole: https://a https://b",
     )
 
-    assert problems == ["✅ Trello's automation puts it on **Nicole**'s checklist"], problems
+    assert problems == ["✅ On **Nicole**'s checklist — Trello's automation, or me in a minute and a half if it doesn't"], problems
     assert posted["text"] == "@nic0l3\nhttps://a https://b"
     assert "item" not in posted, "the board's automation makes it"
     assert url == "https://trello.com/c/C"
@@ -7411,7 +7411,7 @@ def test_the_tagged_name_is_tagged_on_trello(monkeypatch):
         day=date(2026, 9, 14), text="K2: @Franklin collate all logins", tag=["Franklin", "Nobody Here"])
     assert said == ["@franklinmay\nK2: @Franklin collate all logins"]
     assert problems == ["Nobody on the board is called Nobody Here — not tagged.",
-                        "✅ Trello's automation puts it on **Franklin**'s checklist"]
+                        "✅ On **Franklin**'s checklist — Trello's automation, or me in a minute and a half if it doesn't"]
     assert items == []
 
 
@@ -7599,8 +7599,8 @@ def test_a_teammate_named_is_tagged_and_gets_it_on_their_checklist(monkeypatch):
                                              text="Nicole and therese please cap Michael Greff at 10/day")
     assert posted == ["@nic0l3 @therese3\nNicole and therese please cap Michael Greff at 10/day"]
     assert items == []
-    assert problems == ["✅ Trello's automation puts it on **Nicole**'s checklist",
-                        "✅ Trello's automation puts it on **Therese**'s checklist"]
+    assert problems == ["✅ On **Nicole**'s checklist — Trello's automation, or me in a minute and a half if it doesn't",
+                        "✅ On **Therese**'s checklist — Trello's automation, or me in a minute and a half if it doesn't"]
 
 
 def test_tagged_in_any_growth_channel_ryte_answers(config, monkeypatch):
@@ -7785,7 +7785,7 @@ def test_ryte_never_makes_a_second_item_on_the_card_it_comments_on(monkeypatch):
     _t, _u, problems = jobs.comment_on_daily(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="B")),
                                              kind="ops", day=date(2026, 10, 16), text="and tag Therese Karli Kelley crm")
     assert comments == ["@thereseguba\nKarli Kelley crm"] and items == []
-    assert "✅ Trello's automation puts it on **Therese**'s checklist" in problems
+    assert "✅ On **Therese**'s checklist — Trello's automation, or me in a minute and a half if it doesn't" in problems
 
 
 def test_a_different_order_that_cant_be_placed_is_said_not_left(config, monkeypatch):

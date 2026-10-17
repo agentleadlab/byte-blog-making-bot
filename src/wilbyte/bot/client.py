@@ -388,6 +388,7 @@ class WilByteBot(discord.Client):
             if getattr(self.config.secrets, "trello_key", None):
                 _also_running(self.loop.create_task(order_sweep_loop(self)))
                 _also_running(self.loop.create_task(agency_fill_loop(self)))
+                _also_running(self.loop.create_task(tag_items_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -9520,6 +9521,20 @@ async def _agency_fill(bot) -> list[str]:
 
 
 _LEAD_TROUBLE_SAID: list = [""]
+
+
+async def tag_items_loop(bot: "WilByteBot") -> None:
+    """Comments RYTE tagged people in, looked at again: whoever the board's
+    automation didn't give a checklist item gets one."""
+    while not bot.is_closed():
+        for check in jobs.tag_checks_due():
+            try:
+                added = await asyncio.to_thread(jobs.tag_items_fill, bot.config, check)
+                if added:
+                    log.info("Tagged but no checklist item from the board - added for %s", ", ".join(added))
+            except Exception:
+                log.warning("Couldn't check the tagged comment's checklist items", exc_info=True)
+        await asyncio.sleep(30)
 
 
 async def agency_fill_loop(bot: "WilByteBot") -> None:
