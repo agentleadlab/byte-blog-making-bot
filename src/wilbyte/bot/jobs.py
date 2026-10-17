@@ -4746,7 +4746,7 @@ _OPS_WORDS = re.compile(r"\b(?:ringy|crm|sid|token|twilio|a2p|sheet|zap|zapier|w
                         r"sms|text\s+line|number\s+port)\b", re.IGNORECASE)
 
 
-def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
+def trello_ask_kind(config: Config, text: str, pictures=(), found: dict | None = None) -> tuple[str, str]:
     """Which day card an "add to trello" with no card named belongs on, and a
     one-line task for the checklists. ("general" | "ads" | "ops", the line).
     Ads work - caps, pausing, schedules, states, lead types, replacements -
@@ -4776,7 +4776,11 @@ def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
                         "switching CRM once more... I need to update CRM and take care of lead flow... anyone "
                         "available to help today?' and the team replying 'I will have Therese reach out' is "
                         "'Matt is switching CRM - help him update the CRM and lead flow today (reach out in his "
-                        "Discord channel)'. Names, numbers, states and deadlines kept.")}}, "required": ["card", "task"]}}
+                        "Discord channel)'. Names, numbers, states and deadlines kept.")},
+                    "client": {"type": "string", "description": (
+                        "The client (agent) this is about, full name, when the words or the screenshot say who - "
+                        "the name at the top of a text conversation, or named in the message. Empty when it isn't "
+                        "about one client.")}}, "required": ["card", "task", "client"]}}
         content = [{"type": "text", "text": f"Added to Trello by the team:\n{said or '(only a screenshot)'}"}]
         content += [{"type": "image", "source": {"type": "url", "url": url}} for url in list(pictures)[:3]]
         response = None
@@ -4793,11 +4797,57 @@ def trello_ask_kind(config: Config, text: str, pictures=()) -> tuple[str, str]:
         if response is None:
             raise RuntimeError("Claude didn't answer")
         got = _tool_input(response, "place")
+        if found is not None:
+            found["client"] = " ".join(str(got.get("client") or "").split())
         card = got.get("card") if got.get("card") in ("general", "ads", "ops") else by_words
         return card, " ".join(str(got.get("task") or said).split())
     except Exception:
         logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
         return by_words, said
+
+
+def client_card_for(config: Config, text: str, client: str = "") -> dict | None:
+    """The card of the client an "add to trello" is about - "add to his
+    current order" was Karl Cook's, and went on the Ads card and nowhere near
+    his. Their newest New Agent or Aged Leads card on the board, by the name
+    Claude read off it, else by a client's whole name in the words. None when
+    it names nobody with a card, or two people who have one."""
+    from .. import agents, clearout
+
+    said = " ".join(str(text or "").split()).casefold()
+    board = open_trello(config)
+    try:
+        lists = board.board_lists(config.secrets.trello_board_id)
+        cards = _cards_of(board, config.secrets.trello_board_id, lists)
+    finally:
+        board.close()
+    theirs = []
+    for card in cards:
+        title = str(card.get("name") or "")
+        if not (agents.is_agent_card(title) or re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE)):
+            continue
+        name = agents.agent_name(title) if agents.is_agent_card(title) else title.split("-", 1)[-1].strip()
+        if len(name.split()) < 2:
+            continue
+        if (client and clearout.name_match(client, name) >= 2) or (
+                not client and re.search(rf"(?<!\w){re.escape(name.casefold())}(?!\w)", said)):
+            theirs.append((str(card.get("id") or ""), name, card))
+    if len({name.casefold() for _id, name, _card in theirs}) != 1:
+        return None
+    # Newest first: a card's id starts with when it was made.
+    return max(theirs, key=lambda one: one[0])[2]
+
+
+def comment_on_client_card(config: Config, card: dict, text: str, pictures=()) -> str:
+    """The task on the client's own card, with its screenshots. Its link."""
+    board = open_trello(config)
+    try:
+        shown, _missed = _pictures_onto(board, str(card.get("id") or ""), pictures)
+        said = text + ("\n\n" + "\n".join(f"![{one.rsplit('/', 1)[-1]}]({one})" for one in shown) if shown else "")
+        board.add_comment(str(card.get("id") or ""), said.strip())
+    finally:
+        board.close()
+    return str(card.get("shortUrl") or card.get("url") or "")
 
 
 def _pictures_onto(client, card_id: str, urls) -> tuple[list[str], int]:

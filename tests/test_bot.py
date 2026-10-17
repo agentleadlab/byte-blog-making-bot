@@ -7735,7 +7735,7 @@ def test_a_tag_and_a_screenshot_gets_a_task_and_the_ads_card(monkeypatch):
 
     from wilbyte.bot import client as bot_client
 
-    monkeypatch.setattr(bot_client.jobs, "trello_ask_kind", lambda config, text, pictures: ("ads", "Cap Heather at 1/day"))
+    monkeypatch.setattr(bot_client.jobs, "trello_ask_kind", lambda config, text, pictures, **kw: ("ads", "Cap Heather at 1/day"))
     posted = []
     monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
                         lambda config, **kw: posted.append(kw) or ("📊 Ads 10/15/26", "https://trello.com/c/A/x", []))
@@ -7802,3 +7802,61 @@ def test_a_different_order_that_cant_be_placed_is_said_not_left(config, monkeypa
     assert {checklist for checklist, _name in board.written} == {"c2", "c3", "c4"}
     assert any("Mortgage Protection" in one and "doesn't say which" in one for one in problems)
     assert not any("already placed" in one for one in problems)
+
+
+def test_an_ask_about_a_client_goes_on_their_card_too(monkeypatch):
+    """"AS WELL AS THAT KARL COOK CARD" - "add to his current order" went on
+    the Ads card and not on Karl's."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client
+
+    def asking(config, text, pictures, found=None):
+        found["client"] = "Karl Cook"
+        return "ads", "Add $200 to his current order - fill the 50 by next Friday"
+
+    monkeypatch.setattr(bot_client.jobs, "trello_ask_kind", asking)
+    karl = {"id": "k", "name": "New Agent - Karl Cook", "shortUrl": "https://trello.com/c/KARL"}
+    monkeypatch.setattr(bot_client.jobs, "client_card_for",
+                        lambda config, text, client: karl if client == "Karl Cook" else None)
+    posted, theirs = [], []
+    monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
+                        lambda config, **kw: posted.append(kw) or ("📊 Ads 10/16/26", "https://trello.com/c/A/x", []))
+    monkeypatch.setattr(bot_client.jobs, "comment_on_client_card",
+                        lambda config, card, text, pictures=(): theirs.append((card["id"], text)) or card["shortUrl"])
+    said = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    shot = SimpleNamespace(url="https://cdn.discordapp.com/x/shot.png", content_type="image/png")
+    message = SimpleNamespace(content="<@999> add to trello @Nicole", embeds=[], attachments=[shot],
+                              message_snapshots=[], mentions=[], guild=None, reference=None)
+    monkeypatch.setattr(bot_client, "_today", lambda cfg: date(2026, 10, 16))
+    asyncio.run(bot_client._comment_on_card(Responder(), SimpleNamespace(), "@Nicole", message))
+    assert posted[0]["text"].endswith("https://trello.com/c/KARL")
+    assert theirs and theirs[0][0] == "k" and "fill the 50" in theirs[0][1] and "Ads 10/16/26" in theirs[0][1]
+    assert "Karl Cook**'s card too" in said[-1]
+
+
+def test_the_clients_card_is_found_by_name(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "5f00a", "name": "New Agent - Karl Cook", "shortUrl": "old"},
+                    {"id": "6a00b", "name": "New Agent - Karl Cook", "shortUrl": "new"},
+                    {"id": "6a00c", "name": "Aged Leads - Jane Doe", "shortUrl": "jane"},
+                    {"id": "6a00d", "name": "📊 Ads 10/16/26", "shortUrl": "ads"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    assert jobs.client_card_for(config, "", "Karl Cook")["shortUrl"] == "new", "the newest"
+    assert jobs.client_card_for(config, "cap jane doe at 10 a day")["shortUrl"] == "jane"
+    assert jobs.client_card_for(config, "cap him at 10") is None

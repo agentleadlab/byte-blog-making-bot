@@ -3133,12 +3133,14 @@ async def _comment_on_card(
             if name not in tag:
                 tag.append(name)
         text = re.sub(r"<@!?\d+>", "", text or "").strip(" -–—:,")
+    read_off: dict = {}
     if not kind and (text or pictures):
         # Nobody named a card: "this is ads related so checklist is on ads".
         # Ads work on Ads, setup systems on Ops, the rest on General - and an
         # ask that's only a tag and a screenshot gets its task read off it.
         bare = re.sub(r"@\S+", "", text or "").strip()
-        kind, line = await asyncio.to_thread(partial(jobs.trello_ask_kind, config, text or "", pictures))
+        kind, line = await asyncio.to_thread(partial(jobs.trello_ask_kind, config, text or "", pictures,
+                                                     found=read_off))
         guessed = True
         if len(bare.split()) < 3 and line:
             text = (text + "\n" + line).strip() if text else line
@@ -3161,6 +3163,16 @@ async def _comment_on_card(
         )
         return
 
+    # The client it's about, when they have a card: "add to his current
+    # order" goes on Karl Cook's card too, and the day card's line links it.
+    theirs = None
+    try:
+        theirs = await asyncio.to_thread(partial(jobs.client_card_for, config, text or "",
+                                                 read_off.get("client") or ""))
+    except Exception:
+        log.warning("Couldn't look for the client's card", exc_info=True)
+    if theirs is not None:
+        text = f"{text}\n{theirs.get('shortUrl') or theirs.get('url') or ''}".strip()
     try:
         title, url, problems = await asyncio.to_thread(
             partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures)
@@ -3168,6 +3180,14 @@ async def _comment_on_card(
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
         return
+    if theirs is not None and url:
+        task = re.sub(r"https?://trello\.com/\S+", "", text).strip()
+        try:
+            on = await asyncio.to_thread(partial(
+                jobs.comment_on_client_card, config, theirs, f"📌 {task}\n— also on {title}: {url}", pictures))
+            problems.append(f"✅ On **{theirs.get('name')}**'s card too: <{on}>")
+        except Exception as exc:
+            problems.append(f"Couldn't comment on {theirs.get('name')}'s card: {_readable(exc)}")
 
     # A url means it went on the board. Anything said alongside one is a
     # warning about part of it - a name nobody on the board answers to - and
