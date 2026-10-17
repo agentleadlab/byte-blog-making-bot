@@ -7860,3 +7860,25 @@ def test_the_clients_card_is_found_by_name(monkeypatch, config):
     assert jobs.client_card_for(config, "", "Karl Cook")["shortUrl"] == "new", "the newest"
     assert jobs.client_card_for(config, "cap jane doe at 10 a day")["shortUrl"] == "jane"
     assert jobs.client_card_for(config, "cap him at 10") is None
+
+
+def test_tag_check_files_every_missing_tag_without_a_button(monkeypatch):
+    """"check if he missed adding anything on checklist from the comments here
+    for all of members, THESE ARE IMPORTATNT"."""
+    import asyncio
+
+    from wilbyte.bot import client as bot_client, mentions
+
+    asked = {}
+
+    def to_file(config, **kw):
+        asked.update(kw)
+        return ["karl", "faith"], []
+
+    monkeypatch.setattr(bot_client.jobs, "tags_to_file", to_file)
+    monkeypatch.setattr(bot_client.jobs, "file_tags", lambda config, tasks: (
+        ["📊 Ads 10/16/26 · Faith — KARL GOLD FRESH ON GOING REPLACEMENT", "💎 General · Faith — 25+25 = 50"], []))
+    said = asyncio.run(bot_client._tag_check(SimpleNamespace(config=None)))
+    assert asked == {"everything": True}, "reports included"
+    assert "Missed and now added — 2" in said and "KARL GOLD" in said
+    assert mentions.parse("tag check").action == "tagcheck"

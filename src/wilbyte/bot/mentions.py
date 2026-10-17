@@ -896,6 +896,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if template:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
+    # "tag check" - every tagged comment on the day's cards onto the
+    # checklists of everybody it tags, whatever it says.
+    if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?tags?\s+check|check\s+(?:the\s+)?(?:tags|comments|checklists?)|"
+                r"(?:tags?|comments?)\s+(?:to\s+)?checklists?)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="tagcheck", brief=text)
     # "setup check" - the setup card's checklists against each other: who's
     # missing from whose ("the division of this card doesnt make sense").
     if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?setup\s+cards?(?:\s+check)?|setup\s+(?:card\s+)?(?:check|balance))"
@@ -1518,6 +1523,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
+> **tag check** — every comment on today's cards that tags somebody, onto their checklist if it isn't there yet - all of them, reports included, no button.
 > **setup check** — each upcoming setup card's Therese / Kathleen / Nicole lists against each other: who's missing from whose, who's on twice. **setup check fix** copies the missing lines over.
 > **agency <name>** — the New Lead Request in #lead-lab I'd take their Agency from, or why there isn't one.
 > **invoice note <name>** — the note fields on their Payra invoices, as an aged card reads them.

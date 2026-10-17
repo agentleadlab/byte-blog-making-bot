@@ -1800,6 +1800,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_audit(bot, responder, request.brief or "")
                 return
 
+            if request.action == "tagcheck":
+                await responder.send(await _tag_check(bot))
+                return
+
             if request.action == "setupbalance":
                 await responder.send(await _setup_balance(bot, fix=bool(re.search(r"\bfix\b", request.brief or "", re.IGNORECASE))))
                 return
@@ -9579,6 +9583,23 @@ async def agency_fill_loop(bot: "WilByteBot") -> None:
         except Exception:
             log.exception("Filling in agencies failed; trying again shortly")
         await asyncio.sleep(AGENCY_FILL_SECONDS)
+
+
+async def _tag_check(bot) -> str:
+    """"tag check" - every tag on the day's cards on somebody's checklist."""
+    try:
+        tasks, problems = await asyncio.to_thread(partial(jobs.tags_to_file, bot.config, everything=True))
+    except Exception as exc:
+        return f"⚠ Couldn't read the cards: {_readable(exc)}"
+    if not tasks and not problems:
+        return "✅ Every comment that tags somebody on today's cards is on their checklist."
+    landed, trouble = await asyncio.to_thread(jobs.file_tags, bot.config, tasks) if tasks else ([], [])
+    out = [f"📌 Missed and now added — {len(landed)}:"] if landed else ["✅ Nothing tagged was missing."]
+    out += [f"• {one}" for one in landed[:30]]
+    if len(landed) > 30:
+        out.append(f"…and {len(landed) - 30} more.")
+    out += [f"⚠ {one}" for one in (list(problems) + list(trouble))[:10]]
+    return "\n".join(out)[:1950]
 
 
 async def _setup_balance(bot, *, fix: bool = False) -> str:

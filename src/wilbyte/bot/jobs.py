@@ -3140,7 +3140,7 @@ def tags_stamp(config: Config, *, day=None) -> str:
         client.close()
 
 
-def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
+def tags_to_file(config: Config, *, day=None, everything: bool = False) -> tuple[list, list[str]]:
     """The tagged comments that are not on anybody's checklist yet. (tasks, problems).
 
     Reads only. Every person tagged in a comment or written into a card's
@@ -3176,6 +3176,11 @@ def tags_to_file(config: Config, *, day=None) -> tuple[list, list[str]]:
         tasks = []
         for which in days:
             tasks += _tags_on(config, client, every, members, which, problems)
+        if everything:
+            # "check if he missed adding anything on checklist from the
+            # comments here for all of members, THESE ARE IMPORTATNT" -
+            # every tag, reports included: asked for, not run on the clock.
+            return tasks, problems
         # A checklist is what is left to do. "Updated email for Killian
         # Cooper" is a line about work that already happened, and it would
         # arrive on somebody's list already true - "not an update on a current
