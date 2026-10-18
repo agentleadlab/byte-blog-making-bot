@@ -8552,6 +8552,22 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
         # Tuesday is a Thursday card, and the agents for it can go on now.
         card = rules.find_setup_card(every_card, agent.launch)
         if card is None:
+            # The day's own Ads and Ops cards, when they're already up and no
+            # setup card covers it any more - Thomas DeCarlo, Sean Unzueta and
+            # Justice Hartford, live Monday, came in on the weekend after the
+            # Saturday-Monday setup card was done and gone, and waited in
+            # Franklin's list for a card that was never coming. Done the way
+            # a same-day agent is.
+            theirs = dailyops.cards_covering(every_card, agent.launch)
+            if theirs.get("ads") and theirs.get("ops") and (agent.launch - day).days <= 3:
+                problem = rules.cannot_read(agent, needs_lead_type=True)
+                if problem:
+                    plan.problems.append(problem)
+                    return plan
+                _same_day_steps(client, plan, agent, day=agent.launch, dated=theirs,
+                                every_card=every_card, label=agent.stated)
+                plan.move_to = rules.DONE
+                return plan
             # Nothing to put them on yet. The setup cards are made on their
             # own schedule at eleven; making a second one here would split a
             # day's agents across two cards, which is worse than waiting.

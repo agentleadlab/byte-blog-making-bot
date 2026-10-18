@@ -4829,3 +4829,18 @@ def test_setup_for_a_day_is_the_launch(said, wanted):
 
     assert agents.find_launch(said, today=date(2026, 10, 17)) == wanted
     assert ordercards.says_when(said) is (wanted is not None)
+
+
+def test_with_no_setup_card_left_the_days_own_ads_and_ops_cards_are_used():
+    """Thomas DeCarlo, Sean Unzueta and Justice Hartford - live Monday, in on
+    the weekend after the Saturday-Monday setup card was done and gone - sat
+    in Franklin's list for a card that was never coming."""
+    monday = [{"id": "ads", "name": "📊 Ads 08/31/26"}, {"id": "ops", "name": "💻 Ops 08/31/26"}]
+    plan = plan_for_launch("Lead Type: OTP Vets\nLive Monday, August 31", every_card=monday,
+                           day=date(2026, 8, 30))
+    assert plan.move_to == agents.DONE and plan.problems == []
+    assert {step.card_title for step in plan.steps} == {"📊 Ads 08/31/26", "💻 Ops 08/31/26"}
+    assert {step.checklist for step in plan.steps} == set(agents.ADS_PEOPLE) | set(agents.OPS_PEOPLE)
+    # Its Ads and Ops cards not up yet: waits, as before.
+    plan = plan_for_launch("Lead Type: OTP Vets\nLive Monday, August 31", every_card=[], day=date(2026, 8, 30))
+    assert plan.move_to == agents.PARKED
