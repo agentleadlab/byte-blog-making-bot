@@ -1800,6 +1800,18 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_audit(bot, responder, request.brief or "")
                 return
 
+            if request.action == "dedupe":
+                try:
+                    removed, trouble = await asyncio.to_thread(jobs.remove_duplicate_items, config)
+                except Exception as exc:
+                    await responder.send(f"⚠ Couldn't read the cards: {_readable(exc)}")
+                    return
+                said = ([f"🧹 Took off {len(removed)} copied line(s):"] + [f"• {one}" for one in removed[:25]]
+                        if removed else ["✅ No line is on any checklist twice."])
+                said += [f"⚠ {one}" for one in trouble[:5]]
+                await responder.send("\n".join(said)[:1950])
+                return
+
             if request.action == "tagcheck":
                 await responder.send(await _tag_check(bot))
                 return

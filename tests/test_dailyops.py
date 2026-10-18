@@ -4385,3 +4385,41 @@ def test_a_tag_the_automation_left_without_an_item_gets_one(monkeypatch, config)
     (check,) = jobs.tag_checks_due(now=10 ** 12)
     assert jobs.tag_items_fill(config, check) == ["Nicole"]
     assert board.items == [("cl-Nicole", "See the comment https://trello.com/c/ADS#comment-c1")]
+
+
+def test_a_carried_line_with_a_key_isnt_carried_again_and_again(monkeypatch, config):
+    """"WHAT ARE THESE? SI THIS RYTE?" - the hidden Auth/SID line once for
+    every carry-over: the hidden copy never matched the line it came from."""
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+    from wilbyte.trello import no_secrets
+
+    line = 'iS1rklum6oedbhfcci4f6czkomcc9qac" lq87y496a34il1575e772bh77duikfq4 There you go Auth and Sid'
+    board = LinkingChecklists({"Today": []}, held={"gen": [
+        {"id": "cl-T", "name": "Therese", "checkItems": [{"id": "i", "name": no_secrets(line)}]}]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    plan = SimpleNamespace(kind="general", carried=[SimpleNamespace(person="Therese", name=line),
+                                                    SimpleNamespace(person="Therese", name=line)])
+    moved, problems = jobs.apply_rollover(config, [plan], {"general": ("gen", [])}, day=date(2026, 10, 16))
+    assert moved == 0 and board.items == []
+
+
+def test_copies_on_a_checklist_are_taken_off_and_the_first_kept(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    class Board(LinkingChecklists):
+        def remove_check_item(self, checklist_id, item_id):
+            self.gone.append(item_id)
+
+        def cards_in(self, board_id, lists):
+            return [card for name in self.lists for card in self.lists[name]]
+
+    board = Board({"In Que": [{"id": "gen", "name": "💎 General 10/19/26"}]}, held={"gen": [
+        {"id": "cl-T", "name": "Therese", "checkItems": [
+            {"id": "a", "name": "[hidden] There you go"}, {"id": "b", "name": "[hidden] There you go"},
+            {"id": "c", "name": "Set up Ringy"}, {"id": "d", "name": "[hidden]  There you go"}]}]})
+    board.gone = []
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    removed, problems = jobs.remove_duplicate_items(config, day=date(2026, 10, 18))
+    assert board.gone == ["b", "d"] and len(removed) == 2 and problems == []

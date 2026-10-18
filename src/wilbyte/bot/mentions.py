@@ -896,6 +896,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if template:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
+    # "remove duplicates" - the same line twice on one checklist, once left.
+    if re.match(r"\s*(?:remove|delete|clear|clean(?:\s+up)?)\s+(?:the\s+)?(?:duplicates?|dupes?|copies|repeats?)"
+                r"(?:\s+(?:on|from)\s+(?:the\s+)?(?:checklists?|cards?))?\s*[.?!]*\s*$|\s*dedupe\b", text, re.IGNORECASE):
+        return MentionRequest(action="dedupe", brief=text)
     # "tag check" - every tagged comment on the day's cards onto the
     # checklists of everybody it tags, whatever it says.
     if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?tags?\s+check|check\s+(?:the\s+)?(?:tags|comments|checklists?)|"
@@ -1523,6 +1527,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
+> **remove duplicates** — the same line twice on one person's checklist, on the day cards: the copies off, the first kept.
 > **tag check** — every comment on today's cards that tags somebody, onto their checklist if it isn't there yet - all of them, reports included, no button.
 > **setup check** — each upcoming setup card's Therese / Kathleen / Nicole lists against each other: who's missing from whose, who's on twice. **setup check fix** copies the missing lines over.
 > **agency <name>** — the New Lead Request in #lead-lab I'd take their Agency from, or why there isn't one.

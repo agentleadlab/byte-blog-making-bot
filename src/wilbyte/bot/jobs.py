@@ -8843,6 +8843,7 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     on twice.
     """
     from .. import carried, dailyops
+    from ..trello import no_secrets
 
     day = day or board_day(config)
     client = open_trello(config)
@@ -8868,18 +8869,23 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
                 " ".join(str(c.get("name") or "").split()).casefold(): str(c.get("id") or "")
                 for c in target_lists or []
             }
+            # Compared as they're written onto the board: a line with a key in
+            # it goes on with the key hidden, and held up against the line as
+            # it was it never matched - "[hidden — a key or token]" went onto
+            # Therese's General checklist once for every run.
             already = {
                 (
                     " ".join(str(c.get("name") or "").split()).casefold(),
-                    " ".join(str(existing.get("name") or "").split()),
+                    " ".join(no_secrets(str(existing.get("name") or "")).split()),
                 )
                 for c in target_lists or []
                 for existing in c.get("checkItems") or []
             }
             for item in plan.carried:
                 key = " ".join(item.person.split()).casefold()
-                if (key, " ".join(item.name.split())) in already:
+                if (key, " ".join(no_secrets(item.name).split())) in already:
                     continue
+                already.add((key, " ".join(no_secrets(item.name).split())))
                 try:
                     if key not in by_person:
                         made = client.create_checklist(target_id, item.person)
@@ -8898,6 +8904,41 @@ def apply_rollover(config: Config, plans, targets, *, day=None) -> tuple[int, li
     if counted:
         carried.record(counted, day)
     return moved, problems
+
+
+def remove_duplicate_items(config: Config, *, day=None) -> tuple[list[str], list[str]]:
+    """The same line twice on one person's checklist, on the day cards from
+    today on - the second and after taken off, the first left as it is.
+    "WHAT ARE THESE? SI THIS RYTE?": the hidden Auth/SID line, once for every
+    carry-over. Only exact copies on the same checklist. (removed, problems)."""
+    from .. import dailyops
+
+    day = day or board_day(config)
+    client = open_trello(config)
+    removed, problems = [], []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = _cards_of(client, config.secrets.trello_board_id, lists)
+        for card in every:
+            key = dailyops.parse_card_title(str(card.get("name") or ""))
+            if not key or key[1] < day - timedelta(days=3):
+                continue
+            for checklist in client.card_checklists(str(card.get("id") or "")):
+                seen = set()
+                for item in checklist.get("checkItems") or []:
+                    name = " ".join(str(item.get("name") or "").split())
+                    if name not in seen:
+                        seen.add(name)
+                        continue
+                    try:
+                        client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
+                    except Exception as exc:
+                        problems.append(f"{card.get('name')} · {checklist.get('name')} — {_short(exc, 100)}")
+                        continue
+                    removed.append(f"{card.get('name')} · {checklist.get('name')} — {name[:70]}")
+    finally:
+        client.close()
+    return removed, problems
 
 
 # ---------------------------------------------------------- the SOP library
