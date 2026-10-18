@@ -3233,3 +3233,15 @@ def test_an_aged_payment_minutes_old_is_on_its_way_not_missing():
                            embeds=[], message_snapshots=[], author=SimpleNamespace(bot=True), reactions=[])
     how, line = client._audit_line(just, {}, [])
     assert how == "waiting" and "on its way" in line
+
+
+def test_a_new_agent_payment_isnt_read_off_an_aged_invoice():
+    """"is this really aged leads?" - Riley Noah's Trucker IUL payment and his
+    Aged IUL invoice from the day before."""
+    aged = "Name: Riley Noah\nLead Type: Aged IUL - 30-90 days [AGED - $8/Lead]\nNumber of Requested Leads: 40"
+    assert jobs._other_product("Text-Verified Trucker IUL", aged)
+    assert not jobs._other_product("Aged Leads (IUL)", aged)
+    fresh = "Lead Type: Text-Verified Veteran Leads [FRESH - $45/Lead]"
+    assert jobs._other_product("Aged Leads (VET)", fresh)
+    assert not jobs._other_product("VET", fresh)
+    assert not jobs._other_product("Aged Leads (VET)", "180+ vets TX FL"), "an aged note needn't say aged"

@@ -13570,6 +13570,15 @@ def _other_product(paid_for: str, invoice: str) -> bool:
     if not said:
         return False
     text = "\n".join(said)
+    # Aged against new-agent leads, whatever the family: Riley Noah's $1,987.20
+    # Text-Verified Trucker IUL was read off his "Aged IUL - 30-90 days"
+    # invoice from the day before - IUL both, and nothing alike.
+    aged_paid = bool(re.search(r"\baged\b", paid_for, re.IGNORECASE))
+    if not aged_paid and re.search(r"\baged\b", text, re.IGNORECASE):
+        return True
+    if aged_paid and re.search(r"\bfresh\b|text[\s-]*verified|\botp\b", text, re.IGNORECASE) \
+            and not re.search(r"\baged\b", text, re.IGNORECASE):
+        return True
     return setupcheck.same_product(paid_for, text) is False and setupcheck.same_product(text, paid_for) is False
 
 
