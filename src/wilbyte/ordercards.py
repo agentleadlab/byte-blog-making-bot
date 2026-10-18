@@ -125,7 +125,16 @@ def is_chatter(text: str) -> bool:
     words = said.split()
     if "[screenshot" in str(text or "") or re.search(r"\d", said):
         return False
-    return len(words) <= 2 or (len(words) <= 6 and bool(_STATUS.search(said)))
+    # Four words at most, and never one that says how or where - "i sent
+    # this one via sms" (Lisasi Dieumerci) is how her leads went, not chatter.
+    if _HOW.search(said):
+        return False
+    return len(words) <= 2 or (len(words) <= 4 and bool(_STATUS.search(said)))
+
+
+#: Words that make a short line say something: how leads went, or where.
+_HOW = re.compile(r"\b(?:via|by|through|sms|text(?:ed)?|e-?mail(?:ed)?|sheet|discord|zelle|ringy|crm|csv|"
+                  r"drive|link|google)\b", re.IGNORECASE)
 
 
 def same_text(one: str, two: str) -> bool:

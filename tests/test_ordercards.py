@@ -815,6 +815,8 @@ def test_a_gavelled_order_with_a_screenshot_gets_it_on_the_card(order, monkeypat
     ("FEARLESS", True),
     ("Monday-Friday: 8:00am - 10:00pm EST\n\nSaturday 8am-8pm EST\n\nSunday 1:00pm - 5:00pm EST", False),
     ("[screenshot 2]", False), ("add TX and FL to his states please", False),
+    # "why was the thread/note not added?" - Lisasi Dieumerci.
+    ("@Nicole @Faith i sent this one via sms", False), ("leads sent", True),
 ])
 def test_status_chatter_after_the_card_is_kept_off_it(said, chatter):
     assert ordercards.is_chatter(said) is chatter
