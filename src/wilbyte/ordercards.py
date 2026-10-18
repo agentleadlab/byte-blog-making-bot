@@ -296,7 +296,7 @@ _WHEN = re.compile(
 #: make, not a launch - Emilie Cruz's card said Thursday from it.
 _LAUNCH_WORD = re.compile(
     r"\b(?:live|launch\w*|start\w*|begin\w*|go[\s-]*live|golive|turn(?:ed|ing)?\s+on|activat\w*|"
-    r"deliver\w*|send(?:ing)?\s+leads|leads?\s+(?:on|from|begin|start))\b", re.IGNORECASE)
+    r"deliver\w*|send(?:ing)?\s+leads|leads?\s+(?:on|from|begin|start)|set[\s-]?up\s+(?:for|on))\b", re.IGNORECASE)
 
 
 #: "Same states last time", "same states as before", "states same as last".

@@ -12887,8 +12887,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "The launch / go-live date as a date: 'Tuesday, October 13'. Work out 'today' / 'tomorrow' from "
             "when the note was written. Only a date the order gives for going live / launching / starting "
             "leads. Empty when nothing says when they launch - never the day it was paid or posted, and never "
-            "the day somebody is to reach out, call, follow up or set up (\"reach out tomorrow\" is not a "
-            "launch date).")},
+            "the day somebody is to reach out, call or follow up (\"reach out tomorrow\" is not a launch "
+            "date). \"Setup for Monday\" / \"set up on Monday\" IS the launch day - the day the agent is set up "
+            "for.")},
         "screenshots": {"type": "array", "items": {"type": "string"}, "description": (
             "For each screenshot the team posted in the notes - '[screenshot 1]' is the first image shown, "
             "'[screenshot 2]' the second - what it means for the setup, written as an instruction to the "

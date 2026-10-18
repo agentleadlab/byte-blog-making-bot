@@ -1804,6 +1804,10 @@ _WHEN_SAID = (
         re.IGNORECASE,
     ),
     re.compile(r"[^.\n]*\blive\b[^.\n]*", re.IGNORECASE),
+    # "Setup for Monday" - the day they're set up for is the day they go live
+    # (Justice Hartford). Only with "for" or "on": "set up the CRM tomorrow"
+    # is a job, not a launch.
+    re.compile(r"[^.\n]*\bset[\s-]?up\s+(?:for|on)\b[^.\n]*", re.IGNORECASE),
 )
 
 # "August 27th" and "Sept 3rd" are how dates get typed by people rather than

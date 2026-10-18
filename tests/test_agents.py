@@ -4816,3 +4816,16 @@ def test_orders_written_with_commas_are_each_their_own():
         "30 Mortgage Protection", "30 Veteran", "30 Blue Collar IUL", "30 Trucker IUL MONDAY"]
     assert agents.order_parts("Text-Verified Final Expense, Vets") == ["Text-Verified Final Expense, Vets"]
     assert agents.words_it_cannot_place("30 Mortgage Protection") == []
+
+
+@pytest.mark.parametrize("said, wanted", [
+    ("Setup for Monday", date(2026, 10, 19)),
+    ("set up on monday 10/19", date(2026, 10, 19)),
+    ("set up the CRM tomorrow", None),
+])
+def test_setup_for_a_day_is_the_launch(said, wanted):
+    """"this is monday bro" - Justice Hartford's "Setup for Monday"."""
+    from wilbyte import ordercards
+
+    assert agents.find_launch(said, today=date(2026, 10, 17)) == wanted
+    assert ordercards.says_when(said) is (wanted is not None)
