@@ -370,6 +370,7 @@ class WilByteBot(discord.Client):
             _also_running(self.loop.create_task(_offer_the_run(self)))
             _also_running(self.loop.create_task(_catch_up_payra(self)))
             # Gavels dropped while RYTE was down.
+            _last_alive(self)
             _also_running(self.loop.create_task(_catch_up_gavels(self)))
             # The down alarm: say how long RYTE was gone, then check in
             # every five minutes for as long as it's up.
@@ -2186,17 +2187,30 @@ async def _board_steps(bot: "WilByteBot") -> None:
     # the next morning. Each of these is safe to run late: the carry skips
     # whatever is already on the next card, and the move into Done takes only
     # cards dated that day or before.
-    yesterday = today - timedelta(days=1)
-    missed = await asyncio.to_thread(boardclock.done_on, yesterday)
-    for step in dailyops.OVERNIGHT_CATCH_UP:
-        if step not in missed:
-            await _board_step(bot, step, yesterday, day=yesterday)
+    # Every weekday evening missed, oldest first - "ryte will be gone for 1
+    # and a half days": two evenings' carry-overs, not only last night's. A
+    # step is done for a day when it last ran on that day or after it.
+    for back in range(OVERNIGHT_LOOK_BACK_DAYS, 0, -1):
+        then = today - timedelta(days=back)
+        if then.weekday() >= 5 and back > 1:
+            continue
+        for step in dailyops.OVERNIGHT_CATCH_UP:
+            last = await asyncio.to_thread(boardclock.last_run, step)
+            if back > 1 and not last:
+                continue
+            if last and last >= then.isoformat():
+                continue
+            await _board_step(bot, step, then, day=then)
     due = dailyops.steps_due(
         datetime.now(ZoneInfo(config.schedule.timezone)),
         await asyncio.to_thread(boardclock.done_on, today),
     )
     for step in due:
         await _board_step(bot, step, today)
+
+
+#: How many evenings back a restart catches the end of day up for.
+OVERNIGHT_LOOK_BACK_DAYS = 4
 
 
 # Enough of them to see who is outstanding, not so many that the card is
@@ -9688,6 +9702,27 @@ def _order_preview(card: dict) -> str:
 
 #: How far back a start looks for gavels it missed.
 GAVEL_CATCH_UP = timedelta(hours=24)
+#: The furthest back a start looks, however long RYTE was away.
+GAVEL_CATCH_UP_MOST = timedelta(days=4)
+#: Messages read back per channel - all of a busy day and a half.
+GAVEL_CATCH_UP_READ = 5000
+def _last_alive(bot) -> datetime | None:
+    """When RYTE was last running before this start - the down alarm's own
+    record, read once, before this start's check-in writes over it."""
+    from .. import alive
+
+    held = getattr(bot, "_was_alive", "unread")
+    if held != "unread":
+        return held
+    try:
+        when = alive.last_seen()
+    except Exception:
+        when = None
+    try:
+        bot._was_alive = when
+    except Exception:
+        pass
+    return when
 #: "now i just want him to take care those going forward" - nothing gavelled
 #: before the gavel went live (6pm Eastern, 10/13) is caught up.
 GAVELS_FROM = datetime(2026, 10, 13, 22, 0, tzinfo=timezone.utc)
@@ -9705,7 +9740,13 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
     if guild is None:
         return []
     now = now or datetime.now(timezone.utc)
-    since = max(now - GAVEL_CATCH_UP, GAVELS_FROM)
+    # Back to when RYTE was last running, not just a day - "ryte will be gone
+    # for 1 and a half days". Never more than GAVEL_CATCH_UP_MOST.
+    away = _last_alive(bot)
+    since = now - GAVEL_CATCH_UP
+    if away is not None:
+        since = min(since, away - timedelta(minutes=30))
+    since = max(since, now - GAVEL_CATCH_UP_MOST, GAVELS_FROM)
     places = list(getattr(guild, "text_channels", None) or [])
     try:
         places += list(await guild.active_threads())
@@ -9725,7 +9766,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
         except Exception:
             pass
         try:
-            async for message in place.history(after=since, limit=300):
+            async for message in place.history(after=since, limit=GAVEL_CATCH_UP_READ):
                 # An aged payment with no card - posted while RYTE was down,
                 # or its two minutes cut short by a restart.
                 if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
@@ -9734,7 +9775,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
                         and not (await asyncio.to_thread(ordercards.load)).get(str(message.id))):
                     waited = (now - message.created_at).total_seconds()
                     _also_running(asyncio.get_running_loop().create_task(_aged_from_invoice(
-                        bot, message, wait=max(0.0, AGED_INVOICE_WAIT_SECONDS - waited))))
+                        bot, message, wait=max(0.0, AGED_INVOICE_WAIT_SECONDS - waited), catching_up=True)))
                     done.append(str(message.id))
                     continue
                 for reaction in getattr(message, "reactions", None) or []:
@@ -9750,7 +9791,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
                             done.append(str(message.id))
                             await _order_gavelled(bot, SimpleNamespace(
                                 message_id=message.id, channel_id=place.id, user_id=person.id,
-                                guild_id=guild.id, member=person))
+                                guild_id=guild.id, member=person, catching_up=True))
                             break
                     break
         except Exception:
@@ -9806,7 +9847,7 @@ _PAID_NAME = re.compile(r"NAME:\**\s*([^\n]+)", re.IGNORECASE)
 _PAID_EMAIL = re.compile(r"EMAIL:\**\s*([^\s]+@[^\s]+)", re.IGNORECASE)
 
 
-async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
+async def _aged_from_invoice(bot, message, *, wait: float | None = None, catching_up: bool = False) -> str:
     """The aged order's card from its invoice note - or nothing, when the
     invoice has none (the thread and the gavel still work). What happened."""
     from .. import ordercards
@@ -9841,7 +9882,8 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None) -> str:
     await _order_gavelled(bot, SimpleNamespace(
         message_id=message.id, channel_id=message.channel.id, user_id=0,
         guild_id=getattr(getattr(message, "guild", None), "id", None), member=None,
-        extra_notes=(f"Payra invoice note: {note}",) if note else (), aged_only=True))
+        extra_notes=(f"Payra invoice note: {note}",) if note else (), aged_only=True,
+        catching_up=catching_up))
     return "made"
 
 
@@ -10041,6 +10083,26 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             card["kind"] = "fresh"
         except Exception:
             log.warning("Couldn't read the order again; making it as shown", exc_info=True)
+    # Caught up after time away: a card the team made by hand meanwhile is
+    # the card - not a second one beside it.
+    if getattr(payload, "catching_up", False) and card.get("client"):
+        try:
+            found = await asyncio.to_thread(partial(jobs.card_made_since, bot.config, card["client"],
+                                                    since=message.created_at - timedelta(minutes=10)))
+        except Exception:
+            log.warning("Couldn't look for a card made while I was away", exc_info=True)
+            found = None
+        if found is not None:
+            await _order_note(key, status="made", kind=kind, card_id=found["id"],
+                              url=str(found.get("shortUrl") or found.get("url") or ""), name=found.get("name"),
+                              client=card["client"], merged=True, link=link,
+                              message_channel_id=str(payload.channel_id))
+            await _order_mark(bot, payload.channel_id, key)
+            if responder is not None:
+                await responder.send(f"🔨 **{card['client']}** — paid while I was away, and already has a card made "
+                                     f"since, so I left it as it is: {found.get('shortUrl') or found.get('url')}",
+                                     quiet=True)
+            return
     # Aged leads and new-agent leads bought together: a card for each -
     # Patrick Moreno's four aged lines on one Aged Leads card, each new-agent
     # line on a New Agent card of its own.
@@ -10582,7 +10644,7 @@ def _payload_copy(payload, **changed):
     """A gavel's particulars, kept - Discord's own event can't be copied."""
     kept = {name: getattr(payload, name, None) for name in (
         "message_id", "channel_id", "user_id", "guild_id", "member")}
-    for name in ("extra_notes", "aged_only", "separate", "confirmed"):
+    for name in ("extra_notes", "aged_only", "separate", "confirmed", "catching_up"):
         if hasattr(payload, name):
             kept[name] = getattr(payload, name)
     kept.update(changed)

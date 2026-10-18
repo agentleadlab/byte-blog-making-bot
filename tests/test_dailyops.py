@@ -4423,3 +4423,30 @@ def test_copies_on_a_checklist_are_taken_off_and_the_first_kept(monkeypatch, con
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
     removed, problems = jobs.remove_duplicate_items(config, day=date(2026, 10, 18))
     assert board.gone == ["b", "d"] and len(removed) == 2 and problems == []
+
+
+def test_each_missed_evening_is_caught_up_oldest_first(monkeypatch):
+    """"ryte will be gone for 1 and a half days" - Monday and Tuesday nights'
+    carry-overs both, not only last night's."""
+    import asyncio
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    from wilbyte import boardclock, dailyops
+    from wilbyte.bot import client
+
+    ran = []
+
+    async def step(bot, name, today, *, day=None):
+        ran.append((name, day))
+
+    monkeypatch.setattr(client, "_board_step", step)
+    monkeypatch.setattr(client, "_today", lambda config: _date(2026, 10, 21))   # Wednesday
+    monkeypatch.setattr(boardclock, "last_run", lambda name: "2026-10-18")      # last ran Sunday
+    monkeypatch.setattr(boardclock, "done_on", lambda day: set(dailyops.STEP_TIMES) if hasattr(dailyops, "STEP_TIMES") else set())
+    monkeypatch.setattr(dailyops, "steps_due", lambda now, done: [])
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York")))
+    asyncio.run(client._board_steps(bot))
+    days = [day for _name, day in ran]
+    assert days[:len(dailyops.OVERNIGHT_CATCH_UP)] == [_date(2026, 10, 19)] * len(dailyops.OVERNIGHT_CATCH_UP)
+    assert set(days) == {_date(2026, 10, 19), _date(2026, 10, 20)}, "Monday then Tuesday, not the weekend"

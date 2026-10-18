@@ -4843,6 +4843,36 @@ def client_card_for(config: Config, text: str, client: str = "") -> dict | None:
     return max(theirs, key=lambda one: one[0])[2]
 
 
+def card_made_since(config: Config, client: str, *, since) -> dict | None:
+    """The newest New Agent or Aged Leads card for this client made since
+    then - by anyone, archived or not - or None. A card's id starts with when
+    it was made."""
+    from .. import agents, clearout
+
+    board = open_trello(config)
+    try:
+        lists = board.board_lists(config.secrets.trello_board_id)
+        cards = _cards_of(board, config.secrets.trello_board_id, lists)
+    finally:
+        board.close()
+    stamp = int(since.timestamp())
+    found = []
+    for card in cards:
+        title = str(card.get("name") or "")
+        if not (agents.is_agent_card(title) or re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE)):
+            continue
+        name = agents.agent_name(title) if agents.is_agent_card(title) else title.split("-", 1)[-1].strip()
+        if clearout.name_match(client, name) < 2:
+            continue
+        try:
+            made = int(str(card.get("id") or "")[:8], 16)
+        except ValueError:
+            continue
+        if made >= stamp:
+            found.append((made, card))
+    return max(found, key=lambda one: one[0])[1] if found else None
+
+
 def comment_on_client_card(config: Config, card: dict, text: str, pictures=()) -> str:
     """The task on the client's own card, with its screenshots. Its link."""
     board = open_trello(config)

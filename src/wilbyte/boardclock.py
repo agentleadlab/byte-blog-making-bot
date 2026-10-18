@@ -48,3 +48,8 @@ def mark(step: str, day, path: Path | None = None) -> None:
     steps[step] = stamp
     where.parent.mkdir(parents=True, exist_ok=True)
     where.write_text(json.dumps(steps, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def last_run(step: str, path: Path | None = None) -> str:
+    """The day a step last ran, as YYYY-MM-DD, or "" when it never has."""
+    return str(load(path).get(step) or "")

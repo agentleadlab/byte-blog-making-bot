@@ -1315,7 +1315,7 @@ def test_an_aged_payment_missed_while_down_gets_its_card_on_start(order, monkeyp
     monkeypatch.setattr(client, "_setup_guild", lambda bot, config: guild)
     made = []
 
-    async def making(bot, message, *, wait=None):
+    async def making(bot, message, *, wait=None, **kw):
         made.append((message.id, wait))
         return "made"
 
@@ -3245,3 +3245,75 @@ def test_a_new_agent_payment_isnt_read_off_an_aged_invoice():
     assert jobs._other_product("Aged Leads (VET)", fresh)
     assert not jobs._other_product("VET", fresh)
     assert not jobs._other_product("Aged Leads (VET)", "180+ vets TX FL"), "an aged note needn't say aged"
+
+
+# ------------------------------------------- "gone for 1 and a half days"
+
+def test_the_catch_up_goes_back_to_when_ryte_was_last_running(order, monkeypatch):
+    now = datetime(2026, 10, 19, 21, 0, tzinfo=timezone.utc)
+    asked = []
+
+    class Place:
+        id = 700
+        last_message_id = int(((now.timestamp() - 60) * 1000 - 1420070400000)) << 22
+
+        def history(self, **kw):
+            asked.append(kw)
+
+            async def gen():
+                return
+                yield
+            return gen()
+
+    async def threads():
+        return []
+
+    guild = SimpleNamespace(id=1, text_channels=[Place()], active_threads=threads)
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: guild)
+
+    async def no_wait(_s):
+        return None
+
+    monkeypatch.setattr(client.asyncio, "sleep", no_wait)
+    bot = _bot(_message())
+    bot._was_alive = now - timedelta(hours=36)
+    asyncio.run(client._catch_up_gavels(bot, now=now))
+    assert asked[0]["after"] == now - timedelta(hours=36, minutes=30)
+    assert asked[0]["limit"] >= 5000
+    bot._was_alive = now - timedelta(days=9)
+    asked.clear()
+    asyncio.run(client._catch_up_gavels(bot, now=now))
+    assert asked[0]["after"] == now - client.GAVEL_CATCH_UP_MOST, "never more than four days"
+
+
+def test_a_card_made_by_hand_while_away_is_used_not_doubled(order, monkeypatch):
+    order.kind = "fresh"
+    hand = {"id": "6a00ffff00000000000000aa", "name": "New Agent - Cole Petersen", "shortUrl": "https://trello.com/c/HAND"}
+    monkeypatch.setattr(jobs, "card_made_since", lambda config, client_name, since: hand)
+    payload = SimpleNamespace(**{**vars(GAVEL), "catching_up": True})
+    asyncio.run(client._order_gavelled(_bot(_message()), payload))
+    assert order.made == []
+    held = ordercards.load()["900"]
+    assert held["status"] == "made" and held["card_id"] == hand["id"]
+    assert "already has a card made since" in order.responder.sent[-1][0]
+
+
+def test_cards_made_since_a_time(monkeypatch):
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": f"{int(datetime(2026, 10, 17, tzinfo=timezone.utc).timestamp()):08x}0000000000000001",
+                     "name": "New Agent - Karl Cook"},
+                    {"id": f"{int(datetime(2026, 10, 19, tzinfo=timezone.utc).timestamp()):08x}0000000000000002",
+                     "name": "New Agent - Karl Cook"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    found = jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 18, tzinfo=timezone.utc))
+    assert found["id"].endswith("2")
+    assert jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 20, tzinfo=timezone.utc)) is None
