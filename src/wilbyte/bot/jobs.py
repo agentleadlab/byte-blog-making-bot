@@ -6583,7 +6583,9 @@ def quiet_check(newest, now) -> tuple[bool, str]:
 
 #: An order card this recent means a client still buying, whatever their
 #: channel says - their channel is not RYTE's to delete on its own.
-RECENT_ORDER_DAYS = 60
+#: The same 35 days as quiet: 24 of 36 were left at 60, each with a card
+#: from five or six weeks back - "can you check why isnt he deleting this".
+RECENT_ORDER_DAYS = 35
 
 #: The board, read once for a run of ten rather than once a channel.
 _BOARD_READ: dict = {}

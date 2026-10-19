@@ -4660,3 +4660,36 @@ def test_an_update_waits_for_an_open_clear_out(monkeypatch):
     bot = SimpleNamespace(run_lock=asyncio.Lock())
     asyncio.run(bot_client._update_now(bot, Heard()))
     assert "a clear-out is open" in said[-1]
+
+
+def test_on_its_own_a_name_that_only_fits_doesnt_leave_the_channel(monkeypatch):
+    """Malcolm Edwards' channel was left for a person only for "has their name
+    but never wrote in or was tagged" - said, but nothing to decide: nothing
+    of that member's is kept, and nobody is banned."""
+    from wilbyte.bot import client as bot_client
+
+    async def elsewhere(guild, member, channels):
+        return [], []
+
+    monkeypatch.setattr(bot_client, "_also_said", elsewhere)
+    _guild, channel, said, _buttons = _closing(monkeypatch, says=[None, None], auto=True, welcomed=False)
+
+    assert channel.deleted is True
+    assert "has their name but never wrote in or was tagged" in "\n".join(said)
+
+
+def test_an_order_card_older_than_35_days_doesnt_keep_the_channel(monkeypatch):
+    from datetime import timezone
+
+    from wilbyte.bot import jobs
+
+    now = datetime(2026, 10, 19, 17, 0, tzinfo=timezone.utc)
+
+    def card(days):
+        made = int((now - timedelta(days=days)).timestamp())
+        return {"id": f"{made:08x}" + "0" * 16, "name": "New Agent - Charles Sellers", "shortUrl": "u"}
+
+    monkeypatch.setattr(jobs, "_board_for_a_while", lambda config: [card(46), card(56)])
+    assert jobs.recent_order(None, "charles-sellers-vet", now=now)[0] is True
+    monkeypatch.setattr(jobs, "_board_for_a_while", lambda config: [card(20)])
+    assert jobs.recent_order(None, "charles-sellers-vet", now=now)[0] is False

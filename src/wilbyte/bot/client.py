@@ -3974,12 +3974,16 @@ async def _clear_out_one(
     # who never wrote in the client's own channel and was never tagged in it
     # is a name that happens to fit - their messages elsewhere are not kept
     # as the client's, and the Drive folder is named for the channel instead.
+    # Said, and not a reason to leave the channel for a person: it only means
+    # nothing of that member's is kept, and nobody is banned either way.
+    just_said = []
     if member is not None and not clearout.seen_in(messages, member.id):
-        plan.notes.append(
+        just_said.append(
             f"{member.display_name} has their name but never wrote in or was "
             f"tagged in #{plan.channel.name} — not keeping anything of theirs "
             "from other channels."
         )
+        plan.notes.append(just_said[-1])
         member = None
         plan.member_id, plan.member_name = "", ""
     # The card's link first - it is the one the team chose, and the card is
@@ -4015,7 +4019,8 @@ async def _clear_out_one(
         plan.sheet, plan.from_channel, trouble = own, True, []
     plan.problems += trouble
 
-    held = list(plan.problems) + list(plan.notes) + ([] if plan.sheet else ["no sheet link found"])
+    held = (list(plan.problems) + [one for one in plan.notes if one not in just_said]
+            + ([] if plan.sheet else ["no sheet link found"]))
     if auto:
         # Two more a person would think of before deleting on their own -
         # "MAKE SURE RYTE DONT MAKE MISTAKE HERE".
