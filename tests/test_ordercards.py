@@ -3990,3 +3990,33 @@ def test_only_trellos_own_files_are_fetched_with_the_boards_key():
             client.download("https://evil.example.com/image.png")
     finally:
         client.close()
+
+
+def test_one_payment_for_five_agents_is_five_cards(monkeypatch):
+    """"how is ryte gonna file this" - Colby Whittaker paid $2550.24 once for
+    five agents, each with their own details, states, count and webhook."""
+    from pathlib import Path
+
+    notes = (Path(__file__).parent / "colby_order.txt").read_text()
+    text = ("[10/19 03:57PM] Nova: New Payment | Payra\nNAME: Colby Whittaker\nEMAIL: —\nAMOUNT: $2550.24\n"
+            "PRODUCT: —\n[10/19 03:58PM] Faith: " + notes)
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Colby Whittaker", "package": "Fresh Vets",
+                                    "leads": "154", "launch": "Monday, October 19", "launch_iso": "2026-10-19"},
+                      text, [notes])
+    cards = jobs.agent_cards(card, today=date(2026, 10, 19))
+
+    assert [one["client"] for one in cards] == ["Gabriel Lucas", "Sawyer Wetzel", "Justin Bailey", "Dillon Willis",
+                                                "Colby Whittaker"]
+    assert [one["fields"]["leads"] for one in cards] == ["28", "42", "28", "28", "28"]
+    assert all(one["launch_iso"] == "2026-10-19" and one["fields"]["launch"] == "Monday, October 19" for one in cards)
+    justin = cards[2]["fields"]
+    assert justin["email"] == "justinbailey@example.com" and "WV" in justin["states"] and "UT" in justin["states"]
+    assert "Webhook URL: https://americanfirstagency.com/api/public/leads/inbound/926b6738" in justin["notes"]
+    assert "Paid by Colby Whittaker - one payment for 5 agents ($2550.24)" in justin["notes"]
+    assert cards[4]["fields"]["states"].startswith("All but HI")
+    assert jobs.split_doubts(cards) == []
+
+
+def test_one_agent_with_labels_is_one_card():
+    said = "Name: Shane Suleiman\nEmail: s@example.com\nStates: TX, FL\nOrder Type: 30 Fresh Vets"
+    assert jobs.order_agents(said) == []

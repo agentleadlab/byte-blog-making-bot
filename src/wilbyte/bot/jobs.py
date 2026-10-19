@@ -13417,7 +13417,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90" went out as one New
         # Agent card, and no Aged Leads card was made.
         parts = parts_from_package(fields, launch_iso) or parts
+    # Several agents in the one order: a card each - see `agent_cards`.
+    agents = order_agents("\n".join(
+        [str(one) for one in notes or () if not str(one).startswith("Payra invoice note:")]
+        + ([_cards.post_invoice(text)[1]] if _cards.post_invoice(text)[1] else [])))
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
+            **({"agents": agents} if agents and kind == "fresh" else {}),
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
@@ -13561,6 +13566,147 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         out.append({"kind": "fresh", "client": client, "fields": fields, "name": f"New Agent - {client}",
                     "desc": order_desc(fields, "fresh"), "launch_iso": when.isoformat() if when else "",
                     "source": source})
+    return out
+
+
+#: A line of dashes - "* - - - - - -" - between one agent and the next.
+_AGENT_BREAK = re.compile(r"^[\s*•·]*(?:-\s*){5,}$|^[\s*•·]*[-–—_=]{5,}\s*$")
+_LABELLED = re.compile(r"^\s*(?P<label>name|e-?mail|number|phone(?:\s*number)?|states?|order\s*type|"
+                       r"lead\s*type|package|webhook(?:\s*url)?)\s*(?:[:\-–]\s*|\s+(?=\S))(?P<value>.*)$",
+                       re.IGNORECASE)
+_PHONE_SAID = re.compile(r"\+?1?[\s\-.(]*\d{3}[\s\-.)]*\d{3}[\s\-.]*\d{4}")
+
+
+def _state_codes_named(said: str) -> list[str]:
+    """Two-letter codes for the states a line names, spelled out or not -
+    "South,Carolina", "Washington DC" and "West Virginia" included."""
+    from .. import ordercards
+
+    text = str(said or "")
+    names = sorted(((name, code) for code, name in ordercards.US_STATES.items()), key=lambda one: -len(one[0]))
+    found, taken = [], [False] * len(text)
+
+    def take(pattern, code):
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            if any(taken[match.start():match.end()]):
+                continue
+            taken[match.start():match.end()] = [True] * (match.end() - match.start())
+            found.append((match.start(), code))
+
+    take(r"\bwashington[\s,]*d\.?\s*c\b\.?", "DC")
+    for name, code in names:
+        take(r"\b" + r"[\s,]+".join(map(re.escape, name.split())) + r"\b", code)
+    for match in re.finditer(r"\b[A-Z]{2}\b", text):
+        if match.group(0) in ordercards.US_STATES and not any(taken[match.start():match.end()]):
+            found.append((match.start(), match.group(0)))
+    codes = []
+    for _at, code in sorted(found):
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _is_name_line(line: str) -> bool:
+    found = _LABELLED.match(str(line or "").strip(" *•\t"))
+    return bool(found) and found.group("label").casefold() == "name"
+
+
+def order_agents(text: str) -> list[dict]:
+    """Several agents in one order, each with their own name, email, phone,
+    states, lead count and webhook - Colby Whittaker paid once for Gabriel
+    Lucas, Sawyer Wetzel, Justin Bailey, Dillon Willis and himself, 28 or 42
+    Fresh Vets each. [] unless at least two are plainly there."""
+    blocks, current = [], []
+    for line in str(text or "").splitlines():
+        if _AGENT_BREAK.match(line):
+            blocks.append(current)
+            current = []
+            continue
+        if _is_name_line(line) and any(_is_name_line(one) for one in current):
+            # A second "Name:" with no line of dashes between: the next agent.
+            blocks.append(current)
+            current = []
+        current.append(line)
+    blocks.append(current)
+    agents = []
+    for block in blocks:
+        one = {"name": "", "email": "", "phone": "", "states": "", "order": "", "webhook": ""}
+        last = ""
+        for line in block:
+            bare = line.strip(" *•\t")
+            if not bare:
+                continue
+            labelled = _LABELLED.match(bare)
+            label = labelled.group("label").casefold() if labelled else ""
+            value = labelled.group("value").strip() if labelled else ""
+            if not labelled and last.startswith("state") and _state_codes_named(bare):
+                # Justin Bailey's states ran onto a second line.
+                one["states"] += ", " + bare
+                continue
+            last = label
+            if label == "name" and not one["name"]:
+                one["name"] = " ".join(value.split())
+            elif label.startswith("state") and not one["states"]:
+                one["states"] = value
+            elif (label == "number" or label.startswith("phone")) and not one["phone"]:
+                found = _PHONE_SAID.search(value)
+                one["phone"] = found.group(0).strip(" -.") if found else value
+            elif label in ("order type", "lead type", "package") or label.startswith("order"):
+                one["order"] = one["order"] or value
+            elif label.startswith("webhook"):
+                url = re.search(r"https?://\S+", value)
+                one["webhook"] = one["webhook"] or (url.group(0) if url else "")
+                one["webhook_how"] = value[url.end():].strip() if url else ""
+            elif re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", bare) and not one["email"]:
+                one["email"] = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", bare).group(0)
+            elif _PHONE_SAID.search(bare) and not one["phone"] and not re.search(r"https?://", bare):
+                one["phone"] = _PHONE_SAID.search(bare).group(0).strip(" -.")
+            elif not one["name"] and _A_NAME.match(bare) and not _NOT_NAME_WORDS.search(bare):
+                one["name"] = " ".join(bare.split())
+        if one["name"] and (one["order"] or one["states"]) and (one["email"] or one["phone"]):
+            agents.append(one)
+    return agents if len(agents) >= 2 else []
+
+
+def agent_cards(card: dict, *, today=None) -> list[dict]:
+    """An order for several agents as its cards: a New Agent card each, with
+    their own details, the order's launch day, and who paid. []  unless the
+    order is one of those."""
+    from .. import ordercards
+
+    agents = list(card.get("agents") or [])
+    if len(agents) < 2:
+        return []
+    base = dict(card.get("fields") or {})
+    source = str(card.get("source") or "")
+    payer = ordercards.paid_by(source) or card.get("client") or ""
+    paid = re.search(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", source, re.IGNORECASE)
+    zelle = [bit for bit in str(base.get("notes") or "").splitlines() if bit.startswith("Paid via Zelle")]
+    launch = ""
+    try:
+        launch = date.fromisoformat(str(card.get("launch_iso") or "")).isoformat()
+    except ValueError:
+        launch = ""
+    out = []
+    for one in agents:
+        count = re.match(r"\s*(\d[\d,]*)\s*(.*)$", one["order"] or "")
+        states = one["states"]
+        if re.search(r"\ball\b", states, re.IGNORECASE):
+            shown = " ".join(states.split())
+        else:
+            shown = ", ".join(_state_codes_named(states))
+        fields = dict(base, name=one["name"], email=one["email"], phone=one["phone"], states=shown,
+                      package=(count.group(2).strip() if count else one["order"]) or base.get("package", ""),
+                      leads=count.group(1).replace(",", "") if count else "",
+                      launch=(f"{date.fromisoformat(launch):%A, %B} {date.fromisoformat(launch).day}" if launch else ""))
+        fields["notes"] = "\n".join([
+            *zelle,
+            *([f"Webhook URL: {one['webhook']}" + (f" {one['webhook_how']}" if one.get("webhook_how") else "")]
+              if one["webhook"] else []),
+            f"Paid by {payer} - one payment for {len(agents)} agents"
+            + (f" (${paid.group(1)})" if paid else "") + "."])
+        out.append({"kind": "fresh", "client": one["name"], "fields": fields, "name": f"New Agent - {one['name']}",
+                    "desc": order_desc(fields, "fresh"), "launch_iso": launch, "source": source})
     return out
 
 
