@@ -389,3 +389,17 @@ def test_the_hub_channel_is_found_however_its_name_is_written(name, monkeypatch)
     hub_channel = SimpleNamespace(name=name)
     bot = SimpleNamespace(guilds=[SimpleNamespace(text_channels=[SimpleNamespace(name="trello-manager"), hub_channel])])
     assert client._hub_responder(bot).channel is hub_channel
+
+
+def test_a_growth_server_channel_is_read_back_like_it_is_answered(monkeypatch):
+    """Kharyl's "@Ryte add to trello and tag therese" in #internal-team, sent
+    while RYTE restarted, was never answered: the read-back passed over every
+    Growth server channel that isn't on the list, and a tag in one is
+    answered."""
+    bot = Bot()
+    bot.config.secrets.discord_watch_channel_ids = ()
+    bot.config.secrets.discord_channel_ids = ("60",)
+    growth = NS(id=777)
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: growth)
+    assert client._never_speaks_in(bot, NS(id=70, name="internal-team", guild=growth)) is False
+    assert client._never_speaks_in(bot, NS(id=71, name="random", guild=NS(id=1))) is True

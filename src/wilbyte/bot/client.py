@@ -680,6 +680,11 @@ def _never_speaks_in(bot: "WilByteBot", channel) -> bool:
         channel_name=str(getattr(channel, "name", "") or ""),
         guild_id=getattr(getattr(channel, "guild", None), "id", None),
     )
+    # The Growth server's every channel, as when RYTE is there to hear it:
+    # Kharyl's "add to trello and tag therese" in #internal-team, sent while
+    # RYTE was restarting, was never answered.
+    if not allowed and "channel" in reason and _in_setup_guild(bot, getattr(channel, "guild", None)):
+        return False
     return not allowed and "channel" in reason
 
 
@@ -767,11 +772,13 @@ async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) ->
         if since is not None:
             since = max(since - MENTION_OVERLAP, now - timedelta(hours=MENTION_CATCH_UP_HOURS))
             for message in await missed_mentions(bot, since=since, until=now):
-                if not is_allowed(
+                allowed, reason = is_allowed(
                     channel_id=message.channel.id, user=message.author, config=bot.config,
                     channel_name=str(getattr(message.channel, "name", "") or ""),
                     guild_id=getattr(getattr(message, "guild", None), "id", None),
-                )[0]:
+                )
+                if not allowed and not ("channel" in reason
+                                        and _in_setup_guild(bot, getattr(message, "guild", None))):
                     continue
                 # Taken in hand before anything is said, so a second connect
                 # in the middle of this does not answer it twice.
