@@ -1060,9 +1060,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # "sheet for Faith". Only when nothing else claimed the message: "levinson
     # sheet" is the tracker, a format word means a copy brief, and all of those
     # said what they wanted first.
+    # Not when it opens with "add to trello": Faith's "add to trello tag
+    # therese new sheet for petar" is a job for Therese, and was read as
+    # asking for Petar's sheet - "I can't find a New Agent card for ...".
     if (
         not action
         and not _first_format_word(text, find)
+        and not TRELLO_ASK.match(text)
         and SHEET_ASKED.search(_without_links(text))
     ):
         return MentionRequest(action="agentsheet", brief=text)

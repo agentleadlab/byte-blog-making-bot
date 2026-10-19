@@ -753,3 +753,11 @@ def test_remove_duplicates_said_any_short_way(text):
 @pytest.mark.parametrize("text", ["why are there duplicates", "how do I remove duplicates?"])
 def test_asking_about_duplicates_is_not_the_command(text):
     assert parse(text).action != "dedupe"
+
+
+def test_add_to_trello_wins_over_a_sheet_in_the_message():
+    """"what are we doing" - "add to trello tag therese new sheet for petar"
+    was read as asking for Petar's sheet: "I can't find a New Agent card"."""
+    request = parse("<@1> add to trello tag therese new sheet for petar")
+    assert request.action == "comment" and request.brief == "tag therese new sheet for petar"
+    assert parse("<@1> new sheet for petar").action == "agentsheet"

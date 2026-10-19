@@ -4475,3 +4475,13 @@ def test_a_sentence_after_the_tags_is_the_message_not_a_name(said, left, tagged_
 
     known = {"nicole": "nic0l3", "therese": "thereseguba"}
     assert dailyops.tag_asked(said, known) == (left, tagged_, strangers)
+
+
+def test_a_name_at_the_front_of_the_message_is_still_a_tag():
+    """Faith's "add to trello tag therese new sheet for petar"."""
+    from wilbyte import dailyops
+
+    known = {"therese": "thereseguba", "therese guba": "thereseguba"}
+    assert dailyops.tag_asked("tag therese new sheet for petar", known) == (
+        "new sheet for petar", ["thereseguba"], [])
+    assert dailyops.tag_asked("tag therese guba new sheet for petar", known)[1] == ["thereseguba"]

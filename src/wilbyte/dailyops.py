@@ -609,8 +609,18 @@ def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:
             continue
         elif len(one.split()) >= 3:
             # "tag nicole, tag therese, can you take a look" - a sentence,
-            # not somebody's name: it and what follows are the message.
-            rest = names[at:]
+            # not somebody's name: it and what follows are the message. A
+            # name at the front of it is still a tag - "tag therese new
+            # sheet for petar".
+            words = one.split()
+            for size in (2, 1):
+                lead = (known or {}).get(" ".join(words[:size]).casefold())
+                if lead:
+                    if lead not in handles:
+                        handles.append(lead)
+                    words = words[size:]
+                    break
+            rest = [" ".join(words), *names[at + 1:]]
             break
         else:
             strangers.append(one)
