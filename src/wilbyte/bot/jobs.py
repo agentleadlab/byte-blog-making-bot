@@ -12905,7 +12905,21 @@ def request_agency(post: str) -> str:
 
 #: Agencies the team names - and every agency a New Lead Request in
 #: #lead-lab has given, added as they're read.
-KNOWN_AGENCIES = ("AEP", "FFL", "Wolfpack", "Uprise", "Fearless", "PHNX", "Phoenix", "Ascend", "Liftoff", "Spark")
+KNOWN_AGENCIES = ("AEP", "FFL", "Wolfpack", "Uprise", "Fearless", "PHNX", "Phoenix", "Ascend", "Liftoff", "Spark",
+                  "Roadmap")
+
+#: "ROADMAP AGENCY  LIVE OCT 19", "Roadmap agency", "Agency: Roadmap" - the
+#: agency named the way the team writes it, known or not. Benny Beniamin's
+#: card went out blank with "ROADMAP AGENCY" in his notes.
+_NAMED_AGENCY = (
+    re.compile(r"^\s*(?:agency|imo)\s*[:\-–—]\s*(?P<name>[A-Za-z][\w&.' ]{1,40}?)\s*[.!]*\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?P<name>[A-Za-z][\w&.']*(?:\s+[A-Za-z][\w&.']*){0,3}?)\s+(?:agency|imo)\b\s*[-–—,:]?\s*"
+               r"(?:(?:is\s+)?(?:going\s+)?(?:live|launch\w*|start\w*)\b.*)?$", re.IGNORECASE),
+)
+#: Words a "<name> agency" can't start with: "my current agency", "the agency".
+_NOT_A_NAME = re.compile(r"^(?:the|my|his|her|their|our|your|a|an|current|new|same|no|any|which|what|this|that|"
+                         r"other|old|previous|i|he|she|they|leaving|left|from|with|for|of|at|in|to|via|by)\b",
+                         re.IGNORECASE)
 
 
 #: The payment post's own lines - who paid, how much, the invoice's number
@@ -13030,6 +13044,15 @@ def agency_said(text: str, agencies=()) -> str:
         for name, spelled in known.items():
             if re.match(rf"{re.escape(name)}\s*[-–—:,]?\s+(?:is\s+)?(?:going\s+)?(?:live|launch\w*|start\w*)\b", said):
                 return spelled
+    for line in reversed(str(text or "").splitlines()):
+        bare = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line)
+        bare = " ".join(re.sub(r"@\S+", "", bare).strip(" *_").split())
+        for pattern in _NAMED_AGENCY:
+            found = pattern.match(bare)
+            name = " ".join(found.group("name").split()).strip(" .") if found else ""
+            if name and not _NOT_A_NAME.match(name) and agency_usable(name) \
+                    and name.casefold().strip(" .") not in _SAYS_NOTHING:
+                return known.get(name.casefold(), name)
     return ""
 
 

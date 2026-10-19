@@ -3843,3 +3843,21 @@ def test_one_lead_type_with_an_aged_and_a_fresh_line_is_split(monkeypatch):
 @pytest.mark.parametrize("package", ["50 Aged VET 180+ + 50 Aged Mortgage Protection", "25 OTP VET", "20 VET + 20 Aged IUL"])
 def test_a_lead_type_that_isnt_plainly_both_isnt_split(package):
     assert jobs.parts_from_package({"package": package}) == []
+
+
+@pytest.mark.parametrize("said, agency", [
+    ("ROADMAP AGENCY  LIVE OCT 19", "Roadmap"), ("Roadmap agency", "Roadmap"), ("Agency: Symmetry Financial", "Symmetry Financial"),
+    ("LEGADO AGENCY - live monday", "LEGADO"),
+    ("[10/19 11:28AM] Kharyl: Benny Beniamin\nNC,TX\n20 fresh vet\n\nROADMAP AGENCY  LIVE OCT 19", "Roadmap"),
+])
+def test_the_agency_as_the_team_writes_it(said, agency):
+    """"ryte didnt add roadmap as an agency to benny beniamin"."""
+    assert jobs.agency_said(said) == agency
+
+
+@pytest.mark.parametrize("said", [
+    "i am leaving my current agency at this time", "the agency", "my agency", "Agency: none", "Agency: N/A",
+    "Same agency", "he is with the agency now", "Agency: F",
+])
+def test_not_an_agency_named(said):
+    assert jobs.agency_said(said) == ""
