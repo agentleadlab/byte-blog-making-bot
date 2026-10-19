@@ -3811,3 +3811,35 @@ def test_states_made_up_beside_same_as_before_are_still_held():
             "fields": {"name": "Shane Suleiman", "states": "TX, FL", "package": "OTP VET", "leads": ""}}
     wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
     assert any("TX is on the card" in one for one in wrong)
+
+
+def test_one_lead_type_with_an_aged_and_a_fresh_line_is_split(monkeypatch):
+    """"no aged leads card???? why?" - Allen Coleman's "20 Fresh OTP Mtg PRO
+    + 20 Aged Mtg Pro 30-90" was one New Agent card."""
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(
+        Anthropic=lambda **kw: SimpleNamespace(messages=SimpleNamespace(create=lambda **kw: "reply"))))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Allen Coleman", "package": "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90",
+        "leads": "40", "states": "CA, AZ, CO, UT", "launch": "Tuesday, October 20", "launch_iso": "2026-10-20",
+        "parts": []})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="m"))
+    text = ("[10/18 04:00PM] LeadLab: New Payment | Payra\nNAME: Allen Coleman\nPRODUCT: Aged Leads (MTG)\n"
+            "Payra invoice note: 20 Fresh OTP Mtg PRO\n20 Aged Mtg Pro 30-90\nStates: CA, AZ, CO, UT\n"
+            "[10/18 04:05PM] Kath: live Tuesday October 20")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 19))
+    cards = jobs.split_order(card, today=date(2026, 10, 19))
+
+    assert sorted(one["kind"] for one in cards) == ["aged", "fresh"]
+    fresh = next(one for one in cards if one["kind"] == "fresh")
+    aged = next(one for one in cards if one["kind"] == "aged")
+    assert fresh["fields"]["leads"] == "20" and fresh["launch_iso"] == "2026-10-20"
+    assert aged["fields"]["leads"] == "20" and "Aged Mtg Pro 30-90" in aged["fields"]["package"]
+
+
+@pytest.mark.parametrize("package", ["50 Aged VET 180+ + 50 Aged Mortgage Protection", "25 OTP VET", "20 VET + 20 Aged IUL"])
+def test_a_lead_type_that_isnt_plainly_both_isnt_split(package):
+    assert jobs.parts_from_package({"package": package}) == []

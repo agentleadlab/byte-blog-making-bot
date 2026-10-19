@@ -13255,6 +13255,11 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     parts = [{key: " ".join(str((one or {}).get(key) or "").split())
               for key in ("kind", "package", "leads", "states", "launch_iso")}
              for one in got.get("parts") or [] if isinstance(one, dict)]
+    if not {"aged", "fresh"} <= {one["kind"] for one in parts}:
+        # Read as one card when its own lead type says both: Allen Coleman's
+        # "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90" went out as one New
+        # Agent card, and no Aged Leads card was made.
+        parts = parts_from_package(fields, launch_iso) or parts
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
@@ -13267,6 +13272,35 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
 def _count_of(said: str) -> int | None:
     found = re.search(r"\d[\d,]*", str(said or ""))
     return int(found.group(0).replace(",", "")) if found else None
+
+
+_PART_JOIN = re.compile(r"\s+\+\s+|\s*&\s*(?=\d)|,\s*(?=\d)|\s+and\s+(?=\d)|\s*;\s*", re.IGNORECASE)
+_FRESH_WORD = re.compile(r"\bfresh\b|\botp\b|text[\s-]*verified|\bnew\s+agent\b", re.IGNORECASE)
+
+
+def parts_from_package(fields: dict, launch_iso: str = "") -> list[dict]:
+    """The order's lines out of a lead type that joins an aged line and a
+    new-agent one - "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90" - each
+    with its count, the order's states and, for the new-agent ones, its
+    launch day. [] unless every line is plainly one or the other and there's
+    one of each."""
+    pieces = [one.strip() for one in _PART_JOIN.split(str(fields.get("package") or "")) if one.strip()]
+    if len(pieces) < 2:
+        return []
+    parts = []
+    for piece in pieces:
+        count = re.match(r"\s*(\d[\d,]*)\s+", piece)
+        if re.search(r"\baged\b", piece, re.IGNORECASE):
+            kind = "aged"
+        elif _FRESH_WORD.search(piece):
+            kind = "fresh"
+        else:
+            return []
+        parts.append({"kind": kind, "package": piece[count.end():] if count else piece,
+                      "leads": count.group(1).replace(",", "") if count else "",
+                      "states": str(fields.get("states") or ""),
+                      "launch_iso": launch_iso if kind == "fresh" else ""})
+    return parts if {"aged", "fresh"} <= {one["kind"] for one in parts} else []
 
 
 def split_order(card: dict, *, today=None) -> list[dict]:
