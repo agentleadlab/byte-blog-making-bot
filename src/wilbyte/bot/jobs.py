@@ -14312,6 +14312,103 @@ def invoice_said(invoice: dict) -> str:
 
 
 
+def payra_invoices_since(config: Config, since) -> list[dict]:
+    """Every Payra invoice changed since then, slim."""
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    if not (token and site):
+        raise RuntimeError("No Payra token or site in .env, so the invoices can't be read.")
+    found = []
+    with payraapi.PayraClient(token, site, timeout=60.0) as client:
+        after = payraapi.when(since)
+        for _page in range(30):
+            got = client.changed("invoices", after)
+            found += [payraapi.slim_invoice(record) for record in got.get("records") or []]
+            onward = str(got.get("next_updated_after") or "")
+            if not got.get("records") or not onward or onward == after:
+                break
+            after = onward
+    return found
+
+
+def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) -> tuple[list[str], int]:
+    """"@Ryte check aged lines" - every Aged Leads card from the last `days`,
+    archived ones too, against its Payra invoice: an invoice that gives each
+    line its own states, and a card that has them as one list, or not line
+    for line, or a count the invoice doesn't have. Mateo Lyon's Vets 90-180
+    were Texas only and went out with nineteen states. Reads, writes
+    nothing. (what's wrong, card by card; how many cards were looked at)."""
+    from .. import clearout, ordercards
+
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    if invoices is None:
+        invoices = payra_invoices_since(config, since - timedelta(days=3))
+    board = open_trello(config)
+    try:
+        cards = board.board_cards(config.secrets.trello_board_id, archived=True)
+    finally:
+        board.close()
+
+    def made_at(item, key):
+        try:
+            when = datetime.fromisoformat(str(item.get(key) or "").replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+    flagged, looked = [], 0
+    for card in cards or []:
+        title = " ".join(str(card.get("name") or "").split())
+        if not re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE):
+            continue
+        try:
+            made = datetime.fromtimestamp(int(str(card.get("id") or "")[:8], 16), tz=timezone.utc)
+        except ValueError:
+            continue
+        if made < since:
+            continue
+        looked += 1
+        desc = str(card.get("desc") or "")
+        client = title.split("-", 1)[-1].strip()
+        email = (re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", desc) or [None])[0] or ""
+        states = (re.search(r"^\W*States\W*:\s*(.*)$", desc, re.MULTILINE | re.IGNORECASE) or [None, ""])[1]
+        package = (re.search(r"^\W*Lead Type[^:\n]*:\s*(.*)$", desc, re.MULTILINE | re.IGNORECASE) or [None, ""])[1]
+        for invoice in invoices:
+            theirs = (email and str(invoice.get("email") or "").casefold() == email.casefold()) or \
+                clearout.name_match(client, str(invoice.get("name") or "")) >= 2
+            when = made_at(invoice, "created")
+            if not theirs or when is None or not (made - timedelta(days=3) <= when <= made + timedelta(days=1)):
+                continue
+            said = invoice_said(invoice)
+            lines = ordercards._lines_with_states(said)
+            if len(lines) < 2 or len({frozenset(codes) for _kind, codes in lines}) < 2:
+                continue
+            wrong = []
+            if ";" not in states:
+                wrong.append("its lines' states are one list on the card")
+            else:
+                on_card = sorted(sorted(ordercards._codes(bit)) for bit in states.split(";") if bit.strip())
+                if on_card != sorted(sorted(codes) for _kind, codes in lines):
+                    wrong.append("the states on the card aren't the invoice's, line for line")
+            numbers = {int(one.replace(",", "")) for one in re.findall(r"\d[\d,]*", said)}
+            numbers |= {int(float(str(line.get("qty") or line.get("quantity") or 0)))
+                        for line in invoice.get("lines") or [] if isinstance(line, dict)
+                        if str(line.get("qty") or line.get("quantity") or "").replace(".", "", 1).isdigit()}
+            for each in ordercards._COUNT_OF.finditer(package):
+                if int(each.group(1)) not in numbers:
+                    wrong.append(f"{each.group(1)} in the lead type isn't on the invoice")
+            if wrong:
+                number = invoice.get("number") or invoice.get("id")
+                flagged.append(
+                    f"**{title}** <{card.get('shortUrl') or card.get('url') or ''}> — {number}: " + "; ".join(wrong)
+                    + "\n   Should be: " + " · ".join(f"{kind}: {' '.join(codes)}" for kind, codes in lines))
+            break
+    return flagged, looked
+
+
 def payra_invoice_note_fields(config: Config, name: str, *, now=None) -> list[tuple[str, list]]:
     """"@Ryte invoice note Aiden Larsen" - each of their invoices from the
     last week, newest first, with every note-like field on it as Payra has it.

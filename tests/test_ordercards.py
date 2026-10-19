@@ -4258,3 +4258,56 @@ def test_lines_with_their_own_states_on_one_list_are_held():
 
     assert any("Lead type: 50" in one for one in wrong)
     assert any("each line of the order has its own states" in one for one in wrong)
+
+
+def _aged_board(monkeypatch, cards):
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            assert archived, "archived cards too - Aged Leads Order Done is archived each night"
+            return cards
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    return SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+
+
+MATEO_INVOICE = {"id": "i130", "number": "INV-20130", "name": "Mateo Lyon", "email": "mateo@example.com",
+                 "created": "2026-10-19T14:30:00Z", "description": "", "lines": [],
+                 "notes": ("Name: Mateo Lyon\nLead Type: Aged Vets 30-90\nStates: AL CA KS KY MI MN NC OH OK SC TN TX\n"
+                           "Lead Type: Aged Vets 90-180\nStates: TX\n"
+                           "Lead Type: Aged FEX 180+\nStates: AZ CA ID MI NV OR SD TX UT WA\n163 + 33 + 167")}
+
+
+def _aged_card(states, package):
+    made = int(datetime(2026, 10, 19, 14, 42, tzinfo=timezone.utc).timestamp())
+    return {"id": f"{made:08x}0000000000000001", "name": "Aged Leads - Mateo Lyon", "shortUrl": "https://trello.com/c/M",
+            "desc": f"Name: Mateo Lyon\nEmail: mateo@example.com\nLead Type: {package}\nStates: {states}\n"}
+
+
+def test_check_aged_lines_finds_one_list_for_lines_of_their_own(monkeypatch):
+    """"yes build the check aged lines" - Mateo Lyon's card, as it went out."""
+    config = _aged_board(monkeypatch, [_aged_card(
+        "AL, CA, KS, KY, MI, MN, NC, OH, OK, SC, TN, TX, AZ, ID, NV, OR, SD, UT, WA",
+        "50 Aged Vets 30-90 + 33 Aged Vets 90-180 + 167 Aged FEX 180+")])
+    flagged, looked = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                            invoices=[MATEO_INVOICE])
+    assert looked == 1 and len(flagged) == 1
+    assert "one list" in flagged[0] and "50 in the lead type" in flagged[0] and "Aged Vets 90-180: TX" in flagged[0]
+
+
+def test_check_aged_lines_passes_a_card_right_line_by_line(monkeypatch):
+    config = _aged_board(monkeypatch, [_aged_card(
+        "Aged Vets 30-90: AL, CA, KS, KY, MI, MN, NC, OH, OK, SC, TN, TX; Aged Vets 90-180: TX; "
+        "Aged FEX 180+: AZ, CA, ID, MI, NV, OR, SD, TX, UT, WA",
+        "Aged Vets 30-90 + Aged Vets 90-180 + Aged FEX 180+")])
+    flagged, looked = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                            invoices=[MATEO_INVOICE])
+    assert looked == 1 and flagged == []
+
+
+def test_check_aged_lines_is_a_command():
+    request = mentions.parse("<@1> check aged lines")
+    assert request.action == "agedlines" and request.brief == ""
+    assert mentions.parse("<@1> check aged lines 14 days").brief == "14"

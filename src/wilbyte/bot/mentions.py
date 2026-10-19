@@ -910,6 +910,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?tags?\s+check|check\s+(?:the\s+)?(?:tags|comments|checklists?)|"
                 r"(?:tags?|comments?)\s+(?:to\s+)?checklists?)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="tagcheck", brief=text)
+    # "check aged lines" - every recent Aged Leads card against its invoice,
+    # line by line. "check aged lines 14 days" looks further back.
+    aged_lines = re.match(r"\s*(?:check\s+(?:the\s+)?aged\s+(?:lines?|cards?|states)|aged\s+lines?\s+check)"
+                          r"(?:\s+(?:for\s+)?(?:the\s+)?(?:last\s+)?(\d{1,2})\s*days?)?\s*[.?!]*\s*$", text, re.IGNORECASE)
+    if aged_lines:
+        return MentionRequest(action="agedlines", brief=aged_lines.group(1) or "")
     # "setup check" - the setup card's checklists against each other: who's
     # missing from whose ("the division of this card doesnt make sense").
     if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?setup\s+cards?(?:\s+check)?|setup\s+(?:card\s+)?(?:check|balance))"
@@ -1538,6 +1544,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
 > **remove duplicates** — the same line twice on one person's checklist, on the day cards: the copies off, the first kept.
 > **tag check** — every comment on today's cards that tags somebody, onto their checklist if it isn't there yet - all of them, reports included, no button.
+> **check aged lines** — every Aged Leads card from the last 7 days (`check aged lines 14 days` for more) against its Payra invoice: lines with their own states that the card has as one list or wrong. Reads only.
 > **setup check** — each upcoming setup card's Therese / Kathleen / Nicole lists against each other: who's missing from whose, who's on twice. **setup check fix** copies the missing lines over.
 > **agency <name>** — the New Lead Request in #lead-lab I'd take their Agency from, or why there isn't one.
 > **invoice note <name>** — the note fields on their Payra invoices, as an aged card reads them.

@@ -1855,6 +1855,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_check(bot, responder)
                 return
 
+            if request.action == "agedlines":
+                await _aged_lines_check(bot, responder, int(request.brief) if (request.brief or "").isdigit() else 7)
+                return
+
             if request.action == "ordertemplates":
                 await _order_templates_said(responder)
                 return
@@ -11837,6 +11841,28 @@ async def _order_backfill(bot, responder: Responder, author) -> None:
         except Exception as exc:
             made_lines.append(f"⚠ {card['client']}: {_readable(exc)}")
     await responder.send("\n".join(made_lines)[:1900])
+
+
+async def _aged_lines_check(bot, responder: Responder, days: int = 7) -> None:
+    """"@Ryte check aged lines" - every recent Aged Leads card whose lines'
+    states aren't the invoice's, line for line. Reads only."""
+    await responder.send(f"🔎 Checking every Aged Leads card from the last {days} days against its Payra invoice, "
+                         "line by line…", quiet=True)
+    try:
+        flagged, looked = await asyncio.to_thread(partial(jobs.check_aged_lines, bot.config, days=days))
+    except Exception as exc:
+        log.exception("Checking the aged lines broke")
+        await responder.send(f"⚠ Couldn't check the aged cards: {_readable(exc)}")
+        return
+    if not flagged:
+        await responder.send(f"✅ {looked} Aged Leads card(s) from the last {days} days — every one with lines of its "
+                             "own states has them right, line by line.")
+        return
+    said = (f"⚠ **{len(flagged)} of {looked} Aged Leads card(s) don't match their invoice line by line** — check "
+            "what was delivered to each:\n" + "\n".join(f"• {one}" for one in flagged)
+            + "\n-# Nothing was changed. Fix the card and the delivery tabs by hand.")
+    for at in range(0, len(said), 1900):
+        await responder.send(said[at:at + 1900])
 
 
 async def _live_list(bot, responder: Responder) -> None:
