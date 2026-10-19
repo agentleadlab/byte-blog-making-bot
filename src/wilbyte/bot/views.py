@@ -148,8 +148,13 @@ class ConfirmView(discord.ui.View):
         emoji: str,
         danger: bool = False,
         stoppable: bool = False,
+        ids: tuple[str, str] | None = None,
     ):
         super().__init__(timeout=timeout)
+        # Fixed ids, so the buttons can still be answered after a restart -
+        # see `HeldButton`.
+        if ids:
+            self._go.custom_id, self._no.custom_id = ids
         self.requester_id = requester_id
         self.confirmed = False
         #: Whether they asked to stop going down the list. Only offered during
@@ -325,3 +330,27 @@ class ChannelPicker(discord.ui.View):
         self.chosen = None
         for child in self.children:
             child.disabled = True
+
+
+class HeldButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ryte:held:(?P<key>\d+):(?P<act>go|no)"):
+    """A held order's Create anyway / Leave it, answered after RYTE has
+    restarted: the button it was sent with only lives as long as RYTE does,
+    and pressed after an update it said "The application didn't respond in
+    time" (Montaser Aidah). `on_press(interaction, key, act)` does the work;
+    nothing happens here while the original is still waiting."""
+
+    #: Set by the client: async (interaction, key, act) -> bool, whether it
+    #: was answered here.
+    on_press = None
+
+    def __init__(self, key: str, act: str):
+        super().__init__(discord.ui.Button(label="x", custom_id=f"ryte:held:{key}:{act}"))
+        self.key, self.act = key, act
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["key"], match["act"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if HeldButton.on_press is not None:
+            await HeldButton.on_press(interaction, self.key, self.act)

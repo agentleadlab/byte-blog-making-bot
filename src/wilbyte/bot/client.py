@@ -222,6 +222,12 @@ class WilByteBot(discord.Client):
 
     async def setup_hook(self) -> None:
         register_commands(self)
+        # Held orders' buttons, answered after a restart too.
+        views.HeldButton.on_press = lambda interaction, key, act: _held_pressed(self, interaction, key, act)
+        try:
+            self.add_dynamic_items(views.HeldButton)
+        except Exception:
+            log.warning("Couldn't set up the held orders' buttons", exc_info=True)
         raw_guild_id = self.config.secrets.discord_guild_id
         guild_id = parse_guild_id(raw_guild_id)
 
@@ -10717,6 +10723,51 @@ def _payload_copy(payload, **changed):
     return SimpleNamespace(**kept)
 
 
+#: Held orders whose Create anyway button RYTE is still waiting on itself.
+_HELD_LIVE: set[str] = set()
+
+
+async def _held_pressed(bot, interaction, key: str, act: str) -> None:
+    """Create anyway / Leave it on a held order, pressed after a restart -
+    the order made from what was written down when it was held."""
+    from .. import ordercards
+
+    if key in _HELD_LIVE:
+        return  # the button it was sent with is still waiting, and answers
+    held = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if act == "no" or held.get("status") != "held" or not held.get("message_channel_id"):
+        said = ("✖ Left alone — nothing changed." if act == "no" else
+                "Already made." if held.get("status") == "made" else "That order isn't waiting any more.")
+        try:
+            await interaction.response.edit_message(content=f"{interaction.message.content}\n{said}"[:1990], view=None)
+        except Exception:
+            log.warning("Couldn't answer the held button", exc_info=True)
+        return
+    try:
+        await interaction.response.edit_message(content=f"{interaction.message.content}\n✅ Working on it…"[:1990],
+                                                view=None)
+    except Exception:
+        log.warning("Couldn't answer the held button", exc_info=True)
+    payload = SimpleNamespace(
+        message_id=int(key), channel_id=int(held["message_channel_id"]), user_id=interaction.user.id,
+        guild_id=int(held["guild_id"]) if str(held.get("guild_id") or "").isdigit() else None, member=None,
+        confirmed=True, extra_notes=tuple(held.get("held_extra") or ()),
+        **({"aged_only": True} if held.get("held_aged_only") else {}))
+    async with _ORDER_LOCK:
+        if key in _ORDER_ACTIVE or ((await asyncio.to_thread(ordercards.load)).get(key) or {}).get("status") == "made":
+            return
+        _ORDER_ACTIVE.add(key)
+    try:
+        await _order_make(bot, payload, key, _order_responder(bot))
+    except Exception as exc:
+        log.exception("Making the held order broke")
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send(f"🔨 ⚠ Couldn't make that order: {_readable(exc)}")
+    finally:
+        _ORDER_ACTIVE.discard(key)
+
+
 async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
     """A card that would go wrong, not made: what it would be, what doesn't
     add up, and a button for a person who has looked."""
@@ -10728,7 +10779,8 @@ async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
             + "\n".join(f"• {one}" for one in wrong)
             + f"\n<{link}>\n" + _order_preview(card)
             + "\n-# Fix it in the thread and gavel it again, or press Create anyway if the card is right.")
-    view = views.ConfirmView(requester_id=None, timeout=24 * 60 * 60, label="Create anyway", emoji="⚠️")
+    view = views.ConfirmView(requester_id=None, timeout=24 * 60 * 60, label="Create anyway", emoji="⚠️",
+                             ids=(f"ryte:held:{key}:go", f"ryte:held:{key}:no"))
     ack = _ORDER_ACKS.pop(key, None)
     try:
         if ack is None or not hasattr(ack, "edit"):
@@ -10738,8 +10790,16 @@ async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
         await responder.send(said[:1950], view=view)
     # Remembered as held, so a restart's catch-up doesn't hold it again - it
     # said "Not made yet" twice for Mohammad Kanan. A fresh gavel still reads it.
-    await _order_note(key, status="held", message_channel_id=str(payload.channel_id))
-    await view.wait()
+    # With what it takes to make it after a restart, from the button alone.
+    await _order_note(key, status="held", message_channel_id=str(payload.channel_id),
+                      guild_id=str(getattr(payload, "guild_id", "") or ""),
+                      held_extra=list(getattr(payload, "extra_notes", ()) or ()),
+                      held_aged_only=bool(getattr(payload, "aged_only", False)))
+    _HELD_LIVE.add(key)
+    try:
+        await view.wait()
+    finally:
+        _HELD_LIVE.discard(key)
     if not view.confirmed:
         return
     async with _ORDER_LOCK:

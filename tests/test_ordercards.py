@@ -3739,3 +3739,55 @@ def test_a_line_without_a_day_beside_one_with_stays_blank():
     fresh = [one for one in jobs.split_order(card, today=date(2026, 10, 22)) if one["kind"] == "fresh"]
 
     assert [one["launch_iso"] for one in fresh] == ["", "2026-10-25"]
+
+
+def test_paid_through_their_own_business_is_said_not_held():
+    """"bro" - Montaser Aidah paid as "Victory Freedom Llc", his own
+    company, and the card was held as somebody else paying."""
+    source = "New Payment | Zelle\nNAME: Victory Freedom Llc\nAMOUNT: $1100\n[10/19 11:30AM] K: Montaser Aidah setup"
+    card = {"kind": "fresh", "source": source,
+            "fields": {"name": "Montaser Aidah", "states": "", "package": "VET", "leads": ""}}
+    wrong, missing = ordercards.doubts(card, today=date(2026, 10, 19))
+
+    assert not any("paid by" in one for one in wrong)
+    assert any("Victory Freedom Llc - their business?" in one for one in missing)
+
+
+def test_held_buttons_carry_the_order_so_a_restart_can_answer_them():
+    from wilbyte.bot import views
+
+    item = views.HeldButton("1561758162590244915", "go")
+    assert item.item.custom_id == "ryte:held:1561758162590244915:go"
+    assert views.HeldButton.__discord_ui_compiled_template__.fullmatch(item.item.custom_id)
+
+
+def test_a_held_button_from_before_a_restart_makes_the_order(monkeypatch):
+    made, edits = [], []
+    held = {"156": {"status": "held", "message_channel_id": "77", "guild_id": "88", "held_extra": ["Payra invoice note: x"]}}
+    monkeypatch.setattr(ordercards, "load", lambda: held)
+
+    async def making(bot, payload, key, responder):
+        made.append((key, payload.channel_id, payload.guild_id, payload.confirmed, payload.extra_notes))
+
+    monkeypatch.setattr(client, "_order_make", making)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: None)
+
+    class Response:
+        async def edit_message(self, **kw):
+            edits.append(kw)
+
+    press = SimpleNamespace(user=SimpleNamespace(id=5), message=SimpleNamespace(content="Not made yet"),
+                            response=Response())
+    asyncio.run(client._held_pressed(None, press, "156", "go"))
+
+    assert made == [("156", 77, 88, True, ("Payra invoice note: x",))]
+    assert "Working on it" in edits[0]["content"]
+
+
+def test_a_held_button_still_waiting_isnt_answered_twice(monkeypatch):
+    client._HELD_LIVE.add("157")
+    try:
+        monkeypatch.setattr(ordercards, "load", lambda: pytest.fail("answered twice"))
+        asyncio.run(client._held_pressed(None, SimpleNamespace(), "157", "go"))
+    finally:
+        client._HELD_LIVE.discard("157")

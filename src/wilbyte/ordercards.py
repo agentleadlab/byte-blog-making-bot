@@ -453,6 +453,13 @@ def paid_by(source: str) -> str:
     return " ".join(found.group(1).split()) if found else ""
 
 
+#: A payer that's a company, not a person.
+_BUSINESS = re.compile(
+    r"\b(?:llc|l\.l\.c|inc|incorporated|corp|corporation|co|company|ltd|llp|pllc|pc|group|agency|agencies|"
+    r"financial|insurance|enterprises?|holdings?|solutions|services|partners|associates|brokerage|"
+    r"consulting|ventures|capital|trust)\b\.?", re.IGNORECASE)
+
+
 def same_person(one: str, other: str) -> bool:
     """Whether two names share a name - "Mike Smith" and "Michael Smith" do,
     "Tony Moderno" and "Preston Bridges" don't."""
@@ -499,6 +506,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     named = " ".join(str(fields.get("name") or "").split())
     if payer and named and not same_person(payer, named) and paid_for_by(source, named):
         missing.append(f"paid by {payer} for {named}, as the order says")
+    elif payer and named and not same_person(payer, named) and _BUSINESS.search(payer):
+        # Montaser Aidah paid through "Victory Freedom Llc" - his own company,
+        # its email the one on his card. Said, not held.
+        missing.append(f"paid by {payer} - their business? - for {named}")
     elif payer and named and not same_person(payer, named):
         wrong.append(f"Name: paid by {payer}, but the order is for {named} - somebody paying for them, "
                      f"or notes from another order?")
