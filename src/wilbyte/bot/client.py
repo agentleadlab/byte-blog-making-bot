@@ -10143,7 +10143,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     if getattr(payload, "catching_up", False) and card.get("client"):
         try:
             found = await asyncio.to_thread(partial(jobs.card_made_since, bot.config, card["client"],
-                                                    since=message.created_at - timedelta(minutes=10)))
+                                                    since=message.created_at - timedelta(minutes=10), kind=kind))
         except Exception:
             log.warning("Couldn't look for a card made while I was away", exc_info=True)
             found = None

@@ -3289,7 +3289,7 @@ def test_the_catch_up_goes_back_to_when_ryte_was_last_running(order, monkeypatch
 def test_a_card_made_by_hand_while_away_is_used_not_doubled(order, monkeypatch):
     order.kind = "fresh"
     hand = {"id": "6a00ffff00000000000000aa", "name": "New Agent - Cole Petersen", "shortUrl": "https://trello.com/c/HAND"}
-    monkeypatch.setattr(jobs, "card_made_since", lambda config, client_name, since: hand)
+    monkeypatch.setattr(jobs, "card_made_since", lambda config, client_name, since, kind="": hand)
     payload = SimpleNamespace(**{**vars(GAVEL), "catching_up": True})
     asyncio.run(client._order_gavelled(_bot(_message()), payload))
     assert order.made == []
@@ -3317,6 +3317,29 @@ def test_cards_made_since_a_time(monkeypatch):
     found = jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 18, tzinfo=timezone.utc))
     assert found["id"].endswith("2")
     assert jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 20, tzinfo=timezone.utc)) is None
+
+
+def test_a_new_agent_card_isnt_an_aged_orders_card(monkeypatch):
+    """"where is the card of this" - Abdullah Bahrani's aged payment, caught
+    up after a restart, was taken as made by his New Agent card from that
+    morning: Ryte's gavel on it, and no Aged Leads card anywhere."""
+    made = f"{int(datetime(2026, 10, 19, 14, tzinfo=timezone.utc).timestamp()):08x}"
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": made + "0000000000000001", "name": "New Agent - Abdullah Bahrani"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    since = datetime(2026, 10, 19, 13, tzinfo=timezone.utc)
+    assert jobs.card_made_since(config, "Abdullah Bahrani", since=since, kind="aged") is None
+    assert jobs.card_made_since(config, "Abdullah Bahrani", since=since, kind="fresh") is not None
 
 
 # ------------------------------------------ the payment post from Oct 19 on

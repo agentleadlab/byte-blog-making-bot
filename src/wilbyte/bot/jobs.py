@@ -4917,10 +4917,12 @@ def client_card_for(config: Config, text: str, client: str = "") -> dict | None:
     return max(theirs, key=lambda one: one[0])[2]
 
 
-def card_made_since(config: Config, client: str, *, since) -> dict | None:
+def card_made_since(config: Config, client: str, *, since, kind: str = "") -> dict | None:
     """The newest New Agent or Aged Leads card for this client made since
     then - by anyone, archived or not - or None. A card's id starts with when
-    it was made."""
+    it was made. Only the `kind` asked for, when one is: Abdullah Bahrani's
+    aged payment was taken as made by his New Agent card from the same
+    morning, and no Aged Leads card was ever made."""
     from .. import agents, clearout
 
     board = open_trello(config)
@@ -4933,7 +4935,10 @@ def card_made_since(config: Config, client: str, *, since) -> dict | None:
     found = []
     for card in cards:
         title = str(card.get("name") or "")
-        if not (agents.is_agent_card(title) or re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE)):
+        aged = bool(re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE))
+        if not (agents.is_agent_card(title) or aged):
+            continue
+        if kind and (kind == "aged") != aged:
             continue
         name = agents.agent_name(title) if agents.is_agent_card(title) else title.split("-", 1)[-1].strip()
         if clearout.name_match(client, name) < 2:
