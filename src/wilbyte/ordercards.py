@@ -461,11 +461,21 @@ def same_person(one: str, other: str) -> bool:
     return not first or not second or bool(first & second)
 
 
+#: Payra's invoice header, on every invoice: "IF YOU USE CC/DEBIT WE CAN
+#: START YOUR ORDER TODAY" - not a launch date.
+INVOICE_BOILERPLATE = re.compile(r"(?:if\s+you\s+use\s+cc\s*/?\s*debit\s*,?\s*)?we\s+can\s+start\s+your\s+order\s+today",
+                                 re.IGNORECASE)
+
+
 def says_when(source: str) -> bool:
     """Whether the order says when they launch: a launch word and a day or
     date - leaving out the time each message was posted, which RYTE adds as
     it reads them."""
-    said = _STAMP.sub("", str(source or ""))
+    said = _STAMP.sub("", INVOICE_BOILERPLATE.sub(" ", str(source or "")))
+    # Not the payment post's "INVOICE: INV-20162 · card •••• 7872 ·
+    # 10/19/2026 8:50 AM" - a date on every post since Oct 19.
+    said = "\n".join(line for line in said.splitlines()
+                     if not re.match(r"^\W*(?:invoice|date|due|paid\s+on)\W*:", line, re.IGNORECASE))
     return bool(_WHEN.search(said)) and bool(_LAUNCH_WORD.search(said))
 
 

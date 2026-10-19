@@ -12906,6 +12906,40 @@ def request_agency(post: str) -> str:
 KNOWN_AGENCIES = ("AEP", "FFL", "Wolfpack", "Uprise", "Fearless", "PHNX", "Phoenix", "Ascend", "Liftoff", "Spark")
 
 
+#: The payment post's own lines - who paid, how much, the invoice's number
+#: and date - which say nothing about when anybody goes live.
+_POST_LINE = re.compile(
+    r"^\W*(?:name|email|phone|amount|product|invoice|subtotal|total|automatic dual pricing|"
+    r"discount[^:]*|\$\d+/lead off|paid on|date|due)\W*:", re.IGNORECASE)
+
+
+def launch_written(when, text: str, *, today) -> bool:
+    """Whether the order names this launch day: its weekday, its date, or
+    today / tomorrow when that's what it is - outside the payment post's own
+    lines and the times RYTE stamps on notes."""
+    from .. import ordercards
+
+    said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", str(text or ""), flags=re.MULTILINE)
+    said = ordercards.INVOICE_BOILERPLATE.sub(" ", said)
+    said = "\n".join(line for line in said.splitlines() if not _POST_LINE.match(line)).casefold()
+    names = [f"{when:%A}".casefold(), f"{when:%a}".casefold()]
+    if when.weekday() == 1:
+        names.append("tues")
+    if when.weekday() == 3:
+        names += ["thur", "thurs"]
+    if any(re.search(rf"\b{name}\b", said) for name in names):
+        return True
+    month, day = f"{when:%B}".casefold(), when.day
+    if re.search(rf"\b(?:{month}|{month[:3]})\.?\s+{day}(?:st|nd|rd|th)?\b", said) \
+            or re.search(rf"(?<![\d/]){when.month}/0?{day}(?![\d])|(?<![\d/])0{when.month}/0?{day}(?![\d])", said):
+        return True
+    if when == today and re.search(r"\b(?:today|tonight|asap|same\s*day|right\s+away|now)\b", said):
+        return True
+    if when == today + timedelta(days=1) and re.search(r"\b(?:tomorrow|tmrw?|tmw)\b", said):
+        return True
+    return False
+
+
 def agency_usable(name: str) -> bool:
     """Whether what a request put as the agency names one: not a letter -
     Bram Gutierrez's "F" - unless it's one the team knows."""
@@ -13103,7 +13137,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         invoice = [str(one) for one in notes or () if str(one).startswith("Payra invoice note:")]
         for said in ("\n".join(team), "\n".join(invoice), text):
             try:
-                when = agents.find_launch(re.sub(stamps, "", said, flags=re.MULTILINE), today=today)
+                when = agents.find_launch(ordercards.INVOICE_BOILERPLATE.sub(
+                    " ", re.sub(stamps, "", said, flags=re.MULTILINE)), today=today)
             except Exception:
                 when = None
             if when:
@@ -13113,6 +13148,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 when = date.fromisoformat(launch_iso)
             except ValueError:
                 when = None
+            # Claude's day only when the order names it - Travis Compere's
+            # card said "Tuesday, October 20" off "not sure who this is but
+            # they aren't setup" and a payment post with a date on it.
+            if when is not None and not launch_written(when, source, today=today):
+                when = None
+                fields["launch"], launch_iso = "", ""
         if when is not None:
             fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
     if not fields.get("agency"):

@@ -3603,3 +3603,45 @@ def test_without_the_posts_time_it_is_matched_as_before(monkeypatch):
     _note, which = jobs.payra_invoice_pick(config, name="Wiser Charles", amount="$103.5",
                                            now=datetime(2026, 10, 16, 21, 0, tzinfo=timezone.utc))
     assert which == "i1"
+
+
+TRAVIS = """**New Payment | Payra** ✅
+**NAME:** Travis Compere
+**AMOUNT:** $1000
+**PRODUCT:** VET
+**INVOICE:** INV-20170 · card •••• 1234 · 10/19/2026 10:20 AM
+[10/19 10:25AM] Kath: not sure who this is
+but they aren't setup"""
+
+
+def test_a_launch_day_nothing_names_isnt_taken_from_claude():
+    """"why is this tuesday????" - Travis Compere's card: Tuesday, October 20,
+    from nothing in his order."""
+    assert not jobs.launch_written(date(2026, 10, 20), TRAVIS, today=date(2026, 10, 19))
+    assert not ordercards.says_when(TRAVIS)
+
+
+@pytest.mark.parametrize("said", ["Live Tuesday", "launch tues", "go live Oct 20", "start 10/20", "live tomorrow"])
+def test_a_launch_day_the_order_names_is(said):
+    assert jobs.launch_written(date(2026, 10, 20), said, today=date(2026, 10, 19))
+
+
+def test_claudes_day_is_dropped_when_the_order_doesnt_say_it(monkeypatch):
+    import sys
+    import types
+
+    class Messages:
+        def create(self, **kw):
+            return "reply"
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(
+        Anthropic=lambda **kw: SimpleNamespace(messages=Messages())))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Travis Compere", "launch": "Tuesday, October 20", "launch_iso": "2026-10-20"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="m"))
+    # Payra's invoice header reads as "when" to the loose check.
+    card = jobs.read_order(config, text=TRAVIS + "\nIF YOU USE CC/DEBIT WE CAN START YOUR ORDER TODAY", images=[],
+                           today=date(2026, 10, 19))
+
+    assert card["fields"]["launch"] == "" and card["launch_iso"] == ""
