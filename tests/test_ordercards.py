@@ -3861,3 +3861,47 @@ def test_the_agency_as_the_team_writes_it(said, agency):
 ])
 def test_not_an_agency_named(said):
     assert jobs.agency_said(said) == ""
+
+
+def _read_with(monkeypatch, got, text, notes):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(
+        Anthropic=lambda **kw: SimpleNamespace(messages=SimpleNamespace(create=lambda **kw: "reply"))))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: got)
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="m"))
+    return jobs.read_order(config, text=text, images=[], today=date(2026, 10, 19), notes=notes)
+
+
+def test_the_person_the_notes_name_gets_the_card_not_who_paid(monkeypatch):
+    """"Why didnt this named Camden?" - Garret Sekelsky paid, the notes said
+    "7 OTP VETS / Camden Misquez", and the card was Garret's, with his email."""
+    note = "7 OTP VETS\nCamden Misquez\nSame states last time\nLive today Monday October 19"
+    text = ("[10/19 02:20PM] LeadLab: New Payment | Payra\nNAME: Garret Sekelsky\nEMAIL: garret@example.com\n"
+            "PHONE: +15025550123\nPRODUCT: VET\n[10/19 02:25PM] Kath: " + note)
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Garret Sekelsky", "email": "garret@example.com",
+                                    "phone": "+15025550123", "package": "OTP VETS", "leads": "7"}, text, [note])
+
+    assert card["client"] == "Camden Misquez" and card["name"] == "New Agent - Camden Misquez"
+    assert card["fields"]["email"] == "" and card["fields"]["phone"] == ""
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
+    assert any("paid by Garret Sekelsky" in one and "Camden Misquez" in one for one in wrong)
+
+
+def test_notes_naming_who_paid_change_nothing(monkeypatch):
+    note = "Shane Suleiman\n142 OTP VET Leads"
+    text = "[10/19 02:20PM] LeadLab: New Payment | Payra\nNAME: Shane Suleiman\nEMAIL: s@example.com\n" + note
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Shane Suleiman", "email": "s@example.com",
+                                    "package": "OTP VET", "leads": "142"}, text, [note])
+    assert card["client"] == "Shane Suleiman" and card["fields"]["email"] == "s@example.com"
+
+
+@pytest.mark.parametrize("notes, name", [
+    (["7 OTP VETS\nCamden Misquez\nSame states last time"], "Camden Misquez"),
+    (["Same states last time\nLive Monday"], ""), (["Camden Misquez", "Jack Collins"], ""),
+    (["Text Verified Fresh Vets"], ""),
+])
+def test_a_name_on_a_line_of_its_own(notes, name):
+    assert jobs.name_in_notes(notes) == name

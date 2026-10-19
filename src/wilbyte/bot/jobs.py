@@ -12805,6 +12805,29 @@ def _beyond_fields(note: str, fields: dict) -> str:
     return said
 
 
+_A_NAME = re.compile(r"^\s*([A-Z][a-z'’\-]+(?:\s+[A-Z][a-z'’\-]+){1,2})\s*[.,]?\s*$")
+_NOT_NAME_WORDS = re.compile(
+    r"\b(?:same|states?|live|today|tomorrow|leads?|vets?|veterans?|iul|fex|otp|aged|fresh|text|verified|mortgage|"
+    r"protection|trucker|blue|collar|spanish|setup|set|agency|thank|thanks|please|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|"
+    r"november|december|paid|zelle|card|order|new|agent|done|signed|nationwide|all|except)\b", re.IGNORECASE)
+
+
+def name_in_notes(notes) -> str:
+    """The one person the team's notes name on a line of its own - "Camden
+    Misquez" under "7 OTP VETS" - or "" for none or more than one."""
+    found = []
+    for note in notes or ():
+        for line in str(note or "").splitlines():
+            match = _A_NAME.match(line)
+            if not match or _NOT_NAME_WORDS.search(match.group(1)):
+                continue
+            name = " ".join(match.group(1).split())
+            if name.casefold() not in {one.casefold() for one in found}:
+                found.append(name)
+    return found[0] if len(found) == 1 else ""
+
+
 def order_fields(got: dict, notes: list[str] = ()) -> dict:
     """Claude's reading of an order, tidied: nothing that only says it doesn't
     know, an ad-spend package's lead count as no cap, and Additional Notes as
@@ -13194,6 +13217,26 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             fields["package"] = named
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
     client_name = fields["name"]
+    # The team's notes naming somebody on a line of its own, who isn't who
+    # paid: the card is theirs, and the payer's email and phone aren't.
+    # Garret Sekelsky paid for "7 OTP VETS / Camden Misquez" and the card
+    # went out as Garret's. It's held as somebody else paying all the same -
+    # Tony Moderno's notes were about Preston Bridges by mistake.
+    from .. import ordercards as _cards
+
+    payer = _cards.paid_by(text)
+    named = name_in_notes([one for one in notes or () if not str(one).startswith("Payra invoice note:")])
+    if named and payer and _cards.same_person(client_name, payer) and not _cards.same_person(named, payer):
+        paid = text.casefold()
+        fields["name"] = client_name = named
+        for key in ("email", "phone"):
+            value = str(fields.get(key) or "")
+            digits = re.sub(r"\D", "", value)[-10:]
+            from_post = (key == "email" and value and value.casefold() in paid) or (
+                key == "phone" and len(digits) == 10 and digits in re.sub(r"\D", "", text))
+            if from_post and not any(value.casefold() in str(one).casefold() or
+                                     (digits and digits in re.sub(r"\D", "", str(one))) for one in notes or ()):
+                fields[key] = ""
     launch_iso = str(got.get("launch_iso") or "")[:10]
     if not re.match(r"\d{4}-\d{2}-\d{2}$", launch_iso):
         launch_iso = ""
