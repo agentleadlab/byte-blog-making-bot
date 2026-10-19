@@ -9260,7 +9260,8 @@ async def _order_said(bot, message, *, since: datetime | None = None,
     for reading in ([thread] if thread is not None else []) + more:
         try:
             async for one in reading.history(limit=100, oldest_first=True):
-                if getattr(one.author, "bot", False) and not getattr(one, "embeds", None):
+                if (getattr(one.author, "bot", False) and not getattr(one, "embeds", None)
+                        and not _payment_details(one)):
                     continue
                 lines.append(_said_line(one))
                 said, pictures = _request_bits(one)
@@ -9280,6 +9281,15 @@ async def _order_said(bot, message, *, since: datetime | None = None,
         except Exception:
             log.warning("Couldn't read the order's thread", exc_info=True)
     return "\n".join(lines), note_images + images, (int(thread.id) if thread is not None else None), notes
+
+
+def _payment_details(message) -> bool:
+    """Nova's "💳 Payment details — from the Payra invoice" in a payment's
+    thread: the invoice's notes - states, how many - written out, from a bot
+    and with no embed, so it was passed over with the bots' chatter."""
+    said = str(getattr(message, "content", "") or "")
+    return bool(re.search(r"payment\s+details", said, re.IGNORECASE)) or (
+        bool(re.search(r"invoice\W*:", said, re.IGNORECASE)) and bool(re.search(r"\bnotes\W*:", said, re.IGNORECASE)))
 
 
 def _note_without_tags(text: str) -> str:

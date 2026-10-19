@@ -557,6 +557,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # had 10 in the order whatever it said.
     words = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:", "", source, flags=re.MULTILINE)
     if count and not re.search(rf"(?<![\d$./:]){count.group(0)}(?![\d./:])", words) \
+            and not re.search(rf"[A-Za-z)]\s*:\s*{count.group(0)}(?![\d./:])", words) \
             and not _adds_up_to(int(count.group(0)), source):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
     # An agency on the card the order doesn't name - Matthew Odierno's said

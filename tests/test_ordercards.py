@@ -3535,3 +3535,30 @@ def test_a_letter_or_a_sentence_from_lead_lab_isnt_matched_in_the_notes():
     assert jobs.agency_said("Notes\nf", agencies) == ""
     assert jobs.agency_said("i am leaving my current agency at this time", agencies) == ""
     assert jobs.agency_said("symmetry financial", agencies) == "Symmetry Financial"
+
+
+def test_a_count_after_the_lead_type_is_the_count():
+    """Aaron Prum's "Text Verified Fresh Vets:30" - held for "30 isn't in
+    the order"."""
+    card = {"kind": "fresh", "source": "GA, FL, SC, AL, LA\nText Verified Fresh Vets:30\n\nAEP\n\nLIVE TODAY OCT 19",
+            "fields": {"name": "Aaron Prum", "states": "GA, FL, SC, AL, LA",
+                       "package": "Text-Verified Veteran leads", "leads": "30"}}
+    assert ordercards.doubts(card, today=date(2026, 10, 19))[0] == []
+
+
+def test_a_time_is_still_not_a_count():
+    card = {"kind": "fresh", "source": "live at 10:30 today, GA FL SC AL LA vets",
+            "fields": {"name": "Aaron Prum", "states": "GA, FL, SC, AL, LA",
+                       "package": "Text-Verified Veteran leads", "leads": "30"}}
+    assert any("30 isn't in the order" in one for one in ordercards.doubts(card, today=date(2026, 10, 19))[0])
+
+
+@pytest.mark.parametrize("said, details", [
+    ("💳 **Payment details** — from the Payra invoice\n**Name:** Drucilla Bell", True),
+    ("**Invoice:** INV-20112\n**Notes:**\n> States Leads In: md,dc", True),
+    ("✅ Aged Leads card made", False),
+])
+def test_novas_payment_details_in_the_thread_are_read(said, details):
+    """Drucilla Bell's states were in Nova's thread message - a bot's, with
+    no embed, so passed over."""
+    assert client._payment_details(SimpleNamespace(content=said)) is details
