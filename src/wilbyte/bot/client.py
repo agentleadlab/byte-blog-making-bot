@@ -10037,8 +10037,19 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     except Exception as exc:
         log.exception("Couldn't read the gavelled order")
         await _order_forget(key)
+        again = "didn't answer" in str(exc) and not getattr(payload, "retried", False)
+        if ack is not None and hasattr(ack, "delete"):
+            try:
+                await ack.delete()
+            except Exception:
+                pass
         if responder is not None:
-            await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)}")
+            await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)} <{link}>"
+                                 + (f"\n-# Trying it again by myself in {ORDER_RETRY_SECONDS // 60} minutes."
+                                    if again else ""))
+        if again:
+            _also_running(asyncio.get_running_loop().create_task(
+                _order_again(bot, _payload_copy(payload, retried=True))))
         return
     await _order_same_states(bot, message, card)
     kind, link = card["kind"], str(getattr(message, "jump_url", "") or "")
@@ -10651,11 +10662,25 @@ def _own_invoice(existing: dict, key: str) -> bool:
     return bool(theirs) and mine not in theirs
 
 
+#: How long after Claude didn't answer an order it is read again, once.
+ORDER_RETRY_SECONDS = 120
+
+
+async def _order_again(bot, payload, *, wait: float | None = None) -> None:
+    """A gavelled order Claude didn't answer for, tried once more - unless a
+    person has made it since."""
+    await asyncio.sleep(ORDER_RETRY_SECONDS if wait is None else wait)
+    try:
+        await _order_gavelled(bot, payload)
+    except Exception:
+        log.exception("Trying the order again broke")
+
+
 def _payload_copy(payload, **changed):
     """A gavel's particulars, kept - Discord's own event can't be copied."""
     kept = {name: getattr(payload, name, None) for name in (
         "message_id", "channel_id", "user_id", "guild_id", "member")}
-    for name in ("extra_notes", "aged_only", "separate", "confirmed", "catching_up"):
+    for name in ("extra_notes", "aged_only", "separate", "confirmed", "catching_up", "retried"):
         if hasattr(payload, name):
             kept[name] = getattr(payload, name)
     kept.update(changed)

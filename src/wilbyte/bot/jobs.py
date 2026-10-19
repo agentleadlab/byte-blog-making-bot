@@ -12683,6 +12683,20 @@ def order_template(config: Config, kind: str) -> dict:
 #: fields out of a payment and a few notes doesn't need the writer's model.
 ORDER_MODEL = "claude-haiku-5-5"
 
+#: Seconds to wait before asking again when Claude was busy or unreachable.
+ORDER_READ_RETRY_WAITS = (5, 20)
+
+
+def claude_busy(exc) -> bool:
+    """Whether a failed call to Claude is worth making again: overloaded, rate
+    limited, a server error, a timeout or the connection dropping - not a
+    request it refused."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in (408, 409, 429) or status >= 500
+    name = type(exc).__name__
+    return any(word in name for word in ("Connection", "Timeout", "Overloaded", "InternalServer", "RateLimit"))
+
 #: A new agent's card description, field by field - "Do this template".
 #: An aged leads card's description - "Aged Leads - Name of Agent" and
 #: Franklin's fields for it.
@@ -13014,16 +13028,30 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                                       tool_choice={"type": "tool", "name": "order"},
                                       messages=[{"role": "user", "content": said}])
 
-    response = None
+    import time
+
+    response, last = None, None
     for model in dict.fromkeys((os.getenv("ORDER_MODEL") or ORDER_MODEL, config.copy.model)):
-        try:
-            response = asking(model, content)
+        # Again after a wait when it was Claude busy or the line dropping -
+        # "Claude didn't answer" on an order at 10:08 Oct 19, both models in
+        # the same second, and the card left for somebody to gavel again.
+        for wait in (0, *ORDER_READ_RETRY_WAITS):
+            if wait:
+                time.sleep(wait)
+            try:
+                response = asking(model, content)
+                break
+            except Exception as exc:
+                last = exc
+                logging.getLogger("wilbyte.bot").warning("Reading the order with %s failed", model, exc_info=True)
+                if not claude_busy(exc):
+                    break
+        if response is not None:
             break
-        except Exception:
-            logging.getLogger("wilbyte.bot").warning("Reading the order with %s failed", model, exc_info=True)
     if response is None:
         if not images:
-            raise RuntimeError("Couldn't read the order - Claude didn't answer.")
+            raise RuntimeError("Couldn't read the order - Claude didn't answer"
+                               + (f" ({_short(last, 140)})" if last is not None else "") + ".")
         # A screenshot Claude couldn't fetch shouldn't cost the whole read.
         response = asking(config.copy.model, content[:1])
     got = _tool_input(response, "order")

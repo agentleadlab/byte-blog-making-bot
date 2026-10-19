@@ -3415,3 +3415,73 @@ def test_a_post_naming_its_invoice_gets_that_one(monkeypatch):
     note, which = jobs.payra_invoice_pick(config, name="Hayden Keltner", amount="900", now=now,
                                           taken={"INV-20162"})
     assert which == "a"
+
+
+def _busy_claude(monkeypatch, failures):
+    """Anthropic that fails with each of `failures` in turn, then answers."""
+    import sys
+    import types
+
+    asked = []
+
+    class Messages:
+        def create(self, *, model, **kw):
+            asked.append(model)
+            if failures:
+                raise failures.pop(0)
+            return "reply"
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=lambda **kw: SimpleNamespace(
+        messages=Messages())))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {"kind": "fresh", "name": "Bram Gutierrez"})
+    monkeypatch.setattr(jobs, "ORDER_READ_RETRY_WAITS", (0.001, 0.001))
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    return asked, config
+
+
+class Overloaded(Exception):
+    status_code = 529
+
+
+class Refused(Exception):
+    status_code = 400
+
+
+def test_claude_busy_is_asked_again_after_a_wait(monkeypatch):
+    """"Couldn't read the order - Claude didn't answer", both models in the
+    same second, Oct 19."""
+    asked, config = _busy_claude(monkeypatch, [Overloaded(), Overloaded()])
+    card = jobs.read_order(config, text="NAME: Bram Gutierrez", images=[], today=date(2026, 10, 19))
+
+    assert card["name"] == "New Agent - Bram Gutierrez"
+    assert asked == [jobs.ORDER_MODEL] * 3
+
+
+def test_a_refused_request_isnt_asked_again_and_says_why(monkeypatch):
+    asked, config = _busy_claude(monkeypatch, [Refused("bad image"), Refused("bad image")])
+    with pytest.raises(RuntimeError, match=r"didn't answer \(.*bad image"):
+        jobs.read_order(config, text="NAME: Bram Gutierrez", images=[], today=date(2026, 10, 19))
+
+    assert asked == [jobs.ORDER_MODEL, "claude-opus-5-5"]
+
+
+@pytest.mark.parametrize("exc, busy", [
+    (Overloaded(), True), (Refused(), False), (type("APIConnectionError", (Exception,), {})(), True),
+    (type("APITimeoutError", (Exception,), {})(), True), (ValueError("no"), False),
+])
+def test_what_is_worth_asking_again(exc, busy):
+    assert jobs.claude_busy(exc) is busy
+
+
+def test_an_order_claude_didnt_answer_is_tried_again_once(monkeypatch):
+    tried = []
+
+    async def gavelled(bot, payload):
+        tried.append(getattr(payload, "retried", False))
+
+    monkeypatch.setattr(client, "_order_gavelled", gavelled)
+    asyncio.run(client._order_again(None, client._payload_copy(
+        SimpleNamespace(message_id=1, channel_id=2, user_id=3, guild_id=4, member=None), retried=True), wait=0))
+
+    assert tried == [True]
