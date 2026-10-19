@@ -3791,3 +3791,23 @@ def test_a_held_button_still_waiting_isnt_answered_twice(monkeypatch):
         asyncio.run(client._held_pressed(None, SimpleNamespace(), "157", "go"))
     finally:
         client._HELD_LIVE.discard("157")
+
+
+@pytest.mark.parametrize("states, said", [
+    ("Same as before", "States: Same as before"), ("Same as Fresh", "States: Same as Fresh"),
+    ("States: Same as before", "States: Same as before"),
+])
+def test_same_as_before_is_taken_as_written(states, said):
+    """Shane Suleiman's "States: Same as before" was held: "isn't a list of
+    states". "if it said same states as last time, just put it as is"."""
+    card = {"kind": "fresh", "source": f"NAME: Shane Suleiman\n142 OTP VET Leads\n{said}\nLive Monday October 19",
+            "fields": {"name": "Shane Suleiman", "states": states, "package": "OTP VET", "leads": "142"}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
+    assert not [one for one in wrong if "State" in one]
+
+
+def test_states_made_up_beside_same_as_before_are_still_held():
+    card = {"kind": "fresh", "source": "NAME: Shane Suleiman\nStates: Same as before",
+            "fields": {"name": "Shane Suleiman", "states": "TX, FL", "package": "OTP VET", "leads": ""}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
+    assert any("TX is on the card" in one for one in wrong)

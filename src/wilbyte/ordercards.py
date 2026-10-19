@@ -333,8 +333,13 @@ _LAUNCH_WORD = re.compile(
 
 #: "Same states last time", "same states as before", "states same as last".
 SAME_STATES = re.compile(
-    r"\bsame\s+states?\b|\bstates?\s+(?:are\s+)?(?:the\s+)?same\b|"
+    r"\bsame\s+states?\b|\bstates?\s*:?\s*(?:are\s+)?(?:the\s+)?same\b|"
     r"\bstates?\b[^\n]{0,25}\b(?:last\s+time|as\s+before|previous|last\s+order)\b", re.IGNORECASE)
+
+
+#: The States field saying only "Same as before" / "Same as Fresh" / "same
+#: as last time" - Shane Suleiman's was held as "isn't a list of states".
+_SAME_ANSWER = re.compile(r"^\s*(?:the\s+)?same(?:\s+(?:as|like)\b[^\n]{0,30})?\s*[.!]*\s*$", re.IGNORECASE)
 
 
 #: "50 Aged VET 180+", "25 LA" - a count before what it's of. Not "$1,000",
@@ -518,7 +523,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     states = str(fields.get("states") or "").strip()
     if not states:
         missing.append("no states in the order yet")
-    elif SAME_STATES.search(states) and SAME_STATES.search(source):
+    elif (SAME_STATES.search(states) or _SAME_ANSWER.match(states)) and SAME_STATES.search(source):
         # "Same states last time" - taken as written.
         pass
     elif _ALL_BUT.search(states):
