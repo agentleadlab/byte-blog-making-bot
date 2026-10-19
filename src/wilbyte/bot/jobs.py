@@ -13257,9 +13257,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
         "parts": {"type": "array", "description": (
-            "ONLY when one order buys both aged leads and new-agent leads (fresh / OTP / text-verified, set up "
-            "to go live): every line of the order, in the order written, each as its own part. Empty in every "
-            "other order - one lead type, or several of one kind."),
+            "When one order buys more than one line - aged leads and new-agent leads (fresh / OTP / "
+            "text-verified, set up to go live) together, OR several aged lines (different ages or lead types: "
+            "'Aged Vets 30-90', 'Aged Vets 90-180', 'Aged FEX 180+'): every line of the order, in the order "
+            "written, each as its own part, with THAT line's own count and THAT line's own states - never the "
+            "states of every line put together. Match each count to its line from the invoice's lines and "
+            "notes. Empty when the order is one line."),
             "items": {"type": "object", "properties": {
                 "kind": {"type": "string", "enum": ["fresh", "aged"]},
                 "package": {"type": "string", "description": "That line's lead type, as written: "
@@ -13504,7 +13507,12 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     from .. import ordercards
 
     parts = [dict(one) for one in card.get("parts") or []]
-    if not {"aged", "fresh"} <= {one.get("kind") for one in parts}:
+    kinds = [one.get("kind") for one in parts]
+    # Several aged lines on their own are one Aged Leads card too, each line
+    # with its own states: Mateo Lyon's 163 Vets 30-90, 33 Vets 90-180 (Texas
+    # only) and 167 FEX 180+ went out with every state on every line - "this
+    # cost us MONEY".
+    if not ({"aged", "fresh"} <= set(kinds) or (kinds.count("aged") >= 2 and "fresh" not in kinds)):
         return []
     for one in parts:
         # "25 OTP IULs" is the count and the lead type: the count has its own
@@ -13551,8 +13559,10 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     said = "\n".join(bit for bit in str(base.get("notes") or "").splitlines()
                      if not bit.startswith("Paid via Zelle") and about_aged(bit))
     fields["notes"] = "\n".join(
-        [*zelle, "Order lines:", *(f"• {line(one)}" for one in aged), "",
-         "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]
+        [*zelle, "Order lines - each with its own states:" if not fresh else "Order lines:",
+         *(f"• {line(one)}" for one in aged)]
+        + (["", "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]
+           if also else [])
         + (["", "From the thread:", said.strip()] if said.strip() else []))
     out.append({"kind": "aged", "client": client, "fields": fields, "name": f"Aged Leads - {client}",
                 "desc": order_desc(fields, "aged"), "launch_iso": "", "source": source})

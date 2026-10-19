@@ -3203,9 +3203,12 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
     assert jobs.split_doubts([aged, vets, iuls]) == []
 
 
-def test_one_kind_isnt_split():
+def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
     card = _patrick()
     card["parts"] = [one for one in card["parts"] if one["kind"] == "aged"]
+    made = jobs.split_order(card)
+    assert [one["kind"] for one in made] == ["aged"], "one Aged Leads card, each line with its own states"
+    card["parts"] = [one for one in _patrick()["parts"] if one["kind"] == "fresh"]
     assert jobs.split_order(card) == []
     card["parts"] = []
     assert jobs.split_order(card) == []
@@ -4210,3 +4213,48 @@ def test_a_job_nobody_tagged_goes_to_somebody_the_comment_names(text, named):
     kath = tagged.Person(username="kathleenmarie15", full_name="Kathleen Marie")
     who = kath if "Kath" in text else faith
     assert jobs._named_in_comment(text, who) is named
+
+
+MATEO = """New Payment | Payra
+**NAME:** Mateo Lyon
+**PRODUCT:** Aged Leads (VET)
+Payra invoice note: Name: Mateo Lyon
+Lead Type: Aged Vets 30-90
+States: AL CA KS KY MI MN NC OH OK SC TN TX
+Lead Type: Aged Vets 90-180
+States: TX
+Lead Type: Aged FEX 180+
+States: AZ CA ID MI NV OR SD TX UT WA
+[10/19 10:40AM] Kath: 163 AGED VETS
+33 AGED VETS
+167 AGED FEX"""
+
+
+def test_several_aged_lines_keep_their_own_states():
+    """"this cost us MONEY" - Mateo Lyon's three aged lines went out with
+    every state on every line, and his Vets 90-180 were Texas only."""
+    card = {"client": "Mateo Lyon", "source": MATEO, "fields": {"name": "Mateo Lyon"},
+            "parts": [{"kind": "aged", "package": "Aged Vets 30-90", "leads": "163",
+                       "states": "AL, CA, KS, KY, MI, MN, NC, OH, OK, SC, TN, TX", "launch_iso": ""},
+                      {"kind": "aged", "package": "Aged Vets 90-180", "leads": "33", "states": "TX", "launch_iso": ""},
+                      {"kind": "aged", "package": "Aged FEX 180+", "leads": "167",
+                       "states": "AZ, CA, ID, MI, NV, OR, SD, TX, UT, WA", "launch_iso": ""}]}
+    cards = jobs.split_order(card, today=date(2026, 10, 19))
+
+    assert len(cards) == 1 and cards[0]["kind"] == "aged"
+    fields = cards[0]["fields"]
+    assert "Aged Vets 90-180: TX;" in fields["states"]
+    assert fields["leads"] == "363 (163 + 33 + 167)"
+    assert "• 33 Aged Vets 90-180 — TX" in fields["notes"] and "New-agent leads" not in fields["notes"]
+    assert ordercards.doubts({"kind": "aged", "source": MATEO, "fields": {**fields, "name": "Mateo Lyon"}},
+                             today=date(2026, 10, 19))[0] == []
+
+
+def test_lines_with_their_own_states_on_one_list_are_held():
+    card = {"kind": "aged", "source": MATEO, "fields": {
+        "name": "Mateo Lyon", "package": "50 Aged Vets 30-90 + 33 Aged Vets 90-180 + 167 Aged FEX 180+",
+        "leads": "363", "states": "AL, CA, KS, KY, MI, MN, NC, OH, OK, SC, TN, TX, AZ, ID, NV, OR, SD, UT, WA"}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
+
+    assert any("Lead type: 50" in one for one in wrong)
+    assert any("each line of the order has its own states" in one for one in wrong)

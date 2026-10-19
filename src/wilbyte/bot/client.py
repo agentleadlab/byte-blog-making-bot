@@ -10309,8 +10309,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     # line on a New Agent card of its own.
     subs = jobs.split_order(card, today=_today(bot.config)) or jobs.agent_cards(card, today=_today(bot.config))
     if subs:
-        if getattr(payload, "aged_only", False):
+        if getattr(payload, "aged_only", False) and any(one["kind"] == "fresh" for one in subs):
             # Made on its own from an invoice: new-agent cards wait for a gavel.
+            # Several aged lines alone are made as any aged order is.
             await _order_forget(key)
             return
         await _order_make_split(bot, payload, key, responder, message, card, subs, link, thread_id)
@@ -10492,7 +10493,8 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
     if responder is None:
         return
     what = (f"paid once for {len(parts)} agents" if card.get("agents") and not jobs.split_order(card)
-            else "buys aged leads and new-agent leads")
+            else "buys aged leads and new-agent leads" if any(one["kind"] == "fresh" for one in parts)
+            else "buys several aged lines, each with its own states")
     said = (f"🔨 ✅ **{_order_payer(card) or card.get('client') or 'This order'}** {what} — "
             f"split into {len(parts)} cards:\n"
             + "\n".join(f"• {one['name']} · {one['package']} · {one['list']}\n  {one['url']}"

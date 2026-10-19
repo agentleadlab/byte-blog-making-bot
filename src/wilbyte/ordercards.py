@@ -451,6 +451,29 @@ def paid_for_by(source: str, named: str) -> bool:
     return False
 
 
+_LINE_KIND = re.compile(r"^\W*(?:payra invoice note:\s*)?lead\s*type\W*:\s*(.+)$", re.IGNORECASE)
+_LINE_STATES = re.compile(r"^\W*states?(?:\s+leads?\s+in)?\W*:\s*(.+)$", re.IGNORECASE)
+
+
+def _lines_with_states(source: str) -> list[tuple[str, list[str]]]:
+    """[(the line, its states)] for an order written a line at a time -
+    "Lead Type: Aged Vets 30-90 / States: AL CA KS ..." then the next."""
+    found, kind = [], ""
+    for line in str(source or "").splitlines():
+        line = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line).strip(" >*")
+        said = _LINE_KIND.match(line)
+        if said:
+            kind = " ".join(said.group(1).split())
+            continue
+        places = _LINE_STATES.match(line)
+        if places and kind:
+            codes = [one.upper() for one in _CODE.findall(places.group(1)) if one.upper() in US_STATES]
+            if codes:
+                found.append((kind, codes))
+            kind = ""
+    return found
+
+
 def paid_by(source: str) -> str:
     """The name on the payment post - "NAME: Tony Moderno", as Payra and
     Zelle posts write it, in capitals - or ""."""
@@ -586,6 +609,20 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             and not re.search(rf"[A-Za-z)]\s*:\s*{count.group(0)}(?![\d./:])", words) \
             and not _adds_up_to(int(count.group(0)), source):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
+    # Every count in the lead type, too: Mateo Lyon's card said "50 Aged Vets
+    # 30-90" for the 163 he bought, and only the total was checked.
+    for each in _COUNT_OF.finditer(package):
+        said = each.group(1)
+        if not re.search(rf"(?<![\d$./:]){said}(?![\d./:])", words) \
+                and not re.search(rf"[A-Za-z)]\s*:\s*{said}(?![\d./:])", words):
+            wrong.append(f"Lead type: {said} (in “{package}”) isn't in the order")
+    # Lines with their own states, on the card as one list: Mateo Lyon's Vets
+    # 90-180 were Texas only, and went out with every state of the other two.
+    lines = _lines_with_states(source)
+    if len(lines) >= 2 and len({frozenset(codes) for _kind, codes in lines}) >= 2 \
+            and ";" not in str(fields.get("states") or ""):
+        wrong.append("States: each line of the order has its own states, and the card has them as one list - "
+                     + "; ".join(f"{kind}: {', '.join(codes)}" for kind, codes in lines))
     # An agency on the card the order doesn't name - Matthew Odierno's said
     # Phoenix; his order said Liftoff Ascend.
     for agency, said in (("PHNX", r"\bphx\b|\bphnx\b|phoenix"), ("Ascend", r"ascend|lift\s*off"),
