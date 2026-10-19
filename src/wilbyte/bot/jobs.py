@@ -12906,12 +12906,24 @@ def request_agency(post: str) -> str:
 KNOWN_AGENCIES = ("AEP", "FFL", "Wolfpack", "Uprise", "Fearless", "PHNX", "Phoenix", "Ascend", "Liftoff", "Spark")
 
 
+def agency_usable(name: str) -> bool:
+    """Whether what a request put as the agency names one: not a letter -
+    Bram Gutierrez's "F" - unless it's one the team knows."""
+    said = re.sub(r"[^A-Za-z0-9]", "", str(name or ""))
+    if said.casefold() in {re.sub(r"[^A-Za-z0-9]", "", one).casefold() for one in KNOWN_AGENCIES}:
+        return True
+    return len(said) >= 2
+
+
 def agency_said(text: str, agencies=()) -> str:
     """The agency when the team writes it on a line of its own - Kharyl's
     "aep" at the foot of Gavin Mathieu's notes, "AEP @Nicole" - as the
     agency is spelled, or ""."""
+    # Names only - not "F", not "i am leaving my current agency at this
+    # time" - or any line saying just that would be read as the agency.
     known = {" ".join(str(one).split()).casefold(): " ".join(str(one).split())
-             for one in (*agencies, *KNOWN_AGENCIES) if str(one or "").strip()}
+             for one in (*agencies, *KNOWN_AGENCIES)
+             if len(re.sub(r"[^A-Za-z0-9]", "", str(one or ""))) >= 3 and len(str(one).split()) <= 4}
     for line in reversed(str(text or "").splitlines()):
         said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line)
         said = re.sub(r"@\S+", "", said)
@@ -13108,6 +13120,11 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Mathieu's card went out with it blank.
         fields["agency"] = agency_said("\n".join([text, *notes]), agencies)
     agency = request_agency(request)
+    unclear = ""
+    if agency and not agency_usable(agency):
+        # Bram Gutierrez's request said "Agency: F" and his card went out
+        # with it: "what is the agency of this". Left blank, and said.
+        unclear, agency = agency, ""
     if agency and not fields.get("agency"):
         # Where the agency is said: the client's New Lead Request in
         # #lead-lab - "he doesnt know where to get them".
@@ -13132,6 +13149,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
               for key in ("kind", "package", "leads", "states", "launch_iso")}
              for one in got.get("parts") or [] if isinstance(one, dict)]
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
+            **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",

@@ -9554,7 +9554,7 @@ async def _agency_fill(bot) -> list[str]:
         if now - made > timedelta(days=AGENCY_FILL_DAYS):
             continue
         agency = jobs.request_agency(jobs.lead_request_for(posts, _order_who(order)))
-        if not agency:
+        if not agency or not jobs.agency_usable(agency):
             continue
         try:
             done = await asyncio.to_thread(jobs.order_card_fill_agency, bot.config, order["card_id"], agency)
@@ -10222,7 +10222,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                 # Why the Agency is blank, so it can be put right.
                 + ("\n-# Agency blank — no New Lead Request in #lead-lab matches their email, phone or name, "
                    "and the notes don't name one." if "agency" in (card.get("fields") or {})
-                   and not (card.get("fields") or {}).get("agency") and not card.get("lead_request") else ""))
+                   and not (card.get("fields") or {}).get("agency") and not card.get("lead_request") else "")
+                + (f"\n⚠ **Agency blank** — their #lead-lab request says just “{card['agency_unclear']}”. "
+                   f"Which agency is that? Put it on the card." if card.get("agency_unclear") else ""))
         ack = _ORDER_ACKS.pop(key, None)
         try:
             if ack is None or not hasattr(ack, "edit"):

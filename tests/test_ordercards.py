@@ -3519,3 +3519,19 @@ def test_short_ways_of_writing_a_state(code, said):
 @pytest.mark.parametrize("code, said", [("WV", "virginia only"), ("KS", "arkansas"), ("NC", "sc only")])
 def test_not_a_state_that_isnt_written(code, said):
     assert not ordercards._said_state(code, said)
+
+
+@pytest.mark.parametrize("said, usable", [
+    ("F", False), ("-", False), ("FFL", True), ("Symmetry Financial", True), ("AEP", True), ("FE", True),
+])
+def test_an_agency_that_is_a_letter_isnt_one(said, usable):
+    """Bram Gutierrez's card: "Agency: F" - "what is the agency of this"."""
+    assert jobs.agency_usable(said) is usable
+
+
+def test_a_letter_or_a_sentence_from_lead_lab_isnt_matched_in_the_notes():
+    agencies = ("F", "i am leaving my current agency at this time", "Symmetry Financial")
+
+    assert jobs.agency_said("Notes\nf", agencies) == ""
+    assert jobs.agency_said("i am leaving my current agency at this time", agencies) == ""
+    assert jobs.agency_said("symmetry financial", agencies) == "Symmetry Financial"
