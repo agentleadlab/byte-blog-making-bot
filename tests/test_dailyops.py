@@ -4450,3 +4450,17 @@ def test_each_missed_evening_is_caught_up_oldest_first(monkeypatch):
     days = [day for _name, day in ran]
     assert days[:len(dailyops.OVERNIGHT_CATCH_UP)] == [_date(2026, 10, 19)] * len(dailyops.OVERNIGHT_CATCH_UP)
     assert set(days) == {_date(2026, 10, 19), _date(2026, 10, 20)}, "Monday then Tuesday, not the weekend"
+
+
+@pytest.mark.parametrize("said, left, tagged_, strangers", [
+    ("tag nicole, tag therese, can you take a look", "can you take a look", ["nic0l3", "thereseguba"], []),
+    ("please tag nicole, check his cap", "check his cap", ["nic0l3"], []),
+    ("tag nicole and jenn", "", ["nic0l3"], ["jenn"]),
+])
+def test_a_sentence_after_the_tags_is_the_message_not_a_name(said, left, tagged_, strangers):
+    """"Nobody on the board is called can you take a look" - Faith's "tag
+    nicole, tag therese, can you take a look"."""
+    from wilbyte import dailyops
+
+    known = {"nicole": "nic0l3", "therese": "thereseguba"}
+    assert dailyops.tag_asked(said, known) == (left, tagged_, strangers)

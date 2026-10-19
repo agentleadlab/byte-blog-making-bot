@@ -600,16 +600,23 @@ def tag_asked(text: str, known) -> tuple[str, list[str], list[str]]:
         for one in _AND_ALSO.split(found.group("who"))
         if one and one.strip()
     ]
-    handles, strangers = [], []
-    for one in names:
+    handles, strangers, rest = [], [], []
+    for at, one in enumerate(names):
         who = (known or {}).get(one.casefold())
         if who and who not in handles:
             handles.append(who)
-        elif not who:
+        elif who:
+            continue
+        elif len(one.split()) >= 3:
+            # "tag nicole, tag therese, can you take a look" - a sentence,
+            # not somebody's name: it and what follows are the message.
+            rest = names[at:]
+            break
+        else:
             strangers.append(one)
     if not handles:
         return text, [], []
-    left = (said[:found.start()] + " " + said[found.end():]).strip(" -–—:,")
+    left = (said[:found.start()] + " " + ", ".join(rest) + " " + said[found.end():]).strip(" -–—:,")
     return " ".join(left.split()), handles, strangers
 
 

@@ -79,6 +79,25 @@ class TrelloClient:
     def close(self) -> None:
         self._client.close()
 
+    def download(self, url: str, *, most: int = 5_000_000) -> tuple[bytes, str]:
+        """(the file, its media type) for an attachment on the board - a
+        screenshot somebody tagged a teammate on. Only ever Trello's own
+        address: the board's key and token go nowhere else."""
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(url).hostname or "").casefold()
+        if host != "trello.com" and not host.endswith(".trello.com"):
+            raise TrelloError(f"Not a Trello attachment: {host or url[:60]}")
+        auth = (f'OAuth oauth_consumer_key="{self._auth["key"]}", '
+                f'oauth_token="{self._auth["token"]}"')
+        response = self._client.get(url, headers={"Authorization": auth}, follow_redirects=True)
+        if response.status_code >= 400:
+            raise TrelloError(f"GET attachment -> HTTP {response.status_code}")
+        if len(response.content) > most:
+            raise TrelloError("Attachment too big to read")
+        kind = str(response.headers.get("content-type") or "").split(";")[0].strip().casefold()
+        return response.content, kind
+
     # ---------------------------------------------------------------- requests
 
     def _request(self, method: str, path: str, **kwargs) -> Any:

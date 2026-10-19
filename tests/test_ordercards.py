@@ -3937,3 +3937,56 @@ def test_a_name_in_the_posts_own_notes_gets_the_card(monkeypatch):
     assert ">" not in card["source"].split("Notes:")[1]
     wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
     assert any("paid by Garret Sekelsky" in one for one in wrong)
+
+
+SHOT = "https://trello.com/1/cards/c1/attachments/a1/download/image.png"
+
+
+@pytest.mark.parametrize("text, vague", [
+    (f"@nic0l3 @thereseguba can you take a look ![image.png]({SHOT})", True),
+    (f"@nic0l3 ![image.png]({SHOT})", True),
+    (f"@nic0l3 Michael Greff is capped at 10 a day and got 28 over the weekend ![image.png]({SHOT})", False),
+    ("@nic0l3 can you take a look", False),
+])
+def test_a_picture_with_too_few_words_is_read(text, vague):
+    assert jobs._too_vague(text) is vague
+
+
+def test_a_tagged_picture_is_read_into_the_job(monkeypatch):
+    """"BRO IMAGE CONTEXT"."""
+    import sys
+    import types
+
+    from wilbyte import tagged
+
+    asked = []
+
+    class Messages:
+        def create(self, **kw):
+            asked.append(kw)
+            return SimpleNamespace(content=[SimpleNamespace(
+                text="Michael Greff, capped at 10 leads a day, got 28 over the weekend - find out why")])
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(
+        Anthropic=lambda **kw: SimpleNamespace(messages=Messages())))
+    board = SimpleNamespace(download=lambda url: (b"png", "image/png"))
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k"), copy=SimpleNamespace(model="m"))
+    note = tagged.Note(comment_id="x1", text=f"@nic0l3 can you take a look ![image.png]({SHOT})", author="Ryte",
+                       card_id="c1", card_short="s")
+    jobs._PICTURES_SAID.clear()
+
+    said = jobs._picture_said(config, board, note)
+    assert said.startswith("Michael Greff, capped at 10")
+    assert jobs._picture_said(config, board, note) == said and len(asked) == 1, "read once a comment"
+    assert "can you take a look" in asked[0]["messages"][0]["content"][-1]["text"]
+
+
+def test_only_trellos_own_files_are_fetched_with_the_boards_key():
+    from wilbyte import trello
+
+    client = trello.TrelloClient("key", "token")
+    try:
+        with pytest.raises(trello.TrelloError, match="Not a Trello attachment"):
+            client.download("https://evil.example.com/image.png")
+    finally:
+        client.close()

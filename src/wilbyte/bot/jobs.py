@@ -3279,12 +3279,24 @@ def _tags_on(config, client, every, members, day, problems) -> list:
             # A screenshot and a tag. Trello writes the attachment into the
             # comment as a link to it, so all the words say is "image.png",
             # which went onto KC's list looking exactly like that.
-            if tagged.only_a_file(note.text):
+            if tagged.only_a_file(note.text) or _too_vague(note.text):
                 # Said only when it was handed to somebody. A picture tagging
                 # nobody is nobody's job, and saying so is noise.
-                if tagged.mentioned(note.text):
-                    nothing_said.append(note)
-                continue
+                if not tagged.mentioned(note.text):
+                    if tagged.only_a_file(note.text):
+                        continue
+                else:
+                    # "BRO IMAGE CONTEXT" - Faith's "can you take a look" on
+                    # a screenshot of Michael Greff getting 28 leads with a cap
+                    # of 10: the job is in the picture, so the picture is read.
+                    seen = _picture_said(config, client, note)
+                    if seen:
+                        words = _words_of(note.text)
+                        note = dataclasses.replace(
+                            note, text=f"{seen}" + (f" ({words})" if words else "") + "\n" + note.text)
+                    elif tagged.only_a_file(note.text):
+                        nothing_said.append(note)
+                        continue
 
             if tagged.everyones_job(note.text):
                 # Every checklist on the card it was said on, and asked per
@@ -3514,6 +3526,67 @@ class Want:
     schedule: bool = False
     #: How many lines from this comment are already on their checklists.
     filed: int = 0
+
+
+#: A tagged picture's job, read once a comment: {comment id: (line, when)}.
+#: The tag check runs every half minute.
+_PICTURES_SAID: dict = {}
+PICTURE_RETRY = timedelta(hours=1)
+_TRELLO_FILE = re.compile(r"\((https://trello\.com/1/cards/[^)\s]+/attachments/[^)\s]+/download/[^)\s]+)\)")
+_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def _words_of(text: str) -> str:
+    """What a comment says, without its tags or the files Trello wrote in."""
+    from .. import tagged
+
+    bare = tagged.strip_mentions(re.sub(r"!?\[[^\]]*\]\([^)]*\)", " ", text or ""))
+    return " ".join(bare.split()).strip(" -–—:,.")
+
+
+def _too_vague(text: str) -> bool:
+    """A picture tagged with a few words that don't say the job: "can you
+    take a look", "see this", "pls check"."""
+    return bool(_TRELLO_FILE.search(text or "")) and len(_words_of(text).split()) < 6
+
+
+def _picture_said(config: Config, client, note) -> str:
+    """The job a tagged screenshot hands somebody, in one line, read by
+    Claude - or "" when it can't be read. Once a comment."""
+    import base64
+    import time
+
+    held = _PICTURES_SAID.get(note.comment_id)
+    if held is not None and (held[0] or time.time() - held[1] < PICTURE_RETRY.total_seconds()):
+        return held[0]
+    said = ""
+    try:
+        pictures = []
+        for url in _TRELLO_FILE.findall(note.text or "")[:2]:
+            data, kind = client.download(url)
+            if kind in _IMAGE_TYPES:
+                pictures.append({"type": "image", "source": {
+                    "type": "base64", "media_type": kind, "data": base64.b64encode(data).decode()}})
+        if pictures and str(getattr(config.secrets, "anthropic_api_key", "") or ""):
+            from anthropic import Anthropic
+
+            words = _words_of(note.text)
+            ask = ("A teammate on Agent Lead Lab's Trello board tagged somebody on this screenshot"
+                   + (f", saying “{words}”" if words else "") + ". In one short line, write the job it hands them "
+                   "as an instruction, with the names, numbers and what to check - e.g. \"Michael Greff, capped at "
+                   "10 leads a day, got 28 over the weekend - find out why\". Only the line.")
+            reply = Anthropic(api_key=config.secrets.anthropic_api_key).messages.create(
+                model=config.copy.model, max_tokens=200,
+                messages=[{"role": "user", "content": [*pictures, {"type": "text", "text": ask}]}])
+            said = " ".join("".join(getattr(one, "text", "") for one in reply.content).split()).strip(' "“”')[:220]
+    except Exception:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read the tagged picture", exc_info=True)
+        said = ""
+    _PICTURES_SAID[note.comment_id] = (said, time.time())
+    if len(_PICTURES_SAID) > 300:
+        for old in sorted(_PICTURES_SAID, key=lambda one: _PICTURES_SAID[one][1])[:100]:
+            _PICTURES_SAID.pop(old, None)
+    return said
 
 
 def _read_the_tags(config, wants, people, cards, problems, held_by=None) -> list:
