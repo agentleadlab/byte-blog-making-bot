@@ -233,12 +233,35 @@ def _apart(one: str, other: str) -> int:
     return before[-1]
 
 
+#: The short ways a state gets written. Drucilla Bell's "md,dc,va,sc,mo,tx,
+#: ok,or,west va,nc,tn" was held for WV.
+STATE_SHORT = {
+    "WV": ("west va", "w va", "wva", "w virginia", "west virg"),
+    "NC": ("n carolina", "no carolina"), "SC": ("s carolina", "so carolina"),
+    "ND": ("n dakota", "no dakota"), "SD": ("s dakota", "so dakota"),
+    "NH": ("n hampshire",), "NJ": ("n jersey",), "NM": ("n mexico",), "NY": ("n york",),
+    "RI": ("rhode isl",), "DC": ("washington dc", "district of columbia"),
+    "CA": ("calif", "cali"), "PA": ("penn", "penna"), "MA": ("mass",), "TN": ("tenn",),
+    "WI": ("wisc",), "MN": ("minn",), "MI": ("mich",), "OK": ("okla",), "AZ": ("ariz",),
+    "CO": ("colo",), "CT": ("conn",), "FL": ("fla",), "NE": ("neb", "nebr"), "NV": ("nev",),
+    "OR": ("ore",), "TX": ("tex",), "WY": ("wyo",), "AL": ("ala",), "AR": ("ark",),
+    "KS": ("kan", "kans"), "DE": ("del",), "MT": ("mont",),
+}
+
+
 def _said_state(code: str, source: str) -> bool:
     upper = str(source or "").upper()
     name = US_STATES[code]
+    said = str(source or "").casefold()
+    # Without the dots: "N.C.", "W. Va.".
+    plain = re.sub(r"\b([a-z])\.\s?(?=[a-z]\b)", r"\1", said).replace(".", " ")
     # A whole word: "Kansas" isn't in "Arkansas".
     if (re.search(rf"(?<![A-Z]){code}(?![A-Z])", upper)
-            or re.search(rf"(?<![a-z]){name}(?![a-z])", str(source or "").casefold())):
+            or re.search(rf"(?<![A-Z]){code}(?![A-Z])", plain.upper())
+            or re.search(rf"(?<![a-z]){name}(?![a-z])", said)):
+        return True
+    words = " ".join(re.findall(r"[a-z]+", plain))
+    if any(re.search(rf"(?<![a-z]){re.escape(short)}(?![a-z])", words) for short in STATE_SHORT.get(code, ())):
         return True
     # Spelled wrong - Simon Aleman's "Illinoi". A letter or two off, by how
     # long the name is: "Utah" has to be "Utah".

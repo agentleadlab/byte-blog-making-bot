@@ -3485,3 +3485,37 @@ def test_an_order_claude_didnt_answer_is_tried_again_once(monkeypatch):
         SimpleNamespace(message_id=1, channel_id=2, user_id=3, guild_id=4, member=None), retried=True), wait=0))
 
     assert tried == [True]
+
+
+DRUCILLA = """New Payment | Payra
+**NAME:** Drucilla Bell
+**PRODUCT:** Aged Leads (IUL)
+Payra invoice note: Name: Drucilla Bell
+Lead Type: Aged IUL - 30-90 days [AGED - $8/Lead]
+States Leads In:
+md,dc,va,sc,mo,tx,ok,or,west va,nc,tn
+Number of Requested Leads: 50"""
+
+
+def test_west_va_is_west_virginia():
+    """Drucilla Bell's aged card was held: "WV is on the card but isn't in
+    the order", from "west va"."""
+    card = {"kind": "aged", "source": DRUCILLA, "fields": {
+        "name": "Drucilla Bell", "states": "MD, DC, VA, SC, MO, TX, OK, OR, WV, NC, TN",
+        "package": "Aged IUL 30-90", "leads": "50"}}
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 18))
+
+    assert wrong == []
+
+
+@pytest.mark.parametrize("code, said", [
+    ("WV", "W. Va."), ("WV", "W.Va"), ("NC", "N.C. and S.C."), ("SC", "N.C. and S.C."), ("DC", "D.C."),
+    ("CA", "Calif"), ("TN", "tenn"), ("ND", "N Dakota"),
+])
+def test_short_ways_of_writing_a_state(code, said):
+    assert ordercards._said_state(code, said)
+
+
+@pytest.mark.parametrize("code, said", [("WV", "virginia only"), ("KS", "arkansas"), ("NC", "sc only")])
+def test_not_a_state_that_isnt_written(code, said):
+    assert not ordercards._said_state(code, said)
