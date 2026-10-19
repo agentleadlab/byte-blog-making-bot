@@ -665,6 +665,22 @@ def test_taking_the_gavel_off_and_putting_it_back_makes_a_fresh_card(order):
         jobs.order_card_open = jobs_open
 
 
+def test_a_gavel_put_back_on_an_order_put_with_another_card_makes_its_own(order, monkeypatch):
+    """Abdullah Bahrani's aged payment had been put with his New Agent card;
+    the gavel put back wrote the aged order into that card's comments."""
+    order.kind = "fresh"
+    message = _message()
+    ordercards.save({"900": {"status": "made", "merged": True, "card_id": "fresh1", "client": "Abdullah Bahrani",
+                             "url": "https://trello.com/c/FRESH"}})
+    monkeypatch.setattr(client, "_order_refresh", lambda *a, **kw: pytest.fail("refreshed the other card"))
+    monkeypatch.setattr(jobs, "order_card_open", lambda config, card_id: True)
+
+    asyncio.run(client._order_ungavelled(_bot(message), GAVEL))
+    assert "read the order afresh and make its own card" in order.responder.sent[-1][0]
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert len(order.made) == 1
+
+
 def test_taking_off_a_gavel_that_made_nothing_says_nothing(order):
     before = len(order.responder.sent)
     asyncio.run(client._order_ungavelled(_bot(_message()), GAVEL))

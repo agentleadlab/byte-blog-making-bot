@@ -9972,7 +9972,11 @@ async def _order_ungavelled(bot, payload) -> None:
             held[key] = {**order, "status": "off"}
         await asyncio.to_thread(ordercards.save, held)
     responder = _order_responder(bot)
-    if responder is not None and order.get("status") == "made":
+    if responder is not None and order.get("status") == "made" and order.get("merged"):
+        await responder.send(f"🔨 Gavel taken off **{order.get('client') or order.get('name') or 'that order'}** — "
+                             f"it was put with another card ({order.get('url', '')}), which stays as it is. Put the "
+                             f"gavel back and I'll read the order afresh and make its own card.", quiet=True)
+    elif responder is not None and order.get("status") == "made":
         await responder.send(f"🔨 Gavel taken off **{order.get('client') or order.get('name') or 'that order'}** — "
                              f"put it back and I'll update the card I made with what's in the thread now (delete "
                              f"the card first for a fresh one): {order.get('url', '')}", quiet=True)
@@ -10009,6 +10013,14 @@ async def _order_gavelled(bot, payload) -> None:
     key = str(payload.message_id)
     responder = _order_responder(bot)
     off = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if off.get("status") == "off" and key not in _ORDER_ACTIVE and off.get("merged"):
+        # Its card was somebody else's it was put with - "another payment for
+        # this order", or one found after a restart - so the gavel put back
+        # reads it afresh. Abdullah Bahrani's aged payment had been put with
+        # his New Agent card, and putting the gavel back wrote the aged order
+        # into that card's comments.
+        await _order_forget_made(key)
+        off = {}
     if off.get("status") == "off" and key not in _ORDER_ACTIVE:
         # The gavel put back on an order whose card is still on the board:
         # that card, brought up to date - not a second one.
