@@ -465,10 +465,18 @@ _LABELLED = re.compile(r"(?i)\b(passwords?|passcode|pwd|api[\s_-]*key|secret(?:\
 HIDDEN = "[hidden — a key or token, kept off Trello]"
 
 
+#: Off: "go show everything on card" - Makenna Pence's Ringy login went on
+#: her card as "[hidden ...]", and the team sets her up from it. True puts
+#: the hiding back.
+HIDE_SECRETS = False
+
+
 def no_secrets(text: str) -> str:
-    """The text with anything that looks like a key, token or password taken
-    out - RYTE never puts one on the board. Links are left as they are."""
+    """The text as it is - or, with HIDE_SECRETS on, with anything that looks
+    like a key, token or password taken out. Links are left as they are."""
     said = str(text or "")
+    if not HIDE_SECRETS:
+        return said
     parts = re.split(r"(https?://\S+)", said)
     for at in range(0, len(parts), 2):
         bit = _LABELLED.sub(lambda m: m.group(1) + m.group(2) + HIDDEN, parts[at])

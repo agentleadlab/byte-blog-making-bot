@@ -4319,11 +4319,22 @@ def test_the_trouble_is_said_once():
     assert "Cody" in client._ads_added_note(["Cody Sturma → 📊 Ads 08/26/26 · Nicole"], [], said_already=seen)
 
 
-def test_keys_and_tokens_never_go_on_the_board():
+def test_everything_goes_on_the_card_as_written():
+    """"go show everything on card" - a client's login is what the team sets
+    them up with."""
+    from wilbyte.trello import no_secrets
+
+    for said in ("Password: Example123!", "api key: abc123def456ghi789jkl012mno"):
+        assert no_secrets(said) == said
+
+
+def test_keys_and_tokens_are_hidden_when_switched_back_on(monkeypatch):
     """"where did this comment came from????" - an Auth token and SID on
     Therese's checklist on the General card."""
+    from wilbyte import trello
     from wilbyte.trello import HIDDEN, no_secrets
 
+    monkeypatch.setattr(trello, "HIDE_SECRETS", True)
     said = no_secrets('iS1rklum6oedbhfcci4f6czkomcc9qac" lq87y496a34il1575e772bh77duikfq4 There you go Auth and Sid')
     assert "iS1rklum" not in said and "lq87y496" not in said and "Auth and Sid" in said
     assert no_secrets("password: hunter2") == f"password: {HIDDEN}"
