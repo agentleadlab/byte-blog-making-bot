@@ -10143,7 +10143,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     # Aged leads and new-agent leads bought together: a card for each -
     # Patrick Moreno's four aged lines on one Aged Leads card, each new-agent
     # line on a New Agent card of its own.
-    subs = jobs.split_order(card)
+    subs = jobs.split_order(card, today=_today(bot.config))
     if subs:
         if getattr(payload, "aged_only", False):
             # Made on its own from an invoice: new-agent cards wait for a gavel.
@@ -10343,7 +10343,7 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
 async def _order_refresh_split(bot, key: str, order: dict, card: dict) -> str:
     """New notes on a split order: each of its cards brought up to date -
     the 34 OTP Vets' card gets its states when they're posted."""
-    subs = jobs.split_order(card)
+    subs = jobs.split_order(card, today=_today(bot.config))
     parts = [dict(one) for one in order.get("parts") or []]
     await _order_seen(bot, key)
     if not subs or [one["kind"] for one in subs] != [one["kind"] for one in parts]:

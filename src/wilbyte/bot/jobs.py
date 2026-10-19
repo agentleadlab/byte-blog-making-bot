@@ -13331,6 +13331,26 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     out.append({"kind": "aged", "client": client, "fields": fields, "name": f"Aged Leads - {client}",
                 "desc": order_desc(fields, "aged"), "launch_iso": "", "source": source})
     says_when = ordercards.says_when(source)
+    today = today or date.today()
+
+    def own_day(one):
+        try:
+            when = date.fromisoformat(one.get("launch_iso") or "") if says_when else None
+        except ValueError:
+            return None
+        return when if when is not None and launch_written(when, source, today=today) else None
+
+    # The order's own day for its new-agent lines when none of them has one
+    # of its own: Jack Collins' "60 aged vet 30-90 / 20 fresh vet / ROADMAP
+    # AGENCY LIVE OCT 19" - his New Agent card went out with no launch date.
+    # Not when some lines have their own day: Patrick Moreno's 34 OTP Vets
+    # waiting on states weren't live the Sunday his IULs were.
+    whole = None
+    if says_when and not any(own_day(one) for one in fresh):
+        try:
+            whole = date.fromisoformat(str(card.get("launch_iso") or ""))
+        except ValueError:
+            whole = None
     for one in fresh:
         fields = dict(base)
         count = _count_of(one.get("leads"))
@@ -13338,11 +13358,7 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         fields["leads"] = f"{count}" if count is not None else ""
         codes = ordercards._codes(one.get("states") or "")
         fields["states"] = ", ".join(codes) if codes else ""
-        when = ""
-        try:
-            when = date.fromisoformat(one.get("launch_iso") or "") if says_when else ""
-        except ValueError:
-            when = ""
+        when = own_day(one) or whole or ""
         fields["launch"] = f"{when:%A, %B} {when.day}" if when else ""
         # Nothing of the other lines - no lead type, count or day: the filing
         # reads a card's notes, and listing them made this one card read as

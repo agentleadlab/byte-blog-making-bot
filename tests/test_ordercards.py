@@ -3710,3 +3710,32 @@ def test_aged_on_another_line_isnt_the_product():
     message = _message("New Payment | Payra\n**PRODUCT:** VET\n**Notes:**\n> Lead type: Aged vets 180+")
     message.channel.name = "new-payment"
     assert not client._aged_payment(message)
+
+
+def test_a_split_orders_new_agent_line_takes_the_orders_launch_day():
+    """"??????????????????" - Jack Collins: "60 aged vet 30-90 / 20 fresh vet
+    / ROADMAP AGENCY LIVE OCT 19", and his New Agent card had no launch date."""
+    source = ("New Payment | Zelle\nNAME: Jack Collins\n[10/19 11:28AM] Kharyl: Jack Collins\nNC,TX,TN,CO\n"
+              "60 aged vet 30-90\n20 fresh vet\n\nROADMAP AGENCY  LIVE OCT 19")
+    card = {"client": "Jack Collins", "source": source, "launch_iso": "2026-10-19",
+            "fields": {"name": "Jack Collins", "agency": "ROADMAP"},
+            "parts": [{"kind": "aged", "package": "aged vet 30-90", "leads": "60", "states": "NC, TX, TN, CO",
+                       "launch_iso": ""},
+                      {"kind": "fresh", "package": "fresh vet", "leads": "20", "states": "NC, TX, TN, CO",
+                       "launch_iso": ""}]}
+    cards = jobs.split_order(card, today=date(2026, 10, 19))
+    fresh = [one for one in cards if one["kind"] == "fresh"]
+
+    assert fresh[0]["fields"]["launch"] == "Monday, October 19" and fresh[0]["launch_iso"] == "2026-10-19"
+
+
+def test_a_line_without_a_day_beside_one_with_stays_blank():
+    source = "NAME: Patrick Moreno\n34 OTP Vets waiting on states\n25 OTP IULs live Sunday\n100 Aged Vets 180+ GA"
+    card = {"client": "Patrick Moreno", "source": source, "launch_iso": "2026-10-25",
+            "fields": {"name": "Patrick Moreno"},
+            "parts": [{"kind": "aged", "package": "Aged Vets 180+", "leads": "100", "states": "GA", "launch_iso": ""},
+                      {"kind": "fresh", "package": "OTP Vets", "leads": "34", "states": "", "launch_iso": ""},
+                      {"kind": "fresh", "package": "OTP IULs", "leads": "25", "states": "", "launch_iso": "2026-10-25"}]}
+    fresh = [one for one in jobs.split_order(card, today=date(2026, 10, 22)) if one["kind"] == "fresh"]
+
+    assert [one["launch_iso"] for one in fresh] == ["", "2026-10-25"]
