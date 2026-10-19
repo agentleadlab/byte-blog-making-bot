@@ -4193,3 +4193,20 @@ def test_a_card_ryte_made_from_a_payment_that_went_through_is_left_alone(monkeyp
     bot, _asked, comments, _said = _failed_watch(monkeypatch, failed_at=failed_at, cards=[card], made_by_ryte=["c9"])
     asyncio.run(client._failed_payments_once(bot, now=failed_at + timedelta(hours=1)))
     assert comments == []
+
+
+@pytest.mark.parametrize("text, named", [
+    ("Mandatory entire amount needs moved over Kath and Jenn setup a discord call", True),
+    ("Faith can you send the new link", True),
+    ("@nic0l3 @thereseguba can you take a look", False),
+    ("Give Tre admin access to ROADMAP server, add the Nova bot", False),
+])
+def test_a_job_nobody_tagged_goes_to_somebody_the_comment_names(text, named):
+    """"these are not faith's tasks right?" - Tre's Roadmap steps and "Report
+    back to Santiago Villegas" went on Faith's checklist, named nowhere."""
+    from wilbyte import tagged
+
+    faith = tagged.Person(username="faithhannahcalla", full_name="Faith Hannah Calla")
+    kath = tagged.Person(username="kathleenmarie15", full_name="Kathleen Marie")
+    who = kath if "Kath" in text else faith
+    assert jobs._named_in_comment(text, who) is named

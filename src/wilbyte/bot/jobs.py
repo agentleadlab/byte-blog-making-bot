@@ -3656,6 +3656,11 @@ def _read_the_tags(config, wants, people, cards, problems, held_by=None) -> list
             person = tagged.person_named(str(entry.get("person") or ""), people)
             if person is None or not person.keeps:
                 continue
+            # Only somebody the comment names. The reading guessed: Faith got
+            # Tre's Roadmap steps and "Report back to Santiago Villegas" off
+            # her own comment - "these are not faith's tasks right?".
+            if not _named_in_comment(note.text, person):
+                continue
             already = tagged.how_many_filed(
                 note, held_by(person) if held_by else []
             )
@@ -3670,6 +3675,21 @@ def _read_the_tags(config, wants, people, cards, problems, held_by=None) -> list
             if made is not None:
                 tasks.append(made)
     return tasks
+
+
+def _named_in_comment(text: str, person) -> bool:
+    """Whether a comment names this person - username, full name, first name
+    or what the team calls them ("Kath", "Jenn", "KC") - as a word of its
+    own. "Kath and Jenn setup a discord call" names both."""
+    from .. import dailyops
+
+    said = str(text or "").casefold()
+    username = str(getattr(person, "username", "") or "").casefold()
+    names = {username, str(getattr(person, "full_name", "") or "").casefold()}
+    first = person.first_name() if hasattr(person, "first_name") else ""
+    names.add(str(first or "").casefold())
+    names |= {called for called, handle in dailyops.TEAM_HANDLES.items() if handle.casefold() == username}
+    return any(name and re.search(rf"(?<![\w@]){re.escape(name)}(?!\w)", said) for name in names)
 
 
 def _their_jobs(written: dict, comment_id: str, person, people) -> list:
