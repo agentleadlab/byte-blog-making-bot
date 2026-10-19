@@ -4311,3 +4311,19 @@ def test_check_aged_lines_is_a_command():
     request = mentions.parse("<@1> check aged lines")
     assert request.action == "agedlines" and request.brief == ""
     assert mentions.parse("<@1> check aged lines 14 days").brief == "14"
+
+
+def test_check_aged_lines_leaves_the_new_agent_lines_to_their_own_cards(monkeypatch):
+    """Patrick Moreno's Aged card was flagged against his OTP lines too."""
+    invoice = {"id": "i54", "number": "INV-20054", "name": "Patrick Moreno", "email": "p@example.com",
+               "created": "2026-10-19T14:30:00Z", "description": "", "lines": [],
+               "notes": ("Lead Type: 50 Aged Vets 30-90\nStates: TX\nLead Type: 100 Aged IULs 30-90\nStates: NC GA FL TX\n"
+                         "Lead Type: 34 OTP Vets\nStates: IN\nLead Type: 25 OTP IULs\nStates: AL AZ CA")}
+    made = int(datetime(2026, 10, 19, 14, 42, tzinfo=timezone.utc).timestamp())
+    card = {"id": f"{made:08x}0000000000000002", "name": "Aged Leads - Patrick Moreno", "shortUrl": "u",
+            "desc": ("Name: Patrick Moreno\nEmail: p@example.com\nLead Type: Aged Vets 30-90 + Aged IULs 30-90\n"
+                     "States: Aged Vets 30-90: TX; Aged IULs 30-90: NC, GA, FL, TX\n")}
+    config = _aged_board(monkeypatch, [card])
+    flagged, _looked = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                             invoices=[invoice])
+    assert flagged == []

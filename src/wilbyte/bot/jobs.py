@@ -14384,6 +14384,10 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
                 continue
             said = invoice_said(invoice)
             lines = ordercards._lines_with_states(said)
+            # The aged lines only: Patrick Moreno's 34 OTP Vets and 25 OTP IULs
+            # are on New Agent cards of their own, and flagged his Aged card.
+            if any(re.search(r"\baged\b", kind, re.IGNORECASE) for kind, _codes in lines):
+                lines = [(kind, codes) for kind, codes in lines if re.search(r"\baged\b", kind, re.IGNORECASE)]
             if len(lines) < 2 or len({frozenset(codes) for _kind, codes in lines}) < 2:
                 continue
             wrong = []
