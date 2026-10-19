@@ -739,3 +739,17 @@ def test_talking_to_ryte_is_answered_not_given_the_menu(monkeypatch):
 def test_asking_for_commands_still_gets_the_menu(monkeypatch):
     chatted, sent = _mentioned(monkeypatch, "<@1> commands")
     assert chatted == [] and sent and "Hi, I'm RYTE" in sent[0]
+
+
+@pytest.mark.parametrize("text", [
+    "remove duplicates", "<@123> remove duplicates", "can you remove duplicates",
+    "remove duplicates please", "remove the duplicates on general", "remove duplicate items",
+    "Ryte, remove duplicates", "get rid of the duplicates", "de-dupe",
+])
+def test_remove_duplicates_said_any_short_way(text):
+    assert parse(text).action == "dedupe"
+
+
+@pytest.mark.parametrize("text", ["why are there duplicates", "how do I remove duplicates?"])
+def test_asking_about_duplicates_is_not_the_command(text):
+    assert parse(text).action != "dedupe"

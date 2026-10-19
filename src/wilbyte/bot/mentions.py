@@ -897,8 +897,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         kind = "aged" if template.group(1).casefold().startswith("aged") else "fresh"
         return MentionRequest(action="ordertemplate", brief=f"{kind} {template.group(2)}")
     # "remove duplicates" - the same line twice on one checklist, once left.
-    if re.match(r"\s*(?:remove|delete|clear|clean(?:\s+up)?)\s+(?:the\s+)?(?:duplicates?|dupes?|copies|repeats?)"
-                r"(?:\s+(?:on|from)\s+(?:the\s+)?(?:checklists?|cards?))?\s*[.?!]*\s*$|\s*dedupe\b", text, re.IGNORECASE):
+    # Said any short way: "can you remove duplicates", "remove duplicates
+    # please", "remove the duplicate items on general" all went to chat.
+    if len(text.split()) <= 14 and re.match(
+            r"\s*(?:(?:hey\s+)?(?:ryte|please|pls|can\s+you|could\s+you|go(?:\s+and)?|now)[\s,]+)*"
+            r"(?:remove|delete|clear|clean(?:\s+up)?|get\s+rid\s+of|take\s+(?:out|off))\s+"
+            r"(?:(?:the|any|all|all\s+the|those|these)\s+)?(?:duplicates?|duplicated|dupes?|copies|repeats?|doubles?)\b"
+            r"|\s*(?:please\s+)?de-?dupe\b", text, re.IGNORECASE):
         return MentionRequest(action="dedupe", brief=text)
     # "tag check" - every tagged comment on the day's cards onto the
     # checklists of everybody it tags, whatever it says.
