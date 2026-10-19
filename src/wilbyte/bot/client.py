@@ -9200,10 +9200,21 @@ AGED_ORDERS_ON = True
 _ORDER_ACTIVE: set = set()
 
 
-def _said_line(message) -> str:
+def _said_line(message, tz: str = "") -> str:
+    """"[10/18 09:40PM] Kath: launch tomorrow" - stamped on the board's
+    clock when it's known: Discord's is UTC, and a Sunday-evening note read
+    as Monday's made its "tomorrow" a Tuesday."""
     who = str(getattr(message.author, "display_name", "") or getattr(message.author, "name", ""))
     text, _images = _request_bits(message)
-    return f"[{message.created_at:%m/%d %I:%M%p}] {who}: {text}"
+    when = message.created_at
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+
+            when = when.astimezone(ZoneInfo(tz))
+        except Exception:
+            pass
+    return f"[{when:%m/%d %I:%M%p}] {who}: {text}"
 
 
 async def _order_said(bot, message, *, since: datetime | None = None,
@@ -9213,6 +9224,8 @@ async def _order_said(bot, message, *, since: datetime | None = None,
     to be about it). (text, images, the thread's id or None, the team's own
     notes in the thread as they wrote them)."""
     from .. import ordercards
+
+    tz = str(getattr(getattr(getattr(bot, "config", None), "schedule", None), "timezone", "") or "")
 
     lines, images, notes = [], [], []
     # The team's screenshots first, numbered as they're marked in the notes -
@@ -9225,12 +9238,12 @@ async def _order_said(bot, message, *, since: datetime | None = None,
         thread = channel
         try:
             starter = await channel.parent.fetch_message(channel.id)
-            lines.append(_said_line(starter))
+            lines.append(_said_line(starter, tz))
             images += _request_bits(starter)[1]
         except Exception:
             pass
     else:
-        lines.append(_said_line(message))
+        lines.append(_said_line(message, tz))
         images += _request_bits(message)[1]
         guild = getattr(message, "guild", None)
         thread = getattr(message, "thread", None) or (guild.get_thread(message.id) if guild is not None else None)
@@ -9253,7 +9266,7 @@ async def _order_said(bot, message, *, since: datetime | None = None,
         except Exception:
             starter = None
         if starter is not None and not getattr(starter.author, "bot", False):
-            lines.append(_said_line(starter))
+            lines.append(_said_line(starter, tz))
             said = _note_without_tags(_request_bits(starter)[0]).strip()
             if said:
                 notes.append(said)
@@ -9263,7 +9276,7 @@ async def _order_said(bot, message, *, since: datetime | None = None,
                 if (getattr(one.author, "bot", False) and not getattr(one, "embeds", None)
                         and not _payment_details(one)):
                     continue
-                lines.append(_said_line(one))
+                lines.append(_said_line(one, tz))
                 said, pictures = _request_bits(one)
                 if getattr(one.author, "bot", False):
                     images += pictures

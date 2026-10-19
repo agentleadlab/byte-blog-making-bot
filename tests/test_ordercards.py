@@ -3645,3 +3645,50 @@ def test_claudes_day_is_dropped_when_the_order_doesnt_say_it(monkeypatch):
                            today=date(2026, 10, 19))
 
     assert card["fields"]["launch"] == "" and card["launch_iso"] == ""
+
+
+TARAFA = """[10/18 09:40PM] Nova: **New Payment | Payra** ✅
+**NAME:** Matthew Tarafa
+**PRODUCT:** Text-Verified Trucker IUL
+[10/18 09:45PM] Kath: 40 OTP Trucker IUL Leads
+Launch tomorrow 1am EST"""
+
+
+def test_tomorrow_is_from_the_day_it_was_written():
+    """"AND THIS ONE??????????" - Matthew Tarafa's "Launch tomorrow 1am
+    EST", written on the Sunday, went on his card as Tuesday."""
+    from wilbyte import agents
+
+    named = jobs._named_days_by_stamp(TARAFA, date(2026, 10, 19))
+    assert agents.find_launch(named, today=date(2026, 10, 19)) == date(2026, 10, 19)
+    assert jobs.launch_written(date(2026, 10, 19), TARAFA, today=date(2026, 10, 19))
+    assert not jobs.launch_written(date(2026, 10, 20), TARAFA, today=date(2026, 10, 19))
+
+
+def test_a_note_is_dated_by_its_own_stamp():
+    note = "40 OTP Trucker IUL Leads\nLaunch tomorrow 1am EST"
+    assert jobs._written_on(TARAFA, note, date(2026, 10, 19)) == date(2026, 10, 18)
+    assert jobs._named_days(note, date(2026, 10, 18)).endswith("Launch October 19 1am EST")
+
+
+def test_not_today_stays_not_today():
+    from wilbyte import agents
+
+    said = jobs._named_days("launch not today, Tuesday", date(2026, 10, 19))
+    assert agents.find_launch(said, today=date(2026, 10, 19)) == date(2026, 10, 20)
+
+
+def test_the_invoice_header_isnt_today_once_named():
+    said = jobs._named_days("IF YOU USE CC/DEBIT WE CAN START YOUR ORDER TODAY", date(2026, 10, 19))
+    assert "October" not in said
+
+
+def test_a_note_in_december_read_in_january_is_last_year():
+    days = jobs._days_said("[12/31 11:00PM] K: launch tomorrow", date(2027, 1, 1))
+    assert days[0][1] == date(2026, 12, 31)
+
+
+def test_notes_are_stamped_on_the_boards_clock():
+    message = SimpleNamespace(author=SimpleNamespace(display_name="Kath"), content="launch tomorrow",
+                              embeds=[], attachments=[], created_at=datetime(2026, 10, 19, 1, 45, tzinfo=timezone.utc))
+    assert client._said_line(message, "America/New_York").startswith("[10/18 09:45PM] Kath:")

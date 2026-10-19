@@ -12913,14 +12913,73 @@ _POST_LINE = re.compile(
     r"discount[^:]*|\$\d+/lead off|paid on|date|due)\W*:", re.IGNORECASE)
 
 
+_STAMPED = re.compile(r"^\[(\d\d)/(\d\d) \d\d:\d\d[AP]M\]", re.MULTILINE)
+_TODAY_WORD = re.compile(r"\b(?:today|tonight|tdy)\b", re.IGNORECASE)
+_TOMORROW_WORD = re.compile(r"\b(?:tomorrow|tmrw?|tmw|tomorow|tommorow)\b", re.IGNORECASE)
+
+
+def _days_said(text: str, today) -> list[tuple[int, object]]:
+    """(where, the day) for every "[10/18 09:40PM]" stamp in the order's text,
+    in the year that puts it on or before today."""
+    found = []
+    for stamp in _STAMPED.finditer(str(text or "")):
+        try:
+            day = date(today.year, int(stamp.group(1)), int(stamp.group(2)))
+        except ValueError:
+            continue
+        if day > today + timedelta(days=1):
+            day = day.replace(year=today.year - 1)
+        found.append((stamp.start(), day))
+    return found
+
+
+def _written_on(text: str, note: str, today):
+    """The day a note was written: the stamp before where it is in the text."""
+    first = next((line.strip() for line in str(note or "").splitlines() if line.strip()), "")
+    at = str(text or "").find(first) if first else -1
+    day = today
+    for where, said in _days_said(text, today):
+        if at < 0 or where > at:
+            break
+        day = said
+    return day
+
+
+def _named_days(said: str, written) -> str:
+    """"today" and "tomorrow" as the dates they were, from the day written."""
+    from .. import ordercards
+
+    said = ordercards.INVOICE_BOILERPLATE.sub(" ", str(said or ""))
+    if written is None:
+        return said
+    tomorrow = written + timedelta(days=1)
+    said = _TOMORROW_WORD.sub(f"{tomorrow:%B} {tomorrow.day}", said)
+    return _TODAY_WORD.sub(f"{written:%B} {written.day}", said)
+
+
+def _named_days_by_stamp(text: str, today) -> str:
+    """The order's text with each note's today / tomorrow as dates, by its
+    own stamp."""
+    text = str(text or "")
+    stamps = _days_said(text, today)
+    if not stamps:
+        return text
+    out, last = [text[:stamps[0][0]]], len(text)
+    for at, (where, day) in enumerate(stamps):
+        end = stamps[at + 1][0] if at + 1 < len(stamps) else last
+        out.append(_named_days(text[where:end], day))
+    return "".join(out)
+
+
 def launch_written(when, text: str, *, today) -> bool:
     """Whether the order names this launch day: its weekday, its date, or
     today / tomorrow when that's what it is - outside the payment post's own
     lines and the times RYTE stamps on notes."""
     from .. import ordercards
 
-    said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", str(text or ""), flags=re.MULTILINE)
-    said = ordercards.INVOICE_BOILERPLATE.sub(" ", said)
+    # Each note's today / tomorrow as the date it meant, then without stamps.
+    said = _named_days_by_stamp(ordercards.INVOICE_BOILERPLATE.sub(" ", str(text or "")), today)
+    said = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", said, flags=re.MULTILINE)
     said = "\n".join(line for line in said.splitlines() if not _POST_LINE.match(line)).casefold()
     names = [f"{when:%A}".casefold(), f"{when:%a}".casefold()]
     if when.weekday() == 1:
@@ -13135,7 +13194,14 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Monday, October 19.
         team = [str(one) for one in notes or () if not str(one).startswith("Payra invoice note:")]
         invoice = [str(one) for one in notes or () if str(one).startswith("Payra invoice note:")]
-        for said in ("\n".join(team), "\n".join(invoice), text):
+        # "tomorrow" from the day it was written, not the day it's read:
+        # Matthew Tarafa's "Launch tomorrow 1am EST", written on the Sunday,
+        # went on his card as Tuesday. A note by the day its stamp says; the
+        # invoice by the day it was paid.
+        paid_on = _days_said(text, today)[0][1] if _days_said(text, today) else today
+        team = [_named_days(one, _written_on(text, one, today)) for one in team]
+        invoice = [_named_days(one, paid_on) for one in invoice]
+        for said in ("\n".join(team), "\n".join(invoice), _named_days_by_stamp(text, today)):
             try:
                 when = agents.find_launch(ordercards.INVOICE_BOILERPLATE.sub(
                     " ", re.sub(stamps, "", said, flags=re.MULTILINE)), today=today)
