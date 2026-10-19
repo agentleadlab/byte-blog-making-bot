@@ -9872,7 +9872,8 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None, catchin
     amount = (_AMOUNT.search(said) or [None, ""])[1]
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
-        note = await _invoice_for(bot, key, name=name, email=email, amount=amount, product=product, said=said)
+        note = await _invoice_for(bot, key, name=name, email=email, amount=amount, product=product, said=said,
+                                  paid_at=getattr(message, "created_at", None))
     except Exception:
         # Payra down is no reason for no card: made from the payment and the
         # thread, and said - a silent "failed" left nothing to see.
@@ -10499,14 +10500,15 @@ async def _order_invoice_note(bot, message) -> str:
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
         return await _invoice_for(bot, str(getattr(message, "id", "") or ""), name=name, email=email,
-                                  amount=amount, product=product, said=said)
+                                  amount=amount, product=product, said=said,
+                                  paid_at=getattr(message, "created_at", None))
     except Exception:
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
         return ""
 
 
 async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, product: str,
-                       said: str = "") -> str:
+                       said: str = "", paid_at=None) -> str:
     """The note on the invoice behind this payment post - one no other
     payment has taken, written down as this one's. Raises when Payra can't be
     read.
@@ -10529,7 +10531,8 @@ async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, pro
                  if other != key and isinstance(one, dict) and one.get("invoice_id")}
         note, invoice_id = await asyncio.to_thread(partial(
             jobs.payra_invoice_pick, bot.config, name=name, email=email, amount=amount, product=product,
-            taken=taken, **({"number": number} if number else {})))
+            taken=taken, **({"number": number} if number else {}),
+            **({"paid_at": paid_at} if paid_at is not None else {})))
         if invoice_id and key:
             await _order_note(key, invoice_id=invoice_id)
         return note

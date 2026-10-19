@@ -2971,7 +2971,7 @@ def _note_is(monkeypatch, note):
     """The invoice note every payment gets, in a test."""
     monkeypatch.setattr(jobs, "payra_invoice_note", note)
     monkeypatch.setattr(jobs, "payra_invoice_pick", lambda config, **kw: (
-        note(config, **{key: value for key, value in kw.items() if key not in ("taken", "number")}), ""))
+        note(config, **{key: value for key, value in kw.items() if key not in ("taken", "number", "paid_at")}), ""))
 
 
 def test_two_invoices_are_two_cards_even_paid_together(monkeypatch):
@@ -3562,3 +3562,44 @@ def test_novas_payment_details_in_the_thread_are_read(said, details):
     """Drucilla Bell's states were in Nova's thread message - a bot's, with
     no embed, so passed over."""
     assert client._payment_details(SimpleNamespace(content=said)) is details
+
+
+def test_two_invoices_of_the_same_total_each_go_to_the_payment_that_paid_it(monkeypatch):
+    """"WHAT ARE WE DOING??????" - Wiser Charles paid $103.50 twice on Oct
+    16: INV-20057, 100 VET California, and INV-20058, 100 VET in eight
+    states. Both cards got the eight. Payra's payment says which invoice it
+    paid."""
+    invoices = {
+        "i57": {"id": "i57", "number": "INV-20057", "name": "Wiser Charles", "total": 103.50,
+                "notes": "Lead Type: Aged Veteran - 180+ days\nStates Leads In: California\nNumber of Requested Leads: 100",
+                "created": "2026-10-16T20:40:00Z"},
+        "i58": {"id": "i58", "number": "INV-20058", "name": "Wiser Charles", "total": 103.50,
+                "notes": "Lead Type: Aged Veteran - 180+ days\nStates Leads In: CA FL MI LA NC SC NJ OH\n"
+                         "Number of Requested Leads: 100",
+                "created": "2026-10-16T20:41:00Z"}}
+    payments = {
+        "p1": {"id": "p1", "customer": "Wiser Charles", "amount": 103.5, "paid_on": "2026-10-16T20:50:00Z",
+               "invoice_ids": ["i57"]},
+        "p2": {"id": "p2", "customer": "Wiser Charles", "amount": 103.5, "paid_on": "2026-10-16T20:53:00Z",
+               "invoice_ids": ["i58"]}}
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: invoices if kind == "invoices" else payments)
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    now = datetime(2026, 10, 16, 21, 0, tzinfo=timezone.utc)
+
+    first, first_id = jobs.payra_invoice_pick(config, name="Wiser Charles", amount="$103.5", now=now,
+                                              paid_at=datetime(2026, 10, 16, 20, 50, 20, tzinfo=timezone.utc))
+    second, second_id = jobs.payra_invoice_pick(config, name="Wiser Charles", amount="$103.5", now=now,
+                                                paid_at=datetime(2026, 10, 16, 20, 53, 15, tzinfo=timezone.utc),
+                                                taken={first_id})
+    assert first_id == "i57" and "California" in first and "CA FL" not in first
+    assert second_id == "i58" and "CA FL MI" in second
+
+
+def test_without_the_posts_time_it_is_matched_as_before(monkeypatch):
+    invoices = {"i1": {"id": "i1", "number": "INV-1", "name": "Wiser Charles", "total": 103.50,
+                       "notes": "Lead Type: Aged VET", "created": "2026-10-16T20:40:00Z"}}
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: invoices if kind == "invoices" else {})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    _note, which = jobs.payra_invoice_pick(config, name="Wiser Charles", amount="$103.5",
+                                           now=datetime(2026, 10, 16, 21, 0, tzinfo=timezone.utc))
+    assert which == "i1"

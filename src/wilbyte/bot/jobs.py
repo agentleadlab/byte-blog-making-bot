@@ -13622,7 +13622,7 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
 
 
 def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
-                       now=None, taken=(), number: str = "") -> tuple[str, str]:
+                       now=None, taken=(), number: str = "", paid_at=None) -> tuple[str, str]:
     """The note on the Payra invoice behind a payment just posted - "can ryte
     access agents state for aged leads on summit pay invoice internal note".
     Payra read now, so the invoice paid a minute ago is there. Matched by
@@ -13650,6 +13650,14 @@ def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: st
             theirs = re.sub(r"[^0-9]", "", str(invoice.get("number") or ""))
             if theirs == wanted_number:
                 return invoice_said(invoice), str(number).upper()
+    # The invoice the payment itself was put against. Wiser Charles paid
+    # $103.50 twice on Oct 16 - INV-20057, California, and INV-20058, eight
+    # states - and both cards got the eight: the same total can't tell two
+    # invoices apart, and Payra's payment record can.
+    paid_against = _invoice_paid_against(config, name=name, amount=amount, paid_at=paid_at, now=now,
+                                         invoices=data.get("invoices") or {}, taken=taken)
+    if paid_against is not None:
+        return invoice_said(paid_against[0]), paid_against[1]
     for held_as, invoice in (data.get("invoices") or {}).items():
         theirs = (email and invoice.get("email") == email) or clearout.name_match(name, invoice.get("name", "")) >= 2
         if not theirs or not invoice_said(invoice):
@@ -13682,6 +13690,62 @@ def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: st
         return "", ""
     found.sort(key=lambda one: (one[0], one[1], one[2]), reverse=True)
     return invoice_said(found[0][3]), found[0][4]
+
+
+#: How far a Payra payment's time can be from its post's and still be it.
+PAYMENT_POST_GAP = timedelta(hours=3)
+
+
+def _invoice_paid_against(config: Config, *, name: str, amount: str, paid_at, now, invoices: dict, taken):
+    """(invoice, its id) for the Payra payment behind a post: theirs, the same
+    amount, paid nearest the post's time, against an invoice nobody else has.
+    None when the post's time isn't known or no payment says."""
+    from .. import clearout, payraapi
+
+    if paid_at is None or not name:
+        return None
+    paid_at = paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)
+    try:
+        payments = payra_recent(config, "payments", now=now)
+    except Exception:
+        return None
+    wanted = payraapi._cents(amount)
+    by_id = {str(one.get("id") or held_as): one for held_as, one in invoices.items()}
+    by_number = {re.sub(r"[^0-9]", "", str(one.get("number") or "")): one for one in invoices.values()
+                 if one.get("number")}
+    found = []
+    for payment in payments.values():
+        if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
+            continue
+        if wanted is not None and payraapi._cents(payment.get("amount")) != wanted:
+            continue
+        try:
+            paid = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
+        gap = abs(paid - paid_at)
+        if gap > PAYMENT_POST_GAP:
+            continue
+        named = [by_id.get(str(one)) for one in [*(payment.get("invoice_ids") or []), payment.get("invoice_id")]
+                 if one]
+        number = re.sub(r"[^0-9]", "", str(payment.get("invoice_number") or ""))
+        if number:
+            named.append(by_number.get(number))
+        for invoice in named:
+            if invoice is None:
+                continue
+            invoice_id = str(invoice.get("id") or invoice.get("number") or "")
+            numbered = re.sub(r"[^0-9]", "", str(invoice.get("number") or ""))
+            if invoice_id in taken or (numbered and any(
+                    re.fullmatch(r"INV-?0*" + numbered.lstrip("0"), one, re.IGNORECASE) for one in taken)):
+                continue
+            found.append((gap, invoice, invoice_id))
+            break
+    if not found:
+        return None
+    found.sort(key=lambda one: one[0])
+    return found[0][1], found[0][2]
 
 
 def _other_product(paid_for: str, invoice: str) -> bool:
