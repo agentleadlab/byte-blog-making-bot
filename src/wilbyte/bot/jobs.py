@@ -5313,10 +5313,44 @@ def setup_balance(config: Config, *, day=None, fix: bool = False) -> list[dict]:
                             report["added"].append((person, who))
                         except Exception as exc:
                             report["loose"].append((person, f"couldn't add {who}: {_short(exc, 80)}"))
+            # The day's Lead Order card against it - "but this is 22": 21
+            # agents on the setup card, 22 lines on the Lead Order card.
+            report.update(_lead_order_against(client, every, starts, set(everyone), names_by_key))
             found.append(report)
     finally:
         client.close()
     return found
+
+
+def _lead_order_against(client, every, day, on_setup: set, names_by_key: dict) -> dict:
+    """The Lead Order card covering `day`, held up against the setup card's
+    agents: {"lead_order": {name, url, count}, "lo_extra": [agents on it and
+    not the setup card], "lo_missing": [the other way], "lo_twice": [(agent,
+    how many lines)]}. {} when there's no Lead Order card for the day."""
+    from .. import agents as rules
+    from .. import dailyops
+
+    card = dailyops.cards_covering(every, day).get("lead_order")
+    if card is None:
+        return {}
+    held = client.card_checklists(str(card.get("id") or ""))
+    keys: dict[str, int] = {}
+    count = 0
+    for checklist in held or []:
+        for item in checklist.get("checkItems") or []:
+            count += 1
+            url, _label = rules.split_item(str(item.get("name") or ""))
+            if url:
+                key = rules.card_key(url)
+                keys[key] = keys.get(key, 0) + 1
+    name = lambda key: names_by_key.get(key) or key
+    return {
+        "lead_order": {"name": str(card.get("name") or ""), "url": str(card.get("shortUrl") or card.get("url") or ""),
+                       "count": count},
+        "lo_extra": [name(key) for key in keys if key not in on_setup],
+        "lo_missing": [name(key) for key in on_setup if key not in keys],
+        "lo_twice": [(name(key), many) for key, many in keys.items() if many > 1],
+    }
 
 
 def agent_launch(config: Config, asked: str) -> tuple[list[dict], list[str]]:

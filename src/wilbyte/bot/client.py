@@ -9790,6 +9790,18 @@ async def _setup_balance(bot, *, fix: bool = False) -> str:
     for card in found:
         counts = " · ".join(f"{person} {count}" for person, count in card["counts"].items())
         out.append(f"📋 **{card['name']}** — {counts}\n{card['url']}")
+        order = card.get("lead_order")
+        if order:
+            out.append(f"📦 **{order['name']}** — {order['count']} line(s)")
+            for who in card.get("lo_extra") or []:
+                out.append(f"• **{who}** — on the Lead Order card, not on the setup card (taken off since? "
+                           "remove it from Lead Order if so)")
+            for who in card.get("lo_missing") or []:
+                out.append(f"• **{who}** — on the setup card, not on the Lead Order card yet (`@Ryte spread`)")
+            for who, many in card.get("lo_twice") or []:
+                out.append(f"• **{who}** — {many} lines on the Lead Order card (one per lead type they bought)")
+            if not (card.get("lo_extra") or card.get("lo_missing") or card.get("lo_twice")):
+                out.append("✅ Same agents as the setup card.")
         if not (card["missing"] or card["twice"] or card["loose"]):
             out.append("✅ Every agent is on every checklist, once.")
             continue

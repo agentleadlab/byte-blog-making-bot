@@ -4378,6 +4378,33 @@ def test_the_setup_card_checklists_are_held_up_against_each_other(monkeypatch, c
     assert board.items == [("cl-K", f"{b} OTP IUL")] and card["added"] == [("Kathleen", "New Agent - Bo Baker")]
 
 
+def test_the_lead_order_card_is_held_up_against_the_setup_card(monkeypatch, config):
+    """"but this is 22" - 21 agents on Tuesday's setup card, 22 lines on its
+    Lead Order card."""
+    from wilbyte.bot import jobs
+
+    a, b, c = "https://trello.com/c/AAAAAAAA", "https://trello.com/c/BBBBBBBB", "https://trello.com/c/CCCCCCCC"
+    board = BalanceBoard({
+        "Today": [{"id": "setup", "name": "Agent Setup Going Live Tuesday 10/20", "shortUrl": "https://trello.com/c/SETUP"},
+                  {"id": "lo", "name": "Lead Order 10/20/26", "shortUrl": "https://trello.com/c/LO"},
+                  {"id": "a", "name": "New Agent - Ann Able", "url": a},
+                  {"id": "b", "name": "New Agent - Bo Baker", "url": b},
+                  {"id": "c", "name": "New Agent - Cy Carter", "url": c}],
+    }, held={
+        "setup": [{"id": f"cl-{who}", "name": who, "checkItems": [{"name": f"{a} OTP VETS"}, {"name": f"{b} OTP IUL"}]}
+                  for who in ("Therese", "Kathleen", "Nicole")],
+        "lo": [{"id": "lo-v", "name": "OTP VET", "checkItems": [{"name": f"{a} OTP VETS"}, {"name": f"{c} OTP VETS"}]},
+               {"id": "lo-i", "name": "OTP IUL", "checkItems": [{"name": f"{b} OTP IUL"}, {"name": f"{a} OTP IUL"}]}],
+    })
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    (card,) = jobs.setup_balance(config, day=date(2026, 10, 19))
+    assert card["lead_order"]["count"] == 4
+    assert card["lo_extra"] == ["New Agent - Cy Carter"]
+    assert card["lo_missing"] == []
+    assert card["lo_twice"] == [("New Agent - Ann Able", 2)]
+
+
 def test_a_tag_the_automation_left_without_an_item_gets_one(monkeypatch, config):
     """"why didnt you add this to NICOLE'S CHECKKIST" - tags and a screenshot,
     no words, and no item from the board's automation."""
