@@ -7,6 +7,7 @@ without a gateway connection.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -8477,6 +8478,30 @@ def _plan_for(client, agent, *, day, tomorrow, dated, every_card, parked=False):
 
     plan = rules.AgentPlan(agent=agent, when=agent.when(day))
 
+    # Already set up: today's job whatever the date says, or with no date at
+    # all, and done already for everybody but Nicole and Kathleen - theirs are
+    # left for them to tick.
+    if agent.set_up:
+        plan.when = "today"
+        if not (agent.lead_type or agent.stated):
+            plan.problems.append(rules.cannot_read(
+                dataclasses.replace(agent, launch=day), needs_lead_type=True))
+            return plan
+        _same_day_steps(client, plan, agent, day=day, dated=dated,
+                        every_card=every_card, label=agent.stated)
+        left = {one.casefold() for one in rules.SET_UP_LEFT_FOR}
+        ticked = []
+        for step in plan.steps:
+            step.checked = " ".join(step.checklist.split()).casefold() not in left
+            if step.checked and step.checklist not in ticked:
+                ticked.append(step.checklist)
+        said = "already set up — " + (
+            f"ticked for {', '.join(ticked)}, " if ticked else "")
+        said += "left for Nicole and Kathleen"
+        plan.note = f"{said}; {plan.note}" if plan.note else said
+        plan.move_to = rules.DONE
+        return plan
+
     # Without a launch date there is nothing to decide. It still needs a
     # person, and it waits in Franklin's list while it does - "move it to my
     # section and he'll try again when launch date is available". His list is
@@ -8770,7 +8795,10 @@ def _carry_out(client, plan, where):
         if key not in by_name:
             made = client.create_checklist(step.card_id, step.checklist)
             by_name[key] = str(made.get("id") or "")
-        client.add_check_item(by_name[key], step.item)
+        if step.checked:
+            client.add_check_item(by_name[key], step.item, checked=True)
+        else:
+            client.add_check_item(by_name[key], step.item)
 
     if plan.move_to and plan.move_to in where:
         client.move_card(plan.agent.card_id, where[plan.move_to])

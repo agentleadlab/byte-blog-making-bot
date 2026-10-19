@@ -276,6 +276,10 @@ class Agent:
     # was made by copying another - both for `still_being_written`.
     touched: str = ""
     copied: bool = False
+    # "he is setup", "already set up", "setup done": filed today whatever the
+    # launch date says, with the lines ticked for everybody but Nicole and
+    # Kathleen - see `already_set_up`.
+    set_up: bool = False
 
     @property
     def ready(self) -> bool:
@@ -2142,8 +2146,54 @@ def read_agent(
         note=launch_conflict(
             said if find_launch(said, today=today) else from_comments, today=today
         ),
+        # Comments too, unless the card was copied from somebody else's and
+        # they came with it.
+        set_up=already_set_up(said) or (not copied and already_set_up(from_comments)),
     )
     return agent
+
+
+# "Saadawi and Barri is Barri Almoubarak - he is setup." Barri's card had no
+# launch date and sat in Franklin's list, when the note on it said the work
+# was already done: "for those card that has 'already setup' 'setup done' 'he
+# is setup', just file them for same day/today. and check them off for all
+# checklist except nicole and kathleen".
+_SET_UP = re.compile(
+    r"\balready\s+(?:been\s+)?set[\s-]?up\b"
+    r"|\bset[\s-]?up\s+(?:is\s+|was\s+|has\s+been\s+)?(?:already\s+)?(?:done|complete[d]?|finished)\b"
+    r"|\b(?:he|she|they|agent|client|it)\s*(?:is|are|was|'s|’s)\s+(?:already\s+|all\s+)?set[\s-]?up\b"
+    r"|\b(?:is|are)\s+(?:already\s+)?set[\s-]?up\s*(?:[.!]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_HUB_SAID = re.compile(r"\bhub\s+set[\s-]?up\s+(?:is|was)\s+complete", re.IGNORECASE)
+# "not set up yet", "isn't setup", "setup done?" - asked or denied, not said.
+_NOT_SET_UP = re.compile(r"\bnot\b|n[’']t\b|\byet\b|\bneeds?\b|\bonce\b|\bwhen\b|\bif\b|\?", re.IGNORECASE)
+
+
+def already_set_up(text: str) -> bool:
+    """Whether a line says the agent is already set up - plainly, not asked,
+    hedged or denied."""
+    for line in (text or "").splitlines():
+        # The hub's own "OTP VET ON DISTRO HUB setup is complete for ..." is
+        # read by `wrong_setup`, and comes along on copied cards.
+        if _HUB_SAID.search(line):
+            continue
+        for found in _SET_UP.finditer(line):
+            # The clause it was said in: from the last full stop before it to
+            # the end of the sentence it is in.
+            start = max(line.rfind(".", 0, found.start()), line.rfind(";", 0, found.start())) + 1
+            end = len(line)
+            for stop in ".;":
+                at = line.find(stop, found.end())
+                if at != -1:
+                    end = min(end, at + 1)
+            if not _NOT_SET_UP.search(line[start:end]):
+                return True
+    return False
+
+
+#: Whose lines are left for them to tick on an agent who is already set up.
+SET_UP_LEFT_FOR = ("Kath", "Kathleen", "Nicole")
 
 
 # A day named without committing to it. Aidan Abell's card: "Live once his
@@ -2680,6 +2730,8 @@ class Step:
     checklist: str
     item: str
     make_checklist: bool = False
+    #: Put on already ticked - an agent who is already set up.
+    checked: bool = False
 
 
 @dataclass

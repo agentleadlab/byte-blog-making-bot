@@ -4844,3 +4844,111 @@ def test_with_no_setup_card_left_the_days_own_ads_and_ops_cards_are_used():
     # Its Ads and Ops cards not up yet: waits, as before.
     plan = plan_for_launch("Lead Type: OTP Vets\nLive Monday, August 31", every_card=[], day=date(2026, 8, 30))
     assert plan.move_to == agents.PARKED
+
+
+# ----------------------------------- already set up: today, and ticked off
+
+
+BARRI = """Name: Barri Almoubarak
+Email:
+Phone Number:
+States:
+Lead Type/Package Selected: 26 OTP VETS
+Number of Leads Requested: 26
+Launch Date:
+Agency: Symmetry Financial
+Additional Notes:
+
+
+Note from Tre Tarpley: "Saadawi and Barri is Barri Almoubarak - he is setup."
+Paid via Zelle."""
+
+TODAYS = {
+    "ads": {"id": "ad", "name": "📊 Ads 08/25/26"},
+    "ops": {"id": "op", "name": "💻 Ops 08/25/26"},
+}
+
+
+def _barri(text=BARRI):
+    from wilbyte.bot import jobs
+
+    return jobs._plan_for(
+        Stub(), read(text, title="New Agent - Barri Almoubarak"),
+        day=TUESDAY, tomorrow=date(2026, 8, 26), dated=TODAYS,
+        every_card=[{"id": "s1", "name": "Agent Setup Going Live Friday 08/28"}],
+    )
+
+
+@pytest.mark.parametrize("said", [
+    "he is setup", "Already setup", "setup done", "Setup is complete",
+    "She’s already set up on the hub", "agent already set up last week",
+])
+def test_said_set_up(said):
+    assert agents.already_set_up(said)
+
+
+@pytest.mark.parametrize("said", [
+    "he is not setup yet", "is he setup?", "setup done?", "Needs setup",
+    "once setup is done, launch", "Setup for Monday", "set up for tomorrow",
+])
+def test_not_said_set_up(said):
+    assert not agents.already_set_up(said)
+
+
+def test_already_set_up_with_no_launch_date_is_filed_today():
+    """Barri Almoubarak: no launch date, "he is setup" - sat in Franklin's
+    list. "just file them for same day/today. and check them off for all
+    checklist except nicole and kathleen"."""
+    plan = _barri()
+
+    assert plan.problems == [] and plan.park_to == ""
+    assert plan.move_to == agents.DONE
+    assert {step.card_title for step in plan.steps} == {"📊 Ads 08/25/26", "💻 Ops 08/25/26"}
+    ticked = {step.checklist: step.checked for step in plan.steps}
+    assert ticked == {"Jenn": True, "Kath": False, "Nicole": False, "Therese": True}
+    assert "already set up" in plan.note
+
+
+def test_already_set_up_beats_a_later_launch_date():
+    plan = _barri(BARRI.replace("Launch Date:", "Launch Date: Friday, August 28"))
+
+    assert {step.card_title for step in plan.steps} == {"📊 Ads 08/25/26", "💻 Ops 08/25/26"}
+    assert plan.move_to == agents.DONE
+
+
+def test_already_set_up_still_needs_a_lead_type():
+    plan = _barri("he is setup")
+
+    assert plan.steps == []
+    assert "lead type" in " ".join(plan.problems)
+
+
+def test_ticked_lines_go_on_ticked():
+    from wilbyte.bot import jobs
+
+    class Board:
+        def __init__(self):
+            self.added = []
+
+        def card_checklists(self, card_id):
+            return [{"id": f"{card_id}-{name}", "name": name, "checkItems": []}
+                    for name in ("Jenn", "Kath", "Nicole", "Therese")]
+
+        def add_check_item(self, checklist_id, name, *, checked=False):
+            self.added.append((checklist_id, checked))
+
+        def move_card(self, card_id, list_id, *, position="top"):
+            pass
+
+    board = Board()
+    jobs._carry_out(board, _barri(), {agents.DONE: "done"})
+
+    assert sorted(board.added) == [
+        ("ad-Jenn", True), ("ad-Kath", False), ("ad-Nicole", False), ("op-Therese", True),
+    ]
+
+
+def test_the_hubs_own_confirmation_is_not_a_note_saying_so():
+    """Read by `wrong_setup`, and carried over on copied cards."""
+    assert not agents.already_set_up(EDUARDO_SETUP)
+    assert not agents.already_set_up(MATTHEW_SETUP[0])
