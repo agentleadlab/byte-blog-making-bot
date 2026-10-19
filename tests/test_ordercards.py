@@ -681,6 +681,27 @@ def test_a_gavel_put_back_on_an_order_put_with_another_card_makes_its_own(order,
     assert len(order.made) == 1
 
 
+def test_a_gavel_on_an_aged_order_put_with_a_new_agent_card_makes_its_card(order, monkeypatch):
+    """"nothing" - Ryte's own gavel came off Abdullah Bahrani's payment, which
+    Ryte doesn't hear, and the gavel put back was taken as the order done."""
+    order.kind = "aged"
+    message = _message()
+    ordercards.save({"900": {"status": "made", "merged": True, "kind": "aged", "card_id": "fresh1",
+                             "name": "New Agent - Abdullah Bahrani", "client": "Abdullah Bahrani",
+                             "url": "https://trello.com/c/FRESH"}})
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert len(order.made) == 1
+
+
+def test_a_gavel_on_an_order_with_its_card_says_where_it_is(order):
+    message = _message()
+    ordercards.save({"900": {"status": "made", "kind": "fresh", "card_id": "c1", "name": "New Agent - Cole Petersen",
+                             "client": "Cole Petersen", "url": "https://trello.com/c/C1"}})
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    assert order.made == []
+    assert "already has its card: https://trello.com/c/C1" in order.responder.sent[-1][0]
+
+
 def test_taking_off_a_gavel_that_made_nothing_says_nothing(order):
     before = len(order.responder.sent)
     asyncio.run(client._order_ungavelled(_bot(_message()), GAVEL))

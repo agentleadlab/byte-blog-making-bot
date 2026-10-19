@@ -10005,6 +10005,15 @@ async def _order_gavel_refused(bot, payload) -> None:
         quiet=True)
 
 
+def _put_with_other_kind(order: dict) -> bool:
+    """An order put with a card that isn't its kind - an aged payment with a
+    New Agent card, or the other way."""
+    name = str(order.get("name") or "").strip().casefold()
+    if not order.get("merged") or not name:
+        return False
+    return (str(order.get("kind") or "") == "aged") != name.startswith("aged")
+
+
 async def _order_gavelled(bot, payload) -> None:
     """🔨 on an order: the card, made - aged straight away, fresh on the
     Create button. Everything said in Ryte The Goat, nothing in Growth."""
@@ -10019,6 +10028,13 @@ async def _order_gavelled(bot, payload) -> None:
         # reads it afresh. Abdullah Bahrani's aged payment had been put with
         # his New Agent card, and putting the gavel back wrote the aged order
         # into that card's comments.
+        await _order_forget_made(key)
+        off = {}
+    if off.get("status") == "made" and key not in _ORDER_ACTIVE and _put_with_other_kind(off) \
+            and not getattr(payload, "catching_up", False):
+        # Put with a card of the other kind, and gavelled again however its
+        # gavel came off - Abdullah Bahrani's had Ryte's own taken off, which
+        # Ryte doesn't hear, and the gavel put back did nothing.
         await _order_forget_made(key)
         off = {}
     if off.get("status") == "off" and key not in _ORDER_ACTIVE:
@@ -10042,9 +10058,22 @@ async def _order_gavelled(bot, payload) -> None:
         await _order_forget_made(key)
     async with _ORDER_LOCK:
         held = await asyncio.to_thread(ordercards.load)
-        if (held.get(key) or {}).get("status") == "made" or key in _ORDER_ACTIVE:
-            return
-        _ORDER_ACTIVE.add(key)
+        made = held.get(key) or {}
+        if made.get("status") == "made" or key in _ORDER_ACTIVE:
+            already = made.get("status") == "made" and key not in _ORDER_ACTIVE
+        else:
+            already = None
+        if already is None:
+            _ORDER_ACTIVE.add(key)
+    if already is not None:
+        # Said, not silence: a gavel that does nothing looks like RYTE broke.
+        if already and responder is not None and not getattr(payload, "catching_up", False):
+            await responder.send(f"🔨 **{made.get('client') or made.get('name') or 'That order'}** already has its card: "
+                                 f"{made.get('url', '')}\n-# Take the gavel off and put it back to bring it up to date.",
+                                 quiet=True)
+        return
+    async with _ORDER_LOCK:
+        held = await asyncio.to_thread(ordercards.load)
         # A waiting aged order keeps what it's waited for and whether that
         # was said - it's said once.
         before = held.get(key) if (held.get(key) or {}).get("status") == "waiting" else {}
