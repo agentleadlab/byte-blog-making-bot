@@ -12913,7 +12913,8 @@ _NOT_NAME_WORDS = re.compile(
     r"\b(?:same|states?|live|today|tomorrow|leads?|vets?|veterans?|iul|fex|otp|aged|fresh|text|verified|mortgage|"
     r"protection|trucker|blue|collar|spanish|setup|set|agency|thank|thanks|please|monday|tuesday|wednesday|"
     r"thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|"
-    r"november|december|paid|zelle|card|order|new|agent|done|signed|nationwide|all|except)\b", re.IGNORECASE)
+    r"november|december|paid|zelle|card|order|new|agent|done|signed|nationwide|all|except|only|motion|"
+    r"notes?|name|email|phone|number|ringy|integration|discount|code|invoice)\b", re.IGNORECASE)
 
 
 def name_in_notes(notes) -> str:
@@ -13345,6 +13346,23 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     _number, on_post = _cards.post_invoice(text)
     named = name_in_notes([one for one in notes or () if not str(one).startswith("Payra invoice note:")]
                           + ([on_post] if on_post else []))
+    # "Name: Hunter Kahle" written in the notes is who it's for: a name
+    # guessed off a line of its own never beats it, and a name read that
+    # isn't one written is put right - his card went out as "Only Motion".
+    written = []
+    for said in [*(str(one) for one in notes or ()), on_post or ""]:
+        for found in re.finditer(r"^\W*(?:client\s+|agent\s+|full\s+)?name\s*:\s*([A-Za-z][A-Za-z'’.\- ]{2,40}?)\s*$",
+                                 said, re.MULTILINE | re.IGNORECASE):
+            if found.group(1).strip() not in written:
+                written.append(found.group(1).strip())
+    if written:
+        if named and not any(_cards.same_person(named, one) for one in written):
+            named = ""
+        # Not when the order says it's for somebody else: Hayden Keltner's
+        # "Name: Hayden Keltner ... for his agent Matthew Stewart".
+        if len(written) == 1 and client_name and not _cards.same_person(client_name, written[0]) \
+                and not _cards.paid_for_by(text + "\n" + "\n".join(map(str, notes or ())), client_name):
+            fields["name"] = client_name = written[0]
     if named and _cards.same_person(str(fields.get("agency") or ""), named) \
             and str(fields.get("agency") or "").casefold() == named.casefold():
         fields["agency"] = ""

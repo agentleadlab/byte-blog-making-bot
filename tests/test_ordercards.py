@@ -4347,3 +4347,45 @@ def test_check_aged_lines_takes_the_invoice_the_card_is_for(monkeypatch):
     flagged, _ = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
                                        invoices=[near, his])
     assert len(flagged) == 1 and "Card has: Aged Vets 180+: GA; Aged MTG 180+: TX" in flagged[0]
+
+
+HUNTER = """[10/19 05:30PM] Nova: <@&1>
+**New Payment | Payra** ✅
+**NAME:** Hunter Kahle
+**EMAIL:** hunter@example.com
+**PHONE:** +19735550199
+**AMOUNT:** $507.15
+**PRODUCT:** Text-Verified Aged Veteran Leads
+**INVOICE:** INV-20260 · card •••• 0509 · 10/19/2026 4:27 PM
+**Total:** $507.15
+**Notes:**
+> Name: Hunter Kahle
+> Lead Type: Aged Vets
+> States: KY OK SC TN FL NC VA NJ OH MO CO AZ TX
+> Notes: Only Motion
+**Internal Notes:**
+> *(none)*"""
+
+
+def test_notes_inside_the_notes_dont_cut_them_short():
+    """Hunter Kahle's "Notes: Only Motion" read as the post's own heading."""
+    _number, notes = ordercards.post_invoice(HUNTER)
+    assert notes.startswith("Name: Hunter Kahle") and "States: KY OK" in notes and notes.endswith("Notes: Only Motion")
+
+
+@pytest.mark.parametrize("named_by_claude", ["Hunter Kahle", "Only Motion"])
+def test_the_name_written_in_the_notes_is_who_its_for(monkeypatch, named_by_claude):
+    """"what are we doing" - his card went out as "Only Motion", without his
+    email and phone, held as somebody else paying."""
+    card = _read_with(monkeypatch, {"kind": "aged", "name": named_by_claude, "email": "hunter@example.com",
+                                    "phone": "+19735550199", "package": "Aged Vets",
+                                    "states": "KY, OK, SC, TN, FL, NC, VA, NJ, OH, MO, CO, AZ, TX"}, HUNTER, [])
+    assert card["client"] == "Hunter Kahle"
+    assert card["fields"]["email"] == "hunter@example.com"
+    assert not any("paid by" in one for one in ordercards.doubts(card, today=date(2026, 10, 19))[0])
+
+
+def test_a_written_name_doesnt_undo_paying_for_their_agent(monkeypatch):
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Matthew Stewart", "package": "OTP VET", "leads": "29"},
+                      HAYDEN, [])
+    assert card["client"] == "Matthew Stewart"

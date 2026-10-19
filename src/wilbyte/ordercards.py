@@ -410,7 +410,10 @@ def post_invoice(said: str) -> tuple[str, str]:
     blocks, current = {}, None
     for line in said.splitlines():
         head = _NOTES_HEAD.match(line)
-        if head and not line.lstrip().startswith(">"):
+        # The post's own heading - bold, or the first one - not a "Notes: Only
+        # Motion" line inside the notes: Hunter Kahle's lost the rest of his
+        # notes to it, and his card was made out to "Only Motion".
+        if head and not line.lstrip().startswith(">") and (current is None or head.group(1) or "**" in line):
             current = "internal" if head.group(1) else "notes"
             blocks[current] = [head.group(2)] if head.group(2).strip() else []
             continue
