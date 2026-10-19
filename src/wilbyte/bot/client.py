@@ -396,6 +396,7 @@ class WilByteBot(discord.Client):
                 _also_running(self.loop.create_task(order_sweep_loop(self)))
                 _also_running(self.loop.create_task(agency_fill_loop(self)))
                 _also_running(self.loop.create_task(tag_items_loop(self)))
+                _also_running(self.loop.create_task(failed_payments_loop(self)))
             if getattr(self.config.secrets, "payra_api_token", None) and getattr(
                 self.config.secrets, "payra_site_id", None
             ):
@@ -9626,6 +9627,110 @@ async def tag_items_loop(bot: "WilByteBot") -> None:
             except Exception:
                 log.warning("Couldn't check the tagged comment's checklist items", exc_info=True)
         await asyncio.sleep(30)
+
+
+#: How far back #failed-payment is watched, and how often.
+FAILED_WATCH = timedelta(days=2)
+FAILED_CHECK_SECONDS = 5 * 60
+#: A card made this long before the failure is taken as the failure's - one
+#: made just before it posted. Older is an earlier order of theirs.
+FAILED_CARD_BEFORE = timedelta(minutes=30)
+
+
+def _setup_channel(bot, letters: str):
+    """A channel in the Growth server by its name's letters - "failedpayment"."""
+    guild = _setup_guild(bot, bot.config)
+    for channel in getattr(guild, "text_channels", None) or []:
+        if _plain_letters(getattr(channel, "name", "")) == letters:
+            return channel
+    return None
+
+
+async def _failed_payments_once(bot, *, now: datetime | None = None) -> list[str]:
+    """"why did this pushed thru if the payment declined/failed" - every card
+    made for somebody whose payment failed, and who hasn't paid since, told
+    so on the card, once. What was said."""
+    from .. import clearout, failedwatch, ordercards
+
+    now = now or datetime.now(timezone.utc)
+    failed_in = _setup_channel(bot, "failedpayment")
+    if failed_in is None:
+        return []
+    since = now - FAILED_WATCH
+    failures = [one async for one in failed_in.history(after=since, limit=100)
+                if "failed payment" in _all_of_it(one).casefold()]
+    if not failures:
+        return []
+    paid_in = _setup_channel(bot, "newpayment")
+    paid = [one async for one in paid_in.history(after=since, limit=300)] if paid_in is not None else []
+    # Cards RYTE made from a payment that went through are theirs, not this.
+    held = await asyncio.to_thread(ordercards.load)
+    from_payments = {str(one.get("card_id") or "") for one in held.values() if isinstance(one, dict)}
+    from_payments |= {str(part.get("card_id") or "") for one in held.values() if isinstance(one, dict)
+                      for part in one.get("parts") or [] if isinstance(part, dict)}
+    said = []
+    for failure in failures:
+        text = _all_of_it(failure)
+        name = (_PAID_NAME.search(text) or [None, ""])[1].strip(" *")
+        email = (_PAID_EMAIL.search(text) or [None, ""])[1].strip(" *").casefold()
+        if not name:
+            continue
+
+        def theirs(post) -> bool:
+            words = _all_of_it(post)
+            their_name = (_PAID_NAME.search(words) or [None, ""])[1].strip(" *")
+            their_email = (_PAID_EMAIL.search(words) or [None, ""])[1].strip(" *").casefold()
+            return (email and their_email == email) or clearout.name_match(name, their_name) >= 2
+
+        # Paid since: that payment is the order now, and its card is right.
+        if any(post.created_at > failure.created_at and "new payment" in _all_of_it(post).casefold()
+               and theirs(post) for post in paid):
+            continue
+        product = (_PRODUCT.search(text) or [None, ""])[1]
+        kind = "aged" if re.search(r"\baged\b", product, re.IGNORECASE) else "fresh"
+        try:
+            cards = await asyncio.to_thread(partial(jobs.cards_made_since, bot.config, name,
+                                                    since=failure.created_at - FAILED_CARD_BEFORE, kind=kind))
+        except Exception:
+            log.warning("Couldn't look for %s's cards", name, exc_info=True)
+            continue
+        amount = (_AMOUNT.search(text) or [None, ""])[1]
+        number, _notes = ordercards.post_invoice(text)
+        when = failure.created_at.astimezone(ZoneInfo(bot.config.schedule.timezone))
+        for card in cards:
+            card_id = str(card.get("id") or "")
+            if not card_id or card_id in from_payments or failedwatch.warned(str(failure.id), card_id):
+                continue
+            url = str(card.get("shortUrl") or card.get("url") or "")
+            line = (f"⚠ Payment failed — {number + ', ' if number else ''}{'$' + amount if amount else ''} "
+                    f"({when:%m/%d %I:%M %p}). No leads until it's paid.\n{failure.jump_url}")
+            try:
+                await asyncio.to_thread(jobs.order_payment_comment, bot.config, card_id, line)
+            except Exception:
+                log.warning("Couldn't warn %s's card", name, exc_info=True)
+                continue
+            await asyncio.to_thread(failedwatch.note_warned, str(failure.id), card_id, now)
+            said.append(f"**{card.get('name') or name}** — {'$' + amount + ' ' if amount else ''}payment failed "
+                        f"{when:%m/%d %I:%M %p}, and the card's been made anyway: {url}")
+    if said:
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send("❌ **Payment failed, but there's a card:**\n" + "\n".join(f"• {one}" for one in said)
+                                 + "\n-# Said on each card. No leads until they pay - once they do, it comes "
+                                   "through #new-payment as usual.")
+    return said
+
+
+async def failed_payments_loop(bot: "WilByteBot") -> None:
+    await asyncio.sleep(60)
+    while not bot.is_closed():
+        try:
+            await _failed_payments_once(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Watching #failed-payment broke")
+        await asyncio.sleep(FAILED_CHECK_SECONDS)
 
 
 async def agency_fill_loop(bot: "WilByteBot") -> None:

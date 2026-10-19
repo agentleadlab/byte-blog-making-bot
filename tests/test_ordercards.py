@@ -4114,3 +4114,82 @@ def test_agents_counted_against_the_number_the_order_says():
     for one in cards:
         one["source"] = "3 agents\n28 Fresh Vets"
     assert jobs.split_doubts(cards) == []
+
+
+JOSHUA_FAILED = """**Failed Payment | Payra** ❌
+**NAME:** joshua holt
+**EMAIL:** joshua@example.com
+**AMOUNT:** $703.80
+**PRODUCT:** Text-Veified Aged IUL Leads
+**INVOICE:** INV-20240 · card •••• 8794 · 10/19/2026 3:11 PM"""
+
+
+def _failed_watch(monkeypatch, *, failed_at, paid=(), cards=(), made_by_ryte=()):
+    """A Growth server with #failed-payment and #new-payment, and a board."""
+    class Channel:
+        def __init__(self, name, posts):
+            self.name, self.posts = name, posts
+
+        def history(self, after=None, limit=None):
+            async def each():
+                for one in self.posts:
+                    yield one
+            return each()
+
+    def post(text, at, id_=1):
+        return SimpleNamespace(id=id_, content=text, embeds=[], created_at=at, jump_url=f"https://discord/{id_}")
+
+    failed = Channel("❌｜failed-payment", [post(JOSHUA_FAILED, failed_at, 11)])
+    payments = Channel("new-payment", [post(text, at, 20 + n) for n, (text, at) in enumerate(paid)])
+    guild = SimpleNamespace(text_channels=[failed, payments])
+    monkeypatch.setattr(client, "_setup_guild", lambda bot, config: guild)
+    asked, comments, said = [], [], []
+
+    def cards_since(config, name, since, kind=""):
+        asked.append((name, kind))
+        return list(cards)
+
+    monkeypatch.setattr(jobs, "cards_made_since", cards_since)
+    monkeypatch.setattr(jobs, "order_payment_comment", lambda config, card_id, text: comments.append((card_id, text)))
+
+    class Responder:
+        async def send(self, text, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    ordercards.save({"x": {"status": "made", "card_id": one} for one in made_by_ryte})
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York")))
+    return bot, asked, comments, said
+
+
+def test_a_card_made_for_a_failed_payment_is_warned_once(monkeypatch):
+    """"why did this pushed thru if the payment declined/failed" - Joshua
+    Holt's aged card, made by hand after his payment failed."""
+    failed_at = datetime(2026, 10, 19, 20, 13, tzinfo=timezone.utc)
+    card = {"id": "c1", "name": "AGED LEAD - Joshua Holt", "shortUrl": "https://trello.com/c/J"}
+    bot, asked, comments, said = _failed_watch(monkeypatch, failed_at=failed_at, cards=[card])
+    now = failed_at + timedelta(hours=1)
+
+    asyncio.run(client._failed_payments_once(bot, now=now))
+    assert asked == [("joshua holt", "aged")]
+    assert comments and comments[0][0] == "c1" and "Payment failed — INV-20240, $703.80" in comments[0][1]
+    assert "Payment failed, but there's a card" in said[0] and "https://trello.com/c/J" in said[0]
+    asyncio.run(client._failed_payments_once(bot, now=now + timedelta(minutes=5)))
+    assert len(comments) == 1, "warned once"
+
+
+def test_paid_since_the_failure_is_left_alone(monkeypatch):
+    failed_at = datetime(2026, 10, 19, 20, 13, tzinfo=timezone.utc)
+    card = {"id": "c1", "name": "AGED LEAD - Joshua Holt"}
+    paid = [("New Payment | Payra\n**NAME:** Joshua Holt\n**EMAIL:** joshua@example.com", failed_at + timedelta(minutes=20))]
+    bot, asked, comments, _said = _failed_watch(monkeypatch, failed_at=failed_at, paid=paid, cards=[card])
+    asyncio.run(client._failed_payments_once(bot, now=failed_at + timedelta(hours=1)))
+    assert asked == [] and comments == []
+
+
+def test_a_card_ryte_made_from_a_payment_that_went_through_is_left_alone(monkeypatch):
+    failed_at = datetime(2026, 10, 19, 20, 13, tzinfo=timezone.utc)
+    card = {"id": "c9", "name": "Aged Leads - Joshua Holt"}
+    bot, _asked, comments, _said = _failed_watch(monkeypatch, failed_at=failed_at, cards=[card], made_by_ryte=["c9"])
+    asyncio.run(client._failed_payments_once(bot, now=failed_at + timedelta(hours=1)))
+    assert comments == []

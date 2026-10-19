@@ -4917,12 +4917,9 @@ def client_card_for(config: Config, text: str, client: str = "") -> dict | None:
     return max(theirs, key=lambda one: one[0])[2]
 
 
-def card_made_since(config: Config, client: str, *, since, kind: str = "") -> dict | None:
-    """The newest New Agent or Aged Leads card for this client made since
-    then - by anyone, archived or not - or None. A card's id starts with when
-    it was made. Only the `kind` asked for, when one is: Abdullah Bahrani's
-    aged payment was taken as made by his New Agent card from the same
-    morning, and no Aged Leads card was ever made."""
+def cards_made_since(config: Config, client: str, *, since, kind: str = "") -> list[dict]:
+    """Every New Agent / Aged Leads card for this client made since then,
+    newest first - "AGED LEAD - Joshua Holt" made by hand counts too."""
     from .. import agents, clearout
 
     board = open_trello(config)
@@ -4936,9 +4933,7 @@ def card_made_since(config: Config, client: str, *, since, kind: str = "") -> di
     for card in cards:
         title = str(card.get("name") or "")
         aged = bool(re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE))
-        if not (agents.is_agent_card(title) or aged):
-            continue
-        if kind and (kind == "aged") != aged:
+        if not (agents.is_agent_card(title) or aged) or (kind and (kind == "aged") != aged):
             continue
         name = agents.agent_name(title) if agents.is_agent_card(title) else title.split("-", 1)[-1].strip()
         if clearout.name_match(client, name) < 2:
@@ -4949,7 +4944,17 @@ def card_made_since(config: Config, client: str, *, since, kind: str = "") -> di
             continue
         if made >= stamp:
             found.append((made, card))
-    return max(found, key=lambda one: one[0])[1] if found else None
+    return [card for _made, card in sorted(found, key=lambda one: one[0], reverse=True)]
+
+
+def card_made_since(config: Config, client: str, *, since, kind: str = "") -> dict | None:
+    """The newest New Agent or Aged Leads card for this client made since
+    then - by anyone, archived or not - or None. A card's id starts with when
+    it was made. Only the `kind` asked for, when one is: Abdullah Bahrani's
+    aged payment was taken as made by his New Agent card from the same
+    morning, and no Aged Leads card was ever made."""
+    found = cards_made_since(config, client, since=since, kind=kind)
+    return found[0] if found else None
 
 
 def comment_on_client_card(config: Config, card: dict, text: str, pictures=()) -> str:
