@@ -4026,7 +4026,7 @@ async def _clear_out_one(
         others = [one for one in clearout.their_channels(plan.channel, channels)
                   if one.channel_id != plan.channel.channel_id]
         if others:
-            quiet_since = datetime.now(timezone.utc) - timedelta(days=clearout.how_far_back(""))
+            quiet_since = datetime.now(timezone.utc) - timedelta(days=clearout.quiet_days(""))
             busy = []
             for one in others:
                 when, _used = _last_used(guild.get_channel(int(one.channel_id)))
@@ -4713,7 +4713,7 @@ async def _quiet_channels(
         return
 
     now = datetime.now(ZoneInfo(config.schedule.timezone))
-    since = now - timedelta(days=clearout.how_far_back(asked or ""))
+    since = now - timedelta(days=clearout.quiet_days(asked or ""))
 
     channels = []
     for one in guild.text_channels:
@@ -4992,7 +4992,7 @@ async def _quiet_auto(
         await responder.send("A quiet run is already going — I'll leave this until it's done.")
         return
     now = datetime.now(ZoneInfo(config.schedule.timezone))
-    since = now - timedelta(days=clearout.how_far_back(re.sub(r"\bauto\w*\b", "", asked or "")))
+    since = now - timedelta(days=clearout.quiet_days(re.sub(r"\bauto\w*\b", "", asked or "")))
     channels = []
     for one in guild.text_channels:
         when, used = _last_used(one)

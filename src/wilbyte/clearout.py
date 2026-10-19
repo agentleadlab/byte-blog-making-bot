@@ -936,6 +936,10 @@ def describe(plan: Plan) -> str:
 #: own figure: "give me list of inactive channel for 2-3months".
 QUIET_MONTHS = 2
 
+#: "35 days quiet, just dont do below 35 days" - what `@RYTE quiet` means
+#: with nothing typed, and the least any quiet run goes back, whatever is.
+QUIET_DAYS = 35
+
 #: A month, for the purpose of "two months ago". Nobody closing a channel down
 #: cares whether February was short.
 DAYS_A_MONTH = 30
@@ -958,7 +962,7 @@ def how_far_back(text: str, *, months: int = QUIET_MONTHS) -> int:
     """
     found = HOW_LONG.search(text or "")
     if not found:
-        return months * DAYS_A_MONTH
+        return QUIET_DAYS if months == QUIET_MONTHS else months * DAYS_A_MONTH
     many = max(1, int(found.group(1)))
     unit = found.group(2).casefold()
     if unit.startswith("d"):
@@ -966,6 +970,11 @@ def how_far_back(text: str, *, months: int = QUIET_MONTHS) -> int:
     if unit.startswith("w"):
         return many * 7
     return many * DAYS_A_MONTH
+
+
+def quiet_days(text: str) -> int:
+    """How far back a quiet run looks: what was asked, never under QUIET_DAYS."""
+    return max(QUIET_DAYS, how_far_back(text))
 
 
 def how_long(channel: Channel, *, now: datetime) -> str:

@@ -6563,7 +6563,7 @@ def collect_client(config: Config, plan, *, when) -> tuple[str, list[str]]:
 
 #: A channel isn't quiet if anything - a message, a delivered lead - landed in
 #: it within this long. "check himself if the channel is really 1 month older".
-QUIET_AT_LEAST_DAYS = 30
+QUIET_AT_LEAST_DAYS = 35
 
 
 def quiet_check(newest, now) -> tuple[bool, str]:

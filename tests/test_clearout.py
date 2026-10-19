@@ -638,8 +638,8 @@ def quiet_channel(name, *, days=None, category="", used=True):
 @pytest.mark.parametrize(
     "typed, days",
     [
-        ("", 60),
-        ("quiet", 60),
+        ("", 35),
+        ("quiet", 35),
         ("3 months", 90),
         ("3months", 90),
         ("1 month", 30),
@@ -654,7 +654,13 @@ def test_how_long_back_however_it_is_typed(typed, days):
 
 def test_nothing_typed_gives_the_answer_rather_than_a_question():
     """`@RYTE quiet` on its own is the common case and must just work."""
-    assert clearout.how_far_back("") == clearout.QUIET_MONTHS * clearout.DAYS_A_MONTH
+    assert clearout.how_far_back("") == clearout.QUIET_DAYS == 35
+
+
+@pytest.mark.parametrize("typed, days", [("", 35), ("2 weeks", 35), ("10 days", 35), ("2 months", 60)])
+def test_a_quiet_run_never_goes_under_35_days(typed, days):
+    """"35 days quiet, just dont do below 35 days"."""
+    assert clearout.quiet_days(typed) == days
 
 
 def test_a_busy_channel_is_not_on_the_list():
@@ -815,7 +821,7 @@ def test_the_command_lists_the_clients_server_and_touches_nothing(monkeypatch):
             self.created_at = datetime(2026, 1, 1, tzinfo=discord.utils.utcnow().tzinfo)
 
     old = datetime(2026, 5, 1, tzinfo=discord.utils.utcnow().tzinfo)
-    new = datetime(2026, 9, 14, tzinfo=discord.utils.utcnow().tzinfo)
+    new = discord.utils.utcnow() - timedelta(days=1)
     guild = SimpleNamespace(
         name="Agent Lead Lab Clients",
         text_channels=[
