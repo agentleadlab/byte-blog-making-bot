@@ -13103,13 +13103,19 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     "fields", "name", "desc", "missing": [labels not given]}."""
     from anthropic import Anthropic
 
+    # Nova's posts quote the invoice's notes: "> Same states" went on a card
+    # as the States, quote mark and all.
+    text = re.sub(r"^(\s*)>+[ \t]?", r"\1", str(text or ""), flags=re.MULTILINE)
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
     properties = {
         "kind": {"type": "string", "enum": ["fresh", "aged"], "description": (
             "'aged' for aged leads (the product says Aged Leads, or the notes say aged); 'fresh' for a new "
             "agent's leads - VET, OTP, FEX, MTG, IUL, Trucker and the rest.")},
-        "name": {"type": "string", "description": "The client's full name."},
+        "name": {"type": "string", "description": (
+            "The client's full name - who the leads are for. When the notes name a person on a line of their "
+            "own ('7 OTP VETS / Bailey Lawrence / Same states'), that person is the client, even when somebody "
+            "else paid.")},
         "email": {"type": "string", "description": "Their email."},
         "phone": {"type": "string", "description": "Their phone number, as written."},
         "states": {"type": "string", "description": "The states, as two-letter codes separated by commas: 'TX, AL, CA'."},
@@ -13140,9 +13146,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "asks for nothing, say in a few words what it shows. Empty when there are none.")},
         "launch_iso": {"type": "string", "description": "The launch date as YYYY-MM-DD, or empty."},
         "agency": {"type": "string", "description": (
-            "The agency or IMO they're with, when the notes say - 'UPRISE', 'FEARLESS', 'AEP', 'FFL'. A short "
-            "name on a line of its own at the end of the notes ('aep', 'AEP @Nicole') is the agency. Empty if "
-            "not said.")},
+            "The agency or IMO they're with, when the notes say - 'UPRISE', 'FEARLESS', 'AEP', 'FFL', "
+            "'ROADMAP AGENCY'. A short agency name on a line of its own at the end of the notes ('aep', 'AEP "
+            "@Nicole') is the agency. Never a person's name: a first and last name on a line of its own "
+            "('Bailey Lawrence') is who the leads are for - the client - not the agency. Empty if not said.")},
         "notes": {"type": "string", "description": (
             "Anything else the team said that matters for the setup - schedule, hours, a cap, same setup as "
             "before, who to tell. Short. Empty if nothing.")},
@@ -13225,7 +13232,16 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     from .. import ordercards as _cards
 
     payer = _cards.paid_by(text)
-    named = name_in_notes([one for one in notes or () if not str(one).startswith("Payra invoice note:")])
+    # The team's notes in the thread, and the ones written on the invoice -
+    # in the payment post itself since Oct 19: Garret Sekelsky's second, "7
+    # OTP VETS / Bailey Lawrence / Same states", went out as his card with
+    # Bailey Lawrence as the Agency.
+    _number, on_post = _cards.post_invoice(text)
+    named = name_in_notes([one for one in notes or () if not str(one).startswith("Payra invoice note:")]
+                          + ([on_post] if on_post else []))
+    if named and _cards.same_person(str(fields.get("agency") or ""), named) \
+            and str(fields.get("agency") or "").casefold() == named.casefold():
+        fields["agency"] = ""
     if named and payer and _cards.same_person(client_name, payer) and not _cards.same_person(named, payer):
         paid = text.casefold()
         fields["name"] = client_name = named

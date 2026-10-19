@@ -3905,3 +3905,35 @@ def test_notes_naming_who_paid_change_nothing(monkeypatch):
 ])
 def test_a_name_on_a_line_of_its_own(notes, name):
     assert jobs.name_in_notes(notes) == name
+
+
+GARRET = """[10/19 02:38PM] Nova: <@&1>
+**New Payment | Payra** ✅
+**NAME:** Garret Sekelsky
+**EMAIL:** garret@example.com
+**PHONE:** +15025550123
+**AMOUNT:** $246.33
+**PRODUCT:** Text-Verified Veteran leads
+**INVOICE:** INV-20230 · card •••• 0395 · 10/19/2026 1:36 PM
+**Total:** $246.33
+**Notes:**
+> 7 OTP VETS
+> Bailey Lawrence
+> Same states
+**Internal Notes:**
+> *(none)*"""
+
+
+def test_a_name_in_the_posts_own_notes_gets_the_card(monkeypatch):
+    """"Same freaking issue" - Garret Sekelsky's "7 OTP VETS / Bailey
+    Lawrence / Same states", in the post itself: his card, Bailey Lawrence as
+    the Agency, and "> Same states" as the States."""
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Garret Sekelsky", "email": "garret@example.com",
+                                    "phone": "+15025550123", "package": "OTP VETS", "leads": "7",
+                                    "agency": "Bailey Lawrence", "states": "Same states"}, GARRET, [])
+
+    assert card["client"] == "Bailey Lawrence"
+    assert card["fields"]["agency"] == "" and card["fields"]["email"] == ""
+    assert ">" not in card["source"].split("Notes:")[1]
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 19))
+    assert any("paid by Garret Sekelsky" in one for one in wrong)
