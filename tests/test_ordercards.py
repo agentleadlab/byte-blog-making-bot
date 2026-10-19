@@ -3692,3 +3692,21 @@ def test_notes_are_stamped_on_the_boards_clock():
     message = SimpleNamespace(author=SimpleNamespace(display_name="Kath"), content="launch tomorrow",
                               embeds=[], attachments=[], created_at=datetime(2026, 10, 19, 1, 45, tzinfo=timezone.utc))
     assert client._said_line(message, "America/New_York").startswith("[10/18 09:45PM] Kath:")
+
+
+@pytest.mark.parametrize("product, aged", [
+    ("Text-Veified Aged IUL Leads", True), ("Text-Verified Aged Veteran Leads", True), ("Aged Leads (VET)", True),
+    ("Text-Verified Veteran leads", False), ("VET", False),
+])
+def test_aged_anywhere_on_the_product_line(product, aged):
+    """"WHY didnt it emojji this? its aged" - Azriel Deskin's "Text-Veified
+    Aged IUL Leads": the word second, and no card."""
+    message = _message(f"New Payment | Payra\n**NAME:** Azriel Deskin\n**PRODUCT:** {product}\n**INVOICE:** INV-20168")
+    message.channel.name = "new-payment"
+    assert client._aged_payment(message) is aged
+
+
+def test_aged_on_another_line_isnt_the_product():
+    message = _message("New Payment | Payra\n**PRODUCT:** VET\n**Notes:**\n> Lead type: Aged vets 180+")
+    message.channel.name = "new-payment"
+    assert not client._aged_payment(message)

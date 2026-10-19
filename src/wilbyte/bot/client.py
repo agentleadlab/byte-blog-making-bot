@@ -9863,7 +9863,9 @@ def _aged_payment(message) -> bool:
     if "newpayment" not in _plain_letters(getattr(getattr(message, "channel", None), "name", "")):
         return False
     said = _all_of_it(message)
-    return "new payment" in said.casefold() and bool(re.search(r"PRODUCT:\**\s*aged\b", said, re.IGNORECASE))
+    # Anywhere on the PRODUCT line: Nova's "Text-Verified Aged IUL Leads"
+    # put the word second, and Azriel Deskin's aged payment got no card.
+    return "new payment" in said.casefold() and bool(re.search(r"PRODUCT:[^\n]*\baged\b", said, re.IGNORECASE))
 
 
 _PAID_NAME = re.compile(r"NAME:\**\s*([^\n]+)", re.IGNORECASE)
