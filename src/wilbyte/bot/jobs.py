@@ -13622,7 +13622,8 @@ def order_agents(text: str) -> list[dict]:
             blocks.append(current)
             current = []
             continue
-        if _is_name_line(line) and any(_is_name_line(one) for one in current):
+        if _is_name_line(line) and any(_is_name_line(one) or re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", one)
+                                       for one in current):
             # A second "Name:" with no line of dashes between: the next agent.
             blocks.append(current)
             current = []
@@ -13663,8 +13664,20 @@ def order_agents(text: str) -> list[dict]:
                 one["phone"] = _PHONE_SAID.search(bare).group(0).strip(" -.")
             elif not one["name"] and _A_NAME.match(bare) and not _NOT_NAME_WORDS.search(bare):
                 one["name"] = " ".join(bare.split())
-        if one["name"] and (one["order"] or one["states"]) and (one["email"] or one["phone"]):
-            agents.append(one)
+        if not (one["name"] and (one["order"] or one["states"]) and (one["email"] or one["phone"])):
+            continue
+        # Once each: Colby Whittaker's five came out as eight cards - the
+        # list was in the notes twice over. The same name or email is the
+        # same agent, and what one copy is missing the other fills in.
+        same = next((had for had in agents
+                     if had["name"].casefold() == one["name"].casefold()
+                     or (one["email"] and had["email"].casefold() == one["email"].casefold())), None)
+        if same is not None:
+            for key, value in one.items():
+                if value and not same.get(key):
+                    same[key] = value
+            continue
+        agents.append(one)
     return agents if len(agents) >= 2 else []
 
 
@@ -13706,7 +13719,8 @@ def agent_cards(card: dict, *, today=None) -> list[dict]:
             f"Paid by {payer} - one payment for {len(agents)} agents"
             + (f" (${paid.group(1)})" if paid else "") + "."])
         out.append({"kind": "fresh", "client": one["name"], "fields": fields, "name": f"New Agent - {one['name']}",
-                    "desc": order_desc(fields, "fresh"), "launch_iso": launch, "source": source})
+                    "desc": order_desc(fields, "fresh"), "launch_iso": launch, "source": source,
+                    "agents_of": len(agents)})
     return out
 
 
@@ -13720,6 +13734,11 @@ def split_doubts(cards: list[dict]) -> list[str]:
     source = str(cards[0].get("source") or "")
     numbers = {int(one.replace(",", "")) for one in re.findall(r"\d[\d,]*", source)}
     wrong = []
+    # "5 agents" said, and that many cards - not eight.
+    many = re.search(r"\b(\d{1,2})\s+agents\b", source, re.IGNORECASE)
+    if cards[0].get("agents_of") and many and int(many.group(1)) != len(cards):
+        wrong.append(f"The order says {many.group(1)} agents, and I read {len(cards)}: "
+                     + ", ".join(one["client"] for one in cards))
     for card in cards:
         fields = card.get("fields") or {}
         counts = ([_count_of(bit) for bit in re.findall(r"[\d,]+", fields.get("leads") or "")]

@@ -4020,3 +4020,37 @@ def test_one_payment_for_five_agents_is_five_cards(monkeypatch):
 def test_one_agent_with_labels_is_one_card():
     said = "Name: Shane Suleiman\nEmail: s@example.com\nStates: TX, FL\nOrder Type: 30 Fresh Vets"
     assert jobs.order_agents(said) == []
+
+
+def test_an_agent_list_said_twice_is_still_one_card_each():
+    """"WDYM?????? they're jiust 5 no?" - Colby Whittaker's five agents came
+    out as eight cards: the list was in the notes more than once."""
+    from pathlib import Path
+
+    notes = (Path(__file__).parent / "colby_order.txt").read_text()
+    twice = notes + "\n" + notes.split("* - - -", 2)[-1]
+    agents = jobs.order_agents(notes + "\n- - - - - - - - - -\n" + twice)
+
+    assert [one["name"] for one in agents] == ["Gabriel Lucas", "Sawyer Wetzel", "Justin Bailey", "Dillon Willis",
+                                               "Colby Whittaker"]
+
+
+def test_a_name_line_starts_the_next_agent_without_a_line_of_dashes():
+    """Gabriel Lucas' block has no "Name:" - without the dashes, Sawyer
+    Wetzel's lines were read as more of Gabriel's."""
+    from pathlib import Path
+
+    notes = (Path(__file__).parent / "colby_order.txt").read_text()
+    no_dashes = "\n".join(line for line in notes.splitlines() if "- - -" not in line)
+    assert [one["name"] for one in jobs.order_agents(no_dashes)] == [
+        "Gabriel Lucas", "Sawyer Wetzel", "Justin Bailey", "Dillon Willis", "Colby Whittaker"]
+
+
+def test_agents_counted_against_the_number_the_order_says():
+    cards = [{"kind": "fresh", "client": name, "name": f"New Agent - {name}", "agents_of": 3,
+              "fields": {"leads": "28", "states": ""}, "source": "5 agents\n28 Fresh Vets"}
+             for name in ("A B", "C D", "E F")]
+    assert any("says 5 agents, and I read 3" in one for one in jobs.split_doubts(cards))
+    for one in cards:
+        one["source"] = "3 agents\n28 Fresh Vets"
+    assert jobs.split_doubts(cards) == []
