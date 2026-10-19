@@ -14376,12 +14376,19 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
         email = (re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", desc) or [None])[0] or ""
         states = (re.search(r"^\W*States\W*:\s*(.*)$", desc, re.MULTILINE | re.IGNORECASE) or [None, ""])[1]
         package = (re.search(r"^\W*Lead Type[^:\n]*:\s*(.*)$", desc, re.MULTILINE | re.IGNORECASE) or [None, ""])[1]
+        # Every invoice of theirs from around then, nearest the card first; the
+        # card is right if it's right for any of them. Patrick Moreno had more
+        # than one order that week, and his card was held up against the wrong
+        # one.
+        near = []
         for invoice in invoices:
             theirs = (email and str(invoice.get("email") or "").casefold() == email.casefold()) or \
                 clearout.name_match(client, str(invoice.get("name") or "")) >= 2
             when = made_at(invoice, "created")
-            if not theirs or when is None or not (made - timedelta(days=3) <= when <= made + timedelta(days=1)):
-                continue
+            if theirs and when is not None and made - timedelta(days=3) <= when <= made + timedelta(days=1):
+                near.append((abs((made - when).total_seconds()), invoice))
+        first_wrong = None
+        for _gap, invoice in sorted(near, key=lambda one: one[0]):
             said = invoice_said(invoice)
             lines = ordercards._lines_with_states(said)
             # The aged lines only: Patrick Moreno's 34 OTP Vets and 25 OTP IULs
@@ -14404,12 +14411,17 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
             for each in ordercards._COUNT_OF.finditer(package):
                 if int(each.group(1)) not in numbers:
                     wrong.append(f"{each.group(1)} in the lead type isn't on the invoice")
-            if wrong:
+            if not wrong:
+                first_wrong = None
+                break
+            if first_wrong is None:
                 number = invoice.get("number") or invoice.get("id")
-                flagged.append(
+                first_wrong = (
                     f"**{title}** <{card.get('shortUrl') or card.get('url') or ''}> — {number}: " + "; ".join(wrong)
-                    + "\n   Should be: " + " · ".join(f"{kind}: {' '.join(codes)}" for kind, codes in lines))
-            break
+                    + "\n   Should be: " + " · ".join(f"{kind}: {' '.join(codes)}" for kind, codes in lines)
+                    + f"\n   Card has: {' '.join(states.split()) or '(no states)'}")
+        if first_wrong:
+            flagged.append(first_wrong)
     return flagged, looked
 
 

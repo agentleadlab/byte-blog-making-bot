@@ -4327,3 +4327,23 @@ def test_check_aged_lines_leaves_the_new_agent_lines_to_their_own_cards(monkeypa
     flagged, _looked = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
                                              invoices=[invoice])
     assert flagged == []
+
+
+def test_check_aged_lines_takes_the_invoice_the_card_is_for(monkeypatch):
+    """Patrick Moreno had two orders that week; his card matched the other."""
+    made = int(datetime(2026, 10, 19, 14, 42, tzinfo=timezone.utc).timestamp())
+    near = {"id": "a", "number": "INV-A", "name": "Patrick Moreno", "email": "p@example.com", "lines": [],
+            "created": "2026-10-19T14:30:00Z", "description": "",
+            "notes": "Lead Type: Aged Vets 30-90\nStates: TX\nLead Type: Aged IULs 30-90\nStates: NC GA FL TX"}
+    his = {**near, "id": "b", "number": "INV-B", "created": "2026-10-18T14:30:00Z",
+           "notes": "Lead Type: Aged Vets 180+\nStates: GA\nLead Type: Aged MTG 180+\nStates: FL"}
+    card = {"id": f"{made:08x}0000000000000003", "name": "Aged Leads - Patrick Moreno", "shortUrl": "u",
+            "desc": "Email: p@example.com\nLead Type: Aged Vets 180+ + Aged MTG 180+\nStates: Aged Vets 180+: GA; Aged MTG 180+: FL\n"}
+    config = _aged_board(monkeypatch, [card])
+    flagged, _ = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                       invoices=[near, his])
+    assert flagged == []
+    card["desc"] = card["desc"].replace("FL\n", "TX\n")
+    flagged, _ = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                       invoices=[near, his])
+    assert len(flagged) == 1 and "Card has: Aged Vets 180+: GA; Aged MTG 180+: TX" in flagged[0]
