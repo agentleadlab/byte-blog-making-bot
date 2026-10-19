@@ -9862,7 +9862,7 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None, catchin
     amount = (_AMOUNT.search(said) or [None, ""])[1]
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
-        note = await _invoice_for(bot, key, name=name, email=email, amount=amount, product=product)
+        note = await _invoice_for(bot, key, name=name, email=email, amount=amount, product=product, said=said)
     except Exception:
         # Payra down is no reason for no card: made from the payment and the
         # thread, and said - a silent "failed" left nothing to see.
@@ -10476,18 +10476,29 @@ async def _order_invoice_note(bot, message) -> str:
     product = (_PRODUCT.search(said) or [None, ""])[1].strip(" *")
     try:
         return await _invoice_for(bot, str(getattr(message, "id", "") or ""), name=name, email=email,
-                                  amount=amount, product=product)
+                                  amount=amount, product=product, said=said)
     except Exception:
         log.warning("Couldn't look up %s's invoice note", name, exc_info=True)
         return ""
 
 
-async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, product: str) -> str:
+async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, product: str,
+                       said: str = "") -> str:
     """The note on the invoice behind this payment post - one no other
     payment has taken, written down as this one's. Raises when Payra can't be
-    read."""
+    read.
+
+    A post that names its invoice and carries its notes - as they all do from
+    Oct 19 - needs nothing looked up: "" (the notes are in the post already,
+    and read with it), and the invoice written down as this one's. One that
+    names it with no notes on it gets that invoice, not the nearest match."""
     from .. import ordercards
 
+    number, notes = ordercards.post_invoice(said)
+    if number and notes:
+        if key:
+            await _order_note(key, invoice_id=number)
+        return ""
     # One at a time, so two posts for one charge can't both take one invoice.
     async with _INVOICE_LOCK:
         held = await asyncio.to_thread(ordercards.load)
@@ -10495,7 +10506,7 @@ async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, pro
                  if other != key and isinstance(one, dict) and one.get("invoice_id")}
         note, invoice_id = await asyncio.to_thread(partial(
             jobs.payra_invoice_pick, bot.config, name=name, email=email, amount=amount, product=product,
-            taken=taken))
+            taken=taken, **({"number": number} if number else {})))
         if invoice_id and key:
             await _order_note(key, invoice_id=invoice_id)
         return note

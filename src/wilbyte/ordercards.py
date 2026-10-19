@@ -367,6 +367,61 @@ def all_counted(source: str) -> int | None:
 
 _PAYER = re.compile(r"NAME:\**[ \t]*([^\n*]+)")
 
+#: The payment post as it is from Oct 19: "INVOICE: INV-20162 · card ••••
+#: 7872 · ...", then the invoice's own "Notes:" and "Internal Notes:", quoted.
+_POST_INVOICE = re.compile(r"INVOICE:\**\s*(INV-?\d+|#?\d{3,})", re.IGNORECASE)
+_NOTES_HEAD = re.compile(r"^\s*\**\s*(internal\s+)?notes\s*:\s*\**\s*(.*)$", re.IGNORECASE)
+_NOTHING = re.compile(r"^[\s*_(\[]*(?:none|n/?a|-+|—)?[\s*_)\]]*$", re.IGNORECASE)
+
+
+def post_invoice(said: str) -> tuple[str, str]:
+    """(the invoice number a payment post names, the invoice's notes it
+    carries - both its Notes and its Internal Notes), "" for each it doesn't."""
+    said = str(said or "")
+    number = _POST_INVOICE.search(said)
+    blocks, current = {}, None
+    for line in said.splitlines():
+        head = _NOTES_HEAD.match(line)
+        if head and not line.lstrip().startswith(">"):
+            current = "internal" if head.group(1) else "notes"
+            blocks[current] = [head.group(2)] if head.group(2).strip() else []
+            continue
+        if current is None:
+            continue
+        bare = re.sub(r"^\s*>+\s?", "", line)
+        if not line.lstrip().startswith(">") and re.match(r"\s*\*\*[^*\n]{1,40}:", line):
+            # The next labelled part of the post, not the notes any more.
+            current = None
+            continue
+        blocks[current].append(bare)
+    kept = []
+    for kind in ("notes", "internal"):
+        text = "\n".join(blocks.get(kind) or []).strip()
+        if text and not _NOTHING.match(text):
+            kept.append(text if kind == "notes" else f"Internal notes: {text}")
+    return (number.group(1).upper().lstrip("#") if number else ""), "\n".join(kept)
+
+
+#: "for his agent Matthew Stewart", "on behalf of", "leads ... go to Matthew".
+_PAYING_FOR = re.compile(
+    r"\bfor\s+(?:his|her|their|my|our)\s+(?:agent|recruit|downline|team\s*mate|teammate|producer)s?\b"
+    r"|\bon\s+behalf\s+of\b|\bpaying\s+for\b|\bpaid\s+for\s+by\b|\bleads?\b[^\n.;]{0,40}\bgo(?:es)?\s+to\b",
+    re.IGNORECASE)
+
+
+def paid_for_by(source: str, named: str) -> bool:
+    """Whether the order itself says somebody is paying for the person the
+    card is for - Hayden Keltner's "invoice 2 of 2, for his agent Matthew
+    Stewart ... leads go to Matthew directly". Their name next to it, on the
+    same line."""
+    words = [word for word in re.findall(r"[a-z]+", str(named or "").casefold()) if len(word) >= 3]
+    if not words:
+        return False
+    for line in str(source or "").splitlines():
+        if _PAYING_FOR.search(line) and any(re.search(rf"\b{re.escape(word)}\b", line, re.IGNORECASE) for word in words):
+            return True
+    return False
+
 
 def paid_by(source: str) -> str:
     """The name on the payment post - "NAME: Tony Moderno", as Payra and
@@ -409,7 +464,9 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # made without a word: somebody paying for them, or the wrong notes.
     payer = paid_by(source)
     named = " ".join(str(fields.get("name") or "").split())
-    if payer and named and not same_person(payer, named):
+    if payer and named and not same_person(payer, named) and paid_for_by(source, named):
+        missing.append(f"paid by {payer} for {named}, as the order says")
+    elif payer and named and not same_person(payer, named):
         wrong.append(f"Name: paid by {payer}, but the order is for {named} - somebody paying for them, "
                      f"or notes from another order?")
 

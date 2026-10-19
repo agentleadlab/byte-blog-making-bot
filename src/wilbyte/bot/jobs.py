@@ -13576,7 +13576,7 @@ def payra_invoice_note(config: Config, *, name: str, email: str = "", amount: st
 
 
 def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: str = "", product: str = "",
-                       now=None, taken=()) -> tuple[str, str]:
+                       now=None, taken=(), number: str = "") -> tuple[str, str]:
     """The note on the Payra invoice behind a payment just posted - "can ryte
     access agents state for aged leads on summit pay invoice internal note".
     Payra read now, so the invoice paid a minute ago is there. Matched by
@@ -13596,6 +13596,14 @@ def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: st
     email = str(email or "").strip().casefold()
     wanted = payraapi._cents(amount)
     found = []
+    # The one the post names, when it names one: no guessing by name and
+    # total.
+    wanted_number = re.sub(r"[^0-9]", "", str(number or ""))
+    if wanted_number:
+        for held_as, invoice in (data.get("invoices") or {}).items():
+            theirs = re.sub(r"[^0-9]", "", str(invoice.get("number") or ""))
+            if theirs == wanted_number:
+                return invoice_said(invoice), str(number).upper()
     for held_as, invoice in (data.get("invoices") or {}).items():
         theirs = (email and invoice.get("email") == email) or clearout.name_match(name, invoice.get("name", "")) >= 2
         if not theirs or not invoice_said(invoice):
@@ -13603,7 +13611,9 @@ def payra_invoice_pick(config: Config, *, name: str, email: str = "", amount: st
         # One invoice, one payment: Ahmed Ghazi paid INV-20039 (225 leads)
         # and INV-20040 (200) in one charge, and both cards read the 200.
         invoice_id = str(invoice.get("id") or invoice.get("number") or held_as)
-        if invoice_id in taken:
+        # Taken by its id, or by the number a payment post named it by.
+        numbered = re.sub(r"[^0-9]", "", str(invoice.get("number") or ""))
+        if invoice_id in taken or (numbered and any(re.fullmatch(r"INV-?0*" + numbered.lstrip("0"), one, re.IGNORECASE) for one in taken)):
             continue
         try:
             made = datetime.fromisoformat(str(invoice.get("created") or invoice.get("updated") or "").replace("Z", "+00:00"))

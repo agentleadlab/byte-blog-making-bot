@@ -2971,7 +2971,7 @@ def _note_is(monkeypatch, note):
     """The invoice note every payment gets, in a test."""
     monkeypatch.setattr(jobs, "payra_invoice_note", note)
     monkeypatch.setattr(jobs, "payra_invoice_pick", lambda config, **kw: (
-        note(config, **{key: value for key, value in kw.items() if key != "taken"}), ""))
+        note(config, **{key: value for key, value in kw.items() if key not in ("taken", "number")}), ""))
 
 
 def test_two_invoices_are_two_cards_even_paid_together(monkeypatch):
@@ -3317,3 +3317,101 @@ def test_cards_made_since_a_time(monkeypatch):
     found = jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 18, tzinfo=timezone.utc))
     assert found["id"].endswith("2")
     assert jobs.card_made_since(config, "Karl Cook", since=datetime(2026, 10, 20, tzinfo=timezone.utc)) is None
+
+
+# ------------------------------------------ the payment post from Oct 19 on
+
+
+HAYDEN = """<@&1> <@2>
+
+**New Payment | Payra** ✅
+
+**NAME:** Hayden Keltner
+**EMAIL:** hayden@example.com
+**PHONE:** +18125550193
+**AMOUNT:** $1020.51
+**PRODUCT:** Text-Verified Veteran leads
+**INVOICE:** INV-20162 · card •••• 7872 · 10/19/2026 8:50 AM
+
+**Subtotal:** $1,305.00
+**$11/lead OFF:** -$319.00
+**Automatic Dual Pricing:** $34.51
+**Total:** $1,020.51
+**Notes:**
+> Name: Hayden Keltner
+> Email: hayden@example.com
+> Phone Number: 812-555-0193
+> Lead Type: OTP VET - Text-Verified Veteran Leads (fresh) - invoice 2 of 2, for his agent Matthew Stewart (stewart@example.com, 720-555-0107); leads, lead texts and emails go to Matthew directly
+> Number of Requested Leads: 29
+**Internal Notes:**
+> *(none)*"""
+
+
+def test_the_new_post_names_its_invoice_and_carries_its_notes():
+    number, notes = ordercards.post_invoice(HAYDEN)
+
+    assert number == "INV-20162"
+    assert notes.startswith("Name: Hayden Keltner") and notes.endswith("Number of Requested Leads: 29")
+    assert "none" not in notes and ">" not in notes
+
+
+def test_internal_notes_are_kept_when_there_are_some():
+    _number, notes = ordercards.post_invoice(HAYDEN.replace("> *(none)*", "> states: TX, FL, GA"))
+
+    assert notes.endswith("Internal notes: states: TX, FL, GA")
+
+
+def test_the_old_post_has_neither():
+    assert ordercards.post_invoice("New Payment | Payra\n**NAME:** X\n**PRODUCT:** VET") == ("", "")
+
+
+def test_paying_for_their_agent_is_said_not_held():
+    """Hayden Keltner paying "for his agent Matthew Stewart": the order says
+    so - not Tony Moderno's card rewritten for Preston Bridges."""
+    card = {"kind": "fresh", "source": HAYDEN,
+            "fields": {"name": "Matthew Stewart", "states": "TX", "package": "OTP VET"}}
+    wrong, missing = ordercards.doubts(card, today=datetime(2026, 10, 19).date())
+
+    assert not any("paid by" in one for one in wrong)
+    assert any("paid by Hayden Keltner for Matthew Stewart" in one for one in missing)
+
+
+def test_somebody_else_named_nowhere_is_still_held():
+    card = {"kind": "fresh", "source": HAYDEN,
+            "fields": {"name": "Preston Bridges", "states": "TX", "package": "OTP VET"}}
+    wrong, _missing = ordercards.doubts(card, today=datetime(2026, 10, 19).date())
+
+    assert any("paid by Hayden Keltner" in one for one in wrong)
+
+
+def test_a_post_carrying_its_notes_looks_nothing_up(monkeypatch):
+    noted = {}
+
+    async def note(key, **kw):
+        noted.update(kw)
+
+    monkeypatch.setattr(client, "_order_note", note)
+    monkeypatch.setattr(jobs, "payra_invoice_pick", lambda *a, **kw: pytest.fail("looked Payra up"))
+    got = asyncio.run(client._invoice_for(SimpleNamespace(config=None), "k1", name="Hayden Keltner", email="",
+                                          amount="1020.51", product="VET", said=HAYDEN))
+
+    assert got == "" and noted == {"invoice_id": "INV-20162"}
+
+
+def test_a_post_naming_its_invoice_gets_that_one(monkeypatch):
+    now = datetime(2026, 10, 19, 14, 0, tzinfo=timezone.utc)
+    invoices = {
+        "a": {"id": "a", "number": "INV-20161", "name": "Hayden Keltner", "total": 1020.51,
+              "notes": "Lead Type: OTP FEX", "created": "2026-10-19T13:00:00Z"},
+        "b": {"id": "b", "number": "INV-20162", "name": "Hayden Keltner", "total": 900.00,
+              "notes": "Lead Type: OTP VET", "created": "2026-10-19T12:00:00Z"}}
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: invoices)
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+
+    note, which = jobs.payra_invoice_pick(config, name="Hayden Keltner", amount="1020.51", now=now,
+                                          number="INV-20162")
+    assert which == "INV-20162" and "OTP VET" in note
+    # And a payment without a number doesn't take the one a post named.
+    note, which = jobs.payra_invoice_pick(config, name="Hayden Keltner", amount="900", now=now,
+                                          taken={"INV-20162"})
+    assert which == "a"
