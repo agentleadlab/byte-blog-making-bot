@@ -1692,9 +1692,13 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
             if request.action == "contracts":
                 paired, problems = await asyncio.to_thread(jobs.contract_check, config)
-                said = describe_contracts(paired, everything=True)
+                # "who can't go live because no contract" wants those, not
+                # the signed ones as well.
+                everything = not mentions.CONTRACTS_ASKED.search(request.brief or "")
+                said = describe_contracts(paired, everything=everything)
                 if not said and not problems:
-                    said = "Nobody going live today or tomorrow."
+                    said = ("Nobody going live today or tomorrow." if not paired else
+                            f"✅ All {len(paired)} going live today or tomorrow have a signed contract.")
                 await responder.send(said + "".join(f"\n⚠ {one}" for one in problems))
                 return
 

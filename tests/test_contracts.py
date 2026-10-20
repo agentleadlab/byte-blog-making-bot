@@ -1,3 +1,4 @@
+import pytest
 """Every order going live has a signed contract of its own.
 
 "every order, contracts are this and the basic, tag me only".
@@ -159,6 +160,28 @@ def test_asking_for_it():
 
     assert mentions.parse("contracts", max_batch=5).action == "contracts"
     assert mentions.parse("check contracts", max_batch=5).action == "contracts"
+
+
+@pytest.mark.parametrize("said", [
+    "who are the people supposed to go live but cant because no contract/unsigned",
+    "who has no contract", "unsigned contracts", "who hasnt signed yet",
+    "who is going live without a contract", "any missing contracts for tomorrow?",
+])
+def test_asked_the_way_people_ask(said):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(said, max_batch=5).action == "contracts"
+
+
+@pytest.mark.parametrize("said, action", [
+    ("contract of David Pereira", "contract"),
+    ("add to trello tag nicole no contract signed for Ann", "comment"),
+    ("comment on general card Ann has no contract yet", "comment"),
+])
+def test_not_when_its_something_else(said, action):
+    from wilbyte.bot import mentions
+
+    assert mentions.parse(said, max_batch=5).action == action
 
 
 def test_only_orders_going_live_today_or_tomorrow_are_checked(monkeypatch):

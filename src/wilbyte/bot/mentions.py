@@ -656,6 +656,18 @@ _TESTIMONIAL_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.b
 _TESTIMONIAL_KEY = re.compile(r"\b(name|quote|about)\s*:", re.IGNORECASE)
 
 
+#: Who hasn't signed: "no contract", "unsigned", "not signed", "missing
+#: contracts", "hasn't signed", "without a contract".
+CONTRACTS_ASKED = re.compile(
+    r"\b(?:no|without(?:\s+a)?|missing|any|unsigned|un-signed)\s+(?:signed\s+)?contracts?\b"
+    r"|\bcontracts?\s+(?:missing|unsigned|not\s+signed|isn'?t\s+signed|aren'?t\s+signed)\b"
+    r"|\bcontracts?\b.{0,60}\b(?:unsigned|not\s+(?:yet\s+)?signed|hasn'?t\s+(?:been\s+)?signed|"
+    r"haven'?t\s+(?:been\s+)?signed|didn'?t\s+sign)\b"
+    r"|\b(?:unsigned|not\s+(?:yet\s+)?signed|hasn'?t\s+signed|haven'?t\s+signed|didn'?t\s+sign)\b.{0,60}\bcontracts?\b"
+    r"|\bwho\b.{0,40}\b(?:hasn'?t|haven'?t|didn'?t|not)\s+(?:yet\s+)?sign(?:ed)?\b",
+    re.IGNORECASE | re.DOTALL)
+
+
 def _testimonial_fields(said: str) -> dict:
     """{"name": ..., "quote": ..., "about": ...} - each runs to the next one,
     in whatever order they were written."""
@@ -1000,6 +1012,14 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
         return MentionRequest(action="payratest", brief=text)
     if re.match(r"\s*(?:contracts|contract\s+check|check\s+contracts)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="contracts", brief=text)
+    # "who are the people supposed to go live but cant because no
+    # contract/unsigned" - asked the way people ask it.
+    # Not something to put on the board that mentions one: "add to trello
+    # tag nicole no contract signed for Ann" is a comment.
+    if CONTRACTS_ASKED.search(text) and not re.match(r"\s*contracts?\s+(?:of|for)\b", text, re.IGNORECASE) \
+            and not TRELLO_ASK.match(text) and not _opens_with(text, COMMENT_WORDS) \
+            and not _opens_with(text, TRELLO_COMMENT_WORDS) and not re.search(r"\btrello\b", text, re.IGNORECASE):
         return MentionRequest(action="contracts", brief=text)
     if re.match(r"\s*(?:calendar|itinerary|ics)\b.*docs\.google\.com/spreadsheets", text,
                 re.IGNORECASE | re.DOTALL):
