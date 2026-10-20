@@ -403,3 +403,56 @@ def test_a_growth_server_channel_is_read_back_like_it_is_answered(monkeypatch):
     monkeypatch.setattr(client, "_setup_guild", lambda bot, config: growth)
     assert client._never_speaks_in(bot, NS(id=70, name="internal-team", guild=growth)) is False
     assert client._never_speaks_in(bot, NS(id=71, name="random", guild=NS(id=1))) is True
+
+
+def test_the_same_words_with_another_screenshot_is_another_ask():
+    """Faith's 3:53 "@Ryte add to trello tag nicole" with Collin Neumann's
+    texts, dropped as a repeat of the next one with somebody else's."""
+    first, second = _said(10, 30, "<@999> add to trello tag nicole"), _said(11, 5, "<@999> add to trello tag nicole")
+    first.attachments = [NS(filename="image.png", size=1000)]
+    second.attachments = [NS(filename="image.png", size=2000)]
+    assert _missed([first, second]) == [10, 11]
+
+
+def test_a_sleep_is_read_back_from_the_last_minute_heard(monkeypatch):
+    """The Mac asleep: the loop woke first and wrote "listening" for the time
+    it had been away, so nothing said meanwhile was read back."""
+    wrote, napped = [], []
+    monkeypatch.setattr(mentionseen, "listening", lambda when: wrote.append(when))
+    monkeypatch.setattr(client, "MENTION_ALIVE_SECONDS", 0)
+
+    async def nap(bot):
+        napped.append(bot.gone_since)
+
+    monkeypatch.setattr(client, "_catch_up_after_nap", nap)
+    before = datetime.now(timezone.utc) - timedelta(minutes=40)
+
+    class Waking(Bot):
+        def __init__(self):
+            super().__init__()
+            self.listened_at, self.mention_task, self.turns = before, None, 0
+
+        def is_closed(self):
+            self.turns += 1
+            return self.turns > 1
+
+    bot = Waking()
+
+    async def run():
+        await client.listening_loop(bot)
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert bot.gone_since == before and wrote == [], "not written as heard"
+    assert napped == [before]
+
+
+def test_a_board_job_from_a_while_ago_is_done_not_asked(monkeypatch, answering):
+    """"he forgets these when he's down" - Faith's "add to trello tag nicole"
+    half an hour before RYTE was back."""
+    done, asked, replies = answering
+    mentionseen.listening(NOW - timedelta(hours=1))
+    _catch_up(monkeypatch, [_said(10, 30, "<@999> add to trello tag nicole")], replies)
+
+    assert done == [10] and asked == []
+    assert "offline" in replies[0] and "putting it on the board" in replies[0]

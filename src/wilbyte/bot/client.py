@@ -428,8 +428,25 @@ class WilByteBot(discord.Client):
         await _warn_if_stale(self)
 
     async def on_disconnect(self) -> None:
+        # From the last minute RYTE is known to have been listening: the
+        # socket is found dead well after it stopped hearing anything.
+        now = datetime.now(timezone.utc)
+        heard = getattr(self, "listened_at", None) or now
+        self.gone_since = min(self.gone_since or now, heard, now)
+
+    async def on_resumed(self) -> None:
+        """Back on the same session. Discord sends what was missed, but only
+        what it still has - read back as well, a little later, so nothing
+        said meanwhile is left. Already answered is skipped."""
         if self.gone_since is None:
-            self.gone_since = datetime.now(timezone.utc)
+            return
+
+        async def later():
+            await asyncio.sleep(20)
+            await mention_catch_up(self)
+
+        if self.mention_task is None or self.mention_task.done():
+            self.mention_task = self.loop.create_task(later())
 
     async def on_raw_reaction_remove(self, payload) -> None:
         """The gavel taken off an order by somebody whose gavel counts: its
@@ -689,11 +706,24 @@ def _never_speaks_in(bot: "WilByteBot", channel) -> bool:
     return not allowed and "channel" in reason
 
 
+def _shown_with(message) -> tuple:
+    """What a message carries besides its words - its screenshots and what it
+    replies to."""
+    files = tuple(sorted((str(getattr(one, "filename", "") or ""), int(getattr(one, "size", 0) or 0))
+                         for one in getattr(message, "attachments", None) or []))
+    reference = getattr(getattr(message, "reference", None), "message_id", None)
+    return files, reference
+
+
 def _asked_the_same(one, other) -> bool:
+    """The same person asking the same thing again - not Faith's "@Ryte add
+    to trello tag nicole" with a different screenshot each time, which is a
+    different job every time: the 3:53 one was dropped as a repeat of a later
+    one and never made it onto the board."""
     return one.author.id == other.author.id and (
         " ".join((one.content or "").split()).casefold()
         == " ".join((other.content or "").split()).casefold()
-    )
+    ) and _shown_with(one) == _shown_with(other) and not _shown_with(one)[0]
 
 
 async def missed_mentions(bot: "WilByteBot", *, since: datetime, until: datetime,
@@ -791,12 +821,33 @@ async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) ->
                         mention_author=False,
                     )
                     await answer_mention(bot, message)
+                elif mentions.parse(message.content or "").action == "comment":
+                    # "he forgets these when he's down": a job for the board -
+                    # a comment and somebody's checklist - is done, not asked
+                    # about behind a button only the sender can press.
+                    stamp = int(message.created_at.timestamp())
+                    await message.reply(f"↩️ I was offline when you sent this (<t:{stamp}:R>) — putting it on "
+                                        f"the board now. If somebody already did it by hand, delete my copy.",
+                                        mention_author=False)
+                    await answer_mention(bot, message)
                 else:
                     _also_running(asyncio.create_task(_ask_about_missed(bot, message)))
     except asyncio.CancelledError:
         raise
     except Exception:
         log.exception("Catching up on missed mentions failed")
+
+
+async def _catch_up_after_nap(bot: "WilByteBot") -> None:
+    """Once the connection has had a moment to come back, what was said."""
+    await asyncio.sleep(30)
+    for _ in range(20):
+        if bot.is_closed():
+            return
+        if bot.is_ready():
+            break
+        await asyncio.sleep(15)
+    await mention_catch_up(bot)
 
 
 async def listening_loop(bot: "WilByteBot") -> None:
@@ -806,11 +857,24 @@ async def listening_loop(bot: "WilByteBot") -> None:
     and the next connect has to read back over them.
     """
     while not bot.is_closed():
+        now = datetime.now(timezone.utc)
+        last = getattr(bot, "listened_at", None)
+        if last is not None and now - last > timedelta(seconds=3 * MENTION_ALIVE_SECONDS):
+            # The Mac asleep: nothing ran, so nothing was heard - and the
+            # socket isn't known to be dead yet. Gone from the last tick,
+            # not from whenever Discord gets round to saying so.
+            bot.gone_since = min(bot.gone_since or last, last)
+            log.info("Nothing ran from %s to %s (asleep?) - reading back what was said", last, now)
+            # A short nap can keep the connection, and then nothing else
+            # reads back over it.
+            if bot.mention_task is None or bot.mention_task.done():
+                bot.mention_task = asyncio.get_running_loop().create_task(_catch_up_after_nap(bot))
         if bot.gone_since is None:
             try:
-                await asyncio.to_thread(mentionseen.listening, datetime.now(timezone.utc))
+                await asyncio.to_thread(mentionseen.listening, now)
             except Exception:
                 log.warning("Couldn't note that I'm listening", exc_info=True)
+        bot.listened_at = now
         await asyncio.sleep(MENTION_ALIVE_SECONDS)
 
 
