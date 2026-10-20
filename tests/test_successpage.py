@@ -367,6 +367,31 @@ def test_the_plan_looks_on_the_interviews_own_channel(monkeypatch):
     assert items[2]["id"] == "VET0000000A" and items[2]["found"] is True
 
 
+def test_a_misspelt_name_still_finds_its_tab(monkeypatch):
+    """"post segments Crsytal Clark" - "No tab called Crsytal Clark"."""
+    from wilbyte import docs, successpage
+    from wilbyte.bot import jobs
+
+    class Doc:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def contents(self):
+            return [(docs.Tab("t.1", "Crystal Clark"), "", ""), (docs.Tab("t.2", "Collin Nueman"), "", ""),
+                    (docs.Tab("t.3", "Karyn Giles"), "", "")]
+
+    monkeypatch.setattr(docs, "open_docs", lambda secrets: Doc())
+    monkeypatch.setattr(successpage, "from_tab", lambda title, text: ([], [], []))
+    monkeypatch.setattr(jobs, "_wordpress", lambda config: (_ for _ in ()).throw(RuntimeError("no site")))
+    config = SimpleNamespace(secrets=SimpleNamespace(segments_doc_id="D"))
+    assert jobs.success_plan(config, "Crsytal Clark")[0] == "Crystal Clark"
+    with pytest.raises(successpage.SuccessError):
+        jobs.success_plan(config, "Somebody Else")
+
+
 def test_both_channels_are_read_from_links_or_handles():
     """"yt has two accounts"."""
     assert sp.channels_in(

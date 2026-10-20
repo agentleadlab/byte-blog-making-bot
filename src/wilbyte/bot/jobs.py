@@ -12249,6 +12249,15 @@ def success_plan(config: Config, who: str) -> tuple[str, list[dict], list[str]]:
         one for one in every if wanted in called(one[0])
     ]
     if not picked:
+        # "post segments Crsytal Clark" - a slip of the keys is still her
+        # tab, when it's close to one tab and no other.
+        import difflib
+
+        close = difflib.get_close_matches(wanted, [called(one[0]) for one in every], n=2, cutoff=0.8)
+        if len(close) == 1 or (len(close) == 2 and difflib.SequenceMatcher(None, wanted, close[0]).ratio()
+                               - difflib.SequenceMatcher(None, wanted, close[1]).ratio() >= 0.1):
+            picked = [one for one in every if called(one[0]) == close[0]]
+    if not picked:
         raise successpage.SuccessError(f"No tab called “{who}” in the posting doc.")
     if len(picked) > 1:
         raise successpage.SuccessError(

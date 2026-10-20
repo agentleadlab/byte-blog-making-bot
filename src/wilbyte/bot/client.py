@@ -2352,6 +2352,9 @@ async def _post_segments(responder: Responder, config: Config, who: str) -> None
     with a YouTube link goes first in its website section; the ones without
     are named, not guessed at.
     """
+    # Said at once: reading the doc and looking for each video on the
+    # channel takes a while, and a quiet minute reads as being ignored.
+    await responder.send(f"🎬 Reading **{who}**'s tab in the posting doc…", quiet=True)
     try:
         tab, items, skipped = await asyncio.to_thread(jobs.success_plan, config, who)
     except Exception as exc:
