@@ -3395,6 +3395,34 @@ def test_the_catch_up_goes_back_to_when_ryte_was_last_running(order, monkeypatch
     asked.clear()
     asyncio.run(client._catch_up_gavels(bot, now=now))
     assert asked[0]["after"] == now - client.GAVEL_CATCH_UP_MOST, "never more than four days"
+    # Away mid-run - the Mac asleep - for longer than a day: from then.
+    bot._was_alive = now - timedelta(days=2, hours=1)
+    asked.clear()
+    asyncio.run(client._catch_up_gavels(bot, now=now, gone=now - timedelta(days=3)))
+    assert asked[0]["after"] == now - timedelta(days=3, minutes=30)
+
+
+def test_an_aged_payment_read_back_twice_waits_once(order, monkeypatch):
+    """A reconnect reads back over the same aged payment while its two
+    minutes are still running: one card, not two."""
+    made = []
+
+    async def gavelled(bot, payload):
+        made.append(payload.message_id)
+
+    async def invoice(*a, **k):
+        return None
+
+    monkeypatch.setattr(client, "_order_gavelled", gavelled)
+    monkeypatch.setattr(client, "_invoice_for", invoice)
+    message = _message()
+
+    async def both():
+        return await asyncio.gather(client._aged_from_invoice(_bot(message), message, wait=0.01),
+                                    client._aged_from_invoice(_bot(message), message, wait=0.01))
+
+    assert sorted(asyncio.run(both())) == ["already", "made"]
+    assert len(made) == 1
 
 
 def test_a_card_made_by_hand_while_away_is_used_not_doubled(order, monkeypatch):

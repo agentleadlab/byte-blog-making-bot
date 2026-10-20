@@ -371,13 +371,19 @@ class WilByteBot(discord.Client):
             self.ring_task = self.loop.create_task(ring_loop(self))
         # A quiet run the restart cut short. Once a start, not once a
         # reconnect: on_ready fires again after every dropped connection.
-        if not self.offered_the_run:
+        first = not self.offered_the_run
+        if first:
             self.offered_the_run = True
             _also_running(self.loop.create_task(_offer_the_run(self)))
-            _also_running(self.loop.create_task(_catch_up_payra(self)))
-            # Gavels dropped while RYTE was down.
+            # Payments and gavels while RYTE was down.
             _last_alive(self)
-            _also_running(self.loop.create_task(_catch_up_gavels(self)))
+            await payments_catch_up(self)
+        else:
+            # Back after the connection went - the Mac asleep, the wifi gone.
+            # Same process, so nothing above runs again: read back over it.
+            gone, self.payments_gone = getattr(self, "payments_gone", None), None
+            await payments_catch_up(self, gone=gone)
+        if first:
             # The down alarm: say how long RYTE was gone, then check in
             # every five minutes for as long as it's up.
             _also_running(self.loop.create_task(alive_loop(self)))
@@ -433,6 +439,7 @@ class WilByteBot(discord.Client):
         now = datetime.now(timezone.utc)
         heard = getattr(self, "listened_at", None) or now
         self.gone_since = min(self.gone_since or now, heard, now)
+        self.payments_gone = min(getattr(self, "payments_gone", None) or now, heard, now)
 
     async def on_resumed(self) -> None:
         """Back on the same session. Discord sends what was missed, but only
@@ -447,6 +454,8 @@ class WilByteBot(discord.Client):
 
         if self.mention_task is None or self.mention_task.done():
             self.mention_task = self.loop.create_task(later())
+        gone, self.payments_gone = getattr(self, "payments_gone", None), None
+        await payments_catch_up(self, gone=gone)
 
     async def on_raw_reaction_remove(self, payload) -> None:
         """The gavel taken off an order by somebody whose gavel counts: its
@@ -839,7 +848,8 @@ async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) ->
 
 
 async def _catch_up_after_nap(bot: "WilByteBot") -> None:
-    """Once the connection has had a moment to come back, what was said."""
+    """Once the connection has had a moment to come back, what was said -
+    and what was paid."""
     await asyncio.sleep(30)
     for _ in range(20):
         if bot.is_closed():
@@ -848,6 +858,8 @@ async def _catch_up_after_nap(bot: "WilByteBot") -> None:
             break
         await asyncio.sleep(15)
     await mention_catch_up(bot)
+    gone, bot.payments_gone = getattr(bot, "payments_gone", None), None
+    await payments_catch_up(bot, gone=gone)
 
 
 async def listening_loop(bot: "WilByteBot") -> None:
@@ -864,6 +876,7 @@ async def listening_loop(bot: "WilByteBot") -> None:
             # socket isn't known to be dead yet. Gone from the last tick,
             # not from whenever Discord gets round to saying so.
             bot.gone_since = min(bot.gone_since or last, last)
+            bot.payments_gone = min(getattr(bot, "payments_gone", None) or last, last)
             log.info("Nothing ran from %s to %s (asleep?) - reading back what was said", last, now)
             # A short nap can keep the connection, and then nothing else
             # reads back over it.
@@ -9962,6 +9975,35 @@ def _order_preview(card: dict) -> str:
     return "\n".join(lines)
 
 
+#: Aged payments waiting out their two minutes - so reading back after a
+#: reconnect doesn't start a second wait for the same one.
+_AGED_WAITING: set = set()
+
+
+async def payments_catch_up(bot, *, gone: datetime | None = None) -> None:
+    """Everything payment-side that happened while RYTE wasn't hearing it -
+    "ryte was gone for almost 2 hrs, make sure he doesnt miss payments".
+    Payra's posts remembered (and Levinson's put on the tracker), gavels done,
+    aged payments made into cards. Not just once a start: the Mac asleep or
+    the wifi gone keeps the same process, and on_ready only reconnects."""
+    if getattr(bot, "payments_task", None) is not None and not bot.payments_task.done():
+        return
+
+    async def run():
+        try:
+            await _catch_up_payra(bot)
+        except Exception:
+            log.exception("Couldn't read back the payments")
+        try:
+            done = await _catch_up_gavels(bot, gone=gone)
+            if done:
+                log.info("Caught up %d order(s) after being away", len(done))
+        except Exception:
+            log.exception("Couldn't read back the gavels")
+
+    bot.payments_task = asyncio.get_running_loop().create_task(run())
+
+
 #: How far back a start looks for gavels it missed.
 GAVEL_CATCH_UP = timedelta(hours=24)
 #: The furthest back a start looks, however long RYTE was away.
@@ -9990,7 +10032,7 @@ def _last_alive(bot) -> datetime | None:
 GAVELS_FROM = datetime(2026, 10, 13, 22, 0, tzinfo=timezone.utc)
 
 
-async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
+async def _catch_up_gavels(bot, *, now: datetime | None = None, gone: datetime | None = None) -> list[str]:
     """Gavels dropped while RYTE was down - an update, the Mac asleep - found
     by looking through the Growth server's last day: every channel and thread
     with anything said in it since. Each one is done as if just dropped,
@@ -10006,8 +10048,9 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
     # for 1 and a half days". Never more than GAVEL_CATCH_UP_MOST.
     away = _last_alive(bot)
     since = now - GAVEL_CATCH_UP
-    if away is not None:
-        since = min(since, away - timedelta(minutes=30))
+    for back in (away, gone):
+        if back is not None:
+            since = min(since, back - timedelta(minutes=30))
     since = max(since, now - GAVEL_CATCH_UP_MOST, GAVELS_FROM)
     places = list(getattr(guild, "text_channels", None) or [])
     try:
@@ -10033,7 +10076,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None) -> list[str]:
                 # or its two minutes cut short by a restart.
                 if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
                         and message.created_at >= AGED_AUTO_FROM and _aged_payment(message)
-                        and str(message.id) not in _ORDER_ACTIVE
+                        and str(message.id) not in _ORDER_ACTIVE and str(message.id) not in _AGED_WAITING
                         and not (await asyncio.to_thread(ordercards.load)).get(str(message.id))):
                     waited = (now - message.created_at).total_seconds()
                     _also_running(asyncio.get_running_loop().create_task(_aged_from_invoice(
@@ -10116,8 +10159,14 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None, catchin
     invoice has none (the thread and the gavel still work). What happened."""
     from .. import ordercards
 
-    await asyncio.sleep(AGED_INVOICE_WAIT_SECONDS if wait is None else wait)
     key = str(message.id)
+    if key in _AGED_WAITING:
+        return "already"
+    _AGED_WAITING.add(key)
+    try:
+        await asyncio.sleep(AGED_INVOICE_WAIT_SECONDS if wait is None else wait)
+    finally:
+        _AGED_WAITING.discard(key)
     if (ordercards.load().get(key) or {}).get("status") not in (None, "waiting") or key in _ORDER_ACTIVE:
         return "already"
     said = _all_of_it(message)
@@ -13643,6 +13692,8 @@ def _keep_payment(message_id, paid) -> None:
 
 #: How far back the first read of the payments channel goes.
 PAYRA_FIRST_DAYS = 365
+#: Payments missed while away go on the Levinson tracker when this recent.
+PAYRA_CATCH_UP_TRACKER = timedelta(days=4)
 
 
 async def _catch_up_payra(bot: "WilByteBot") -> None:
@@ -13665,17 +13716,30 @@ async def _catch_up_payra(bot: "WilByteBot") -> None:
         {"after": datetime.now(zone) - timedelta(days=PAYRA_FIRST_DAYS)}
     )
     count = 0
+    missed = []
     try:
         async for old in channel.history(limit=PAYMENT_SCAN * 5, **how):
             paid = levinson.read_payment(_all_text(old), paid_at=old.created_at.astimezone(zone))
             if paid is not None:
                 payra.remember(data, old.id, paid)
                 count += 1
+                # Only what was new since last time - not a year of them on a
+                # first read - and only lately: put on the tracker as it would
+                # have been live.
+                if newest.isdigit() and datetime.now(timezone.utc) - old.created_at <= PAYRA_CATCH_UP_TRACKER:
+                    missed.append(old)
     except Exception:
         log.warning("Couldn't read back the payments channel", exc_info=True)
     if count:
         await asyncio.to_thread(payra.save, data)
         log.info("Remembered %d Payra payment(s)", count)
+    # Levinson's, from while RYTE was away - each written once, however many
+    # times it's read.
+    for old in missed:
+        try:
+            await handle_payment(bot, old)
+        except Exception:
+            log.warning("Couldn't put a missed payment on the Levinson tracker", exc_info=True)
 
 
 def _all_text(message) -> str:

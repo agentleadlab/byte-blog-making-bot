@@ -906,6 +906,45 @@ def test_what_payra_posted_while_ryte_was_off_is_read_back(monkeypatch):
     assert set(payra.load()["payments"]) == {"10", "11"}
 
 
+def test_a_payment_missed_while_away_goes_on_the_tracker(monkeypatch):
+    """"ryte was gone for almost 2 hrs i think, make sure he doesnt miss
+    payments" - read back, and put on the Levinson tracker as if live."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from wilbyte import levinson, payra
+    from wilbyte.bot import client
+
+    when = datetime.now(timezone.utc) - timedelta(hours=1)
+    batches = [[10], [11, 12]]
+
+    class Payments:
+        def history(self, **how):
+            ids = batches.pop(0)
+
+            async def gen():
+                for mid in ids:
+                    yield NS(id=mid, created_at=when, content="Payra", embeds=[])
+            return gen()
+
+    handled = []
+
+    async def handling(bot, message):
+        handled.append(message.id)
+
+    monkeypatch.setattr(levinson, "read_payment",
+                        lambda text, paid_at: _paid("Shelby Guest", "s@x.com", "4358173162", 35000))
+    monkeypatch.setattr(client, "handle_payment", handling)
+    bot = NS(config=NS(secrets=NS(discord_payment_channel_id="55"),
+                       schedule=NS(timezone="America/Chicago")),
+             get_channel=lambda cid: Payments() if cid == 55 else None)
+
+    asyncio.run(client._catch_up_payra(bot))
+    assert handled == [], "a first read is a year of them - remembered, not put on"
+    asyncio.run(client._catch_up_payra(bot))
+    assert handled == [11, 12]
+
+
 def test_a_longer_name_is_not_a_shorter_ones_payment():
     """"Dylan Rankin Jr" asking is not "Dylan Rankin" who paid - father and son."""
     from wilbyte import payra
