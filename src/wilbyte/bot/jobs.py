@@ -12915,22 +12915,19 @@ _FIELD_LINE = re.compile(
 
 
 def _beyond_fields(note: str, fields: dict) -> str:
-    """A note less what the card says above it already - Jad Nour Samman's
-    Additional Notes were his invoice twice over, every field again. Lines
-    that are a field ("Email: ..."), or just his name, email or phone, go;
-    what's left is the note."""
-    def bare(text):
-        return re.sub(r"[^a-z0-9@.]", "", str(text or "").casefold())
-
-    known = {bare(fields.get(key)) for key in ("name", "email") if fields.get(key)}
-    phone = re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:]
+    """A note as it was written - "can you add the additional notes as it is?
+    unless its image, if its text as it is". The team's own notes whole.
+    The invoice's less its form lines ("Email: ...", "States Leads In: ...")
+    that the card has above - Jad Nour Samman's Additional Notes were his
+    invoice twice over, every field again; the rest of it word for word."""
+    if not re.match(r"\s*payra invoice note:", str(note or ""), re.IGNORECASE):
+        # A form pasted into the thread is the card twice over too - its
+        # "Name: ..." lines go, and every other line stays as written.
+        return "\n".join(line for line in str(note or "").splitlines() if not _FIELD_LINE.match(line)).strip()
     kept = []
     for line in str(note or "").splitlines():
         text = re.sub(r"^\s*payra invoice note:\s*", "", line, flags=re.IGNORECASE)
-        if _FIELD_LINE.match(line) or (text.strip() and bare(text) in known):
-            continue
-        digits = re.sub(r"\D", "", text)
-        if phone and len(digits) >= 10 and digits[-10:] == phone and not re.search(r"[a-z]{3}", text, re.IGNORECASE):
+        if _FIELD_LINE.match(text):
             continue
         kept.append(text)
     said = "\n".join(kept).strip()
@@ -13356,6 +13353,14 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # A screenshot Claude couldn't fetch shouldn't cost the whole read.
         response = asking(config.copy.model, content[:1])
     got = _tool_input(response, "order")
+    # The invoice's notes written into the payment post since Oct 19 - Mario
+    # Gonzalez's own "Hey Faith this is Mario ..." - on the card as written,
+    # like the invoice note looked up for an older post.
+    from .. import ordercards as _posted
+
+    _number, on_the_post = _posted.post_invoice(text)
+    if on_the_post and not any(str(one).startswith("Payra invoice note:") for one in notes or ()):
+        notes = [f"Payra invoice note: {on_the_post}", *(notes or ())]
     fields = order_fields(got, notes)
     if fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
         # Ad spend: the agency the order names, and Standard or Plus.

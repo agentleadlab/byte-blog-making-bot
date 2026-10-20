@@ -2061,8 +2061,9 @@ def test_notes_dont_repeat_the_fields_above_them():
     assert jobs.order_fields(dict(got, notes="Name: Jad Nour Samman ..."), [invoice, thread])["notes"] == ""
     declan = "Declan Connolly\n(555) 010-3388\nCan I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet"
     got = {"name": "Declan Connolly", "phone": "(555) 010-3388"}
-    assert jobs.order_fields(got, [declan])["notes"] == (
-        "Can I do an order of $400 worth of veteran aged 30 days az, mi, oh, fl\n100 Aged Vet")
+    # "as it is": what the team wrote, every line of it - only a form's
+    # labelled lines are the card twice.
+    assert jobs.order_fields(got, [declan])["notes"] == declan
     aged = "Payra invoice note: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
     assert jobs.order_fields({}, [aged])["notes"] == "From the Payra invoice: AGED IUL / 180+ / in states IL, SC, AZ, and TX"
 
@@ -4389,3 +4390,49 @@ def test_a_written_name_doesnt_undo_paying_for_their_agent(monkeypatch):
     card = _read_with(monkeypatch, {"kind": "fresh", "name": "Matthew Stewart", "package": "OTP VET", "leads": "29"},
                       HAYDEN, [])
     assert card["client"] == "Matthew Stewart"
+
+
+MARIO = """[10/20 08:14AM] Nova: <@&1>
+**New Payment | Payra** ✅
+**NAME:** Mario Gonzalez
+**EMAIL:** mario@example.com
+**AMOUNT:** $1490.40
+**PRODUCT:** Text-Verified Veteran leads
+**INVOICE:** INV-20243 · card •••• 8356 · 10/20/2026 8:14 AM
+**Total:** $1,490.40
+**Notes:**
+> Hey Faith this is Mario and agent under maxout through Mike shaefer,
+> Would like to make an order of 40 premium vets
+> States are
+> Az , IN , KS, MN, OH ,VA,SC, NC, OR, WA
+> We are told we have a 20% off code with code (leadlab20)
+> Just wanted to place a order! Thank you so much .
+> mario@example.com
+**Internal Notes:**
+> *(none)*"""
+
+
+def test_the_invoices_own_notes_go_on_the_card_as_written(monkeypatch):
+    """"can you add the additional notes as it is? unless its image, if its
+    text as it is"."""
+    card = _read_with(monkeypatch, {"kind": "fresh", "name": "Mario Gonzalez", "email": "mario@example.com",
+                                    "package": "OTP VETS", "leads": "40", "notes": "Client wants 40 premium vets."},
+                      MARIO, [])
+    notes = card["fields"]["notes"]
+    assert notes.startswith("From the Payra invoice: Hey Faith this is Mario and agent under maxout through Mike shaefer,")
+    assert "We are told we have a 20% off code with code (leadlab20)" in notes
+    assert "Client wants 40 premium vets." not in notes, "the invoice as written, not a summary of it"
+
+
+def test_the_teams_notes_go_on_whole():
+    """Every line, as they wrote it - "50 OTP Vets / Add OR and ND / Live tonight
+    Monday October 19 / Marcel Trifan"."""
+    note = "50 OTP Vets\nAdd OR and ND\n\nLive tonight Monday October 19\nMarcel Trifan"
+    fields = jobs.order_fields({"name": "Marcel Trifan", "package": "OTP Vets", "leads": "50"}, [note])
+    assert fields["notes"] == note
+
+
+def test_the_invoices_form_lines_arent_the_card_twice():
+    note = "Payra invoice note: Name: Jad\nEmail: jad@example.com\nStates Leads In: TX\nPlease start Monday morning"
+    fields = jobs.order_fields({"name": "Jad", "email": "jad@example.com"}, [note])
+    assert fields["notes"] == "From the Payra invoice: Please start Monday morning"
