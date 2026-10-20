@@ -4449,6 +4449,34 @@ def test_the_automations_link_only_item_gets_the_task(monkeypatch, config):
     assert board.items == [], "no second item beside the automation's"
 
 
+def test_a_tag_check_survives_a_restart_and_a_trello_hiccup(monkeypatch, config):
+    """An update in the minute and a half after a tag lost the look, and a
+    Trello error during it lost it too."""
+    from wilbyte.bot import jobs
+
+    jobs._TAG_CHECKS.clear()
+    jobs.tag_check_later(card_id="ads", comment_id="c9", link="L", people=["Nicole"], text="Cap Ann at 10")
+    jobs._TAG_CHECKS.clear()  # the restart
+    assert jobs.tag_checks_restore() == 1 and jobs.tag_checks_restore() == 0
+    (check,) = jobs.tag_checks_due(now=10 ** 12)
+    assert jobs.tag_checks_restore() == 0, "done is done - not taken back up again"
+    for _ in range(jobs.TAG_CHECK_TRIES - 1):
+        assert jobs.tag_check_again(check)
+        (check,) = jobs.tag_checks_due(now=10 ** 12)
+    assert not jobs.tag_check_again(check), "given up on - and said"
+
+
+def test_a_tag_finds_a_checklist_named_with_more_than_the_name(monkeypatch, config):
+    from wilbyte.bot import jobs
+
+    board = LinkingChecklists({"Today": []}, held={"ads": [{"id": "cl-N", "name": "Nicole - Ads", "checkItems": []}]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    check = {"card_id": "ads", "comment_id": "c1", "link": "https://trello.com/c/ADS#comment-c1",
+             "people": ["Nicole"], "text": "Cap Ann at 10"}
+    assert jobs.tag_items_fill(config, check) == ["Nicole"]
+    assert board.items == [("cl-N", "Cap Ann at 10 https://trello.com/c/ADS#comment-c1")]
+
+
 def test_a_screenshot_ask_is_read_again_when_claude_is_busy(monkeypatch, config):
     """Two screenshots tagged a minute apart: one came out with no task."""
     from types import SimpleNamespace

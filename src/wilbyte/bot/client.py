@@ -9224,6 +9224,10 @@ AGED_ORDERS_ON = True
 #: meanwhile isn't a second card. Not kept over a restart, where the button
 #: is gone anyway: gavelling it again asks again.
 _ORDER_ACTIVE: set = set()
+#: {order: [card made]} while its card is being finished - so something
+#: breaking after the card is on the board doesn't say "nothing was made"
+#: and forget it, for the next try to make a second one.
+_ORDER_JUST_MADE: dict = {}
 
 
 def _said_line(message, tz: str = "") -> str:
@@ -9625,6 +9629,12 @@ _LEAD_TROUBLE_SAID: list = [""]
 async def tag_items_loop(bot: "WilByteBot") -> None:
     """Comments RYTE tagged people in, looked at again: whoever the board's
     automation didn't give a checklist item gets one."""
+    try:
+        back = await asyncio.to_thread(jobs.tag_checks_restore)
+        if back:
+            log.info("Took back up %s tag check(s) from before the restart", back)
+    except Exception:
+        log.warning("Couldn't take the tag checks back up", exc_info=True)
     while not bot.is_closed():
         for check in jobs.tag_checks_due():
             try:
@@ -9633,7 +9643,23 @@ async def tag_items_loop(bot: "WilByteBot") -> None:
                     log.info("Tagged but no worded checklist item from the board - added for %s", ", ".join(added))
             except Exception:
                 log.warning("Couldn't check the tagged comment's checklist items", exc_info=True)
+                if not jobs.tag_check_again(check):
+                    await _tag_check_gave_up(bot, check)
         await asyncio.sleep(30)
+
+
+async def _tag_check_gave_up(bot, check: dict) -> None:
+    """Said in Ryte The Goat: a tag whose checklist item couldn't be made
+    after trying again and again - never just left."""
+    responder = _order_responder(bot)
+    if responder is None:
+        return
+    who = ", ".join(check.get("people") or []) or "whoever was tagged"
+    try:
+        await responder.send(f"⚠ Couldn't make sure {who} got this on their checklist — Trello kept failing. "
+                             f"Check it by hand: {check.get('link') or check.get('card_id')}", quiet=True)
+    except Exception:
+        log.warning("...and couldn't say so", exc_info=True)
 
 
 #: How far back #failed-payment is watched, and how often.
@@ -10208,15 +10234,36 @@ async def _order_gavelled(bot, payload) -> None:
     except Exception as exc:
         # Anything not already said: said, so a gavel never just does nothing.
         log.exception("The gavelled order broke")
-        await _order_forget(key)
+        made = _ORDER_JUST_MADE.pop(key, [])
+        if made:
+            # The card is on the board: remembered as made, so trying again
+            # can't make a second one - and said where it is.
+            first = made[0]
+            try:
+                if (ordercards.load().get(key) or {}).get("status") != "made":
+                    await _order_note(key, status="made", card_id=first["id"], url=first["url"],
+                                      name=first.get("name"), client=first.get("client"),
+                                      message_channel_id=str(payload.channel_id),
+                                      **({"split": True, "parts": made} if len(made) > 1 else {}))
+            except Exception:
+                log.exception("...and couldn't note the card that was made")
+        else:
+            await _order_forget(key)
         if responder is not None:
             try:
-                await responder.send(f"🔨 ⚠ Something broke making that order's card: {_readable(exc)}\n"
-                                     f"-# Nothing was made. `@Ryte order <message link>` tries again.")
+                if made:
+                    await responder.send(
+                        f"🔨 ⚠ The card was made, then something broke: {_readable(exc)}\n"
+                        + "\n".join(f"• {one.get('name')}: {one['url']}" for one in made)
+                        + "\n-# Check its bank comment and screenshots — don't make it again.")
+                else:
+                    await responder.send(f"🔨 ⚠ Something broke making that order's card: {_readable(exc)}\n"
+                                         f"-# Nothing was made. `@Ryte order <message link>` tries again.")
             except Exception:
                 log.exception("...and couldn't say so")
     finally:
         _ORDER_ACTIVE.discard(key)
+        _ORDER_JUST_MADE.pop(key, None)
         _ORDER_ACKS.pop(key, None)
 
 
@@ -10330,8 +10377,19 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     if subs:
         if getattr(payload, "aged_only", False) and any(one["kind"] == "fresh" for one in subs):
             # Made on its own from an invoice: new-agent cards wait for a gavel.
-            # Several aged lines alone are made as any aged order is.
+            # Several aged lines alone are made as any aged order is. Said, so
+            # the aged part isn't left waiting on a gavel nobody knows about.
             await _order_forget(key)
+            ack = _ORDER_ACKS.pop(key, None)
+            if ack is not None and hasattr(ack, "delete"):
+                try:
+                    await ack.delete()
+                except Exception:
+                    pass
+            if responder is not None:
+                await responder.send(f"🔨 **{card.get('client') or 'This order'}** bought aged leads and new-agent "
+                                     f"leads together — none of its cards are made until somebody gavels it, so the "
+                                     f"aged card isn't out yet either. <{link}>", quiet=True)
             return
         await _order_make_split(bot, payload, key, responder, message, card, subs, link, thread_id)
         return
@@ -10391,6 +10449,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         if responder is not None:
             await responder.send(f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
         return
+    _ORDER_JUST_MADE.setdefault(key, []).append({"id": made["id"], "url": made["url"], "name": card["name"],
+                                                 "client": card.get("client"), "kind": kind})
     if bank:
         try:
             await asyncio.to_thread(jobs.order_bank_comment, bot.config, made["id"], _bank_comment(paid, hold=hold))
@@ -10416,6 +10476,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     await _order_mark(bot, payload.channel_id, key)
     if responder is not None:
         said = (f"🔨 ✅ **{ordercards.KINDS[kind]} card made** — {card['name']} · {made['list']}\n{made['url']}"
+                + ("\n🚨 **Check this card before it goes out** — " + "; ".join(made["trouble"])
+                   if made.get("trouble") else "")
                 + ("\n🏦 **Paid by bank — not settled yet.** The card waits in Franklin (Admin) with a comment; "
                    "I'll move it to Aged Leads Order Done once Payra shows it Settled." if hold else
                    "\n🏦 Paid by bank — captured, not settled yet. Said in a comment on the card." if bank else "")
@@ -10455,7 +10517,7 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
     """An order split into its cards - "yes build it that way": checked line
     by line, held for a person when a line doesn't add up, then made card by
     card, the aged one held in Franklin (Admin) when the bank hasn't settled."""
-    wrong = jobs.split_doubts(subs)
+    wrong = jobs.split_doubts(subs, today=_today(bot.config))
     if wrong and not getattr(payload, "confirmed", False):
         preview = {"client": card.get("client"), "missing": [],
                    "name": f"{card.get('client') or 'This order'} — split into {len(subs)} cards",
@@ -10466,7 +10528,7 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
         return
     paid, _looked = await _order_payment(bot, message)
     bank = jobs.payment_by_bank(paid)
-    parts, held_back, trouble = [], False, []
+    parts, held_back, trouble, checks = [], False, [], []
     for one in subs:
         hold = bank and one["kind"] == "aged" and BANK_HOLD_AGED and not jobs.payment_settled(paid)
         try:
@@ -10475,7 +10537,11 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
         except Exception as exc:
             trouble.append(f"{one['name']} ({one['fields'].get('package')}): {_readable(exc)}")
             continue
+        _ORDER_JUST_MADE.setdefault(key, []).append({"id": made["id"], "url": made["url"], "name": one["name"],
+                                                     "client": card.get("client"), "kind": one["kind"]})
         held_back = held_back or hold
+        if made.get("trouble"):
+            checks.append(f"{one['name']} <{made['url']}>: " + "; ".join(made["trouble"]))
         if bank:
             try:
                 await asyncio.to_thread(jobs.order_bank_comment, bot.config, made["id"], _bank_comment(paid, hold=hold))
@@ -10524,7 +10590,8 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
             + ("\n🏦 **Paid by bank — not settled yet.** The aged card waits in Franklin (Admin)." if held_back else
                "\n🏦 Paid by bank — captured, not settled yet. Said in a comment on each card." if bank else "")
             + ("\n⚠ Made past a check: " + "; ".join(wrong) if wrong else "")
-            + ("\n⚠ Not made: " + "; ".join(trouble) if trouble else ""))
+            + ("\n⚠ Not made: " + "; ".join(trouble) if trouble else "")
+            + ("\n🚨 **Check before it goes out** — " + "; ".join(checks) if checks else ""))
     ack = _ORDER_ACKS.pop(key, None)
     try:
         if ack is None or not hasattr(ack, "edit"):

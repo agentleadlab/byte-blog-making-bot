@@ -35,6 +35,8 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(keeplist, "KEEP_PATH", tmp_path / "quiet-keep.json")
     from wilbyte import failedwatch
     monkeypatch.setattr(failedwatch, "WARNED_PATH", tmp_path / "failed-payments.json")
+    from wilbyte.bot import jobs as _jobs
+    monkeypatch.setattr(_jobs, "TAG_CHECKS_PATH", tmp_path / "tag-checks.json")
     monkeypatch.setattr(delivery, "SEEN_PATH", tmp_path / "delivery-flagged.json")
     monkeypatch.setattr(paidsetup, "SEEN_PATH", tmp_path / "paid-not-set-up.json")
     monkeypatch.setattr(alive, "ALIVE_PATH", tmp_path / "alive.json")

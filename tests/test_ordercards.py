@@ -99,13 +99,14 @@ class Board:
     def create_card(self, list_id, name, *, position="top"):
         self.made.append(dict(list=list_id, name=name))
         self.positions = getattr(self, "positions", []) + [position]
+        self.name = name
         return {"id": f"c{len(self.made)}", "shortUrl": f"https://trello.com/c/new{len(self.made)}"}
 
     def card_full(self, card_id):
         return {"id": f"id-{card_id}", "name": "New Agent - Jane Doe 25 VET", "desc": "Name:\nStates:", "shortUrl": card_id}
 
     def card_detail(self, card_id):
-        return {"desc": self.desc, "name": "x"}
+        return {"desc": self.desc, "name": getattr(self, "name", "x")}
 
     def set_description(self, card_id, text):
         self.descs.append(text)
@@ -113,6 +114,7 @@ class Board:
 
     def rename_card(self, card_id, name):
         self.names.append(name)
+        self.name = name
 
     def add_comment(self, card_id, text):
         self.comments.append(text)
@@ -138,6 +140,32 @@ def test_a_new_card_in_its_list_with_franklins_layout_and_no_due_date(monkeypatc
     assert board.made == [dict(list="q", name="New Agent - Gregory Stevens")], "copied, not made new"
     assert board.descs == [desc]
     assert board.ticks == [] and board.cleared == [] and board.unticked == []
+
+
+def test_a_made_card_is_read_back_and_put_right(monkeypatch):
+    """"he cant fail this card creation": the description that didn't stick
+    put on again, and the card said as made - with a warning - when it
+    still won't, never "couldn't make the card" beside a blank one."""
+    monkeypatch.setattr(jobs, "DESC_PAUSES", (0, 0))
+
+    class Lossy(Board):
+        def set_description(self, card_id, text):
+            self.descs.append(text)
+            self.desc = "" if len(self.descs) == 1 else text
+
+    board = Lossy()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    made = jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Ann Able", "desc": "Name: Ann Able\nStates: TX"})
+    assert "trouble" not in made and len(board.descs) == 2, "read back, found blank, put on again"
+
+    class Refusing(Board):
+        def set_description(self, card_id, text):
+            raise RuntimeError("HTTP 503")
+
+    board = Refusing()
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    made = jobs.order_card_make(CONFIG, "fresh", {"name": "New Agent - Ann Able", "desc": "Name: Ann Able"})
+    assert made["id"] == "c1" and "description didn't go on" in made["trouble"][0]
 
 
 def test_every_label_is_there_even_when_the_order_doesnt_say():
@@ -492,6 +520,20 @@ def test_anything_that_breaks_is_said_and_nothing_is_made(order, monkeypatch):
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert "Something broke making that order's card: Discord hiccup" in order.responder.sent[-1][0]
     assert "900" not in ordercards.load()
+
+
+def test_a_break_after_the_card_is_made_keeps_it_made(order, monkeypatch):
+    """Something breaking once the card is on the board said "Nothing was
+    made" and forgot it - and trying again made a second card."""
+    async def broken_mark(*a, **k):
+        raise RuntimeError("Discord hiccup")
+
+    monkeypatch.setattr(client, "_order_mark", broken_mark)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    said = order.responder.sent[-1][0]
+    assert "The card was made, then something broke" in said and "Nothing was made" not in said
+    assert ordercards.load()["900"]["status"] == "made"
+    assert client._ORDER_JUST_MADE == {}
 
 
 def test_gavels_dropped_while_ryte_was_down_are_found_anywhere(order, monkeypatch):
@@ -3201,7 +3243,7 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
         assert len(agents.dated_orders(one["desc"], today=date(2026, 10, 16))) <= 1
     assert agents.find_launch(iuls["desc"], today=date(2026, 10, 16)) == date(2026, 10, 18)
     assert agents.find_launch(vets["desc"], today=date(2026, 10, 16)) is None
-    assert jobs.split_doubts([aged, vets, iuls]) == []
+    assert jobs.split_doubts([aged, vets, iuls], today=date(2026, 10, 16)) == []
 
 
 def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
@@ -3219,6 +3261,34 @@ def test_a_split_line_that_isnt_in_the_order_is_held():
     card = _patrick()
     card["parts"][4]["leads"] = "43"
     assert any("43 leads isn't in the order" in one for one in jobs.split_doubts(jobs.split_order(card)))
+
+
+def test_a_split_order_gets_a_single_cards_checks():
+    """"make sure that this task ryte doing is not gonna cost us anymore
+    money": split cards went round the lead type, launch and agency checks,
+    and an aged line with no states went out with none."""
+    card = _patrick()
+    card["parts"][2]["states"] = ""
+    wrong = jobs.split_doubts(jobs.split_order(card, today=date(2026, 10, 16)), today=date(2026, 10, 16))
+    assert any("no states for Aged Vets 30-90" in one for one in wrong)
+
+    card = _patrick()
+    card["parts"][5]["package"] = "25 OTP IULs PHNX"
+    wrong = jobs.split_doubts(jobs.split_order(card, today=date(2026, 10, 16)), today=date(2026, 10, 16))
+    assert any("the card says PHNX but the order doesn't name PHNX" in one for one in wrong)
+
+    cards = jobs.split_order(_patrick(), today=date(2026, 10, 16))
+    assert any("too far from today" in one for one in jobs.split_doubts(cards, today=date(2026, 12, 20)))
+
+    card = _patrick()
+    card["source"] = card["source"].replace("PRODUCT: Text-Verified Trucker IUL", "PRODUCT: Aged Leads (VET)")
+    card["parts"] = [one for one in card["parts"] if one["kind"] == "fresh"]
+    card["parts"].append(dict(card["parts"][0]))
+    assert jobs.split_order(card) == [], "two fresh lines aren't split"
+    fresh_only = [dict(one, kind="fresh") for one in jobs.split_order(_patrick(), today=date(2026, 10, 16))[1:]]
+    for one in fresh_only:
+        one["source"] = card["source"]
+    assert any("aged - but no card here is aged" in one for one in jobs.split_doubts(fresh_only, today=date(2026, 10, 16)))
 
 
 def test_a_gavelled_split_order_makes_each_card(order, monkeypatch):

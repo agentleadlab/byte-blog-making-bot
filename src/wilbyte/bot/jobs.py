@@ -4683,6 +4683,42 @@ def weekend_order_card(config: Config, *, day=None) -> tuple[str, list[str]]:
 TAG_ITEM_WAIT = 90
 _TAG_CHECKS: list = []
 _TAG_CHECKS_LOCK = threading.Lock()
+#: Written down as well, so an update in the minute and a half after a tag
+#: doesn't lose the look - the checklist item was simply never made.
+TAG_CHECKS_PATH = None
+#: Times a look that broke is tried again before it's given up on - said.
+TAG_CHECK_TRIES = 5
+
+
+def _tag_checks_path():
+    from ..state import _state_dir
+
+    return TAG_CHECKS_PATH or (_state_dir() / "tag-checks.json")
+
+
+def _tag_checks_save() -> None:
+    try:
+        where = _tag_checks_path()
+        where.parent.mkdir(parents=True, exist_ok=True)
+        spare = where.with_suffix(".tmp")
+        spare.write_text(json.dumps(_TAG_CHECKS, indent=1), encoding="utf-8")
+        spare.replace(where)
+    except OSError:
+        logging.getLogger("wilbyte.bot").warning("Couldn't write down the tag checks", exc_info=True)
+
+
+def tag_checks_restore() -> int:
+    """The looks still to do from before a restart, taken back up. How many."""
+    try:
+        held = json.loads(_tag_checks_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    with _TAG_CHECKS_LOCK:
+        known = {(one.get("card_id"), one.get("comment_id")) for one in _TAG_CHECKS}
+        back = [one for one in held if isinstance(one, dict) and one.get("card_id")
+                and (one.get("card_id"), one.get("comment_id")) not in known]
+        _TAG_CHECKS.extend(back)
+    return len(back)
 
 
 def tag_check_later(**check) -> None:
@@ -4692,6 +4728,21 @@ def tag_check_later(**check) -> None:
 
     with _TAG_CHECKS_LOCK:
         _TAG_CHECKS.append({**check, "at": time.time()})
+        _tag_checks_save()
+
+
+def tag_check_again(check: dict) -> bool:
+    """A look that broke - Trello having a moment - put back to try again.
+    False once it's been tried enough."""
+    import time
+
+    tries = int(check.get("tries") or 0) + 1
+    if tries >= TAG_CHECK_TRIES:
+        return False
+    with _TAG_CHECKS_LOCK:
+        _TAG_CHECKS.append({**check, "tries": tries, "at": time.time()})
+        _tag_checks_save()
+    return True
 
 
 def tag_checks_due(now: float | None = None) -> list[dict]:
@@ -4701,6 +4752,8 @@ def tag_checks_due(now: float | None = None) -> list[dict]:
     with _TAG_CHECKS_LOCK:
         due = [one for one in _TAG_CHECKS if now - one["at"] >= TAG_ITEM_WAIT]
         _TAG_CHECKS[:] = [one for one in _TAG_CHECKS if one not in due]
+        if due:
+            _tag_checks_save()
     return due
 
 
@@ -4720,8 +4773,12 @@ def tag_items_fill(config: Config, check: dict) -> list[str]:
         by_name = {" ".join(str(one.get("name") or "").split()).casefold(): one for one in held}
         task = " ".join(str(check.get("text") or "").split())
         for first in check.get("people") or []:
-            found = by_name.get(" ".join(str(first).split()).casefold())
+            who = " ".join(str(first).split()).casefold()
+            # "Nicole" or "Nicole - Ads": the list with their name as a word.
+            found = by_name.get(who) or next(
+                (one for name, one in by_name.items() if who and re.search(rf"\b{re.escape(who)}\b", name)), None)
             if found is None:
+                logging.getLogger("wilbyte.bot").warning("Tagged %s, and the card has no checklist of theirs", first)
                 continue
             linked = [item for item in found.get("checkItems") or []
                       if check["comment_id"] in str(item.get("name") or "")]
@@ -13866,15 +13923,21 @@ def agent_cards(card: dict, *, today=None) -> list[dict]:
     return out
 
 
-def split_doubts(cards: list[dict]) -> list[str]:
+def split_doubts(cards: list[dict], *, today=None) -> list[str]:
     """What doesn't add up in a split order: each line's count and states
-    have to be in the order as written."""
-    from .. import ordercards
+    have to be in the order as written, and each card gets what a single
+    card's checked for - "make sure that this task ryte doing is not gonna
+    cost us anymore money": the lead type against the payment, the launch
+    day, the agency, and an aged card's states, count and lead type, since
+    it goes out as soon as it's made."""
+    from datetime import date as _date
+
+    from .. import ordercards, setupcheck
 
     if not cards:
         return []
+    today = today or _date.today()
     source = str(cards[0].get("source") or "")
-    numbers = {int(one.replace(",", "")) for one in re.findall(r"\d[\d,]*", source)}
     wrong = []
     # Who paid, against who it's for - a split order went round the check a
     # single card has: Tony Moderno paid, the thread said "Name: Shelby
@@ -13889,14 +13952,51 @@ def split_doubts(cards: list[dict]) -> list[str]:
                      + ", ".join(one["client"] for one in cards))
     for card in cards:
         fields = card.get("fields") or {}
-        counts = ([_count_of(bit) for bit in re.findall(r"[\d,]+", fields.get("leads") or "")]
-                  if card["kind"] == "aged" else [_count_of(fields.get("leads"))])
+        name, kind = card["name"], card["kind"]
+        counts = ([_count_of(bit) for bit in re.findall(r"\d[\d,]*", fields.get("leads") or "")]
+                  if kind == "aged" else [_count_of(fields.get("leads"))])
         for count in counts[1:] if len(counts) > 1 else counts:
-            if count is not None and count not in numbers:
-                wrong.append(f"{card['name']}: {count:,} leads isn't in the order")
-        for code in ordercards._codes(fields.get("states") or ""):
+            if count is not None and not ordercards.count_said(count, source, total=True):
+                wrong.append(f"{name}: {count:,} leads isn't in the order")
+        states = " ".join(str(fields.get("states") or "").split())
+        for code in ordercards._codes(states):
             if not ordercards._said_state(code, source):
-                wrong.append(f"{card['name']}: {code} isn't in the order")
+                wrong.append(f"{name}: {code} isn't in the order")
+        listed = bool(ordercards._codes(states) or re.search(r"\ball\b", states, re.IGNORECASE)
+                      or ordercards.SAME_STATES.search(states) or ordercards._SAME_ANSWER.match(states))
+        if kind == "aged":
+            # Out the door the moment it's in Aged Leads Order Done.
+            if not states or re.search(r"\bto come\b", states, re.IGNORECASE):
+                wrong.append(f"{name}: no states for "
+                             + (", ".join(bit.split(":")[0].strip() for bit in states.split(";")
+                                          if re.search(r"\bto come\b", bit, re.IGNORECASE)) or "it")
+                             + " — an aged card goes out as soon as it's made")
+            elif not listed:
+                wrong.append(f"{name}: “{states}” isn't a list of states")
+            if not re.search(r"\d", str(fields.get("leads") or "")):
+                wrong.append(f"{name}: no lead count — an aged card goes out as soon as it's made")
+            if not str(fields.get("package") or "").strip():
+                wrong.append(f"{name}: no lead type — an aged card goes out as soon as it's made")
+        elif states and not listed:
+            wrong.append(f"{name}: “{states}” isn't a list of states")
+        wrong += [f"{name}: {one}" for one in ordercards.agency_doubts(
+            str(fields.get("package") or ""), str(fields.get("leads") or ""), source)]
+        wrong += [f"{name}: {one}" for one in ordercards.launch_doubts(
+            str(card.get("launch_iso") or ""), source, kind=kind, today=today)]
+    # Aged against what the payment was for: an aged payment needs an aged
+    # card, and one that isn't aged can't be only aged cards. Not the lead
+    # type itself - Patrick Moreno's $12,091 for six lines showed Payra's
+    # one product, "Text-Verified Trucker IUL", which none of them was.
+    product = re.search(r"PRODUCT:\**\s*([^\n]*)", source, re.IGNORECASE)
+    product = " ".join(product.group(1).split()) if product else ""
+    if product and not re.match(r"^[—\-–(]", product):
+        kinds = {card["kind"] for card in cards}
+        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE))
+        if aged_paid and "aged" not in kinds:
+            wrong.append(f"Lead type: the payment is for “{product}” - aged - but no card here is aged")
+        family, _subtypes = setupcheck.product_of(product)
+        if not aged_paid and family and kinds == {"aged"}:
+            wrong.append(f"Lead type: the payment is for “{product}” - not aged - but every card here is aged")
     return wrong
 
 
@@ -13923,12 +14023,73 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
         made = _create_once(client, str(where["id"]), card["name"],
                             position="bottom" if kind == "aged" and not list_name else "top")
         card_id = str(made.get("id") or "")
-        if card.get("desc"):
-            client.set_description(card_id, card["desc"])
-        return {"id": card_id, "url": str(made.get("shortUrl") or made.get("url") or ""),
-                "list": str(where.get("name") or "")}
+        out = {"id": card_id, "url": str(made.get("shortUrl") or made.get("url") or ""),
+               "list": str(where.get("name") or "")}
+        # Made is made: a description that won't go on is said with the
+        # card's link, not "couldn't make the card" - that left a blank card
+        # on the board and a second one on the next gavel.
+        trouble = _described(client, card_id, card)
+        if trouble:
+            out["trouble"] = trouble
+        return out
     finally:
         client.close()
+
+
+#: Waits before putting a card's description on again.
+DESC_PAUSES = (2.0, 5.0)
+
+
+def _described(client, card_id: str, card: dict) -> list[str]:
+    """The card's description put on, and read back to be sure it's what was
+    written and the title is the order's - "he cant fail this card
+    creation". What's wrong with it, or []."""
+    import time
+
+    from .. import trello
+
+    wanted_desc = str(card.get("desc") or "")
+    if not wanted_desc:
+        return []
+    last = None
+    for pause in (0.0, *DESC_PAUSES):
+        if pause:
+            time.sleep(pause)
+        try:
+            client.set_description(card_id, wanted_desc)
+            last = None
+            break
+        except Exception as exc:
+            last = exc
+    if last is not None:
+        return [f"its description didn't go on ({_short(last, 120)}) — the card is there with only its title"]
+    reading = getattr(client, "card_detail", None)
+    if reading is None:
+        return []
+
+    def flat(text):
+        return " ".join(str(text or "").split())
+
+    for attempt in range(2):
+        try:
+            there = reading(card_id) or {}
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning("Couldn't read the new card back", exc_info=True)
+            return []
+        trouble = []
+        if flat(there.get("name")) != flat(card.get("name")):
+            trouble.append(f"its title reads “{there.get('name')}”, not “{card.get('name')}”")
+        if flat(there.get("desc")) != flat(trello.no_secrets(wanted_desc)):
+            trouble.append("its description on Trello isn't what I wrote")
+        if not trouble or attempt:
+            return trouble
+        try:
+            if any("title" in one for one in trouble):
+                client.rename_card(card_id, str(card.get("name") or ""))
+            client.set_description(card_id, wanted_desc)
+        except Exception as exc:
+            return trouble + [f"putting it right failed ({_short(exc, 120)})"]
+    return []
 
 
 #: Waits before asking Trello again to make a card it answered 5xx to.

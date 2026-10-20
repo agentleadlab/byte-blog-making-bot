@@ -535,12 +535,62 @@ def payer_doubts(source: str, named: str) -> tuple[list[str], list[str]]:
             f"or notes from another order?"], []
 
 
+def count_said(count, source: str, *, total: bool = False) -> bool:
+    """Whether a lead count is in the order's words - not in the times RYTE
+    stamps on them ("[10/15 01:38PM]" had 10 in the order whatever it said),
+    not inside an amount, a date or a phone. "1,000" and "1000" are the same.
+    `total`: or the order's counts add up to it."""
+    digits = str(count).replace(",", "").strip()
+    if not digits.isdigit():
+        return False
+    words = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:", "", str(source or ""), flags=re.MULTILINE)
+    shown = {digits, f"{int(digits):,}"}
+    for one in shown:
+        said = re.escape(one)
+        if re.search(rf"(?<![\d$./:]){said}(?![\d./:])", words) \
+                or re.search(rf"[A-Za-z)]\s*:\s*{said}(?![\d./:])", words):
+            return True
+    return total and _adds_up_to(int(digits), source)
+
+
+def agency_doubts(package: str, leads: str, source: str) -> list[str]:
+    """An agency on the card the order doesn't name - Matthew Odierno's said
+    Phoenix; his order said Liftoff Ascend - and "No cap" without one."""
+    wrong = []
+    for agency, said in (("PHNX", r"\bphx\b|\bphnx\b|phoenix"), ("Ascend", r"ascend|lift\s*off"),
+                         ("Spark", r"\bspark\b")):
+        if re.search(said, str(package or ""), re.IGNORECASE) and not re.search(said, source, re.IGNORECASE):
+            wrong.append(f"Lead type: the card says {agency} but the order doesn't name {agency}")
+    if "no cap" in str(leads or "").casefold() and not re.search(r"\bphx\b|\bphnx\b|phoenix|ad\s*spend", source,
+                                                                 re.IGNORECASE):
+        wrong.append("Number of leads: “No cap (ad spend)” but the order doesn't say Phoenix / ad spend")
+    return wrong
+
+
+def launch_doubts(launch_iso: str, source: str, *, kind: str, today) -> list[str]:
+    """A launch date too far from today to be right, or on a new agent's card
+    when the order never says when they launch."""
+    from datetime import date, timedelta
+
+    if not launch_iso:
+        return []
+    try:
+        day = date.fromisoformat(str(launch_iso))
+    except ValueError:
+        return [f"Launch date: “{launch_iso}” isn't a date"]
+    if not (today - timedelta(days=1) <= day <= today + timedelta(days=45)):
+        return [f"Launch date: {day:%a %m/%d/%Y} is too far from today to be right"]
+    if kind == "fresh" and not says_when(source):
+        # Blaze Lubbers: nothing said when, and the card said "today" - the
+        # day the payment was posted.
+        return [f"Launch date: {day:%a %m/%d} is on the card but the order doesn't say when they launch"]
+    return []
+
+
 def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     """(what doesn't add up - the card isn't made without a person saying so,
     what's only missing - said when it's made). Every value has to be in the
     order as written: Claude reading it is not the same as it being there."""
-    from datetime import date, timedelta
-
     from . import setupcheck
 
     fields = card.get("fields") or {}
@@ -612,19 +662,13 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # How many.
     leads = str(fields.get("leads") or "")
     count = re.search(r"\d+", leads)
-    # In the words, not in the times RYTE stamps on them: "[10/15 01:38PM]"
-    # had 10 in the order whatever it said.
-    words = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:", "", source, flags=re.MULTILINE)
-    if count and not re.search(rf"(?<![\d$./:]){count.group(0)}(?![\d./:])", words) \
-            and not re.search(rf"[A-Za-z)]\s*:\s*{count.group(0)}(?![\d./:])", words) \
-            and not _adds_up_to(int(count.group(0)), source):
+    if count and not count_said(count.group(0), source, total=True):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
     # Every count in the lead type, too: Mateo Lyon's card said "50 Aged Vets
     # 30-90" for the 163 he bought, and only the total was checked.
     for each in _COUNT_OF.finditer(package):
         said = each.group(1)
-        if not re.search(rf"(?<![\d$./:]){said}(?![\d./:])", words) \
-                and not re.search(rf"[A-Za-z)]\s*:\s*{said}(?![\d./:])", words):
+        if not count_said(said, source):
             wrong.append(f"Lead type: {said} (in “{package}”) isn't in the order")
     # Lines with their own states, on the card as one list: Mateo Lyon's Vets
     # 90-180 were Texas only, and went out with every state of the other two.
@@ -633,14 +677,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             and ";" not in str(fields.get("states") or ""):
         wrong.append("States: each line of the order has its own states, and the card has them as one list - "
                      + "; ".join(f"{kind}: {', '.join(codes)}" for kind, codes in lines))
-    # An agency on the card the order doesn't name - Matthew Odierno's said
-    # Phoenix; his order said Liftoff Ascend.
-    for agency, said in (("PHNX", r"\bphx\b|\bphnx\b|phoenix"), ("Ascend", r"ascend|lift\s*off"),
-                         ("Spark", r"\bspark\b")):
-        if re.search(said, str(fields.get("package") or ""), re.IGNORECASE) and not re.search(said, source, re.IGNORECASE):
-            wrong.append(f"Lead type: the card says {agency} but the order doesn't name {agency}")
-    if "no cap" in leads.casefold() and not re.search(r"\bphx\b|\bphnx\b|phoenix|ad\s*spend", source, re.IGNORECASE):
-        wrong.append("Number of leads: “No cap (ad spend)” but the order doesn't say Phoenix / ad spend")
+    wrong += agency_doubts(package, leads, source)
     if not leads:
         missing.append("no number of leads")
 
@@ -658,16 +695,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # When.
     launch = str(card.get("launch_iso") or "")
     if launch:
-        try:
-            day = date.fromisoformat(launch)
-        except ValueError:
-            day = None
-        if day is not None and not (today - timedelta(days=1) <= day <= today + timedelta(days=45)):
-            wrong.append(f"Launch date: {day:%a %m/%d/%Y} is too far from today to be right")
-        elif day is not None and kind == "fresh" and not says_when(source):
-            # Blaze Lubbers: nothing said when, and the card said "today" -
-            # the day the payment was posted.
-            wrong.append(f"Launch date: {day:%a %m/%d} is on the card but the order doesn't say when they launch")
+        wrong += [one for one in launch_doubts(launch, source, kind=kind, today=today) if "isn't a date" not in one]
     elif kind == "fresh":
         missing.append("no launch date")
     return wrong, missing
