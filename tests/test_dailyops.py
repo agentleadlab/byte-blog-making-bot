@@ -4425,6 +4425,60 @@ def test_a_tag_the_automation_left_without_an_item_gets_one(monkeypatch, config)
     assert board.items == [("cl-Nicole", "See the comment https://trello.com/c/ADS#comment-c1")]
 
 
+def test_the_automations_link_only_item_gets_the_task(monkeypatch, config):
+    """"are you still adding the trello tags on checklist" - the automation's
+    item for Gannon's screenshot was only the comment's link. An item with
+    words already is left as it is."""
+    from wilbyte.bot import jobs
+
+    renamed = []
+    board = LinkingChecklists({"Today": []}, held={"ads": [
+        {"id": "cl-Nicole", "name": "Nicole", "checkItems": [
+            {"id": "bare", "name": "https://trello.com/c/ADS#comment-c1"}]},
+        {"id": "cl-Therese", "name": "Therese", "checkItems": [
+            {"id": "worded", "name": "Pause Gannon's leads https://trello.com/c/ADS#comment-c1"}]},
+    ]})
+    board.set_check_item = lambda card, item, **kw: renamed.append((card, item, kw.get("name")))
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    check = {"card_id": "ads", "comment_id": "c1", "link": "https://trello.com/c/ADS#comment-c1",
+             "people": ["Nicole", "Therese"],
+             "text": "Pause Gannon Talken's leads at 9 PM Central and resume at 8:30 AM daily"}
+    assert jobs.tag_items_fill(config, check) == ["Nicole"]
+    assert renamed == [("ads", "bare", "Pause Gannon Talken's leads at 9 PM Central and resume at 8:30 AM daily "
+                                        "https://trello.com/c/ADS#comment-c1")]
+    assert board.items == [], "no second item beside the automation's"
+
+
+def test_a_screenshot_ask_is_read_again_when_claude_is_busy(monkeypatch, config):
+    """Two screenshots tagged a minute apart: one came out with no task."""
+    from types import SimpleNamespace
+
+    import anthropic
+
+    from wilbyte.bot import jobs
+
+    calls = []
+
+    class Busy(Exception):
+        status_code = 529
+
+    class Messages:
+        def create(self, **kw):
+            calls.append(kw["model"])
+            if len(calls) == 1:
+                raise Busy()
+            return SimpleNamespace(content=[SimpleNamespace(type="tool_use", name="place", input={
+                "card": "ads", "task": "Pause Gannon's leads 9 PM-8:30 AM Central", "client": "Gannon Talken"})])
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: SimpleNamespace(messages=Messages()))
+    monkeypatch.setattr(config.secrets, "anthropic_api_key", "test-key", raising=False)
+    monkeypatch.setattr(jobs, "ORDER_READ_RETRY_WAITS", (0, 0))
+    found = {}
+    assert jobs.trello_ask_kind(config, "tag nicole", ["https://cdn.example/a.png"], found=found) == (
+        "ads", "Pause Gannon's leads 9 PM-8:30 AM Central")
+    assert len(calls) == 2 and not found.get("unread")
+
+
 def test_a_carried_line_with_a_key_isnt_carried_again_and_again(monkeypatch, config):
     """"WHAT ARE THESE? SI THIS RYTE?" - the hidden Auth/SID line once for
     every carry-over: the hidden copy never matched the line it came from."""

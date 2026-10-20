@@ -3250,6 +3250,9 @@ async def _comment_on_card(
         note += "\n" + "\n".join(done)
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
+    if read_off.get("unread"):
+        note += ("\n⚠ Couldn't read the task off the screenshot (Claude didn't answer) — the comment and the "
+                 "checklist have only the picture. Reply with what to do in words and I'll put it on.")
     if guessed:
         note += ("\n-# Nobody said which card, so it went where it reads as belonging. `on general`, `on ops`, "
                  "`on ads` or `on lead order` puts it there instead.")
@@ -9627,7 +9630,7 @@ async def tag_items_loop(bot: "WilByteBot") -> None:
             try:
                 added = await asyncio.to_thread(jobs.tag_items_fill, bot.config, check)
                 if added:
-                    log.info("Tagged but no checklist item from the board - added for %s", ", ".join(added))
+                    log.info("Tagged but no worded checklist item from the board - added for %s", ", ".join(added))
             except Exception:
                 log.warning("Couldn't check the tagged comment's checklist items", exc_info=True)
         await asyncio.sleep(30)

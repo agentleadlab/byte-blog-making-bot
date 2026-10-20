@@ -4707,19 +4707,32 @@ def tag_checks_due(now: float | None = None) -> list[dict]:
 def tag_items_fill(config: Config, check: dict) -> list[str]:
     """Each person the comment tagged, on their checklist on that card: left
     alone when an item links the comment already (the automation's), added
-    by RYTE when none does. Who was added."""
+    by RYTE when none does. Who was added.
+
+    "are you still adding the trello tags on checklist" - the automation's
+    item for Gannon Talken's screenshot was the comment's link and nothing
+    else, so Nicole's list said nothing about pausing his leads at night. An
+    item that's only the link gets the task put in front of it."""
     client = open_trello(config)
     added = []
     try:
         held = client.card_checklists(check["card_id"])
         by_name = {" ".join(str(one.get("name") or "").split()).casefold(): one for one in held}
+        task = " ".join(str(check.get("text") or "").split())
         for first in check.get("people") or []:
             found = by_name.get(" ".join(str(first).split()).casefold())
             if found is None:
                 continue
-            if any(check["comment_id"] in str(item.get("name") or "") for item in found.get("checkItems") or []):
+            linked = [item for item in found.get("checkItems") or []
+                      if check["comment_id"] in str(item.get("name") or "")]
+            if linked:
+                for item in linked:
+                    named = str(item.get("name") or "")
+                    if task and item.get("id") and not re.sub(r"https?://\S+", "", named).strip(" -–—:"):
+                        client.set_check_item(check["card_id"], str(item["id"]), name=f"{task} {named.strip()}")
+                        added.append(first)
                 continue
-            line = f"{check.get('text') or 'See the comment'} {check.get('link') or ''}".strip()
+            line = f"{task or 'See the comment'} {check.get('link') or ''}".strip()
             client.add_check_item(str(found.get("id") or ""), line)
             added.append(first)
     finally:
@@ -4884,15 +4897,27 @@ def trello_ask_kind(config: Config, text: str, pictures=(), found: dict | None =
         content += [{"type": "image", "source": {"type": "url", "url": url}} for url in list(pictures)[:3]]
         response = None
         # The careful model first: Matt Odierno's CRM ask was read by the
-        # quick one as the $1,200 ad spend line above it.
+        # quick one as the $1,200 ad spend line above it. Each asked again
+        # when Claude is only busy - two screenshots tagged a minute apart
+        # left one of them on the card with no task at all.
+        import time
+
         for model in dict.fromkeys((config.copy.model, ORDER_MODEL)):
-            try:
-                response = client.messages.create(
-                    model=model, max_tokens=400, tools=[tool], tool_choice={"type": "tool", "name": "place"},
-                    messages=[{"role": "user", "content": content}])
+            for wait in (0, *ORDER_READ_RETRY_WAITS):
+                if wait:
+                    time.sleep(wait)
+                try:
+                    response = client.messages.create(
+                        model=model, max_tokens=400, tools=[tool], tool_choice={"type": "tool", "name": "place"},
+                        messages=[{"role": "user", "content": content}])
+                    break
+                except Exception as exc:
+                    logging.getLogger("wilbyte.bot").warning("Reading the Trello ask with %s failed", model,
+                                                             exc_info=True)
+                    if not claude_busy(exc):
+                        break
+            if response is not None:
                 break
-            except Exception:
-                logging.getLogger("wilbyte.bot").warning("Reading the Trello ask with %s failed", model, exc_info=True)
         if response is None:
             raise RuntimeError("Claude didn't answer")
         got = _tool_input(response, "place")
@@ -4902,6 +4927,8 @@ def trello_ask_kind(config: Config, text: str, pictures=(), found: dict | None =
         return card, " ".join(str(got.get("task") or said).split())
     except Exception:
         logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
+        if found is not None and pictures:
+            found["unread"] = True
         return by_words, said
 
 
