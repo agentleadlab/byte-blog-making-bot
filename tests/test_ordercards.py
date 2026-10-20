@@ -4436,3 +4436,49 @@ def test_the_invoices_form_lines_arent_the_card_twice():
     note = "Payra invoice note: Name: Jad\nEmail: jad@example.com\nStates Leads In: TX\nPlease start Monday morning"
     fields = jobs.order_fields({"name": "Jad", "email": "jad@example.com"}, [note])
     assert fields["notes"] == "From the Payra invoice: Please start Monday morning"
+
+
+SHELBY = """[10/19 04:47PM] Nova: **New Payment | Payra** ✅
+**NAME:** Tony Moderno
+**EMAIL:** tony@example.com
+**PHONE:** +18015550114
+**AMOUNT:** $1852.65
+**PRODUCT:** Text-Verified Mortgage Protection Leads
+[10/19 04:53PM] Faith: Name: Shelby Guest
+Email: Shelby.guest@example.com
+Phone number: 435-555-3162
+States. UT, AL, AR, AZ, CA
+30 fresh mortgage protection plus
+100 aged final expense
+30-90
+Live Tuesday October 20"""
+
+SHELBY_NOTE = SHELBY.split("Faith: ", 1)[1]
+
+
+def test_a_split_order_for_somebody_else_is_held_and_theirs(monkeypatch):
+    """"what are we doing bro" - Tony Moderno paid, the thread said "Name:
+    Shelby Guest", and both her cards went out as Tony's, with his email and
+    phone: the split order went round the paid-by check."""
+    card = _read_with(monkeypatch, {
+        "kind": "fresh", "name": "Tony Moderno", "email": "tony@example.com", "phone": "+18015550114",
+        "package": "30 fresh mortgage protection plus + 100 aged final expense 30-90", "leads": "130",
+        "states": "UT, AL, AR, AZ, CA", "launch": "Tuesday, October 20", "launch_iso": "2026-10-20",
+        "parts": [{"kind": "fresh", "package": "fresh mortgage protection plus", "leads": "30",
+                   "states": "UT, AL, AR, AZ, CA", "launch_iso": "2026-10-20"},
+                  {"kind": "aged", "package": "aged final expense 30-90", "leads": "100",
+                   "states": "UT, AL, AR, AZ, CA", "launch_iso": ""}]}, SHELBY, [SHELBY_NOTE])
+
+    assert card["client"] == "Shelby Guest"
+    assert card["fields"]["email"] == "Shelby.guest@example.com" and card["fields"]["phone"] == "435-555-3162"
+    cards = jobs.split_order(card, today=date(2026, 10, 19))
+    assert {one["client"] for one in cards} == {"Shelby Guest"}
+    assert any("paid by Tony Moderno, but the order is for Shelby Guest" in one for one in jobs.split_doubts(cards))
+
+
+def test_several_agents_paid_for_by_one_isnt_held_for_it():
+    cards = [{"kind": "fresh", "client": "Gabriel Lucas", "name": "New Agent - Gabriel Lucas", "agents_of": 2,
+              "fields": {"leads": "28", "states": ""}, "source": "NAME: Colby Whittaker\n2 agents\n28 Fresh Vets"},
+             {"kind": "fresh", "client": "Sawyer Wetzel", "name": "New Agent - Sawyer Wetzel", "agents_of": 2,
+              "fields": {"leads": "28", "states": ""}, "source": "NAME: Colby Whittaker\n2 agents\n28 Fresh Vets"}]
+    assert jobs.split_doubts(cards) == []

@@ -517,6 +517,24 @@ def says_when(source: str) -> bool:
     return bool(_WHEN.search(said)) and bool(_LAUNCH_WORD.search(said))
 
 
+def payer_doubts(source: str, named: str) -> tuple[list[str], list[str]]:
+    """Who paid, against who the card is for - (held, said). Tony Moderno's
+    payment went on a card for Preston Bridges - the thread's notes were
+    about him - and was made without a word: somebody paying for them, or
+    the wrong notes."""
+    payer = paid_by(source)
+    if not (payer and named) or same_person(payer, named):
+        return [], []
+    if paid_for_by(source, named):
+        return [], [f"paid by {payer} for {named}, as the order says"]
+    if _BUSINESS.search(payer):
+        # Montaser Aidah paid through "Victory Freedom Llc" - his own company,
+        # its email the one on his card. Said, not held.
+        return [], [f"paid by {payer} - their business? - for {named}"]
+    return [f"Name: paid by {payer}, but the order is for {named} - somebody paying for them, "
+            f"or notes from another order?"], []
+
+
 def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     """(what doesn't add up - the card isn't made without a person saying so,
     what's only missing - said when it's made). Every value has to be in the
@@ -530,20 +548,9 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     kind = card.get("kind") or "fresh"
     wrong, missing = [], []
 
-    # Who paid, against who the card is for. Tony Moderno's payment went on a
-    # card for Preston Bridges - the thread's notes were about him - and was
-    # made without a word: somebody paying for them, or the wrong notes.
-    payer = paid_by(source)
-    named = " ".join(str(fields.get("name") or "").split())
-    if payer and named and not same_person(payer, named) and paid_for_by(source, named):
-        missing.append(f"paid by {payer} for {named}, as the order says")
-    elif payer and named and not same_person(payer, named) and _BUSINESS.search(payer):
-        # Montaser Aidah paid through "Victory Freedom Llc" - his own company,
-        # its email the one on his card. Said, not held.
-        missing.append(f"paid by {payer} - their business? - for {named}")
-    elif payer and named and not same_person(payer, named):
-        wrong.append(f"Name: paid by {payer}, but the order is for {named} - somebody paying for them, "
-                     f"or notes from another order?")
+    held, said = payer_doubts(source, " ".join(str(fields.get("name") or "").split()))
+    wrong += held
+    missing += said
 
     # States.
     states = str(fields.get("states") or "").strip()

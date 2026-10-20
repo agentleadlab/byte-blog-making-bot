@@ -13402,6 +13402,24 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         if len(written) == 1 and client_name and not _cards.same_person(client_name, written[0]) \
                 and not _cards.paid_for_by(text + "\n" + "\n".join(map(str, notes or ())), client_name):
             fields["name"] = client_name = written[0]
+            # Their email and phone from the same note, not the payer's:
+            # Shelby Guest's card had Tony Moderno's.
+            theirs = next((said for said in [*(str(one) for one in notes or ()), on_post or ""]
+                           if re.search(rf"name\s*:\s*{re.escape(written[0])}", said, re.IGNORECASE)), "")
+            email = re.search(r"^\W*e-?mail\W*:?\s*([\w.+-]+@[\w-]+\.[\w.]+)", theirs, re.MULTILINE | re.IGNORECASE)
+            phone = re.search(r"^\W*phone(?:\s*number)?\W*:?\s*([+\d()][\d()\s.\-+]{6,})$", theirs,
+                              re.MULTILINE | re.IGNORECASE)
+            paid = (_cards.paid_by(text), text.casefold(), re.sub(r"\D", "", text))
+            somebody_else = bool(paid[0]) and not _cards.same_person(written[0], paid[0])
+            for key, found in (("email", email), ("phone", phone)):
+                value = str(fields.get(key) or "")
+                digits = re.sub(r"\D", "", value)[-10:]
+                payers = (key == "email" and bool(value) and value.casefold() in paid[1]) or (
+                    key == "phone" and len(digits) == 10 and digits in paid[2])
+                if found:
+                    fields[key] = found.group(1).strip()
+                elif somebody_else and payers:
+                    fields[key] = ""
     if named and _cards.same_person(str(fields.get("agency") or ""), named) \
             and str(fields.get("agency") or "").casefold() == named.casefold():
         fields["agency"] = ""
@@ -13831,6 +13849,12 @@ def split_doubts(cards: list[dict]) -> list[str]:
     source = str(cards[0].get("source") or "")
     numbers = {int(one.replace(",", "")) for one in re.findall(r"\d[\d,]*", source)}
     wrong = []
+    # Who paid, against who it's for - a split order went round the check a
+    # single card has: Tony Moderno paid, the thread said "Name: Shelby
+    # Guest", and both cards went out as Tony's. Not for an order of several
+    # agents, which is one person paying for them all.
+    if not cards[0].get("agents_of"):
+        wrong += ordercards.payer_doubts(source, str(cards[0].get("client") or ""))[0]
     # "5 agents" said, and that many cards - not eight.
     many = re.search(r"\b(\d{1,2})\s+agents\b", source, re.IGNORECASE)
     if cards[0].get("agents_of") and many and int(many.group(1)) != len(cards):
