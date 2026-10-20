@@ -2685,6 +2685,36 @@ def test_all_of_whats_available_is_a_count_on_the_card(monkeypatch):
     assert ordercards.all_counted("25 VET leads\nTX, FL") is None, "nothing asked for ALL"
 
 
+def test_the_invoice_form_fills_what_the_reading_left_out(monkeypatch):
+    """Mackenzie Ho: "States Leads In: all but new york" and "Lead Type: Aged
+    Veteran - 180+ days" on the invoice; the card had no states and the
+    product line's "Text-Verified Aged Veteran Leads"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Mackenzie Ho", "states": "", "email": "mackenzie@example.com",
+        "package": "Text-Verified Aged Veteran Leads", "leads": "300"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/20 04:04PM] LeadLab: New Payment | Payra\nNAME: Mackenzie Ho\nEMAIL: mackenzie@example.com\n"
+            "AMOUNT: $310.50\nPRODUCT: Text-Verified Aged Veteran Leads\n"
+            "**INVOICE:** INV-20278 · card •••• 2146 · 10/20/2026 4:04 PM\n**Subtotal:** $300.00\n**Notes:**\n"
+            "> Name: Mackenzie Ho\n> Email: mackenzie@example.com\n> Phone Number: +15555550833\n"
+            "> Lead Type: Aged Veteran - 180+ days [AGED - $1/Lead]\n> States Leads In: all but new york\n"
+            "> Number of Requested Leads: 300\n**Internal Notes:**\n> (none)")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 20))
+    assert card["fields"]["states"] == "All states except NY"
+    assert card["fields"]["package"] == "Aged Veteran - 180+ days"
+    assert ordercards.doubts(card, today=date(2026, 10, 20))[0] == []
+    assert client._aged_gaps(card) == []
+
+
 @pytest.mark.parametrize("kind", ["fresh", "aged"])
 def test_a_zelle_payment_says_so_in_the_notes(monkeypatch, kind):
     """"add on additional notes on the cards both aged and fresh that if they

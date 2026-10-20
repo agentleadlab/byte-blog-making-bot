@@ -10550,8 +10550,10 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         wrong = list(wrong) + [f"Not in the order: {', '.join(gaps)} — an aged card goes out as soon as it's made"]
     if wrong and not getattr(payload, "confirmed", False):
         # Waited on apart from the gavel, so gavelling it again once the
-        # thread is fixed isn't taken for this one still going.
-        await _order_forget(key)
+        # thread is fixed isn't taken for this one still going - and held
+        # from this moment, not from once the message is out: Mackenzie Ho's
+        # aged card was made by the invoice's own path in between.
+        await _order_note(key, status="held")
         _also_running(asyncio.get_running_loop().create_task(
             _order_held(bot, _payload_copy(payload), key, responder, card, wrong, link)))
         return
@@ -10642,7 +10644,7 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
         preview = {"client": card.get("client"), "missing": [],
                    "name": f"{card.get('client') or 'This order'} — split into {len(subs)} cards",
                    "desc": "\n\n".join(f"── {one['name']} ──\n{one['desc']}" for one in subs)}
-        await _order_forget(key)
+        await _order_note(key, status="held")
         _also_running(asyncio.get_running_loop().create_task(
             _order_held(bot, _payload_copy(payload), key, responder, preview, wrong, link)))
         return

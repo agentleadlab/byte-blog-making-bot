@@ -13056,6 +13056,83 @@ def name_in_notes(notes) -> str:
     return found[0] if len(found) == 1 else ""
 
 
+#: The invoice form's labels, and the card field each one is.
+_FORM_LABELS = (
+    ("states", r"states?(?:\s*leads?\s*in)?|states?\s*(?:wanted|requested)"),
+    ("package", r"lead\s*type(?:\s*/\s*package(?:\s*selected)?)?|package(?:\s*selected)?"),
+    ("leads", r"number\s*of\s*(?:requested\s*)?leads(?:\s*requested)?|leads\s*requested|how\s*many\s*leads"),
+    ("email", r"e-?mail"),
+    ("phone", r"phone(?:\s*number)?"),
+)
+#: An age bucket in a lead type - "180+ days", "30-90", "90 - 180".
+_AGE_BUCKET = re.compile(r"\b\d{2,3}\s*(?:\+|[-–]\s*\d{2,3})")
+
+
+def invoice_form(text: str) -> dict:
+    """The invoice's form lines - "States Leads In: all but new york", "Lead
+    Type: Aged Veteran - 180+ days [AGED - $1/Lead]" - as {field: value}, the
+    first of each. Values as written, less the price tag in brackets."""
+    found = {}
+    for line in str(text or "").splitlines():
+        bare = re.sub(r"^\s*>+\s?", "", line).strip(" *•\t")
+        for key, label in _FORM_LABELS:
+            match = re.match(rf"(?:{label})\s*:\s*(.+)$", bare, re.IGNORECASE)
+            if match and key not in found:
+                value = re.sub(r"\s*\[[^\]]*\$[^\]]*\]\s*", " ", match.group(1))
+                value = " ".join(value.split()).strip(" .")
+                if value and value.casefold() not in _SAYS_NOTHING:
+                    found[key] = value
+                break
+    return found
+
+
+def _form_states(said: str) -> str:
+    """The form's states the way the card writes them: "all but new york" ->
+    "All states except NY", "texas, florida" -> "TX, FL"; anything else as
+    written."""
+    from .. import ordercards
+
+    if re.search(r"\b(?:all|every|nation\s*-?\s*wide)\b", said, re.IGNORECASE):
+        if ordercards._ALL_BUT.search(said):
+            left_out = _state_codes_named(ordercards._ALL_BUT.split(said, maxsplit=1)[-1])
+            if left_out:
+                return "All states except " + ", ".join(left_out)
+        return said
+    codes = _state_codes_named(said)
+    return ", ".join(codes) if codes else said
+
+
+def with_invoice_form(fields: dict, form: dict) -> dict:
+    """The card's fields with what the invoice's form says where the reading
+    left it out or lost part of it. The form is what the client filled in."""
+    fields = dict(fields)
+    if not form:
+        return fields
+    states = form.get("states")
+    if states:
+        written = _form_states(states)
+        have = str(fields.get("states") or "")
+        from .. import ordercards
+
+        # Empty, or the exclusions lost: "all but new york" read as "All".
+        lost = ordercards._ALL_BUT.search(written) and not ordercards._ALL_BUT.search(have)
+        if not have.strip() or lost:
+            fields["states"] = written
+    package = form.get("package")
+    if package:
+        have = str(fields.get("package") or "")
+        bucket = _AGE_BUCKET.search(package)
+        if not have.strip() or (bucket and not _AGE_BUCKET.search(have)):
+            fields["package"] = package
+    leads = form.get("leads")
+    if leads and not re.search(r"\d", str(fields.get("leads") or "")) and re.search(r"\d", leads):
+        fields["leads"] = re.search(r"\d[\d,]*", leads).group(0)
+    for key in ("email", "phone"):
+        if form.get(key) and not str(fields.get(key) or "").strip():
+            fields[key] = form[key]
+    return fields
+
+
 def order_fields(got: dict, notes: list[str] = ()) -> dict:
     """Claude's reading of an order, tidied: nothing that only says it doesn't
     know, an ad-spend package's lead count as no cap, and Additional Notes as
@@ -13462,6 +13539,13 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         if named:
             fields["package"] = named
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
+    # The invoice's own form, read as written - Claude's reading left
+    # Mackenzie Ho's "States Leads In: all but new york" out and put the
+    # product line's "Text-Verified Aged Veteran Leads" for her "Aged Veteran
+    # - 180+ days".
+    form = invoice_form("\n".join(str(one)[len("Payra invoice note:"):] for one in notes or ()
+                                  if str(one).startswith("Payra invoice note:")))
+    fields = with_invoice_form(fields, form)
     client_name = fields["name"]
     # The team's notes naming somebody on a line of its own, who isn't who
     # paid: the card is theirs, and the payer's email and phone aren't.
