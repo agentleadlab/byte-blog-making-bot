@@ -8237,6 +8237,49 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
                     done.append(f"✅ Lead Order: {old.get('name')} → **{new_order.get('name')}** "
                                 f"({checklist.get('name')})")
 
+        # The Ads and Ops cards of the old day - "yes add ads/ops to the move
+        # button too". An agent going live today is on today's Ads and Ops
+        # lists; one going live later is on that day's setup card, which is
+        # linked onto its Ads card. So: onto today's when the new day is
+        # today, otherwise off the old day's - unless somebody already ticked
+        # it, which is work done and theirs to clear.
+        try:
+            today = board_day(config)
+        except AttributeError:
+            today = date.today()
+        for kind in ("ads", "ops"):
+            olds_kind = [card for card in every
+                         if (dailyops.parse_card_title(str(card.get("name") or "")) or ("",))[0] == kind
+                         and any(rules.setup_covers(old_title, one)
+                                 for one in dailyops.card_days(str(card.get("name") or "")))]
+            new_card = dailyops.cards_covering(every, day).get(kind) if day == today else None
+            for old in olds_kind:
+                for checklist in client.card_checklists(str(old.get("id") or "")):
+                    for item in checklist.get("checkItems") or []:
+                        said = str(item.get("name") or "")
+                        if not short or trello.linked_card_id(said) != short:
+                            continue
+                        ticked = str(item.get("state") or "") == "complete"
+                        if day == today:
+                            if new_card is None or str(new_card.get("id") or "") == str(old.get("id") or ""):
+                                continue
+                            place = same_list(client.card_checklists(str(new_card.get("id") or "")),
+                                              str(checklist.get("name") or ""))
+                            if place is None:
+                                problems.append(f"{new_card.get('name')} has no “{checklist.get('name')}” list, "
+                                                f"so their line is still on {old.get('name')}.")
+                                continue
+                            client.add_check_item(str(place.get("id") or ""), said, checked=ticked)
+                            client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
+                            done.append(f"✅ {dailyops.CARD_KINDS.get(kind, kind)}: {old.get('name')} → "
+                                        f"**{new_card.get('name')}** ({checklist.get('name')})")
+                        elif ticked:
+                            problems.append(f"Left on {old.get('name')} ({checklist.get('name')}): already ticked.")
+                        else:
+                            client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
+                            done.append(f"✅ Off **{old.get('name')}** ({checklist.get('name')}) — they're on "
+                                        f"the {day:%a %m/%d} setup card now")
+
         # And the card itself says the new day: Chance Duncan's "Launch Date:
         # Wednesday, October 21" stayed after "leads flowing starting
         # tomorrow" - "this should update the launch date".

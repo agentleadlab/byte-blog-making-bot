@@ -279,3 +279,35 @@ def test_the_move_puts_the_new_day_on_their_card_too(monkeypatch):
     done, problems = _move(monkeypatch, board)
     assert problems == [] and board.descs[ERIC["id"]] == "Name: Eric Karas\nLaunch Date: Tuesday, October 6\nAgency:"
     assert "Launch Date → **Tuesday, October 6**" in done[-1]
+
+
+def test_the_move_takes_them_off_the_old_days_ads_and_ops(monkeypatch):
+    """"yes add ads/ops to the move button too" - off Ads and Ops of the old
+    day when they now go live later; a ticked line is left and said."""
+    board = MovingBoard()
+    ads = {"id": "ads8", "name": "📊 Ads 10/08/26"}
+    ops = {"id": "ops8", "name": "💻 Ops 10/08/26"}
+    board.cards += [ads, ops]
+    board.lists["ads8"] = [{"id": "ads-nicole", "name": "Nicole", "checkItems": [
+        {"id": "a1", "name": f"{ERIC['url']} Text-Verified Veteran", "state": "incomplete"}]}]
+    board.lists["ops8"] = [{"id": "ops-therese", "name": "Therese", "checkItems": [
+        {"id": "p1", "name": f"{ERIC['url']} Text-Verified Veteran", "state": "complete"}]}]
+    monkeypatch.setattr(jobs, "board_day", lambda config: date(2026, 10, 5))
+    done, problems = _move(monkeypatch, board)
+    assert ("ads-nicole", "a1") in board.removed and ("ops-therese", "p1") not in board.removed
+    assert any("Off **📊 Ads 10/08/26** (Nicole)" in one for one in done)
+    assert any("already ticked" in one for one in problems)
+
+
+def test_moved_to_today_their_ads_line_comes_to_todays_card(monkeypatch):
+    board = MovingBoard()
+    ads_old = {"id": "ads8", "name": "📊 Ads 10/08/26"}
+    ads_new = {"id": "ads6", "name": "📊 Ads 10/06/26"}
+    board.cards += [ads_old, ads_new]
+    line = f"{ERIC['url']} Text-Verified Veteran"
+    board.lists["ads8"] = [{"id": "ads8-nicole", "name": "Nicole", "checkItems": [
+        {"id": "a1", "name": line, "state": "incomplete"}]}]
+    board.lists["ads6"] = [{"id": "ads6-nicole", "name": "Nicole", "checkItems": []}]
+    monkeypatch.setattr(jobs, "board_day", lambda config: date(2026, 10, 6))
+    done, problems = _move(monkeypatch, board)
+    assert ("ads6-nicole", line, False) in board.added and ("ads8-nicole", "a1") in board.removed
