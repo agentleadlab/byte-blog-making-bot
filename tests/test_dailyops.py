@@ -2969,6 +2969,29 @@ def test_the_wrong_setup_is_flagged_with_both_halves(monkeypatch, config):
     assert found[0]["when"] == "tomorrow"
 
 
+def test_what_they_paid_for_decides_a_card_with_two_lead_types(monkeypatch, config):
+    """Xenaida Garcia: "Lead Type: Text Verified Spanish IUL" and "25 Final
+    Expense Spanish Leads" on her card, set up on Spanish FEX - "can ryte
+    confirm what they paid for ... before assuming its wrong"."""
+    from wilbyte import payra
+    from wilbyte.bot import jobs
+
+    ordered = ("First Name: Xenaida\nLast Name: Garcia\nEmail: xenaida@example.com\n"
+               "Lead Type: Text Verified Spanish IUL\n25 Final Expense Spanish Leads")
+    board = brody(ordered=ordered, setup="TEXT VERIFIED SPANISH FINAL EXPENSE")
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+
+    found, _ = jobs.wrong_setups(config, day=WEDNESDAY)
+    assert found and found[0]["card_also"] == "25 Final Expense Spanish Leads" and not found[0]["paid"]
+
+    data = payra.load()
+    data["payments"]["1"] = {"name": "Xenaida Garcia", "email": "xenaida@example.com", "phone": "",
+                             "cents": 12500, "product": "Text-Verified Spanish Final Expense",
+                             "at": "2026-08-25T00:00:00+00:00"}
+    payra.save(data)
+    assert jobs.wrong_setups(config, day=WEDNESDAY) == ([], []), "set up on what she paid for"
+
+
 @pytest.mark.parametrize("where", ["Done", "In Que", "Today", "Franklin (Admin)"])
 def test_it_looks_everywhere_not_just_done(monkeypatch, config, where):
     """A card still parked in Franklin's list can be set up early, and one

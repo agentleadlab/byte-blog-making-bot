@@ -4071,6 +4071,29 @@ def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[
     return added, problems
 
 
+def _paid_for(desc: str) -> str:
+    """What their newest Payra payment was for, found by the card's email,
+    then phone, then name - or ""."""
+    from .. import payra
+
+    try:
+        data = payra.load()
+    except Exception:
+        return ""
+    email = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", desc or "")
+    phone = re.search(r"(?im)^\s*phone(?:\s*number)?\s*:\s*([+\d()][\d()\s.\-+]{6,})$", desc or "")
+    first = re.search(r"(?im)^\s*first\s*name\s*:\s*(.+)$", desc or "")
+    last = re.search(r"(?im)^\s*last\s*name\s*:\s*(.+)$", desc or "")
+    name = re.search(r"(?im)^\s*name\s*:\s*(.+)$", desc or "")
+    whole = (f"{first.group(1)} {last.group(1)}" if first and last else name.group(1) if name else "").strip()
+    for who in (email.group(0) if email else "", phone.group(1) if phone else "", whole):
+        found = payra.find(data, who) if who else []
+        product = next((str(one.get("product") or "") for one in found if one.get("product")), "")
+        if product:
+            return product
+    return ""
+
+
 # How far back to look. A confirmation lands hours or a day after the card is
 # filed, and `dateLastActivity` moves when somebody comments - so two days
 # covers the gap and keeps the check to a handful of cards rather than the
@@ -4131,6 +4154,17 @@ def wrong_setups(
             clash = agents.wrong_setup(ordered, said)
             if clash is None:
                 continue
+            # "it has two leads type, can ryte confirm what they paid for ...
+            # before assuming its wrong" - Xenaida Garcia's card says "Lead
+            # Type: Text Verified Spanish IUL" and "25 Final Expense Spanish
+            # Leads"; she was set up on Spanish FEX. What Payra took the money
+            # for decides, and a setup on what was paid for is no alarm.
+            setup_kinds = agents.families_in(clash[1])
+            paid = _paid_for(desc)
+            if paid and setup_kinds and agents.families_in(paid) == setup_kinds:
+                continue
+            card_also = next((one for one in agents._phrases_in(desc)
+                              if one != clash[0] and setup_kinds and agents.families_in(one) == setup_kinds), "")
             # What the confirmation says about the leads away from its opening
             # line. Faith's on Eduardo Munoz opened "OTP VET" and then gave a
             # form slug and a sheet both saying FB Spanish IUL - which is what
@@ -4149,6 +4183,8 @@ def wrong_setups(
                 "typo": bool(also) and agents.setup_conflict(ordered, also) is None,
                 "when": "today" if launch == day else "tomorrow",
                 "where": _list_named(lists, str(card.get("idList") or "")),
+                "paid": paid,
+                "card_also": card_also,
             })
     except Exception as exc:  # one bad card must not lose the rest
         problems.append(_short(exc, 160))

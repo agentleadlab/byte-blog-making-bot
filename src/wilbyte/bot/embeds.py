@@ -369,6 +369,11 @@ def wrong_setups(found: list[dict], *, shown: int) -> discord.Embed:
             f"  ordered `{_truncate(str(card.get('ordered') or '?'), 60)}`\n"
             f"  set up  `{_truncate(str(card.get('setup') or '?'), 60)}`"
         )
+        if card.get("paid"):
+            said += f"\n  paid for `{_truncate(str(card['paid']), 60)}` (Payra)"
+        if card.get("card_also"):
+            said += (f"\n  …and the card also says `{_truncate(str(card['card_also']), 60)}` — "
+                     + ("which did they buy?" if not card.get("paid") else "the payment says otherwise"))
         also = str(card.get("also") or "")
         if also:
             said += (
