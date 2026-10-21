@@ -10520,6 +10520,12 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                 await ack.delete()
             except Exception:
                 pass
+        # Said, not dropped: "why isnt he filing this" - an aged payment
+        # read as a new agent's left nothing anywhere to say why.
+        if AGED_ORDERS_ON and responder is not None:
+            await responder.send(f"🔨 ⚠ **{card.get('client') or 'An order'}** paid for aged leads, but I read "
+                                 f"the order as a new agent's, so I didn't make it on my own. Gavel it and I'll "
+                                 f"make the right card. <{link}>", quiet=True)
         return
     if kind == "aged" and not AGED_ORDERS_ON:
         await _order_forget(key)
