@@ -4730,7 +4730,7 @@ def test_a_card_that_cant_be_made_tags_franklin(order, monkeypatch):
     nobody."""
     monkeypatch.setattr(order.responder, "send", order.responder.send)
     bot = _bot(_message())
-    bot.config.secrets.discord_notify_user_id = "424242"
+    monkeypatch.setattr(bot.config.secrets, "discord_notify_user_id", "424242")
     assert client._card_ping(bot) == "<@424242> "
     assert client._card_ping(SimpleNamespace()) == ""
 
@@ -4920,3 +4920,56 @@ def test_check_aged_lines_leaves_one_line_cards_with_nothing_to_compare(monkeypa
     assert _one_line_case(monkeypatch, desc, "same as last time")[0] == []
     assert _one_line_case(monkeypatch, desc, "Lead Type: OTP Vets\nStates Leads In: Indiana\n"
                                               "Number of Requested Leads: 34")[0] == []
+
+
+def test_an_aged_order_waiting_for_its_states_isnt_tagged_straight_away(order, monkeypatch):
+    """Thomas Natola: Kharyl's states came seconds after his two minutes, and
+    Franklin was tagged "No card yet" for a card made straight after. Tagged
+    only when it's still waiting AGED_PING_AFTER on - and once."""
+    _note_is(monkeypatch, lambda config, **kw: "")
+    order.fields = {"states": "", "leads": ""}
+    message = _aged_post()
+    asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
+    [first] = [one for one, _v in order.responder.sent if "No card yet" in str(one)]
+    assert f"<@{FRANKLIN}>" not in first and "tag you" in first
+    assert ordercards.load()["950"]["said"] == "quiet"
+
+    tried = []
+
+    async def retry(bot, key, *, settle=30):
+        tried.append(key)
+
+    monkeypatch.setattr(client, "_order_retry", retry)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: order.responder)
+    monkeypatch.setattr(client, "_ORDER_PENDING", {})
+    held = ordercards.load()
+    held["950"]["waiting_since"] = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    ordercards.save(held)
+    asyncio.run(client._order_sweep(_bot(message)))
+    assert not [one for one, _v in order.responder.sent if f"<@{FRANKLIN}>" in str(one)], "not yet"
+
+    held = ordercards.load()
+    held["950"]["waiting_since"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    ordercards.save(held)
+    asyncio.run(client._order_sweep(_bot(message)))
+    asyncio.run(client._order_sweep(_bot(message)))
+    tagged = [one for one, _v in order.responder.sent if f"<@{FRANKLIN}>" in str(one)]
+    assert len(tagged) == 1 and "still no the states or how many leads" in tagged[0] and "No card yet" in tagged[0]
+    assert tried == ["950"], "looked at once more before tagging"
+
+
+def test_an_aged_order_made_before_its_tag_isnt_tagged(order, monkeypatch):
+    _note_is(monkeypatch, lambda config, **kw: "")
+    order.fields = {"states": "", "leads": ""}
+    message = _aged_post()
+    asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
+    order.fields = {}
+    message.thread = _notes("25 aged IUL, AZ TX")
+    monkeypatch.setattr(client, "_order_responder", lambda bot: order.responder)
+    monkeypatch.setattr(client, "_ORDER_PENDING", {})
+    held = ordercards.load()
+    held["950"]["waiting_since"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    ordercards.save(held)
+    asyncio.run(client._order_sweep(_bot(message)))
+    assert ordercards.load()["950"]["status"] == "made"
+    assert not [one for one, _v in order.responder.sent if f"<@{FRANKLIN}>" in str(one)]

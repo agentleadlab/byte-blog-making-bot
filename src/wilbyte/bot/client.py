@@ -11048,6 +11048,34 @@ def _aged_gaps(card: dict) -> list[str]:
 AGED_WAIT_DAYS = 2
 #: How often a waiting aged order's invoice is looked at again.
 AGED_RETRY_EVERY = timedelta(minutes=30)
+#: How long an aged order waits for its states before Franklin's tagged.
+AGED_PING_AFTER = timedelta(minutes=15)
+
+
+async def _order_still_waiting(bot, key: str, order: dict) -> bool:
+    """An aged order still without its states AGED_PING_AFTER on: tried once
+    more, then said with Franklin tagged. Whether it was said."""
+    from .. import ordercards
+
+    await _order_retry(bot, key, settle=0)
+    order = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    if order.get("status") != "waiting" or order.get("said") != "quiet":
+        return False
+    await _order_note(key, said=True)
+    responder = _order_responder(bot)
+    if responder is None:
+        return False
+    gaps = order.get("gaps") or ["the states"]
+    minutes = int(AGED_PING_AFTER.total_seconds() // 60)
+    try:
+        await responder.send(
+            _card_ping(bot) + f"⏳ **{order.get('client') or 'An aged order'}** — still no {' or '.join(gaps)} "
+            f"{minutes}+ minutes after the payment. **No card yet**. Post them in a thread on the payment or put "
+            f"them in the invoice note and I'll make it — or gavel it once they're there.\n{order.get('link') or ''}")
+    except Exception:
+        log.warning("Couldn't say the aged order is still waiting", exc_info=True)
+        return False
+    return True
 
 
 async def _order_wait_for_info(bot, payload, key, card, gaps, link, responder) -> None:
@@ -11068,13 +11096,17 @@ async def _order_wait_for_info(bot, payload, key, card, gaps, link, responder) -
             except Exception:
                 pass
         return
-    await _order_note(key, said=True)
-    said = (_card_ping(bot) + f"⏳ **{card.get('client') or 'An aged order'}** — aged leads, but I can't find {' or '.join(gaps)} "
-            f"in the payment, its Payra invoice note or a thread. **No card yet**: an aged card goes out as soon "
+    # Not tagged yet: Thomas Natola's states were posted seconds after his two
+    # minutes, and Franklin was tagged for a card made straight after. Tagged
+    # by the sweep if it's still waiting AGED_PING_AFTER on.
+    await _order_note(key, said="quiet")
+    minutes = int(AGED_PING_AFTER.total_seconds() // 60)
+    said = (f"⏳ **{card.get('client') or 'An aged order'}** — aged leads, but I can't find {' or '.join(gaps)} "
+            f"in the payment, its Payra invoice note or a thread yet. **No card yet**: an aged card goes out as soon "
             f"as it's made. I'll make it when they're posted in a thread on the payment or put in the invoice "
-            f"note — or gavel it once they're there.\n{link}")
+            f"note — and tag you if they're still not there in {minutes} minutes.\n{link}")
     try:
-        if ack is not None and hasattr(ack, "edit") and not _card_ping(bot):
+        if ack is not None and hasattr(ack, "edit"):
             await ack.edit(content=said)
         else:
             await responder.send(said)
@@ -11684,7 +11716,9 @@ async def _order_sweep(bot) -> list[str]:
                 tried = datetime.fromisoformat(str(order.get("tried_at") or ""))
             except ValueError:
                 continue
-            if now - since <= timedelta(days=AGED_WAIT_DAYS) and now - tried >= AGED_RETRY_EVERY:
+            if order.get("said") == "quiet" and now - since >= AGED_PING_AFTER:
+                await _order_still_waiting(bot, key, order)
+            elif now - since <= timedelta(days=AGED_WAIT_DAYS) and now - tried >= AGED_RETRY_EVERY:
                 await _order_retry(bot, key, settle=0)
             continue
         if not isinstance(order, dict) or order.get("status") != "made" or order.get("merged"):
