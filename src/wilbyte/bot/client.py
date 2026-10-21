@@ -1719,6 +1719,16 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await responder.send(payraapi.status(await asyncio.to_thread(payraapi.load)))
                 return
 
+            if request.action == "health":
+                from .. import health
+
+                await responder.send("🩺 Trying every connection — a few seconds…", quiet=True)
+                found = await asyncio.to_thread(health.checks, config)
+                guilds = len(getattr(bot, "guilds", None) or [])
+                said = health.describe([("Discord", True, f"connected as {bot.user} · {guilds} server(s)"), *found])
+                await responder.send(said[:1990])
+                return
+
             if request.action == "contracts":
                 paired, problems = await asyncio.to_thread(jobs.contract_check, config)
                 # "who can't go live because no contract" wants those, not
@@ -2199,7 +2209,8 @@ async def _restore_state(bot: "WilByteBot", responder: Responder, config: Config
         label="Restore it", emoji="🧠",
     )
     await responder.send(
-        f"🧠 **{found.count('state')}** memory file(s) and **{found.count('corpus')}** copy-library file(s), "
+        f"🧠 **{found.count('state')}** memory file(s), **{found.count('corpus')}** copy-library file(s) and "
+        f"**{found.count('out')}** scheduled post(s), "
         f"{found.size / 1024 / 1024:.1f} MB."
         + (f"\n-# Left out (not memory): {', '.join(found.refused[:5])}" if found.refused else "")
         + "\nThis replaces what I remember here. What's here now is kept aside first. I restart after.",
@@ -2210,10 +2221,12 @@ async def _restore_state(bot: "WilByteBot", responder: Responder, config: Config
         await responder.send("Left as it was.")
         return
     try:
-        kept = await asyncio.to_thread(
+        from .. import pipeline as _pipeline
+
+        kept = await asyncio.to_thread(partial(
             statemove.restore, found, state_dir=_state_dir(), corpus_dir=corpus.corpus_dir(),
-            backup_dir=_state_dir().parent / "backups",
-        )
+            backup_dir=_state_dir().parent / "backups", out_dir=_pipeline.DEFAULT_OUTPUT_DIR,
+        ))
     except OSError as exc:
         await responder.send(f"⚠ Couldn't write it: {exc}")
         return

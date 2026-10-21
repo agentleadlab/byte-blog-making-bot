@@ -1011,6 +1011,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="payrastatus", brief=text)
     if re.match(r"\s*payra\s+(?:test|check|probe)\b", text, re.IGNORECASE):
         return MentionRequest(action="payratest", brief=text)
+    if re.match(r"\s*(?:health(?:\s*check)?|check\s+(?:my\s+|your\s+)?(?:health|connections)|connections)\s*[.?!]*\s*$",
+                text, re.IGNORECASE):
+        return MentionRequest(action="health", brief=text)
     if re.match(r"\s*(?:contracts|contract\s+check|check\s+contracts)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="contracts", brief=text)
     # "who are the people supposed to go live but cant because no
@@ -1606,6 +1609,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **testimonial remove Raymond** — take one off the website (and Full Interviews), after a button.
 > **website check** — whether I can reach the site. **site code** — the page scripts the GHL
 > training pages load from leadlabcrm.com, brought up to date (I do it myself whenever I start)
+> @RYTE **health** — every connection I use, tried once (Trello, Payra, Claude, the hub, Google,
+> PandaDoc, Notion, RingCentral, Zoom, Fathom, YouTube, GHL, the website, Stripe), read only
 > @RYTE **pandadoc test** — whether the PandaDoc key works, and the latest signed documents
 > @RYTE **contracts** — today's and tomorrow's go-lives, and whether each order has its own signed contract
 > @RYTE **post segments Karyn Giles** — her segments that have a YouTube link, onto the

@@ -323,12 +323,31 @@ def cookie_summary() -> tuple[int, bool]:
     return len(names), any(name in _LOGIN_COOKIES for name in names)
 
 
+def proxy_url() -> str:
+    """The proxy YouTube requests go through, or "" for none - the same one
+    the transcript library uses. Webshare's rotating residential: a new home
+    address per request, which is what gets past the datacenter block."""
+    username = os.getenv("WEBSHARE_PROXY_USERNAME")
+    password = os.getenv("WEBSHARE_PROXY_PASSWORD")
+    if username and password:
+        from urllib.parse import quote
+
+        user = username if username.endswith("-rotate") else f"{username}-rotate"
+        return f"http://{quote(user, safe='-_.')}:{quote(password, safe='')}@p.webshare.io:80/"
+    return (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
+
+
 def _ydl_opts(**extra) -> dict:
-    """Base yt-dlp options, with cookies attached when they are configured."""
+    """Base yt-dlp options, with cookies attached when they are configured -
+    and the proxy, when there is one, so yt-dlp gets past the datacenter
+    block as the transcript library does."""
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, **extra}
     cookies = cookie_file()
     if cookies:
         opts["cookiefile"] = cookies
+    proxy = proxy_url()
+    if proxy and "proxy" not in opts:
+        opts["proxy"] = proxy
     return opts
 
 

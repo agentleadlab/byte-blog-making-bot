@@ -16,7 +16,11 @@ def code_version() -> str:
     """`8e976d4 Aug 17 14:32` for a checkout, or a plain note when it isn't one."""
     fields = _git("log", "-1", "--format=%h %ad", "--date=format:%b %d %H:%M")
     if not fields:
-        return "unknown (not a git checkout)"
+        # Railway builds without .git, and says which commit it built.
+        import os
+
+        built = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()
+        return f"{built[:7]} (Railway)" if built else "unknown (not a git checkout)"
     return f"{fields}{' +local edits' if _git('status', '--porcelain') else ''}"
 
 

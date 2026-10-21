@@ -164,7 +164,15 @@ def load_payload(entry: LedgerEntry) -> dict:
         )
     path = Path(entry.payload_path)
     if not path.exists():
-        raise PublishError(f"saved payload is missing from disk ({path})")
+        # Moved hosts: the ledger kept the Mac's full path, and the file came
+        # across into this copy's own output folder under the same post.
+        from .pipeline import DEFAULT_OUTPUT_DIR
+
+        moved = DEFAULT_OUTPUT_DIR / path.parent.name / path.name
+        if path.parent.name and moved.exists():
+            path = moved
+        else:
+            raise PublishError(f"saved payload is missing from disk ({path})")
     return json.loads(path.read_text(encoding="utf-8"))
 
 

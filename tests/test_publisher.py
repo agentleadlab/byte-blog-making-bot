@@ -194,3 +194,21 @@ def test_next_due_is_none_when_nothing_is_waiting(tmp_path):
     )
 
     assert publisher.next_due(ledger, now=NOW) is None
+
+
+def test_a_payload_moved_hosts_is_found_in_this_copys_output(tmp_path, monkeypatch):
+    """The ledger kept the Mac's full path; the file came across into the new
+    host's own output folder under the same post."""
+    from wilbyte import pipeline
+    from wilbyte.state import LedgerEntry
+
+    out = tmp_path / "data" / "out"
+    (out / "my-post").mkdir(parents=True)
+    (out / "my-post" / "ghl-payload.json").write_text('{"title": "T"}')
+    monkeypatch.setattr(pipeline, "DEFAULT_OUTPUT_DIR", out)
+    entry = LedgerEntry.__new__(LedgerEntry)
+    entry.payload_path = "/Users/franklin/RYTE/out/my-post/ghl-payload.json"
+    assert publisher.load_payload(entry) == {"title": "T"}
+    entry.payload_path = "/Users/franklin/RYTE/out/other/ghl-payload.json"
+    with pytest.raises(publisher.PublishError):
+        publisher.load_payload(entry)

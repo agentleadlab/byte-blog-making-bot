@@ -268,3 +268,25 @@ def test_an_unrecognised_rejection_still_reports_the_body():
 
     assert "teapot" in message
     assert "418" in message
+
+
+def test_ytdlp_goes_through_the_proxy_only_when_one_is_set(monkeypatch):
+    from wilbyte import youtube
+
+    for name in ("WEBSHARE_PROXY_USERNAME", "WEBSHARE_PROXY_PASSWORD", "YOUTUBE_PROXY_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(youtube, "cookie_file", lambda: None)
+    assert "proxy" not in youtube._ydl_opts(), "the Mac has none: nothing changes there"
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "abcd")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "p@ss")
+    assert youtube._ydl_opts()["proxy"] == "http://abcd-rotate:p%40ss@p.webshare.io:80/"
+
+
+def test_the_version_says_railways_commit_without_a_checkout(monkeypatch):
+    from wilbyte import version
+
+    monkeypatch.setattr(version, "_git", lambda *a, **k: "")
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    assert version.code_version() == "unknown (not a git checkout)"
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "1d98bbe0000")
+    assert version.code_version() == "1d98bbe (Railway)"

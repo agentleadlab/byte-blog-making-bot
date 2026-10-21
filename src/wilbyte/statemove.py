@@ -23,7 +23,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 #: The folders an archive may write into, by their name in it.
-ROOTS = ("state", "corpus")
+ROOTS = ("state", "corpus", "out")
+#: Of out/, only the saved bodies of posts still to publish - a post
+#: scheduled before the move publishes from Railway as it would have from the
+#: Mac. Nothing else from out/ is memory.
+PAYLOAD = "ghl-payload.json"
 
 #: Bigger than any real memory - Faith's texts are the bulk, a few MB.
 MOST_BYTES = 200 * 1024 * 1024
@@ -50,6 +54,8 @@ def _safe(name: str) -> str | None:
     path = PurePosixPath(str(name or "").replace("\\", "/"))
     parts = [part for part in path.parts if part not in ("", ".")]
     if not parts or path.is_absolute() or ".." in parts or parts[0] not in ROOTS or len(parts) < 2:
+        return None
+    if parts[0] == "out" and (len(parts) != 3 or parts[-1] != PAYLOAD):
         return None
     if parts[-1].endswith(".tmp") or parts[-1].startswith("._") or parts[-1] == ".DS_Store":
         return None
@@ -92,12 +98,12 @@ def read(data: bytes) -> Packed:
     return found
 
 
-def pack(state_dir: Path, corpus_dir: Path) -> bytes:
+def pack(state_dir: Path, corpus_dir: Path, out_dir: Path | None = None) -> bytes:
     """This copy's memory as a .tar.gz, the same shape `read` takes."""
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w:gz") as box:
-        for root, where in (("state", state_dir), ("corpus", corpus_dir)):
-            if not where.is_dir():
+        for root, where in (("state", state_dir), ("corpus", corpus_dir), ("out", out_dir)):
+            if where is None or not where.is_dir():
                 continue
             for path in sorted(where.rglob("*")):
                 if path.is_file() and _safe(f"{root}/{path.relative_to(where).as_posix()}"):
@@ -105,17 +111,25 @@ def pack(state_dir: Path, corpus_dir: Path) -> bytes:
     return out.getvalue()
 
 
-def restore(found: Packed, *, state_dir: Path, corpus_dir: Path, backup_dir: Path) -> Path:
+def restore(found: Packed, *, state_dir: Path, corpus_dir: Path, backup_dir: Path,
+            out_dir: Path | None = None) -> Path:
     """Write the archive's files over this copy's, after keeping what was
     there. Returns where the old memory was kept."""
     backup_dir.mkdir(parents=True, exist_ok=True)
     kept = backup_dir / f"ryte-state-before-restore-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz"
-    kept.write_bytes(pack(state_dir, corpus_dir))
+    kept.write_bytes(pack(state_dir, corpus_dir, out_dir))
+    folders = {"state": state_dir, "corpus": corpus_dir, "out": out_dir}
     for name, data in found.files.items():
         root, rest = name.split("/", 1)
-        where = (state_dir if root == "state" else corpus_dir) / rest
+        # A marker that only ever meant something on the machine it was made
+        # on: "update blocked" brought across says so on every start.
+        if root == "state" and rest == "update-blocked":
+            continue
+        if folders.get(root) is None:
+            continue
+        where = folders[root] / rest
         # Resolved and checked again: nothing lands outside its folder.
-        base = (state_dir if root == "state" else corpus_dir).resolve()
+        base = folders[root].resolve()
         if base not in where.resolve().parents:
             continue
         where.parent.mkdir(parents=True, exist_ok=True)

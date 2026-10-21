@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pack what RYTE remembers on this machine - state/ and corpus/ - into one file
+# Pack what RYTE remembers on this machine - state/, corpus/ and the saved
+# bodies of posts still to publish - into one file
 # on the Desktop, for `@RYTE restore state` on the new host (Railway).
 #
 #   bash scripts/pack-state.sh
@@ -19,6 +20,14 @@ if [ ${#folders[@]} -eq 0 ]; then
   exit 1
 fi
 
-tar -czf "$out" --exclude='*.tmp' --exclude='.DS_Store' "${folders[@]}"
+# The saved bodies of posts still to publish, so they publish from the new
+# host too - nothing else from out/.
+payloads=()
+if [ -d out ]; then
+  while IFS= read -r one; do payloads+=("$one"); done < <(find out -mindepth 2 -maxdepth 2 -name ghl-payload.json)
+fi
+
+tar -czf "$out" --exclude='*.tmp' --exclude='.DS_Store' --exclude='state/update-blocked' \
+  "${folders[@]}" ${payloads[@]+"${payloads[@]}"}
 printf '\n\033[32m✓ Packed\033[0m %s (%s)\n\n' "$out" "$(du -h "$out" | cut -f1)"
 printf 'Next: in Discord, @Ryte restore state - with that file attached.\n\n'

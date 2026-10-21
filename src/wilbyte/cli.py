@@ -314,9 +314,20 @@ def cmd_corpus(args) -> int:
 
 
 def cmd_bot(args) -> int:
+    from . import health
     from .bot import run_bot
 
     config = load_config()
+    if health.standing_by():
+        # On the new host before the switch: say what works, then wait -
+        # never on Discord while the Mac still is. Taking RYTE_STANDBY off is
+        # the switch.
+        import time
+
+        print("RYTE_STANDBY is on - checking connections, then waiting. Not connecting to Discord.", flush=True)
+        print(health.describe(health.checks(config)).replace("**", ""), flush=True)
+        while True:
+            time.sleep(3600)
     print("Starting the Discord bot. Ctrl-C to stop.")
     run_bot(config)
     return 0

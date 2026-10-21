@@ -83,3 +83,20 @@ def test_only_franklin_can_replace_the_memory():
     message = SimpleNamespace(author=SimpleNamespace(id=2), attachments=[])
     asyncio.run(client._restore_state(None, Responder(), config, message))
     assert sent == ["Only Franklin can replace my memory."]
+
+
+def test_posts_still_to_publish_come_across_and_nothing_else_from_out(tmp_path):
+    """A post scheduled on the Mac publishes from Railway: its saved body is
+    carried, and nothing else of out/. The Mac's "update blocked" isn't."""
+    data = _tar({"state/ledger.json": b"{}", "state/update-blocked": b"x",
+                 "out/my-post/ghl-payload.json": b'{"a": 1}', "out/my-post/post.html": b"<p>",
+                 "out/copy/x.txt": b"y", "out/deep/er/ghl-payload.json": b"{}"})
+    found = statemove.read(data)
+    assert set(found.files) == {"state/ledger.json", "state/update-blocked", "out/my-post/ghl-payload.json"}
+    assert found.count("out") == 1
+    state, corpus, out = tmp_path / "state", tmp_path / "corpus", tmp_path / "out"
+    statemove.restore(found, state_dir=state, corpus_dir=corpus, backup_dir=tmp_path / "b", out_dir=out)
+    assert (out / "my-post" / "ghl-payload.json").read_text() == '{"a": 1}'
+    assert not (state / "update-blocked").exists()
+    # And with nowhere for out/ to go, it's left out rather than written anywhere.
+    statemove.restore(found, state_dir=state, corpus_dir=corpus, backup_dir=tmp_path / "b")
