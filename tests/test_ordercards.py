@@ -4781,3 +4781,18 @@ def test_a_question_thread_about_an_agent_isnt_their_order(order):
     person = SimpleNamespace(bot=False)
     assert not client._not_an_order_thread(None, SimpleNamespace(name="Allen Coleman - OTP MTG", owner=person))
     assert asyncio.run(client._order_link_thread(_bot(_message()), asked)) is None
+
+
+def test_a_split_beside_the_states_stays_on_the_card():
+    """Torian Lollis: "States Leads In: 80 Louisiana, 20 Texas" for 25 leads,
+    and the card said "States: LA, TX"."""
+    form = jobs.invoice_form("Lead Type: aged FEX 180+\nNumber of Requested Leads: 25\n"
+                             "States Leads In: 80 Louisiana, 20 Texas")
+    fields = jobs.with_invoice_form({"states": "LA, TX", "leads": "25", "package": "aged FEX 180+"}, form)
+    assert fields["states"] == "LA 80%, TX 20%"
+    card = {"kind": "aged", "source": "PRODUCT: Text-Verified Aged Final Expense Leads\n"
+                                      "States Leads In: 80 Louisiana, 20 Texas\nNumber of Requested Leads: 25",
+            "fields": fields, "launch_iso": ""}
+    assert ordercards.doubts(card, today=date(2026, 10, 21))[0] == []
+    assert jobs._states_split("FL 18, VA 14", "32") == "FL 18, VA 14", "counts, not shares"
+    assert jobs._states_split("Texas, Florida", "10") == ""

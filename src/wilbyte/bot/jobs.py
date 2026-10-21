@@ -13122,6 +13122,28 @@ def invoice_form(text: str) -> dict:
     return found
 
 
+def _states_split(said: str, leads: str = "") -> str:
+    """A split written next to the states, kept: Torian Lollis's "80
+    Louisiana, 20 Texas" went on his card as "LA, TX" and lost it. Counts
+    that add up to 100 and aren't the order's count are shares: "LA 80%, TX
+    20%". "" when the states aren't each given a number."""
+    pairs = []
+    for bit in re.split(r"\s*(?:,|;|/|\band\b|&|\n)\s*", str(said or ""), flags=re.IGNORECASE):
+        if not bit.strip():
+            continue
+        codes = _state_codes_named(bit)
+        numbers = re.findall(r"(?<![\d.])(\d{1,4})(?:\s*%)?(?![\d.])", bit)
+        if len(codes) != 1 or len(numbers) != 1:
+            return ""
+        pairs.append((codes[0], int(numbers[0])))
+    if len(pairs) < 2:
+        return ""
+    total = sum(count for _code, count in pairs)
+    ordered = re.search(r"\d+", str(leads or ""))
+    shares = "%" in str(said) or (total == 100 and not (ordered and int(ordered.group(0)) == 100))
+    return ", ".join(f"{code} {count}{'%' if shares else ''}" for code, count in pairs)
+
+
 def _form_states(said: str) -> str:
     """The form's states the way the card writes them: "all but new york" ->
     "All states except NY", "texas, florida" -> "TX, FL"; anything else as
@@ -13152,7 +13174,11 @@ def with_invoice_form(fields: dict, form: dict) -> dict:
 
         # Empty, or the exclusions lost: "all but new york" read as "All".
         lost = ordercards._ALL_BUT.search(written) and not ordercards._ALL_BUT.search(have)
-        if not have.strip() or lost:
+        split = _states_split(states, str(form.get("leads") or fields.get("leads") or ""))
+        if split and not re.search(r"\d", have):
+            # The numbers beside the states lost: "80 Louisiana, 20 Texas".
+            fields["states"] = split
+        elif not have.strip() or lost:
             fields["states"] = written
     package = form.get("package")
     if package:
