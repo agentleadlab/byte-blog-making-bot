@@ -472,3 +472,44 @@ def test_a_mention_brought_in_twice_is_answered_once(monkeypatch):
     asyncio.run(client.answer_mention(Bot(), message))
     assert answered == [10]
     assert mentionseen.claim(11) and not mentionseen.claim(11)
+
+
+def test_a_pin_puts_a_message_on_the_board_once(monkeypatch):
+    """"can i just hammer it and it will read it as task ... another emoji
+    maybe" - 📌 on Faith's screenshot is "@Ryte add to trello", once."""
+    commented, said = [], []
+
+    async def comment(responder, config, text, message=None):
+        commented.append((text, message.id))
+
+    class Saying:
+        def __init__(self, message):
+            pass
+
+        async def send(self, text, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(client, "_comment_on_card", comment)
+    monkeypatch.setattr(client, "MessageResponder", Saying)
+    faith = NS(id=5, bot=False, roles=[])
+    messages = {20: _said(20, 1, "<@999> add to trello tag nicole", author=faith),
+                21: _said(21, 1, "Brian wants Ohio, Washington and Kansas added", author=faith)}
+
+    class Place:
+        async def fetch_message(self, mid):
+            return messages[mid]
+
+    bot = Bot()
+    bot.get_channel = lambda cid: Place()
+
+    def pin(mid):
+        asyncio.run(client._pinned_to_board(bot, NS(channel_id=50, message_id=mid)))
+
+    pin(21)
+    pin(21)
+    assert commented == [("Brian wants Ohio, Washington and Kansas added", 21)], "once"
+    mentionseen.claim(20)  # answered when it was asked
+    pin(20)
+    assert len(commented) == 1 and "Already on the board" in said[-1]
+    mentionseen.answered().discard("20")
+    assert client.is_pin("📌") and client.is_pin(NS(name="pushpin")) and not client.is_pin("🔨")

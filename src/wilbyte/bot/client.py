@@ -476,6 +476,14 @@ class WilByteBot(discord.Client):
             return
         from .. import ordercards
 
+        # 📌 on a message in the Growth server: put it on the board, as
+        # "@Ryte add to trello" would - "can i just hammer it and it will
+        # read it as task... another emoji maybe". Not the gavel: that's an
+        # order, and a client's texts read as one make a card for nobody.
+        if is_pin(payload.emoji):
+            if _in_setup_guild(self, self.get_guild(payload.guild_id) if payload.guild_id else None):
+                _also_running(self.loop.create_task(_pinned_to_board(self, payload)))
+            return
         if ordercards.is_gavel(payload.emoji):
             log.info("Gavel on message %s by %s", payload.message_id, payload.user_id)
             if _gavel_counts(self, payload):
@@ -3204,6 +3212,45 @@ async def _said_before(message, *, howmany: int = 100):
             yield older
     except Exception:  # no history permission, or Discord having a moment
         return
+
+
+#: The emoji that puts a message on the board.
+PIN_EMOJI = ("📌", "pushpin")
+
+
+def is_pin(emoji) -> bool:
+    name = str(getattr(emoji, "name", None) or emoji or "")
+    return name.rstrip("\ufe0f") in PIN_EMOJI
+
+
+async def _pinned_to_board(bot, payload) -> None:
+    """📌 on a message: on the day's card as if it said "@Ryte add to trello"
+    - its words, its screenshots, whoever it tags. Once per message, and not
+    when RYTE already answered it as an ask."""
+    try:
+        channel = bot.get_channel(payload.channel_id) or await bot.fetch_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+    except Exception:
+        log.warning("Couldn't read the message pinned to the board", exc_info=True)
+        return
+    if getattr(message.author, "bot", False):
+        return
+    responder = MessageResponder(message)
+    with mirror.answering():
+        if str(message.id) in await asyncio.to_thread(mentionseen.answered):
+            await responder.send("📌 Already on the board — I answered this one when it was asked.", quiet=True)
+            return
+        if not await asyncio.to_thread(mentionseen.claim, f"pin:{message.id}"):
+            return
+        said = str(message.content or "")
+        asked = mentions.parse(said)
+        said = asked.brief if asked.action == "comment" and asked.brief is not None else said
+        said = re.sub(r"<@[!&]?\d+>", " ", said)
+        try:
+            await _comment_on_card(responder, bot.config, " ".join(said.split()), message=message)
+        except Exception as exc:
+            log.exception("Couldn't put the pinned message on the board")
+            await responder.send(f"📌 ⚠ Couldn't put it on the board: {_readable(exc)}")
 
 
 async def _the_one_before(message):

@@ -1539,6 +1539,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **Put on trello** — on its own line, with no @RYTE at all. He offers to put
 > the message above it on the board and waits for the button. Also **CC on
 > trello**; add `on ops` for a different card
+> 📌 **on any message** in the Growth server — the same as `@RYTE add to trello` on it: its
+> words, its screenshots and whoever it tags, on the day's card. Once per message. The
+> 🔨 gavel stays for orders only
 > @RYTE **put on trello** — as a *reply* to somebody's message, puts that
 > message on the board with their name in front of it. `on ops`, `on ads` or
 > `on lead order` picks the card; otherwise it's General
