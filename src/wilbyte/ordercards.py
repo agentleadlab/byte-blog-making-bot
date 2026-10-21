@@ -419,6 +419,12 @@ def post_invoice(said: str) -> tuple[str, str]:
             continue
         if current is None:
             continue
+        # The next message: the post ends where somebody else speaks.
+        # Bailey Lawrence's Internal Notes "(none)" ran on into the thread -
+        # Tre's "live tomorrow" and Faith's tags - and onto the card.
+        if re.match(r"\s*\[\d\d/\d\d \d\d:\d\d[AP]M\]", line):
+            current = None
+            continue
         bare = re.sub(r"^\s*>+\s?", "", line)
         if not line.lstrip().startswith(">") and re.match(r"\s*\*\*[^*\n]{1,40}:", line):
             # The next labelled part of the post, not the notes any more.
@@ -692,7 +698,19 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     if len(phone) == 10 and phone not in re.sub(r"\D", "", source):
         missing.append(f"check the phone ({fields.get('phone')}) - not in the order's text, maybe off a screenshot")
 
-    # When.
+    # When - and when the notes give more than one day, which.
+    said_days = [str(one) for one in card.get("launch_conflict") or []]
+    if len(said_days) > 1 and kind == "fresh":
+        from datetime import date as _day
+
+        shown = []
+        for one in said_days:
+            try:
+                shown.append(f"{_day.fromisoformat(one):%a %m/%d}")
+            except ValueError:
+                shown.append(one)
+        wrong.append(f"Launch date: the notes say {' and then '.join(shown)} - I took the latest, "
+                     f"{shown[-1]}. Which is it?")
     launch = str(card.get("launch_iso") or "")
     if launch:
         wrong += [one for one in launch_doubts(launch, source, kind=kind, today=today) if "isn't a date" not in one]

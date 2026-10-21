@@ -2715,6 +2715,42 @@ def test_the_invoice_form_fills_what_the_reading_left_out(monkeypatch):
     assert client._aged_gaps(card) == []
 
 
+def test_bailey_lawrence_bank_and_two_launch_days(monkeypatch):
+    """"so what the heck is this? are we supposed to guess this" - Agency:
+    BANK, Tre's "live tomorrow" kept over Faith's later "BANK - live Monday
+    October 26", and the thread run into the invoice's Internal Notes with
+    its tags."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Bailey Lawrence", "states": "IA, SC, TN, WY", "agency": "BANK",
+        "package": "Text-Verified Veteran Leads", "leads": "40", "launch": "tomorrow",
+        "launch_iso": "2026-10-21"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/20 09:02AM] LeadLab: New Payment | Payra\nNAME: Bailey Lawrence\nAMOUNT: $400\n"
+            "PRODUCT: Text-Verified Veteran Leads\n**INVOICE:** INV-20111\n**Notes:**\n"
+            "> States: IA, SC, TN, WY\n> Number of Requested Leads: 40\n**Internal Notes:**\n> *(none)*\n"
+            "[10/20 11:25AM] Tre Tarpley: live tomorrow <@1478905541001613444>\n"
+            "[10/20 03:29PM] Faith: <@956658038188683264> <@1413148328375619665>\n"
+            "BANK - live Monday October 26")
+    notes = ["live tomorrow", "BANK - live Monday October 26", "BANK - live Monday October 26"]
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 20), notes=notes)
+    fields = card["fields"]
+    assert fields["agency"] == ""
+    assert card["launch_iso"] == "2026-10-26" and fields["launch"] == "Monday, October 26"
+    assert card["launch_conflict"] == ["2026-10-21", "2026-10-26"]
+    assert any("Which is it?" in one for one in ordercards.doubts(card, today=date(2026, 10, 20))[0])
+    assert "<@" not in fields["notes"] and "[10/20" not in fields["notes"] and "(none)" not in fields["notes"]
+    assert fields["notes"].count("BANK - live Monday October 26") == 1
+
+
 @pytest.mark.parametrize("kind", ["fresh", "aged"])
 def test_a_zelle_payment_says_so_in_the_notes(monkeypatch, kind):
     """"add on additional notes on the cards both aged and fresh that if they

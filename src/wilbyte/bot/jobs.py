@@ -13150,7 +13150,10 @@ def order_fields(got: dict, notes: list[str] = ()) -> dict:
         # Every note only said what the fields do - nothing to add.
         fields["notes"] = ""
     if notes:
-        said = "\n".join(str(one).strip() for one in notes if str(one).strip())
+        # Once each: the same note in the thread and on the message it
+        # hangs off read twice on Bailey Lawrence's card.
+        notes = list(dict.fromkeys(str(one).strip() for one in notes if str(one).strip()))
+        said = "\n".join(notes)
         # "they sometimes add screenshot as additional notes" - each one as
         # what it says, where it was posted.
         shots = [" ".join(str(one or "").split()) for one in got.get("screenshots") or []]
@@ -13343,10 +13346,19 @@ def launch_written(when, text: str, *, today) -> bool:
     return False
 
 
+#: How somebody paid, not who they're with: Bailey Lawrence's "BANK - live
+#: Monday October 26" went on his card as Agency: BANK.
+_PAID_HOW = {"bank", "banktransfer", "ach", "wire", "zelle", "cash", "cashapp", "venmo", "paypal", "stripe", "payra",
+             "card", "creditcard", "debitcard", "check", "cheque", "invoice", "paid", "unpaid", "pending"}
+
+
 def agency_usable(name: str) -> bool:
     """Whether what a request put as the agency names one: not a letter -
-    Bram Gutierrez's "F" - unless it's one the team knows."""
+    Bram Gutierrez's "F" - unless it's one the team knows; never how they
+    paid."""
     said = re.sub(r"[^A-Za-z0-9]", "", str(name or ""))
+    if said.casefold() in _PAID_HOW:
+        return False
     if said.casefold() in {re.sub(r"[^A-Za-z0-9]", "", one).casefold() for one in KNOWN_AGENCIES}:
         return True
     return len(said) >= 2
@@ -13623,6 +13635,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # Nothing said when they launch: blank, not the day it was paid -
         # Blaze Lubbers' card said "Wednesday, October 14" from nothing.
         fields["launch"], launch_iso = "", ""
+    launch_conflict = []
     if fields.get("launch"):
         # The day worked out here, and its name from the date - Nicolas
         # Sanmiguel's "push for launch tomorrow" on a Friday came out
@@ -13643,7 +13656,23 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         paid_on = _days_said(text, today)[0][1] if _days_said(text, today) else today
         team = [_named_days(one, _written_on(text, one, today)) for one in team]
         invoice = [_named_days(one, paid_on) for one in invoice]
-        for said in ("\n".join(team), "\n".join(invoice), _named_days_by_stamp(text, today)):
+        # The latest note that names a day is the day - Bailey Lawrence's
+        # card kept Tre's "live tomorrow" (10/21) over Faith's later "BANK -
+        # live Monday October 26". Two different days said is said too:
+        # "are we supposed to guess this".
+        each = []
+        for one in team:
+            try:
+                found = agents.find_launch(ordercards.INVOICE_BOILERPLATE.sub(
+                    " ", re.sub(stamps, "", one, flags=re.MULTILINE)), today=today)
+            except Exception:
+                found = None
+            if found is not None:
+                each.append(found)
+        if len(set(each)) > 1:
+            launch_conflict = list(dict.fromkeys(each))
+        when = each[-1] if each else None
+        for said in () if when else ("\n".join(team), "\n".join(invoice), _named_days_by_stamp(text, today)):
             try:
                 when = agents.find_launch(ordercards.INVOICE_BOILERPLATE.sub(
                     " ", re.sub(stamps, "", said, flags=re.MULTILINE)), today=today)
@@ -13664,6 +13693,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 fields["launch"], launch_iso = "", ""
         if when is not None:
             fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
+    if fields.get("agency") and not agency_usable(fields["agency"]):
+        fields["agency"] = ""
     if not fields.get("agency"):
         # "aep" on a line of its own in the notes is the agency - Gavin
         # Mathieu's card went out with it blank.
@@ -13708,6 +13739,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         + ([_cards.post_invoice(text)[1]] if _cards.post_invoice(text)[1] else [])))
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             **({"agents": agents} if agents and kind == "fresh" else {}),
+            **({"launch_conflict": [one.isoformat() for one in launch_conflict]} if launch_conflict else {}),
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
