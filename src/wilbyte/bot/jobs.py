@@ -8236,6 +8236,24 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
                     client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
                     done.append(f"✅ Lead Order: {old.get('name')} → **{new_order.get('name')}** "
                                 f"({checklist.get('name')})")
+
+        # And the card itself says the new day: Chance Duncan's "Launch Date:
+        # Wednesday, October 21" stayed after "leads flowing starting
+        # tomorrow" - "this should update the launch date".
+        theirs_card = next((card for card in every if short and trello.linked_card_id(
+            str(card.get("shortUrl") or card.get("url") or "")) == short), None)
+        if theirs_card is not None and hasattr(client, "card_detail"):
+            said = f"{day:%A, %B} {day.day}"
+            try:
+                desc = str(client.card_detail(str(theirs_card.get("id") or "")).get("desc") or "")
+                line = re.search(r"^([ \t]*Launch\s*Date[ \t]*:)[ \t]*(.*)$", desc,
+                                 re.MULTILINE | re.IGNORECASE)
+                if line and " ".join(line.group(2).split()).casefold() != said.casefold():
+                    client.set_description(str(theirs_card.get("id") or ""),
+                                           desc[:line.start()] + f"{line.group(1)} {said}" + desc[line.end():])
+                    done.append(f"✅ Their card: Launch Date → **{said}**")
+            except Exception as exc:
+                problems.append(f"Moved, but couldn't change the Launch Date on their card: {_short(exc, 120)}")
         return done, problems
     except Exception as exc:
         problems.append(f"Couldn't finish moving {moved.agent}: {_short(exc, 140)}")

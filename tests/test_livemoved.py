@@ -267,3 +267,15 @@ def test_one_button_moves_every_list_theyre_on(monkeypatch):
     assert labels == ["Move to Tue Oct 06"] and moved == ["Nicole", "Kathleen", "Therese"]
     assert said[0].count("Live date changed after filing") == 1
     assert "Nicole, Kathleen, Therese's lists" in said[0] and "all 3 of their setup lines" in said[0]
+
+
+def test_the_move_puts_the_new_day_on_their_card_too(monkeypatch):
+    """Chance Duncan: "leads flowing starting tomorrow" - "this should update
+    the launch date"."""
+    board = MovingBoard()
+    board.descs = {ERIC["id"]: "Name: Eric Karas\nLaunch Date: Thursday, October 8\nAgency:"}
+    board.card_detail = lambda card_id: {"desc": board.descs.get(card_id, "")}
+    board.set_description = lambda card_id, text: board.descs.__setitem__(card_id, text)
+    done, problems = _move(monkeypatch, board)
+    assert problems == [] and board.descs[ERIC["id"]] == "Name: Eric Karas\nLaunch Date: Tuesday, October 6\nAgency:"
+    assert "Launch Date → **Tuesday, October 6**" in done[-1]

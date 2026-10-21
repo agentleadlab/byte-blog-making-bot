@@ -3424,6 +3424,11 @@ async def _comment_on_card(
             on = await asyncio.to_thread(partial(
                 jobs.comment_on_client_card, config, theirs, f"📌 {task}\n— also on {title}: {url}", pictures))
             problems.append(f"✅ On **{theirs.get('name')}**'s card too: <{on}>")
+            from .. import agents as _agents
+
+            if _agents.find_launch(task, today=_today(config)) is not None:
+                # A day said on their card: is it the day they're filed for?
+                _LIVE_MOVED_NOW.set()
         except Exception as exc:
             problems.append(f"Couldn't comment on {theirs.get('name')}'s card: {_readable(exc)}")
 
@@ -8494,6 +8499,10 @@ async def alive_loop(bot: "WilByteBot") -> None:
 
 #: How often filed agents' go-live days are read back against their setup card.
 LIVE_MOVED_SECONDS = 900
+#: Set when a day was just said on an agent's card - "leads flowing starting
+#: tomorrow" onto Chance Duncan's - so the Move button comes now, not in up
+#: to fifteen minutes.
+_LIVE_MOVED_NOW = asyncio.Event()
 
 
 async def live_moved_loop(bot: "WilByteBot") -> None:
@@ -8528,7 +8537,13 @@ async def live_moved_loop(bot: "WilByteBot") -> None:
             raise
         except Exception:  # a bad tick must not take the loop down for good
             log.exception("Live-date check failed; will try again shortly")
-        await asyncio.sleep(LIVE_MOVED_SECONDS)
+        # Every quarter hour - or at once when a new day was just put on
+        # somebody's card.
+        try:
+            await asyncio.wait_for(_LIVE_MOVED_NOW.wait(), timeout=LIVE_MOVED_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        _LIVE_MOVED_NOW.clear()
 
 
 async def _itinerary_calendar(responder: Responder, config: Config, said: str) -> None:
