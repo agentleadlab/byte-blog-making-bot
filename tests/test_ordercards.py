@@ -2751,6 +2751,23 @@ def test_bailey_lawrence_bank_and_two_launch_days(monkeypatch):
     assert fields["notes"].count("BANK - live Monday October 26") == 1
 
 
+def test_a_daily_cap_isnt_how_many_they_bought():
+    """Paul Miller: "Number of Leads Requested: 5" for the 24 trucker IULs he
+    bought - "CAP 5" is his most a day."""
+    source = ("[10/21 11:38AM] Nova: New Payment | Payra\nNAME: Paul Miller\nAMOUNT: $1192.32\n"
+              "PRODUCT: Text-Verified Trucker IUL Leads\n**Notes:**\n> States: TX, NM\n> CAP 5\n"
+              "> Schedule: 8 am to 8 pm EST\n> NO SUNDAYS\n"
+              "[10/21 11:39AM] Faith: 24-trucker IULs\nHe wants to have a cap of 5 leads per day")
+    card = {"kind": "fresh", "source": source, "launch_iso": "",
+            "fields": {"name": "Paul Miller", "states": "TX, NM", "package": "Text-Verified Trucker IUL Leads",
+                       "leads": "5"}}
+    wrong = ordercards.doubts(card, today=date(2026, 10, 21))[0]
+    assert any("5 is the daily cap" in one and "CAP 5" in one for one in wrong)
+    card["fields"]["leads"] = "24"
+    assert not any("daily cap" in one for one in ordercards.doubts(card, today=date(2026, 10, 21))[0])
+    assert ordercards.only_a_cap("10", "Lead Type: 10 OTP VETS\n10/day") == "", "a count said as a count too"
+
+
 @pytest.mark.parametrize("kind", ["fresh", "aged"])
 def test_a_zelle_payment_says_so_in_the_notes(monkeypatch, kind):
     """"add on additional notes on the cards both aged and fresh that if they

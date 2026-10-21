@@ -559,6 +559,29 @@ def count_said(count, source: str, *, total: bool = False) -> bool:
     return total and _adds_up_to(int(digits), source)
 
 
+def _cap_of(number: str) -> re.Pattern:
+    return re.compile(
+        rf"\bcap(?:ped)?\s*(?:of|at|to|is|=|:|-)?\s*{number}(?![\d.,])(?:\s*(?:leads?\s*)?(?:per|a|/)\s*day\b)?"
+        rf"|(?<![\d.,$]){number}\s*(?:leads?\s*)?(?:per|a|/|each)\s*day\b"
+        rf"|(?<![\d.,$]){number}\s*(?:leads?\s*)?daily\b|\bdaily\s*(?:cap|limit|max)\s*(?:of|:)?\s*{number}(?![\d.,])",
+        re.IGNORECASE)
+
+
+def only_a_cap(count, source: str) -> str:
+    """The words, when the only place a count is in the order is as a daily
+    cap - Paul Miller's "CAP 5" and "a cap of 5 leads per day", made into
+    "Number of Leads Requested: 5" for the 24 he bought. "" otherwise."""
+    digits = str(count).replace(",", "").strip()
+    if not digits.isdigit():
+        return ""
+    pattern = _cap_of(re.escape(digits))
+    said = pattern.search(str(source or ""))
+    if not said:
+        return ""
+    rest = pattern.sub(" ", str(source or ""))
+    return "" if count_said(digits, rest) else " ".join(said.group(0).split())
+
+
 def agency_doubts(package: str, leads: str, source: str) -> list[str]:
     """An agency on the card the order doesn't name - Matthew Odierno's said
     Phoenix; his order said Liftoff Ascend - and "No cap" without one."""
@@ -670,6 +693,9 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     count = re.search(r"\d+", leads)
     if count and not count_said(count.group(0), source, total=True):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
+    elif count and only_a_cap(count.group(0), source):
+        wrong.append(f"Number of leads: {count.group(0)} is the daily cap the order gives (“{only_a_cap(count.group(0), source)}”)"
+                     f", not how many they bought")
     # Every count in the lead type, too: Mateo Lyon's card said "50 Aged Vets
     # 30-90" for the 163 he bought, and only the total was checked.
     for each in _COUNT_OF.finditer(package):

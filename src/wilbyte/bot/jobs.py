@@ -13480,7 +13480,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "the tier, 'Ascend Plus' at $1,000 a week or more, 'PHNX Standard' under it. Never name an agency "
             "the order doesn't.")},
         "leads": {"type": "string", "description": (
-            "How many leads, just the number: '20'. A split order: the total with the split, '100 (50 + 50)'. "
+            "How many leads were BOUGHT, just the number: '20'. Never a daily cap - 'CAP 5', 'cap of 5 leads "
+            "per day', '10/day' is how many a day, not how many in all: '24-trucker IULs ... cap of 5 leads "
+            "per day' is 24. A split order: the total with the split, '100 (50 + 50)'. "
             "Ad-spend packages (Phoenix / 'Phx Standard 350' and the like) buy ad spend, not a lead count: put "
             "'No cap (ad spend)'. Empty if it isn't said.")},
         "launch": {"type": "string", "description": (
@@ -14165,6 +14167,8 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
         for count in counts[1:] if len(counts) > 1 else counts:
             if count is not None and not ordercards.count_said(count, source, total=True):
                 wrong.append(f"{name}: {count:,} leads isn't in the order")
+            elif count is not None and ordercards.only_a_cap(count, source):
+                wrong.append(f"{name}: {count:,} is the daily cap the order gives, not how many they bought")
         states = " ".join(str(fields.get("states") or "").split())
         for code in ordercards._codes(states):
             if not ordercards._said_state(code, source):
