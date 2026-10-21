@@ -15004,12 +15004,66 @@ def payra_invoices_since(config: Config, since) -> list[dict]:
     return found
 
 
+def _one_line_wrong(said: str, desc: str) -> tuple[list[str], str]:
+    """A one-line aged order's invoice form against its card: (what's wrong,
+    what it should be). Nothing to compare - no form on the invoice, or
+    states it doesn't name ("same as before") - is nothing wrong."""
+    from .. import ordercards
+
+    form = invoice_form(said)
+    if not form:
+        return [], ""
+
+    def field(label):
+        found = re.search(rf"^\W*{label}[^:\n]*:\s*(.*)$", desc, re.MULTILINE | re.IGNORECASE)
+        return " ".join(found.group(1).split()) if found else ""
+
+    states, package, leads = field("States"), field("Lead Type"), field("Number of Leads")
+    wrong, should = [], []
+    asked = form.get("states", "")
+    if asked:
+        written = _form_states(asked)
+        should.append(written)
+        split = _states_split(asked, form.get("leads", ""))
+        if ordercards._ALL_BUT.search(written):
+            left_out = set(_state_codes_named(ordercards._ALL_BUT.split(written, maxsplit=1)[-1]))
+            card_out = set(_state_codes_named(ordercards._ALL_BUT.split(states, maxsplit=1)[-1])) \
+                if ordercards._ALL_BUT.search(states) else set()
+            if left_out != card_out:
+                wrong.append(f"the invoice says {written}, the card doesn't leave the same states out")
+        elif not re.search(r"\b(?:all|every|nation\s*-?\s*wide)\b", written, re.IGNORECASE):
+            want = set(_state_codes_named(written))
+            have = set(_state_codes_named(states))
+            if want and want != have:
+                wrong.append(f"the states aren't the invoice's ({', '.join(sorted(want))})")
+            elif split and not re.search(r"\d", states):
+                should[-1] = split
+                wrong.append(f"the invoice splits the states ({split}) and the card doesn't")
+    # The count, when the invoice gives one count for one line.
+    counts = re.findall(r"^\W*number\s*of\s*(?:requested\s*)?leads[^:\n]*:\s*(\d[\d,]*)", said,
+                        re.IGNORECASE | re.MULTILINE)
+    have_count = re.search(r"\d[\d,]*", leads)
+    if len(counts) == 1 and have_count and int(counts[0].replace(",", "")) != int(have_count.group(0).replace(",", "")):
+        wrong.append(f"the invoice is for {counts[0]} leads, the card {have_count.group(0)}")
+    if len(counts) == 1:
+        should.append(f"{counts[0]} leads")
+    # The age range: 180+ bought, 30-90 on the card is somebody else's leads.
+    want_age = _AGE_BUCKET.search(form.get("package", ""))
+    have_age = _AGE_BUCKET.search(package)
+    if form.get("package"):
+        should.append(form["package"])
+    if want_age and have_age and re.sub(r"\s", "", want_age.group(0)) != re.sub(r"\s", "", have_age.group(0)):
+        wrong.append(f"the invoice is for {want_age.group(0)} days, the card says {have_age.group(0)}")
+    return wrong, " · ".join(one for one in should if one)
+
+
 def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) -> tuple[list[str], int]:
     """"@Ryte check aged lines" - every Aged Leads card from the last `days`,
     archived ones too, against its Payra invoice: an invoice that gives each
     line its own states, and a card that has them as one list, or not line
     for line, or a count the invoice doesn't have. Mateo Lyon's Vets 90-180
-    were Texas only and went out with nineteen states. Reads, writes
+    were Texas only and went out with nineteen states. A one-line invoice:
+    its states, split ("80 Louisiana, 20 Texas"), count and age. Reads, writes
     nothing. (what's wrong, card by card; how many cards were looked at)."""
     from .. import clearout, ordercards
 
@@ -15067,6 +15121,23 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
             if any(re.search(r"\baged\b", kind, re.IGNORECASE) for kind, _codes in lines):
                 lines = [(kind, codes) for kind, codes in lines if re.search(r"\baged\b", kind, re.IGNORECASE)]
             if len(lines) < 2 or len({frozenset(codes) for _kind, codes in lines}) < 2:
+                # One line: its states, split, count and age against the card
+                # - "make sure ryte dont miss anything". Torian Lollis's "80
+                # Louisiana, 20 Texas" and Mackenzie Ho's "all but new york"
+                # weren't looked at, being one line each. Their New Agent
+                # invoice from the same week isn't this card's.
+                if not re.search(r"\baged\b", said, re.IGNORECASE):
+                    continue
+                wrong, should = _one_line_wrong(said, desc)
+                if not wrong:
+                    first_wrong = None
+                    break
+                if first_wrong is None:
+                    number = invoice.get("number") or invoice.get("id")
+                    first_wrong = (f"**{title}** <{card.get('shortUrl') or card.get('url') or ''}> — {number}: "
+                                   + "; ".join(wrong) + f"\n   Should be: {should}"
+                                   + f"\n   Card has: {' '.join(states.split()) or '(no states)'} · "
+                                   + f"{' '.join(package.split()) or '(no lead type)'}")
                 continue
             wrong = []
             if ";" not in states:

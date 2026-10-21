@@ -12300,8 +12300,8 @@ async def _order_backfill(bot, responder: Responder, author) -> None:
 
 
 async def _aged_lines_check(bot, responder: Responder, days: int = 7) -> None:
-    """"@Ryte check aged lines" - every recent Aged Leads card whose lines'
-    states aren't the invoice's, line for line. Reads only."""
+    """"@Ryte check aged lines" - every recent Aged Leads card whose states,
+    split, count or age aren't the invoice's, line for line. Reads only."""
     await responder.send(f"🔎 Checking every Aged Leads card from the last {days} days against its Payra invoice, "
                          "line by line…", quiet=True)
     try:
@@ -12311,10 +12311,10 @@ async def _aged_lines_check(bot, responder: Responder, days: int = 7) -> None:
         await responder.send(f"⚠ Couldn't check the aged cards: {_readable(exc)}")
         return
     if not flagged:
-        await responder.send(f"✅ {looked} Aged Leads card(s) from the last {days} days — every one with lines of its "
-                             "own states has them right, line by line.")
+        await responder.send(f"✅ {looked} Aged Leads card(s) from the last {days} days — states, splits, counts and "
+                             "ages match their invoice, line by line.")
         return
-    said = (f"⚠ **{len(flagged)} of {looked} Aged Leads card(s) don't match their invoice line by line** — check "
+    said = (f"⚠ **{len(flagged)} of {looked} Aged Leads card(s) don't match their invoice** — check "
             "what was delivered to each:\n" + "\n".join(f"• {one}" for one in flagged)
             + "\n-# Nothing was changed. Fix the card and the delivery tabs by hand.")
     for at in range(0, len(said), 1900):

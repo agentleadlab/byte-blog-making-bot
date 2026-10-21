@@ -4860,3 +4860,63 @@ def test_a_spark_posts_start_is_the_launch_date(monkeypatch):
     assert card["launch_iso"] == "2026-10-25" and card["fields"]["launch"] == "Sunday, October 25"
     assert card["fields"]["agency"] == "Spark" and "Agency: Spark" in card["desc"]
     assert not any("Launch date" in one for one in ordercards.doubts(card, today=date(2026, 10, 21))[0])
+
+
+def _one_line_case(monkeypatch, desc, form):
+    made = int(datetime(2026, 10, 19, 14, 42, tzinfo=timezone.utc).timestamp())
+    card = {"id": f"{made:08x}0000000000000004", "name": "Aged Leads - Torian Lollis", "shortUrl": "u",
+            "desc": "Name: Torian Lollis\nEmail: torian@example.com\n" + desc}
+    invoice = {"id": "t", "number": "INV-T", "name": "Torian Lollis", "email": "torian@example.com", "lines": [],
+               "created": "2026-10-19T14:30:00Z", "description": "", "notes": "New Lead Request\n" + form}
+    config = _aged_board(monkeypatch, [card])
+    return jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc), invoices=[invoice])
+
+
+TORIAN_FORM = "Lead Type: aged FEX 180+\nNumber of Requested Leads: 25\nStates Leads In: 80 Louisiana, 20 Texas"
+
+
+def test_check_aged_lines_finds_a_lost_split_on_one_line(monkeypatch):
+    """"make sure ryte dont miss anything" - Torian Lollis's 80 Louisiana / 20
+    Texas went out as "LA, TX", and one-line invoices weren't looked at."""
+    flagged, looked = _one_line_case(
+        monkeypatch, "Lead Type: Aged FEX 180+\nNumber of Leads Requested: 25\nStates: LA, TX\n", TORIAN_FORM)
+    assert looked == 1 and len(flagged) == 1
+    assert "splits the states (LA 80%, TX 20%)" in flagged[0] and "Should be: LA 80%, TX 20%" in flagged[0]
+
+
+def test_check_aged_lines_passes_a_one_line_card_thats_right(monkeypatch):
+    flagged, _ = _one_line_case(
+        monkeypatch, "Lead Type: Aged FEX 180+\nNumber of Leads Requested: 25\nStates: LA 80%, TX 20%\n",
+        TORIAN_FORM)
+    assert flagged == []
+
+
+def test_check_aged_lines_finds_wrong_states_count_and_age_on_one_line(monkeypatch):
+    flagged, _ = _one_line_case(
+        monkeypatch, "Lead Type: Aged Veteran 180+\nNumber of Leads Requested: 20\nStates: AZ, VA\n",
+        "Lead Type: Aged Veteran - 30-90 days\nStates Leads In: Arizona Virginia New Mexico\n"
+        "Number of Requested Leads: 25")
+    assert len(flagged) == 1
+    assert "states aren't the invoice's (AZ, NM, VA)" in flagged[0]
+    assert "invoice is for 25 leads, the card 20" in flagged[0]
+    assert "invoice is for 30-90 days, the card says 180+" in flagged[0]
+
+
+def test_check_aged_lines_reads_all_but_on_one_line(monkeypatch):
+    """Mackenzie Ho: "all but new york"."""
+    form = "Lead Type: Aged Veteran - 180+ days\nStates Leads In: all but new york\nNumber of Requested Leads: 300"
+    flagged, _ = _one_line_case(
+        monkeypatch, "Lead Type: Aged Veteran 180+\nNumber of Leads Requested: 300\nStates: All states except NY\n",
+        form)
+    assert flagged == []
+    flagged, _ = _one_line_case(
+        monkeypatch, "Lead Type: Aged Veteran 180+\nNumber of Leads Requested: 300\nStates: All states\n", form)
+    assert len(flagged) == 1 and "All states except NY" in flagged[0]
+
+
+def test_check_aged_lines_leaves_one_line_cards_with_nothing_to_compare(monkeypatch):
+    """No form on the invoice, or their New Agent invoice the same week."""
+    desc = "Lead Type: Aged FEX 180+\nNumber of Leads Requested: 25\nStates: LA, TX\n"
+    assert _one_line_case(monkeypatch, desc, "same as last time")[0] == []
+    assert _one_line_case(monkeypatch, desc, "Lead Type: OTP Vets\nStates Leads In: Indiana\n"
+                                              "Number of Requested Leads: 34")[0] == []
