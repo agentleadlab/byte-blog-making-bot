@@ -10564,6 +10564,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         message = await channel.fetch_message(payload.message_id)
         # "the information is on ... invoice": a gavelled order's Payra
         # invoice read with it, new agent or aged, as the invoice path does.
+        if not getattr(payload, "extra_notes", ()) and _spark_member(message):
+            # Gavelled by hand, a Spark post gets the same notes as on its own.
+            payload = _payload_copy(payload, extra_notes=(_spark_note(message),))
         if not getattr(payload, "extra_notes", ()):
             note = await _order_invoice_note(bot, message)
             if note:
