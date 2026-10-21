@@ -4733,3 +4733,37 @@ def test_a_card_that_cant_be_made_tags_franklin(order, monkeypatch):
     bot.config.secrets.discord_notify_user_id = "424242"
     assert client._card_ping(bot) == "<@424242> "
     assert client._card_ping(SimpleNamespace()) == ""
+
+
+def _spark_post(i=960):
+    fields = [SimpleNamespace(name=name, value=value) for name, value in (
+        ("Buyer", "Precision Life Financial"), ("Pool", "Blue Collar IUL"), ("Lead type", "blue-collar-iul"),
+        ("Order", "$525/wk · pool membership"), ("CPL range", "$35–$39"), ("Expected leads / wk", "13–15"),
+        ("Starts", "October 25, 2026"), ("Paid through", "November 1, 2026"),
+        ("States", "AL, AK, AZ, FL, GA"), ("Buyer email", "michael@example.com"),
+        ("Membership", "aaa49443-0000"), ("Routing token", "lpm_0000"))]
+    message = _message("🛒 New lead pool member on Spark")
+    message.embeds = [SimpleNamespace(title="Blue Collar IUL — $525/wk · pool membership",
+                                      description="A buyer just joined and paid for your pool on Spark. Fulfill "
+                                                  "this order from your Spark vendor dashboard.",
+                                      fields=fields, url=None, footer=None, author=None)]
+    message.id, message.channel.name = i, "👑 | spark"
+    message.author.display_name = "Capture Info"
+    return message
+
+
+def test_a_new_spark_pool_member_gets_its_card_with_no_gavel(order, monkeypatch):
+    """"just like aged leads, everytime there's new capture info, auto-hammer
+    it" - a New Agent card from Capture Info's post in #spark."""
+    order.kind = "fresh"
+    message = _spark_post()
+    assert client._spark_member(message)
+    assert not client._spark_member(_aged_post()), "not a payment post"
+    assert asyncio.run(client._spark_from_post(_bot(message), message, wait=0)) == "made"
+    assert [one[0] for one in order.made] == ["fresh"]
+    note = order.notes[0]
+    assert note.startswith("Purchased on Spark") and "Paid through - November 1, 2026" in note
+    assert "Routing token - lpm_0000" in note and "Buyer email" not in note
+    from wilbyte import agents
+    assert agents.from_spark(note), "known as Spark's: no contract to sign"
+    assert asyncio.run(client._spark_from_post(_bot(message), message, wait=0)) == "already"

@@ -539,6 +539,10 @@ class WilByteBot(discord.Client):
         if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _aged_payment(message)):
             _also_running(self.loop.create_task(_aged_from_invoice(self, message)))
+        # A new Spark pool member: its New Agent card, nobody's gavel needed.
+        if (SPARK_AUTO and getattr(message.author, "bot", False)
+                and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_member(message)):
+            _also_running(self.loop.create_task(_spark_from_post(self, message)))
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
         if (TEAM_TASKS_ON and not getattr(message.author, "bot", False)
@@ -10172,6 +10176,15 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None, gone: datetime |
                         bot, message, wait=max(0.0, AGED_INVOICE_WAIT_SECONDS - waited), catching_up=True)))
                     done.append(str(message.id))
                     continue
+                # A Spark pool member posted while RYTE was down.
+                if (SPARK_AUTO and getattr(message.author, "bot", False) and message.created_at >= SPARK_AUTO_FROM
+                        and _spark_member(message) and str(message.id) not in _ORDER_ACTIVE
+                        and str(message.id) not in _AGED_WAITING
+                        and not (await asyncio.to_thread(ordercards.load)).get(str(message.id))):
+                    _also_running(asyncio.get_running_loop().create_task(_spark_from_post(
+                        bot, message, wait=0.0, catching_up=True)))
+                    done.append(str(message.id))
+                    continue
                 for reaction in getattr(message, "reactions", None) or []:
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
@@ -10237,6 +10250,63 @@ def _aged_payment(message) -> bool:
     # Anywhere on the PRODUCT line: Nova's "Text-Verified Aged IUL Leads"
     # put the word second, and Azriel Deskin's aged payment got no card.
     return "new payment" in said.casefold() and bool(re.search(r"PRODUCT:[^\n]*\baged\b", said, re.IGNORECASE))
+
+
+#: "just like aged leads, everytime there's new capture info, auto-hammer it"
+#: - Capture Info's "New lead pool member on Spark" in #spark.
+SPARK_AUTO = True
+#: Only posts from when it was switched on - not the ones already set up by hand.
+SPARK_AUTO_FROM = datetime(2026, 10, 21, 16, 30, tzinfo=timezone.utc)
+#: A minute for the team to write anything under it first.
+SPARK_WAIT_SECONDS = 60
+#: What of the post goes on the card's notes, as Spark wrote it.
+_SPARK_KEPT = ("pool", "order", "cpl range", "expected leads / wk", "starts", "paid through", "membership",
+               "routing token")
+
+
+def _spark_member(message) -> bool:
+    """Capture Info's new pool member post in #spark."""
+    if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != "spark":
+        return False
+    said = _all_of_it(message).casefold()
+    return "pool member" in said and "spark" in said
+
+
+def _spark_note(message) -> str:
+    """The post's own terms for the card's notes - and "Purchased on Spark",
+    which is how a card is known as Spark's: no contract to sign."""
+    lines = ["Purchased on Spark - pool membership."]
+    for embed in getattr(message, "embeds", None) or []:
+        if getattr(embed, "title", None):
+            lines.append(str(embed.title))
+        for field in getattr(embed, "fields", None) or []:
+            name = " ".join(str(getattr(field, "name", "") or "").split())
+            if name.casefold() in _SPARK_KEPT:
+                lines.append(f"{name} - {' '.join(str(getattr(field, 'value', '') or '').split())}")
+    return "\n".join(lines)
+
+
+async def _spark_from_post(bot, message, *, wait: float | None = None, catching_up: bool = False) -> str:
+    """A Spark pool member's New Agent card, as if somebody had gavelled the
+    post. Held and said - with Franklin tagged - when it doesn't add up."""
+    from .. import ordercards
+
+    key = str(message.id)
+    if key in _AGED_WAITING:
+        return "already"
+    _AGED_WAITING.add(key)
+    try:
+        await asyncio.sleep(SPARK_WAIT_SECONDS if wait is None else wait)
+    finally:
+        _AGED_WAITING.discard(key)
+    if (ordercards.load().get(key) or {}).get("status") not in (None, "waiting") or key in _ORDER_ACTIVE:
+        return "already"
+    log.info("Making the Spark pool member's card for %s", key)
+    await _order_gavelled(bot, SimpleNamespace(
+        message_id=message.id, channel_id=message.channel.id, user_id=0,
+        guild_id=getattr(getattr(message, "guild", None), "id", None), member=None,
+        extra_notes=(_spark_note(message),), catching_up=catching_up))
+    return "made"
 
 
 _PAID_NAME = re.compile(r"NAME:\**\s*([^\n]+)", re.IGNORECASE)
