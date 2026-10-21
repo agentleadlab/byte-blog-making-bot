@@ -15,6 +15,7 @@ wrote. Reads only - which card they belong on is a person's call.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -38,9 +39,23 @@ class Moved:
     item_id: str = ""
     item_name: str = ""
     ticked: bool = False
+    #: The day the setup confirmation says, when it isn't the day they go
+    #: live - Therese's "Ready to go live Wednesday" after the client asked
+    #: for Thursday. The hub is set for this day.
+    setup_day: date | None = None
+    #: The line is on the right setup card; only the hub's day is wrong.
+    hub_only: bool = False
 
     def key(self) -> str:
-        return f"livemoved|{self.card_url}|{self.live.isoformat()}"
+        return f"livemoved|{self.card_url}|{self.live.isoformat()}{'|hub' if self.hub_only else ''}"
+
+
+#: A setup confirmation - "✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is
+#: complete ... Ready to go live Wednesday" - says the day the hub was set
+#: for, not a new day they go live. Chance Duncan's, written without seeing
+#: "leads flowing starting tomorrow", offered to move him back.
+SETUP_SAID = re.compile(r"setup\s+is\s+complete|on\s+distro\s+hub|ready\s+to\s+go\s+live|channels\s+checked",
+                        re.IGNORECASE)
 
 
 def _local(stamp: str, zone) -> datetime | None:
@@ -63,12 +78,28 @@ def current_launch(notes: list[dict], desc: str, *, made: date, timezone: str):
     zone = ZoneInfo(timezone)
     for note in notes or []:  # newest first, as Trello gives them
         when = _local(note.get("when"), zone)
-        if when is None:
+        if when is None or SETUP_SAID.search(str(note.get("text") or "")):
             continue
         found = rules.find_launch(str(note.get("text") or ""), today=when.date())
         if found is not None:
             return found, note
     return rules.find_launch(desc or "", today=made), None
+
+
+def setup_launch(notes: list[dict], *, timezone: str):
+    """(the day the newest setup confirmation says they go live, that
+    comment) - what the hub was set up for - or (None, None)."""
+    from . import agents as rules
+
+    zone = ZoneInfo(timezone)
+    for note in notes or []:
+        when = _local(note.get("when"), zone)
+        if when is None or not SETUP_SAID.search(str(note.get("text") or "")):
+            continue
+        found = rules.find_launch(str(note.get("text") or ""), today=when.date())
+        if found is not None:
+            return found, note
+    return None, None
 
 
 def describe(found: list[Moved]) -> str:

@@ -8615,29 +8615,39 @@ async def _offer_to_move(responder: Responder, config: Config, group) -> None:
     group = group if isinstance(group, list) else [group]
     first = group[0]
     lists = [one.checklist for one in group if one.checklist]
+    hub_only = all(one.hub_only for one in group)
     view = views.ConfirmView(
         requester_id=None,
         timeout=config.discord.approval_timeout_seconds,
-        label=f"Move to {first.live:%a %b %d}",
+        label="Tell Therese" if hub_only else f"Move to {first.live:%a %b %d}",
         emoji="📅",
     )
-    line = livemoved.one_line(first).split("\n", 1)[-1]
-    if len(lists) > 1:
-        line = line.replace(f" ({first.checklist}'s list)", f" ({', '.join(lists)}'s lists)")
-    await responder.send(
-        "📅 **Live date changed after filing:**\n" + line
-        + f"\n-# The button moves {'all ' + str(len(group)) + ' of their setup lines' if len(group) > 1 else 'their setup line'}"
-        " - and their Lead Order line, if it's been spread.",
-        view=view, quiet=True,
-    )
+    setup = (f"\nThe setup on their card says **{first.setup_day:%a %b %d}** - so the hub's set for the wrong day."
+             if first.setup_day is not None else "")
+    if hub_only:
+        text = (f"📅 **Set up for the wrong day:** **[{first.agent}](<{first.card_url}>)** goes live "
+                f"**{first.live:%a %b %d}**, and is on that day's setup card.{setup}"
+                f"\n-# The button unticks their card and tells Therese on it to update the hub.")
+    else:
+        line = livemoved.one_line(first).split("\n", 1)[-1]
+        if len(lists) > 1:
+            line = line.replace(f" ({first.checklist}'s list)", f" ({', '.join(lists)}'s lists)")
+        text = ("📅 **Live date changed after filing:**\n" + line + setup
+                + f"\n-# The button moves {'all ' + str(len(group)) + ' of their setup lines' if len(group) > 1 else 'their setup line'}"
+                " - and Lead Order, Ads and Ops - unticked, puts the new day on their card, unticks it, and tells "
+                "Therese on it to update the hub.")
+    await responder.send(text, view=view, quiet=True)
     await view.wait()
     if not view.confirmed:
         return
     done, problems = [], []
-    for one in group:
+    for one in group if not hub_only else []:
         moved, trouble = await asyncio.to_thread(jobs.move_live_line, config, one)
         done += moved
         problems += trouble
+    told, trouble = await asyncio.to_thread(jobs.live_move_followup, config, first)
+    done += told
+    problems += trouble
     await responder.send("\n".join(done + [f"⚠ {problem}" for problem in problems])
                          or "Nothing needed moving.")
 

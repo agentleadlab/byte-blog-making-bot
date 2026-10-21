@@ -8120,8 +8120,8 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                     card_id = str(card.get("id") or "")
                     touched = str(card.get("dateLastActivity") or "")
                     held = _LAUNCH_READS.get(card_id)
-                    if held is not None and held[0] == touched:
-                        launch, note = held[1]
+                    if held is not None and held[0] == touched and len(held[1]) == 3:
+                        launch, note, setup_day = held[1]
                     else:
                         made = rules.made_at(card_id)
                         try:
@@ -8133,8 +8133,12 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                             notes, str(card.get("desc") or ""),
                             made=made.date() if made else today, timezone=zone,
                         )
-                        _LAUNCH_READS[card_id] = (touched, (launch, note))
-                    if launch is None or rules.setup_covers(title, launch):
+                        setup_day = livemoved.setup_launch(notes, timezone=zone)[0]
+                        _LAUNCH_READS[card_id] = (touched, (launch, note, setup_day))
+                    if launch is None:
+                        continue
+                    hub_wrong = setup_day is not None and setup_day != launch
+                    if rules.setup_covers(title, launch) and not hub_wrong:
                         continue
                     when = livemoved._local((note or {}).get("when"), ZoneInfo(zone))
                     found.append(livemoved.Moved(
@@ -8149,6 +8153,8 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                         item_id=str(item.get("id") or ""),
                         item_name=str(item.get("name") or ""),
                         ticked=str(item.get("state") or "") == "complete",
+                        setup_day=setup_day if hub_wrong else None,
+                        hub_only=rules.setup_covers(title, launch),
                     ))
         return found, problems
     except Exception as exc:
@@ -8203,7 +8209,9 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
         if line is None:
             problems.append(f"{moved.agent} isn't on {moved.setup_card} any more - somebody moved them already.")
             return done, problems
-        client.add_check_item(str(theirs.get("id") or ""), moved.item_name, checked=moved.ticked)
+        # Unticked where it lands: the setup's to be checked again for the new
+        # day - "it should unticked those ticked card as well".
+        client.add_check_item(str(theirs.get("id") or ""), moved.item_name, checked=False)
         client.remove_check_item(moved.checklist_id, moved.item_id)
         done.append(f"✅ Setup: {moved.setup_card} → **{target.get('name')}** ({moved.checklist})")
 
@@ -8231,8 +8239,7 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
                         problems.append(f"{new_order.get('name')} has no “{checklist.get('name')}” list, so "
                                         f"their line is still on {old.get('name')}.")
                         continue
-                    client.add_check_item(str(place.get("id") or ""), said,
-                                          checked=str(item.get("state") or "") == "complete")
+                    client.add_check_item(str(place.get("id") or ""), said, checked=False)
                     client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
                     done.append(f"✅ Lead Order: {old.get('name')} → **{new_order.get('name')}** "
                                 f"({checklist.get('name')})")
@@ -8259,7 +8266,6 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
                         said = str(item.get("name") or "")
                         if not short or trello.linked_card_id(said) != short:
                             continue
-                        ticked = str(item.get("state") or "") == "complete"
                         if day == today:
                             if new_card is None or str(new_card.get("id") or "") == str(old.get("id") or ""):
                                 continue
@@ -8269,12 +8275,10 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
                                 problems.append(f"{new_card.get('name')} has no “{checklist.get('name')}” list, "
                                                 f"so their line is still on {old.get('name')}.")
                                 continue
-                            client.add_check_item(str(place.get("id") or ""), said, checked=ticked)
+                            client.add_check_item(str(place.get("id") or ""), said, checked=False)
                             client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
                             done.append(f"✅ {dailyops.CARD_KINDS.get(kind, kind)}: {old.get('name')} → "
                                         f"**{new_card.get('name')}** ({checklist.get('name')})")
-                        elif ticked:
-                            problems.append(f"Left on {old.get('name')} ({checklist.get('name')}): already ticked.")
                         else:
                             client.remove_check_item(str(checklist.get("id") or ""), str(item.get("id") or ""))
                             done.append(f"✅ Off **{old.get('name')}** ({checklist.get('name')}) — they're on "
@@ -8301,6 +8305,43 @@ def move_live_line(config: Config, moved) -> tuple[list[str], list[str]]:
     except Exception as exc:
         problems.append(f"Couldn't finish moving {moved.agent}: {_short(exc, 140)}")
         return done, problems
+    finally:
+        client.close()
+
+
+def live_move_followup(config: Config, moved) -> tuple[list[str], list[str]]:
+    """After an agent's day moved: their card unticked - the setup's to be
+    checked again - and Therese told on it to put the hub right: "@therese,
+    this person live date changed to ___ please update the hub". (done,
+    problems)."""
+    from .. import dailyops, trello
+
+    done, problems = [], []
+    short = trello.linked_card_id(moved.card_url) or ""
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id)
+        card = next((one for one in every if short and trello.linked_card_id(
+            str(one.get("shortUrl") or one.get("url") or "")) == short), None)
+        if card is None:
+            return done, [f"Couldn't find {moved.agent}'s card to untick and comment on."]
+        card_id = str(card.get("id") or "")
+        if card.get("dueComplete"):
+            client.tick_card(card_id, done=False)
+            done.append(f"✅ {moved.agent}'s card unticked")
+        known = dailyops.who_is_known(client.board_members(config.secrets.trello_board_id))
+        therese = known.get("therese")
+        day = f"{moved.live:%A, %B} {moved.live.day}"
+        said = (f"@{therese} " if therese else "Therese - ") + f"{moved.agent}'s live date changed to **{day}**"
+        if moved.setup_day is not None:
+            said += f" - the setup says {moved.setup_day:%A, %B} {moved.setup_day.day}"
+        said += ". Please update the hub."
+        client.add_comment(card_id, said)
+        done.append(f"✅ Told Therese on their card to update the hub to {day}"
+                    + ("" if therese else " (nobody on the board answers to Therese - not tagged)"))
+        return done, problems
+    except Exception as exc:
+        return done, problems + [f"Couldn't untick or comment on {moved.agent}'s card: {_short(exc, 140)}"]
     finally:
         client.close()
 

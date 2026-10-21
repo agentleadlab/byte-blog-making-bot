@@ -158,7 +158,8 @@ def test_the_button_moves_the_setup_line_and_the_lead_order_line(monkeypatch):
     done, problems = _move(monkeypatch, board)
 
     assert problems == []
-    assert board.added == [("new-nicole", LINE, True), ("new-vets", f"{ERIC['url']} 20 vets", False)]
+    assert board.added == [("new-nicole", LINE, False), ("new-vets", f"{ERIC['url']} 20 vets", False)], \
+        "unticked where it lands: the setup's to be checked again"
     assert board.removed == [("old-nicole", "i1"), ("old-vets", "o1")]
     assert "Agent Setup Going Live Tuesday 10/06" in done[0] and "Lead Order 10/06/26" in done[1]
 
@@ -217,6 +218,7 @@ def test_each_change_comes_with_its_own_button(monkeypatch):
             said.append(text)
 
     monkeypatch.setattr(client.views, "ConfirmView", Button)
+    monkeypatch.setattr(jobs, "live_move_followup", lambda config, one: ([], []))
     monkeypatch.setattr(jobs, "move_live_line", lambda config, one: (["✅ Setup: moved"], []))
     config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
     asyncio.run(client._offer_to_move(Heard(), config, _eric_moved()))
@@ -256,6 +258,7 @@ def test_one_button_moves_every_list_theyre_on(monkeypatch):
             said.append(text)
 
     monkeypatch.setattr(client.views, "ConfirmView", Button)
+    monkeypatch.setattr(jobs, "live_move_followup", lambda config, one: ([], []))
     monkeypatch.setattr(jobs, "move_live_line",
                         lambda config, one: moved.append(one.checklist) or ([f"✅ {one.checklist}: moved"], []))
     lines = [replace(_eric_moved(), checklist=who, checklist_id=f"old-{who}", item_id=f"i-{who}")
@@ -283,7 +286,7 @@ def test_the_move_puts_the_new_day_on_their_card_too(monkeypatch):
 
 def test_the_move_takes_them_off_the_old_days_ads_and_ops(monkeypatch):
     """"yes add ads/ops to the move button too" - off Ads and Ops of the old
-    day when they now go live later; a ticked line is left and said."""
+    day when they now go live later, ticked or not."""
     board = MovingBoard()
     ads = {"id": "ads8", "name": "📊 Ads 10/08/26"}
     ops = {"id": "ops8", "name": "💻 Ops 10/08/26"}
@@ -294,9 +297,8 @@ def test_the_move_takes_them_off_the_old_days_ads_and_ops(monkeypatch):
         {"id": "p1", "name": f"{ERIC['url']} Text-Verified Veteran", "state": "complete"}]}]
     monkeypatch.setattr(jobs, "board_day", lambda config: date(2026, 10, 5))
     done, problems = _move(monkeypatch, board)
-    assert ("ads-nicole", "a1") in board.removed and ("ops-therese", "p1") not in board.removed
+    assert ("ads-nicole", "a1") in board.removed and ("ops-therese", "p1") in board.removed, "ticked too"
     assert any("Off **📊 Ads 10/08/26** (Nicole)" in one for one in done)
-    assert any("already ticked" in one for one in problems)
 
 
 def test_moved_to_today_their_ads_line_comes_to_todays_card(monkeypatch):
@@ -311,3 +313,51 @@ def test_moved_to_today_their_ads_line_comes_to_todays_card(monkeypatch):
     monkeypatch.setattr(jobs, "board_day", lambda config: date(2026, 10, 6))
     done, problems = _move(monkeypatch, board)
     assert ("ads6-nicole", line, False) in board.added and ("ads8-nicole", "a1") in board.removed
+
+
+def test_a_setup_confirmation_isnt_a_new_live_day():
+    """Chance Duncan: "leads flowing starting tomorrow" (Thu 10/22), then
+    Therese's "...setup is complete ... Ready to go live Wednesday, October
+    21" written without seeing it - and RYTE offered to move him back."""
+    notes = [  # newest first
+        {"when": "2026-10-21T21:23:00Z", "author": "Therese Guba",
+         "text": "@card ✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete for CHANCE DUNCAN\n"
+                 "Ready to go live Wednesday, October 21"},
+        {"when": "2026-10-21T21:00:00Z", "author": "Franklin",
+         "text": "📌 tag nicole\nSet Chance Duncan live and have leads flowing starting tomorrow"},
+    ]
+    live, note = livemoved.current_launch(notes, "Launch Date: Wednesday, October 21", made=date(2026, 10, 21),
+                                          timezone="America/New_York")
+    assert live == date(2026, 10, 22) and "starting tomorrow" in note["text"]
+    assert livemoved.setup_launch(notes, timezone="America/New_York")[0] == date(2026, 10, 21)
+
+
+def test_after_the_move_their_card_is_unticked_and_therese_told(monkeypatch):
+    """"it should unticked those ticked card as well? and notify therese by
+    commenting @therese, this person live date changed to ___ please update
+    the hub"."""
+    said, ticks = [], []
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [dict(ERIC, dueComplete=True)]
+
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"}]
+
+        def tick_card(self, card_id, *, done=True):
+            ticks.append((card_id, done))
+
+        def add_comment(self, card_id, text):
+            said.append(text)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    moved = livemoved.Moved(agent="Chance Duncan", card_url=ERIC["url"], setup_card="x", checklist="Nicole",
+                            live=date(2026, 10, 22), setup_day=date(2026, 10, 21))
+    done, problems = jobs.live_move_followup(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")), moved)
+    assert problems == [] and ticks == [(ERIC["id"], False)]
+    assert said == ["@thereseguba Chance Duncan's live date changed to **Thursday, October 22** - the setup says "
+                    "Wednesday, October 21. Please update the hub."]
