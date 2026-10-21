@@ -110,7 +110,7 @@ def test_a_bot_mentioning_ryte_is_not_somebody_asking():
 def answering(monkeypatch):
     done, asked, replies = [], [], []
 
-    async def answer(bot, message):
+    async def answer(bot, message, **kw):
         done.append(message.id)
 
     async def ask(bot, message):
@@ -456,3 +456,19 @@ def test_a_board_job_from_a_while_ago_is_done_not_asked(monkeypatch, answering):
 
     assert done == [10] and asked == []
     assert "offline" in replies[0] and "putting it on the board" in replies[0]
+
+
+def test_a_mention_brought_in_twice_is_answered_once(monkeypatch):
+    """Faith's "add to trello tag nicole" answered at 12:24 and again at 12:25
+    - two comments on the Ads card for one ask."""
+    answered = []
+
+    async def handle(bot, message, untagged=False):
+        answered.append(message.id)
+
+    monkeypatch.setattr(client, "handle_mention", handle)
+    message = _said(10, 1, "<@999> add to trello tag nicole")
+    asyncio.run(client.answer_mention(Bot(), message))
+    asyncio.run(client.answer_mention(Bot(), message))
+    assert answered == [10]
+    assert mentionseen.claim(11) and not mentionseen.claim(11)

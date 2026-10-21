@@ -626,14 +626,17 @@ async def _chat(responder: Responder, config: Config, message) -> None:
     await responder.send(said[:1900], quiet=True)
 
 
-async def answer_mention(bot: "WilByteBot", message, *, untagged: bool = False) -> None:
-    """Answer one @RYTE, and write down that it was answered. `untagged`: a
-    message in Ryte The Goat, answered without the tag."""
+async def answer_mention(bot: "WilByteBot", message, *, untagged: bool = False, claimed: bool = False) -> None:
+    """Answer one @RYTE, and write down that it was answered - once: a message
+    already taken in hand is left (`claimed`: by the read-back, which took it
+    before saying so). `untagged`: a message in Ryte The Goat, answered
+    without the tag."""
     _LAST_TAGGED[:] = [(datetime.now(timezone.utc), getattr(message, "channel", None))]
     said = getattr(message, "id", None)
     try:
-        if said is not None:
-            await asyncio.to_thread(mentionseen.add, said)
+        if said is not None and not claimed and not await asyncio.to_thread(mentionseen.claim, said):
+            log.info("Mention %s is already answered - not again", said)
+            return
     except Exception:  # remembering it is for the catch-up; answering comes first
         log.warning("Couldn't note mention %s as answered", said, exc_info=True)
     # Somebody is waiting on this one. discord.py logs an exception in an
@@ -786,7 +789,7 @@ async def _ask_about_missed(bot: "WilByteBot", message) -> None:
     )
     await view.wait()
     if view.confirmed:
-        await answer_mention(bot, message)
+        await answer_mention(bot, message, claimed=True)
 
 
 async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) -> None:
@@ -822,14 +825,15 @@ async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) ->
                     continue
                 # Taken in hand before anything is said, so a second connect
                 # in the middle of this does not answer it twice.
-                await asyncio.to_thread(mentionseen.add, message.id)
+                if not await asyncio.to_thread(mentionseen.claim, message.id):
+                    continue  # answered meanwhile - Discord sent it after all
                 log.info("Answering a mention made while I was away: %s", message.id)
                 if now - message.created_at <= timedelta(minutes=MENTION_ASK_AFTER_MINUTES):
                     await message.reply(
                         "↩️ I was restarting when you sent this — on it now.",
                         mention_author=False,
                     )
-                    await answer_mention(bot, message)
+                    await answer_mention(bot, message, claimed=True)
                 elif mentions.parse(message.content or "").action == "comment":
                     # "he forgets these when he's down": a job for the board -
                     # a comment and somebody's checklist - is done, not asked
@@ -838,7 +842,7 @@ async def mention_catch_up(bot: "WilByteBot", *, now: datetime | None = None) ->
                     await message.reply(f"↩️ I was offline when you sent this (<t:{stamp}:R>) — putting it on "
                                         f"the board now. If somebody already did it by hand, delete my copy.",
                                         mention_author=False)
-                    await answer_mention(bot, message)
+                    await answer_mention(bot, message, claimed=True)
                 else:
                     _also_running(asyncio.create_task(_ask_about_missed(bot, message)))
     except asyncio.CancelledError:

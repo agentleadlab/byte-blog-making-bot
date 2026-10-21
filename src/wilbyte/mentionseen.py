@@ -60,6 +60,23 @@ def add(message_id, path: Path | None = None) -> None:
         _save(data, where)
 
 
+def claim(message_id, path: Path | None = None) -> bool:
+    """Take this mention in hand - True only for the first to ask. Faith's
+    "add to trello tag nicole" was answered twice at 12:24 and 12:25, two
+    comments on the Ads card: whatever brings a message in a second time -
+    Discord sending it again after an outage, a read-back alongside it - finds
+    it taken and says nothing."""
+    where = path or SEEN_PATH
+    key = str(message_id)
+    with _LOCK:
+        data = load(where)
+        if key in data["answered"]:
+            return False
+        data["answered"] = (data["answered"] + [key])[-KEEP:]
+        _save(data, where)
+    return True
+
+
 def listening_at(path: Path | None = None) -> datetime | None:
     """The last time RYTE was known to be listening, or None the first time."""
     said = load(path).get("alive_at")
