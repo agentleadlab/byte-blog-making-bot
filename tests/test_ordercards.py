@@ -4767,3 +4767,17 @@ def test_a_new_spark_pool_member_gets_its_card_with_no_gavel(order, monkeypatch)
     from wilbyte import agents
     assert agents.from_spark(note), "known as Spark's: no contract to sign"
     assert asyncio.run(client._spark_from_post(_bot(message), message, wait=0)) == "already"
+
+
+def test_a_question_thread_about_an_agent_isnt_their_order(order):
+    """"Nova: Santiago Villegas - Does Allen Coleman have a schedule?" in
+    #team-chat, started by Nova: read onto his card, with a false "40 isn't
+    in the order"."""
+    nova = SimpleNamespace(bot=True)
+    asked = SimpleNamespace(name="Nova: Santiago Villegas — Does Allen Coleman have a schedule?", owner=nova)
+    assert client._not_an_order_thread(None, asked)
+    assert client._not_an_order_thread(None, SimpleNamespace(name="Allen Coleman schedule?", owner=None))
+    assert client._not_an_order_thread(None, SimpleNamespace(name="Allen Coleman", owner=nova))
+    person = SimpleNamespace(bot=False)
+    assert not client._not_an_order_thread(None, SimpleNamespace(name="Allen Coleman - OTP MTG", owner=person))
+    assert asyncio.run(client._order_link_thread(_bot(_message()), asked)) is None

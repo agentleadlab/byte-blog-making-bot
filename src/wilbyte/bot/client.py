@@ -9489,7 +9489,7 @@ async def _order_said(bot, message, *, since: datetime | None = None,
         if thread is not None and str(wanted) == str(thread.id):
             continue
         found = await _order_thread(bot, str(wanted), {})
-        if found is None:
+        if found is None or _not_an_order_thread(bot, found):
             continue
         more.append(found)
         # A thread started from somebody's own message: that message is the
@@ -11516,12 +11516,31 @@ NO_THREAD_RECHECK = timedelta(minutes=30)
 THREAD_LINK_DAYS = 14
 
 
+def _not_an_order_thread(bot, thread) -> bool:
+    """A thread that names an agent without being about their order: one a
+    bot started, or one named as a question - "Nova: Santiago Villegas -
+    Does Allen Coleman have a schedule?" in #team-chat put "Does Allen
+    Coleman have a schedule?" and "Can we edit time window for him?" on his
+    card, and a false "40 isn't in the order" with them."""
+    name = str(getattr(thread, "name", "") or "")
+    if "?" in name or re.match(r"\s*nova\s*:", name, re.IGNORECASE):
+        return True
+    owner = getattr(thread, "owner", None)
+    if owner is None:
+        owner_id = getattr(thread, "owner_id", None)
+        guild = getattr(thread, "guild", None)
+        owner = guild.get_member(owner_id) if guild is not None and owner_id else None
+    return bool(owner is not None and getattr(owner, "bot", False))
+
+
 async def _order_link_thread(bot, thread) -> str | None:
     """A thread named for an agent with a card, taken as about that card and
     read onto it - unless it hangs off a payment post: that's a payment of
     its own, a new order maybe, not a note on the old one."""
     from .. import ordercards
 
+    if _not_an_order_thread(bot, thread):
+        return None
     try:
         starter = await thread.parent.fetch_message(thread.id)
     except Exception:
