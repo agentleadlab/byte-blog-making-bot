@@ -691,6 +691,12 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     # How many.
     leads = str(fields.get("leads") or "")
     count = re.search(r"\d+", leads)
+    # The payment's own count, against the card's: Jordan Holmes's Zelle post
+    # said LEADS: 50 and the card 21.
+    posted = re.search(r"^\W*LEADS\W*:\**\s*(\d[\d,]*)\b", source, re.MULTILINE)
+    if count and posted and int(posted.group(1).replace(",", "")) != int(count.group(0)) \
+            and not _adds_up_to(int(count.group(0)), source):
+        wrong.append(f"Number of leads: the payment says {posted.group(1)}, the card {count.group(0)} — which is it?")
     if count and not count_said(count.group(0), source, total=True):
         wrong.append(f"Number of leads: {count.group(0)} isn't in the order")
     elif count and only_a_cap(count.group(0), source):
@@ -723,6 +729,14 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     phone = re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:]
     if len(phone) == 10 and phone not in re.sub(r"\D", "", source):
         missing.append(f"check the phone ({fields.get('phone')}) - not in the order's text, maybe off a screenshot")
+
+    # Nobody's details at all: what was gavelled wasn't the payment - a
+    # note saying "21 Trucker IUL leads / Add to current order" made a card
+    # with no email, phone or states.
+    if kind == "fresh" and source.strip() and not str(fields.get("email") or "").strip() \
+            and not re.sub(r"\D", "", str(fields.get("phone") or "")) and not states \
+            and not re.search(r"new\s+payment|^\W*(?:name|amount)\W*:", source, re.IGNORECASE | re.MULTILINE):
+        wrong.append("No email, phone or states — was the payment gavelled, or only a note about it?")
 
     # When - and when the notes give more than one day, which.
     said_days = [str(one) for one in card.get("launch_conflict") or []]

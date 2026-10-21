@@ -13122,6 +13122,28 @@ def invoice_form(text: str) -> dict:
     return found
 
 
+def post_form(text: str) -> dict:
+    """A payment post's own lines - "EMAIL: ...", "PHONE: ...", "STATES:
+    ...", "LEADS: ..." - as {field: value}, the first post in the text only
+    (the one gavelled), never the team's notes under it."""
+    post = []
+    for line in str(text or "").splitlines():
+        if post and re.match(r"\s*\[\d\d/\d\d \d\d:\d\d[AP]M\]", line):
+            break  # the next message
+        post.append(line)
+    said = "\n".join(post)
+    if not re.search(r"new\s+payment", said, re.IGNORECASE):
+        return {}
+    found = {}
+    for key, label in (("email", r"e-?mail"), ("phone", r"phone"), ("states", r"states?"), ("leads", r"leads")):
+        match = re.search(rf"^\W*(?:{label})\W*:\**\s*(.+)$", said, re.IGNORECASE | re.MULTILINE)
+        if match:
+            value = " ".join(match.group(1).split()).strip(" *")
+            if value and value.casefold() not in _SAYS_NOTHING:
+                found[key] = value
+    return found
+
+
 def _states_split(said: str, leads: str = "") -> str:
     """A split written next to the states, kept: Torian Lollis's "80
     Louisiana, 20 Texas" went on his card as "LA, TX" and lost it. Counts
@@ -13622,6 +13644,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     form = invoice_form("\n".join(str(one)[len("Payra invoice note:"):] for one in notes or ()
                                   if str(one).startswith("Payra invoice note:")))
     fields = with_invoice_form(fields, form)
+    # And the payment post's own labelled lines - Nova's Zelle post for Jordan
+    # Holmes had EMAIL, PHONE and every state, and his card had none of them.
+    fields = with_invoice_form(fields, post_form(text))
     client_name = fields["name"]
     # The team's notes naming somebody on a line of its own, who isn't who
     # paid: the card is theirs, and the payer's email and phone aren't.

@@ -10716,7 +10716,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             existing = None
         if existing is not None and (not _paid_together(existing, key) or _own_invoice(existing, key)):
             # "Always make seprate card for now, unless its paid at the same
-            # time. if paid separately. create card"
+            # time. if paid separately. create card" - "Add to current order"
+            # included: "no, it should have made a new card!"
             existing = None
         if existing is not None:
             # Their card, but is it this order? A different lead type or live
