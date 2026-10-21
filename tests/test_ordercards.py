@@ -4814,19 +4814,19 @@ def test_a_zelle_posts_own_lines_fill_the_card(monkeypatch):
         "kind": "fresh", "name": "Jordan Holmes", "package": "Trucker IUL", "leads": "21", "agency": "FFL"})
     config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
                              copy=SimpleNamespace(model="claude-opus-5-5"))
-    text = ("[10/21 04:59PM] Nova: @Luna Zelle payment received — Jordan Holmes $1,000.00\\nNew Payment | Zelle\\n"
-            "NAME: Jordan Holmes\\nEMAIL: jordan@example.com\\nPHONE: +18435550000\\nAMOUNT: $1,000.00\\n"
-            "PRODUCT: Text Verified Trucker IUL Leads [FRESH - $60/Lead]\\nLEADS: 50\\n"
-            "STATES: Alabama Alaska Arizona Texas Wyoming\\nAGENCY: FFL\\n"
-            "[10/21 05:01PM] Faith: 21 Trucker IUL leads\\nAdd to current order")
+    text = ("[10/21 04:59PM] Nova: @Luna Zelle payment received — Jordan Holmes $1,000.00\nNew Payment | Zelle\n"
+            "NAME: Jordan Holmes\nEMAIL: jordan@example.com\nPHONE: +18435550000\nAMOUNT: $1,000.00\n"
+            "PRODUCT: Text Verified Trucker IUL Leads [FRESH - $60/Lead]\nLEADS: 50\n"
+            "STATES: Alabama Alaska Arizona Texas Wyoming\nAGENCY: FFL\n"
+            "[10/21 05:01PM] Faith: 21 Trucker IUL leads\nAdd to current order")
     card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 21),
-                           notes=["21 Trucker IUL leads\\nAdd to current order"])
+                           notes=["21 Trucker IUL leads\nAdd to current order"])
     fields = card["fields"]
     assert fields["email"] == "jordan@example.com" and fields["phone"] == "+18435550000"
     assert fields["states"] == "AL, AK, AZ, TX, WY"
     wrong = ordercards.doubts(card, today=date(2026, 10, 21))[0]
     assert any("the payment says 50, the card 21" in one for one in wrong)
     assert not any("No email, phone or states" in one for one in wrong)
-    note_only = {"kind": "fresh", "source": "[10/21 05:01PM] Faith: 21 Trucker IUL leads\\nAdd to current order",
+    note_only = {"kind": "fresh", "source": "[10/21 05:01PM] Faith: 21 Trucker IUL leads\nAdd to current order",
                  "fields": {"name": "Jordan Holmes", "leads": "21", "package": "Trucker IUL"}, "launch_iso": ""}
     assert any("was the payment gavelled" in one for one in ordercards.doubts(note_only, today=date(2026, 10, 21))[0])
