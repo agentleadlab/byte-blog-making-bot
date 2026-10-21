@@ -3276,6 +3276,16 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
     assert jobs.split_doubts([aged, vets, iuls], today=date(2026, 10, 16)) == []
 
 
+def test_invoice_notes_on_a_split_card_arent_called_the_threads():
+    """Skyler Liljenquist: "From the thread:" over "From the Payra invoice:"."""
+    card = _patrick()
+    card["fields"]["notes"] = "From the Payra invoice: Florida · EverLife agency MTG: 20 available"
+    aged = jobs.split_order(card, today=date(2026, 10, 16))[0]
+    assert "From the thread:" not in aged["desc"] and "From the Payra invoice:" in aged["desc"]
+    card["fields"]["notes"] = "Kharyl: send them early"
+    assert "From the thread:" in jobs.split_order(card, today=date(2026, 10, 16))[0]["desc"]
+
+
 def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
     card = _patrick()
     card["parts"] = [one for one in card["parts"] if one["kind"] == "aged"]
@@ -3290,7 +3300,7 @@ def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
 def test_a_split_line_that_isnt_in_the_order_is_held():
     card = _patrick()
     card["parts"][4]["leads"] = "43"
-    assert any("43 leads isn't in the order" in one for one in jobs.split_doubts(jobs.split_order(card)))
+    assert any("43 leads isn't in the order" in one for one in jobs.split_doubts(jobs.split_order(card), today=date(2026, 10, 16)))
 
 
 def test_a_split_order_gets_a_single_cards_checks():
@@ -4206,7 +4216,7 @@ def test_one_payment_for_five_agents_is_five_cards(monkeypatch):
     assert "Webhook URL: https://americanfirstagency.com/api/public/leads/inbound/926b6738" in justin["notes"]
     assert "Paid by Colby Whittaker - one payment for 5 agents ($2550.24)" in justin["notes"]
     assert cards[4]["fields"]["states"].startswith("All but HI")
-    assert jobs.split_doubts(cards) == []
+    assert jobs.split_doubts(cards, today=date(2026, 10, 19)) == []
 
 
 def test_one_agent_with_labels_is_one_card():
@@ -4242,10 +4252,10 @@ def test_agents_counted_against_the_number_the_order_says():
     cards = [{"kind": "fresh", "client": name, "name": f"New Agent - {name}", "agents_of": 3,
               "fields": {"leads": "28", "states": ""}, "source": "5 agents\n28 Fresh Vets"}
              for name in ("A B", "C D", "E F")]
-    assert any("says 5 agents, and I read 3" in one for one in jobs.split_doubts(cards))
+    assert any("says 5 agents, and I read 3" in one for one in jobs.split_doubts(cards, today=date(2026, 10, 19)))
     for one in cards:
         one["source"] = "3 agents\n28 Fresh Vets"
-    assert jobs.split_doubts(cards) == []
+    assert jobs.split_doubts(cards, today=date(2026, 10, 19)) == []
 
 
 JOSHUA_FAILED = """**Failed Payment | Payra** ❌
@@ -4601,7 +4611,7 @@ def test_a_split_order_for_somebody_else_is_held_and_theirs(monkeypatch):
     assert card["fields"]["email"] == "Shelby.guest@example.com" and card["fields"]["phone"] == "435-555-3162"
     cards = jobs.split_order(card, today=date(2026, 10, 19))
     assert {one["client"] for one in cards} == {"Shelby Guest"}
-    assert any("paid by Tony Moderno, but the order is for Shelby Guest" in one for one in jobs.split_doubts(cards))
+    assert any("paid by Tony Moderno, but the order is for Shelby Guest" in one for one in jobs.split_doubts(cards, today=date(2026, 10, 19)))
 
 
 def test_several_agents_paid_for_by_one_isnt_held_for_it():
@@ -4609,4 +4619,4 @@ def test_several_agents_paid_for_by_one_isnt_held_for_it():
               "fields": {"leads": "28", "states": ""}, "source": "NAME: Colby Whittaker\n2 agents\n28 Fresh Vets"},
              {"kind": "fresh", "client": "Sawyer Wetzel", "name": "New Agent - Sawyer Wetzel", "agents_of": 2,
               "fields": {"leads": "28", "states": ""}, "source": "NAME: Colby Whittaker\n2 agents\n28 Fresh Vets"}]
-    assert jobs.split_doubts(cards) == []
+    assert jobs.split_doubts(cards, today=date(2026, 10, 19)) == []

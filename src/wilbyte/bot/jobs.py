@@ -13815,7 +13815,10 @@ def split_order(card: dict, *, today=None) -> list[dict]:
          *(f"• {line(one)}" for one in aged)]
         + (["", "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]
            if also else [])
-        + (["", "From the thread:", said.strip()] if said.strip() else []))
+        # Notes that are the invoice's already say so - Skyler Liljenquist's
+        # read "From the thread:" over "From the Payra invoice:".
+        + (["", *([] if said.strip().startswith("From the Payra invoice:") else ["From the thread:"]), said.strip()]
+           if said.strip() else []))
     out.append({"kind": "aged", "client": client, "fields": fields, "name": f"Aged Leads - {client}",
                 "desc": order_desc(fields, "aged"), "launch_iso": "", "source": source})
     says_when = ordercards.says_when(source)
