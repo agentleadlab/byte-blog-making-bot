@@ -13782,6 +13782,20 @@ def parts_from_package(fields: dict, launch_iso: str = "") -> list[dict]:
     return parts if {"aged", "fresh"} <= {one["kind"] for one in parts} else []
 
 
+def _once_each(lines) -> list[str]:
+    """Lines in order, a repeat left out - the invoice's note and the
+    thread saying the same GHL location id twice over."""
+    seen, kept = set(), []
+    for line in lines:
+        key = " ".join(re.sub(r"^\s*From the Payra invoice:\s*", "", str(line)).split()).casefold()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        kept.append(str(line))
+    return kept
+
+
 def split_order(card: dict, *, today=None) -> list[dict]:
     """An order that buys aged leads and new-agent leads at once, as the
     cards it is: one Aged Leads card with every aged line, and a New Agent
@@ -13836,12 +13850,34 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     # Only the words that are the new-agent lines' own: "Vets" is on both.
     theirs -= {word.casefold() for one in aged for word in re.findall(r"[A-Za-z]{3,}", one["package"])}
 
+    kinds_named = {word.casefold() for one in parts for word in re.findall(r"[A-Za-z]{3,}", one["package"])} - {
+        "leads", "lead", "and", "the", "text", "verified", "fresh", "new", "agent", "days", "day"}
+
+    def for_new_agent(bit: str) -> bool:
+        """A note line the New Agent card needs: not about the aged leads,
+        not a day (its own Launch Date says that), not another line's count."""
+        bare = re.sub(r"^\s*From the Payra invoice:\s*", "", bit)
+        if re.search(r"\baged\b|\b(?:live|launch\w*|go(?:es|ing)?\s+live)\b", bare, re.IGNORECASE):
+            return False
+        # About one of the order's lines - "OTP VETS - waiting for states" -
+        # is that line's, not every card's.
+        if {word.casefold() for word in re.findall(r"[A-Za-z]{3,}", bare)} & kinds_named:
+            return False
+        # A line that's only states is the card's States field already.
+        if _state_codes_named(bare) and not re.sub(r"(?i)\b(?:and|states?)\b|[,\s.&/-]", "",
+                                                   re.sub("|".join(re.escape(name) for name in
+                                                                   sorted(ordercards.US_STATES.values(),
+                                                                          key=len, reverse=True)),
+                                                          "", bare, flags=re.IGNORECASE)):
+            return False
+        return True
+
     def about_aged(bit: str) -> bool:
         words = {word.casefold() for word in re.findall(r"[A-Za-z]{3,}", bit)}
         return not (words & theirs) and not re.search(r"\b(?:live|launch\w*|go(?:es|ing)?\s+live)\b", bit, re.IGNORECASE)
 
-    said = "\n".join(bit for bit in str(base.get("notes") or "").splitlines()
-                     if not bit.startswith("Paid via Zelle") and about_aged(bit))
+    said = "\n".join(_once_each(bit for bit in str(base.get("notes") or "").splitlines()
+                                if not bit.startswith("Paid via Zelle") and about_aged(bit)))
     fields["notes"] = "\n".join(
         [*zelle, "Order lines - each with its own states:" if not fresh else "Order lines:",
          *(f"• {line(one)}" for one in aged)]
@@ -13885,11 +13921,18 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         fields["launch"] = f"{when:%A, %B} {when.day}" if when else ""
         # Nothing of the other lines - no lead type, count or day: the filing
         # reads a card's notes, and listing them made this one card read as
-        # three orders on two days.
+        # three orders on two days. But the thread's setup notes, yes: Syed
+        # Tahir Ahmed's GHL location id, API key and "fresh leads go to this
+        # pipeline" were on his Aged card only - "therese and nicole have
+        # different setup".
+        setup = [bit for bit in _once_each(str(base.get("notes") or "").splitlines())
+                 if bit.strip() and not bit.startswith("Paid via Zelle") and for_new_agent(bit)]
         fields["notes"] = "\n".join(
             [*zelle, *([] if codes else ["No states yet - they'll be posted in the thread."]),
              f"Part of a bigger order of {client}'s - the rest of it is on the Aged Leads card and its own "
-             f"New Agent cards."])
+             f"New Agent cards."]
+            + (["", *([] if setup[0].startswith("From the Payra invoice:") else ["From the thread:"]), *setup]
+               if setup else []))
         out.append({"kind": "fresh", "client": client, "fields": fields, "name": f"New Agent - {client}",
                     "desc": order_desc(fields, "fresh"), "launch_iso": when.isoformat() if when else "",
                     "source": source})

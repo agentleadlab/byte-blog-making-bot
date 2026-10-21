@@ -3322,6 +3322,35 @@ def test_invoice_notes_on_a_split_card_arent_called_the_threads():
     assert "From the thread:" in jobs.split_order(card, today=date(2026, 10, 16))[0]["desc"]
 
 
+def test_a_split_new_agent_card_keeps_the_setup_notes():
+    """Syed Tahir Ahmed: the GHL location id, the API key and "fresh leads go
+    to this pipeline" only on the Aged card - "therese and nicole have
+    different setup"."""
+    card = {"kind": "fresh", "client": "Syed Tahir Ahmed",
+            "source": "NAME: Syed Tahir Ahmed\nPRODUCT: Text-Verified Veteran leads\nTexas, Hawaii, California\n"
+                      "85 aged 90-180 veteran leads\n20 fresh OTP VETS\nLive Wednesday Oct 21",
+            "launch_iso": "2026-10-21",
+            "parts": [{"kind": "aged", "package": "Aged Veteran leads 90-180", "leads": "85", "states": "TX, HI, CA",
+                       "launch_iso": ""},
+                      {"kind": "fresh", "package": "OTP VETS", "leads": "20", "states": "TX, HI, CA",
+                       "launch_iso": "2026-10-21"}],
+            "fields": {"name": "Syed Tahir Ahmed", "notes": (
+                "From the Payra invoice: abc123 here's the ghl location id\npit-us-0000 That's the api key\n"
+                "In the crm\nAs in like 140 aged 90-180 veteran leads. And then 20 fresh\n"
+                "Highest intent pipeline for the fresh leads - fresh leads go to this pipeline\n"
+                "Texas, Hawaii, California\nabc123 here's the ghl location id\npit-us-0000 That's the api key\n"
+                "In the crm\nAs in like 85 aged 90-180 veteran leads\nAnd then 20 fresh OTP VETS\n"
+                "Highest intent pipeline for the fresh leads - fresh leads go to this pipeline\n"
+                "Live Wednesday Oct 21")}}
+    aged, fresh = jobs.split_order(card, today=date(2026, 10, 21))
+    notes = fresh["fields"]["notes"]
+    assert "ghl location id" in notes and "api key" in notes and "fresh leads go to this pipeline" in notes
+    assert notes.count("ghl location id") == 1, "once, not the invoice's and the thread's"
+    assert "aged" not in notes.casefold().replace("part of a bigger order", "") or "Aged Leads card" in notes
+    assert "140" not in notes and "Live Wednesday" not in notes and "Texas, Hawaii" not in notes
+    assert aged["fields"]["notes"].count("ghl location id") == 1
+
+
 def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
     card = _patrick()
     card["parts"] = [one for one in card["parts"] if one["kind"] == "aged"]
