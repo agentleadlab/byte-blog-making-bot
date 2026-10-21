@@ -171,7 +171,7 @@ DONE_STEPS = ("to_done", LATE_DONE)
 # catch-up only ever looked at today. The carry skips anything already on the
 # next card and the move takes only cards dated that day or before, so running
 # them late does what running them on time would have.
-OVERNIGHT_CATCH_UP = ("rollover", "to_done", LATE_ROLLOVER, LATE_DONE)
+OVERNIGHT_CATCH_UP = ("rollover", "to_done", LATE_ROLLOVER, LATE_DONE, "archive_aged")
 
 # Steps that must not be caught up hours after their time. Nothing needs it
 # now that the late pair runs at ten on the same day; kept because the rule is

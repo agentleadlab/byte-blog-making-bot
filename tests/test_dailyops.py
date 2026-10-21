@@ -4572,6 +4572,41 @@ def test_each_missed_evening_is_caught_up_oldest_first(monkeypatch):
     assert set(days) == {_date(2026, 10, 19), _date(2026, 10, 20)}, "Monday then Tuesday, not the weekend"
 
 
+def test_a_step_that_breaks_doesnt_stop_the_others(monkeypatch):
+    """"RYTe didnt move any checklist yesterday" - one step breaking took the
+    rest of the night's down with it, and only the terminal knew."""
+    import asyncio
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    from wilbyte import boardclock, dailyops
+    from wilbyte.bot import client
+
+    ran, said = [], []
+
+    async def step(bot, name, today, *, day=None):
+        if name == "rollover":
+            raise KeyError("checklists")
+        ran.append(name)
+
+    class Saying:
+        async def send(self, *a, **kw):
+            said.append(kw.get("embed"))
+
+    monkeypatch.setattr(client, "_board_step", step)
+    monkeypatch.setattr(client, "_board_responder", lambda bot: Saying())
+    monkeypatch.setattr(client, "_today", lambda config: _date(2026, 10, 21))
+    monkeypatch.setattr(boardclock, "last_run", lambda name: "2026-10-19")
+    monkeypatch.setattr(dailyops, "steps_due", lambda now, done: [])
+    client._BOARD_BROKE_SAID.clear()
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York")))
+    asyncio.run(client._board_steps(bot))
+    asyncio.run(client._board_steps(bot))
+    assert ran[:4] == ["to_done", dailyops.LATE_ROLLOVER, dailyops.LATE_DONE, "archive_aged"]
+    assert len(said) == 1, "said once, not every minute"
+    assert "archive_aged" in dailyops.OVERNIGHT_CATCH_UP
+
+
 @pytest.mark.parametrize("said, left, tagged_, strangers", [
     ("tag nicole, tag therese, can you take a look", "can you take a look", ["nic0l3", "thereseguba"], []),
     ("please tag nicole, check his cap", "check his cap", ["nic0l3"], []),

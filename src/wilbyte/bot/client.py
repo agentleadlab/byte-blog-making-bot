@@ -2311,13 +2311,44 @@ async def _board_steps(bot: "WilByteBot") -> None:
                 continue
             if last and last >= then.isoformat():
                 continue
-            await _board_step(bot, step, then, day=then)
+            await _board_step_safely(bot, step, then, day=then)
     due = dailyops.steps_due(
         datetime.now(ZoneInfo(config.schedule.timezone)),
         await asyncio.to_thread(boardclock.done_on, today),
     )
     for step in due:
-        await _board_step(bot, step, today)
+        await _board_step_safely(bot, step, today)
+
+
+#: (step, day) whose breaking has been said - once, not every minute.
+_BOARD_BROKE_SAID: set = set()
+
+
+async def _board_step_safely(bot: "WilByteBot", step: str, today, *, day=None) -> None:
+    """One step, on its own: "RYTe didnt move any checklist yesterday" - a
+    step that broke took every step queued behind it down with it, tick
+    after tick, and said so only in the terminal. Now the others still run,
+    and the one that broke is said in the board's channel."""
+    from .. import dailyops
+
+    try:
+        await _board_step(bot, step, today, day=day)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.exception("Board step %s for %s broke", step, day or today)
+        key = (step, str(day or today))
+        if key in _BOARD_BROKE_SAID:
+            return
+        _BOARD_BROKE_SAID.add(key)
+        responder = _board_responder(bot)
+        if responder is not None:
+            try:
+                await responder.send(embed=embeds.error(
+                    f"Board step broke — {dailyops.STEP_NAMES.get(step, step)} for {(day or today):%a %m/%d}\n"
+                    f"{_readable(exc)}\nThe other steps still run; I'll try this one again."))
+            except Exception:
+                log.warning("...and couldn't say so", exc_info=True)
 
 
 #: How many evenings back a restart catches the end of day up for.
