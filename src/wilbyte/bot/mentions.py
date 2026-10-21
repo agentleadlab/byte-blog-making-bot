@@ -1626,6 +1626,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **trello rollover** — carry General and Ops onto the next day's cards.
 > **rollover late** does Ads and Lead Order (the ten o'clock pair);
 > **rollover all** does all four\n> @RYTE **trello rollover general** — one card only, to try it on\n> @RYTE **trello rollover yesterday** — carry a day you held back
+> @RYTE **trello rollover late yesterday nicole** — only Nicole's checklist; anybody's first name works
 > @RYTE **trello rollover skip ads** — keep that card's items off tomorrow tonight
 > @RYTE **trello rollover unskip ads** — carry it after all\n> On its own it walks itself: 6am setup card, 9am to Today, 6pm to Quality Check, 8:30pm carry General and Ops over then Done, 10pm carry Ads and Lead Order over then Done, 10pm archive
 > **spread** is not in that list — it only runs when you ask for it\n> Unticked agents in Done get chased at 3:30, 5:30, 6:30 and 7:30

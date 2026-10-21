@@ -1943,6 +1943,49 @@ def test_the_typed_rollover_carries_an_item_however_long_it_has_waited(monkeypat
     assert "carried 6 days running" in "\n".join(heard.messages)
 
 
+def test_a_rollover_for_one_person_carries_only_theirs(monkeypatch):
+    """"can it do just nicole's tasks?" - "rollover late yesterday nicole"."""
+    import asyncio
+    from datetime import date
+    from types import SimpleNamespace
+
+    from wilbyte import dailyops
+    from wilbyte.bot import client as bot_client
+
+    ads = dailyops.RolloverPlan(kind="ads", from_title="Ads 10/20/26", to_title="Ads 10/21/26",
+                                checklists_to_create=["Nicole", "Kath"])
+    ads.leftovers = [dailyops.Leftover(person="Nicole", name="pause Gannon"),
+                     dailyops.Leftover(person="Kath", name="cap Ann"),
+                     dailyops.Leftover(person="Nicole", name="add Ohio for Brian")]
+    order = dailyops.RolloverPlan(kind="lead_order", from_title="Lead Order 10/20/26", to_title="Lead Order 10/21/26")
+    order.leftovers = [dailyops.Leftover(person="own setup", name="40 BASIC SPANISH")]
+    written = []
+
+    class Pressed:
+        def __init__(self, **kw):
+            self.confirmed = True
+
+        async def wait(self):
+            return None
+
+    monkeypatch.setattr(bot_client.jobs, "board_day", lambda config: date(2026, 10, 21))
+    monkeypatch.setattr(bot_client.jobs, "read_rollover", lambda config, **kw: ([ads, order], [], {}, {}))
+    monkeypatch.setattr(bot_client.jobs, "apply_rollover",
+                        lambda config, plans, targets, **kw: (written.append(plans), (2, []))[1])
+    monkeypatch.setattr(bot_client.views, "ConfirmView", Pressed)
+    heard = Asked()
+    config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1),
+                             schedule=SimpleNamespace(timezone="America/New_York"))
+    asyncio.run(bot_client._rollover(heard, config, named="rollover late yesterday nicole"))
+
+    (plans,) = written
+    assert [plan.kind for plan in plans] == ["ads"]
+    assert [one.name for one in plans[0].leftovers] == ["pause Gannon", "add Ohio for Brian"]
+    assert plans[0].checklists_to_create == ["Nicole"]
+    assert "Only Nicole's checklist" in "\n".join(heard.messages)
+    assert len(ads.leftovers) == 3, "the plan read isn't changed for anybody else"
+
+
 def test_the_window_is_not_three_thousand_lines_of_200_ok(monkeypatch):
     """The agent watcher costs sixteen requests every twenty seconds. At that
     volume httpx's own logging is a window nobody reads - and the two real

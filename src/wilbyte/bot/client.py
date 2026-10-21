@@ -13581,6 +13581,28 @@ def _held_as_words(held) -> str:
     return f"Holding back tonight: **{named}** — {whose} unticked items stay put."
 
 
+def _rollover_people(plans, said: str) -> set[str]:
+    """The checklists named in a rollover ask, by their first name as a word -
+    "nicole", not "Kath" for "Kathleen". Empty when nobody's named."""
+    names = {item.person for plan in plans for item in plan.leftovers}
+    names |= {one for plan in plans for one in plan.checklists_to_create}
+    return {name for name in names if name.strip()
+            and re.search(rf"\b{re.escape(name.split()[0])}\b", str(said or ""), re.IGNORECASE)}
+
+
+def _only_theirs(plans, whose: set[str]):
+    """The plans with only those people's items, and no plan left empty."""
+    from dataclasses import replace
+
+    kept = []
+    for plan in plans:
+        mine = replace(plan, leftovers=[one for one in plan.leftovers if one.person in whose],
+                       checklists_to_create=[one for one in plan.checklists_to_create if one in whose])
+        if mine.leftovers:
+            kept.append(mine)
+    return kept
+
+
 async def _rollover(responder: Responder, config: Config, *, named: str = "") -> None:
     """Move today's unfinished items onto tomorrow's cards, once approved.
 
@@ -13625,7 +13647,16 @@ async def _rollover(responder: Responder, config: Config, *, named: str = "") ->
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
 
+    # "can it do just nicole's tasks?" - a checklist named in the ask, and
+    # only theirs: "rollover late yesterday nicole".
+    whose = _rollover_people(plans, named)
+    if whose:
+        plans = _only_theirs(plans, whose)
+
     report = dailyops.summarise(plans, missing=missing)
+    if whose:
+        report = (f"**Only {', '.join(sorted(whose))}'s checklist** — everybody else's items stay where they are.\n"
+                  + report)
     if ahead:
         # Not tomorrow's card. Said before the button rather than after it, so
         # nobody approves a move onto a day they weren't told about.
