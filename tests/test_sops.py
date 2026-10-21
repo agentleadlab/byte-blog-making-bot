@@ -713,3 +713,34 @@ def test_no_document_leaves_it_as_it_was():
 
     message = SimpleNamespace(attachments=[_attached("photo.png", b"\x89PNG")], jump_url="")
     assert asyncio.run(client._with_documents(message, "", None)) is None
+
+
+def test_add_to_sop_as_a_reply_files_the_message_answered(monkeypatch):
+    """"@Ryte add to sop" replying to K2's Loom - "There's nothing in that to
+    file"."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from wilbyte.bot import client
+
+    filed, said = [], []
+
+    class Saying:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    monkeypatch.setattr(client.jobs, "sop_summary", lambda config, sop: "How to create a skill.")
+    monkeypatch.setattr(client.jobs, "file_sop", lambda config, sop, summary="": (filed.append(sop), ("Creating a Skill", "https://notion.so/x"))[1])
+
+    async def no_docs(message, text, sop):
+        return sop
+
+    monkeypatch.setattr(client, "_with_documents", no_docs)
+    k2 = NS(id=1, content="<@5> https://www.loom.com/share/6b9109e750e145c98de724ee7ae86659\nPlay with it and lmk",
+            embeds=[], attachments=[], author=NS(display_name="K2"), created_at=None)
+    ask = NS(id=2, content="<@9> add to sop", embeds=[], attachments=[], author=NS(display_name="Franklin"),
+             created_at=None, reference=NS(resolved=k2, message_id=1))
+    asyncio.run(client._file_sop(Saying(), NS(), ask, ""))
+    assert len(filed) == 1 and "loom.com/share/6b9109e750e145c98de724ee7ae86659" in str(filed[0].url)
+    assert filed[0].posted_by == "K2"
+    assert "Filed **Creating a Skill**" in said[-1]

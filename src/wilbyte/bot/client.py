@@ -7648,15 +7648,26 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
     images, audio = message_files(message)
     sop = sops.find_sop(text, images=images, audio=audio)
     sop = await _with_documents(message, text, sop)
+    source = message
+    if sop is None:
+        # "@Ryte add to sop" as a reply to K2's Loom: the SOP is the message
+        # being answered, not the three words asking for it.
+        replied = await _replied_to(message)
+        if replied is not None:
+            said = _all_of_it(replied)
+            images, audio = message_files(replied)
+            sop = sops.find_sop(said, images=images, audio=audio)
+            sop = await _with_documents(replied, said, sop)
+            source = replied if sop is not None else message
     if sop is None:
         await responder.send(
             "There's nothing in that to file — give me a link, a file, or the "
-            "steps written out."
+            "steps written out. Or reply to the message that has it."
         )
         return
 
-    sop.posted_by = getattr(message.author, "display_name", "") or ""
-    posted = getattr(message, "created_at", None)
+    sop.posted_by = getattr(source.author, "display_name", "") or ""
+    posted = getattr(source, "created_at", None)
     sop.posted_on = posted.date() if posted is not None else None
 
     summary = ""
@@ -7673,6 +7684,8 @@ async def _file_sop(responder: Responder, config: Config, message, text: str) ->
         return
 
     sops.remember(getattr(message, "id", ""))
+    if source is not message:
+        sops.remember(getattr(source, "id", ""))
     await responder.send(f"{jobs.SOP_ICON} Filed **{title}**\n{url}")
 
 
