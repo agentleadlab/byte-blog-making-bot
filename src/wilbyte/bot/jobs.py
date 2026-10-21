@@ -14164,8 +14164,16 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
         name, kind = card["name"], card["kind"]
         counts = ([_count_of(bit) for bit in re.findall(r"\d[\d,]*", fields.get("leads") or "")]
                   if kind == "aged" else [_count_of(fields.get("leads"))])
+        # A line's count made of its states' own: Skyler Liljenquist's 32
+        # Mortgage Protection 30-90 is FL 18 + VA 14, each said in the order,
+        # and "32 isn't in the order" held a right card.
+        by_state = set()
+        for bit in str(fields.get("states") or "").split(";"):
+            said = [int(one) for one in re.findall(r"(?<![\d-])(\d{1,5})(?![\d+-])", bit.rsplit(":", 1)[-1])]
+            if len(said) >= 2 and all(ordercards.count_said(one, source) for one in said):
+                by_state.add(sum(said))
         for count in counts[1:] if len(counts) > 1 else counts:
-            if count is not None and not ordercards.count_said(count, source, total=True):
+            if count is not None and not ordercards.count_said(count, source, total=True) and count not in by_state:
                 wrong.append(f"{name}: {count:,} leads isn't in the order")
             elif count is not None and ordercards.only_a_cap(count, source):
                 wrong.append(f"{name}: {count:,} is the daily cap the order gives, not how many they bought")

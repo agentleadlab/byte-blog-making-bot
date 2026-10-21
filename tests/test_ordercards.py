@@ -3368,6 +3368,26 @@ def test_a_split_new_agent_card_keeps_the_setup_notes():
     assert aged["fields"]["notes"].count("ghl location id") == 1
 
 
+def test_a_lines_count_made_of_its_states_counts_adds_up():
+    """Skyler Liljenquist: "32 leads isn't in the order" - FL 18 + VA 14."""
+    source = ("NAME: Skyler Liljenquist\nPRODUCT: Aged Leads (MTG)\n"
+              "Florida · EverLife agency MTG: 20 available (30-90: 18 · 90-180: 1 · 180+: 1)\n"
+              "Virginia · EverLife agency MTG: 14 available (30-90: 14 · 90-180: 0 · 180+: 0)")
+    card = {"kind": "aged", "client": "Skyler Liljenquist", "source": source, "launch_iso": "",
+            "parts": [{"kind": "aged", "package": "Aged Mortgage Protection 30-90", "leads": "32",
+                       "states": "FL 18, VA 14", "launch_iso": ""},
+                      {"kind": "aged", "package": "Aged Mortgage Protection 90-180", "leads": "1",
+                       "states": "FL 1", "launch_iso": ""},
+                      {"kind": "aged", "package": "Aged Mortgage Protection 180+", "leads": "1",
+                       "states": "FL 1", "launch_iso": ""}],
+            "fields": {"name": "Skyler Liljenquist", "notes": ""}}
+    cards = jobs.split_order(card, today=date(2026, 10, 21))
+    assert jobs.split_doubts(cards, today=date(2026, 10, 21)) == []
+    card["parts"][0]["leads"] = "33"
+    assert any("33 leads isn't in the order" in one
+               for one in jobs.split_doubts(jobs.split_order(card, today=date(2026, 10, 21)), today=date(2026, 10, 21)))
+
+
 def test_one_kind_isnt_split_but_aged_lines_keep_their_own_states():
     card = _patrick()
     card["parts"] = [one for one in card["parts"] if one["kind"] == "aged"]
@@ -4702,3 +4722,14 @@ def test_several_agents_paid_for_by_one_isnt_held_for_it():
              {"kind": "fresh", "client": "Sawyer Wetzel", "name": "New Agent - Sawyer Wetzel", "agents_of": 2,
               "fields": {"leads": "28", "states": ""}, "source": "NAME: Colby Whittaker\n2 agents\n28 Fresh Vets"}]
     assert jobs.split_doubts(cards, today=date(2026, 10, 19)) == []
+
+
+def test_a_card_that_cant_be_made_tags_franklin(order, monkeypatch):
+    """"can ryte tag me with these? ... that way im aware that a card cannot
+    be created" - a new message, since a tag added by an edit notifies
+    nobody."""
+    monkeypatch.setattr(order.responder, "send", order.responder.send)
+    bot = _bot(_message())
+    bot.config.secrets.discord_notify_user_id = "424242"
+    assert client._card_ping(bot) == "<@424242> "
+    assert client._card_ping(SimpleNamespace()) == ""

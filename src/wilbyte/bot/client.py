@@ -2361,6 +2361,13 @@ OVERNIGHT_LOOK_BACK_DAYS = 4
 UNMARKED_SHOWN = 15
 
 
+def _card_ping(bot) -> str:
+    """Franklin tagged, in front of a card that couldn't be made - so it's
+    known, not found by scrolling. "" when nobody's set to be told."""
+    who = getattr(getattr(getattr(bot, "config", None), "secrets", None), "discord_notify_user_id", None)
+    return f"<@{who}> " if who else ""
+
+
 def _unmarked_ping(config: Config, *, ping: bool = True) -> str:
     """Who to tap on the shoulder, as message text rather than embed text.
 
@@ -10455,11 +10462,11 @@ async def _order_gavelled(bot, payload) -> None:
             try:
                 if made:
                     await responder.send(
-                        f"🔨 ⚠ The card was made, then something broke: {_readable(exc)}\n"
+                        _card_ping(bot) + f"🔨 ⚠ The card was made, then something broke: {_readable(exc)}\n"
                         + "\n".join(f"• {one.get('name')}: {one['url']}" for one in made)
                         + "\n-# Check its bank comment and screenshots — don't make it again.")
                 else:
-                    await responder.send(f"🔨 ⚠ Something broke making that order's card: {_readable(exc)}\n"
+                    await responder.send(_card_ping(bot) + f"🔨 ⚠ Something broke making that order's card: {_readable(exc)}\n"
                                          f"-# Nothing was made. `@Ryte order <message link>` tries again.")
             except Exception:
                 log.exception("...and couldn't say so")
@@ -10502,7 +10509,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             except Exception:
                 pass
         if responder is not None:
-            await responder.send(f"🔨 ⚠ Couldn't read that order: {_readable(exc)} <{link}>"
+            await responder.send(_card_ping(bot) + f"🔨 ⚠ Couldn't read that order: {_readable(exc)} <{link}>"
                                  + (f"\n-# Trying it again by myself in {ORDER_RETRY_SECONDS // 60} minutes."
                                     if again else ""))
         if again:
@@ -10523,7 +10530,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
         # Said, not dropped: "why isnt he filing this" - an aged payment
         # read as a new agent's left nothing anywhere to say why.
         if AGED_ORDERS_ON and responder is not None:
-            await responder.send(f"🔨 ⚠ **{card.get('client') or 'An order'}** paid for aged leads, but I read "
+            await responder.send(_card_ping(bot) + f"🔨 ⚠ **{card.get('client') or 'An order'}** paid for aged leads, but I read "
                                  f"the order as a new agent's, so I didn't make it on my own. Gavel it and I'll "
                                  f"make the right card. <{link}>", quiet=True)
         return
@@ -10657,7 +10664,7 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     except Exception as exc:
         await _order_forget(key)
         if responder is not None:
-            await responder.send(f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
+            await responder.send(_card_ping(bot) + f"🔨 ⚠ Couldn't make the card for {card['client'] or 'that order'}: {_readable(exc)}")
         return
     _ORDER_JUST_MADE.setdefault(key, []).append({"id": made["id"], "url": made["url"], "name": card["name"],
                                                  "client": card.get("client"), "kind": kind})
@@ -10769,7 +10776,7 @@ async def _order_make_split(bot, payload, key, responder, message, card, subs, l
     if not parts:
         await _order_forget(key)
         if responder is not None:
-            await responder.send("🔨 ⚠ Couldn't make the cards for " + (card.get("client") or "that order") + ": "
+            await responder.send(_card_ping(bot) + "🔨 ⚠ Couldn't make the cards for " + (card.get("client") or "that order") + ": "
                                  + "; ".join(trouble))
         return
     first = parts[0]
@@ -10937,15 +10944,20 @@ async def _order_wait_for_info(bot, payload, key, card, gaps, link, responder) -
                 pass
         return
     await _order_note(key, said=True)
-    said = (f"⏳ **{card.get('client') or 'An aged order'}** — aged leads, but I can't find {' or '.join(gaps)} "
+    said = (_card_ping(bot) + f"⏳ **{card.get('client') or 'An aged order'}** — aged leads, but I can't find {' or '.join(gaps)} "
             f"in the payment, its Payra invoice note or a thread. **No card yet**: an aged card goes out as soon "
             f"as it's made. I'll make it when they're posted in a thread on the payment or put in the invoice "
             f"note — or gavel it once they're there.\n{link}")
     try:
-        if ack is not None and hasattr(ack, "edit"):
+        if ack is not None and hasattr(ack, "edit") and not _card_ping(bot):
             await ack.edit(content=said)
         else:
             await responder.send(said)
+            if ack is not None and hasattr(ack, "delete"):
+                try:
+                    await ack.delete()
+                except Exception:
+                    pass
     except Exception:
         log.warning("Couldn't say the aged order is waiting", exc_info=True)
 
@@ -11228,7 +11240,7 @@ async def _held_pressed(bot, interaction, key: str, act: str) -> None:
         log.exception("Making the held order broke")
         responder = _order_responder(bot)
         if responder is not None:
-            await responder.send(f"🔨 ⚠ Couldn't make that order: {_readable(exc)}")
+            await responder.send(_card_ping(bot) + f"🔨 ⚠ Couldn't make that order: {_readable(exc)}")
     finally:
         _ORDER_ACTIVE.discard(key)
 
@@ -11240,7 +11252,7 @@ async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
 
     if responder is None:
         return
-    said = (f"🔨 ⚠ **Not made yet — {card.get('client') or 'this order'}**: what I read doesn't add up.\n"
+    said = (_card_ping(bot) + f"🔨 ⚠ **Not made yet — {card.get('client') or 'this order'}**: what I read doesn't add up.\n"
             + "\n".join(f"• {one}" for one in wrong)
             + f"\n<{link}>\n" + _order_preview(card)
             + "\n-# Fix it in the thread and gavel it again, or press Create anyway if the card is right.")
@@ -11248,11 +11260,19 @@ async def _order_held(bot, payload, key, responder, card, wrong, link) -> None:
                              ids=(f"ryte:held:{key}:go", f"ryte:held:{key}:no"))
     ack = _ORDER_ACKS.pop(key, None)
     try:
-        if ack is None or not hasattr(ack, "edit"):
+        # A tag added by an edit notifies nobody: a new message when there's
+        # somebody to tell - "tag me ... that way im aware that a card
+        # cannot be created".
+        if ack is None or not hasattr(ack, "edit") or _card_ping(bot):
             raise LookupError
         await ack.edit(content=said[:1950], view=view)
     except Exception:
         await responder.send(said[:1950], view=view)
+        if ack is not None and hasattr(ack, "delete") and _card_ping(bot):
+            try:
+                await ack.delete()
+            except Exception:
+                pass
     # Remembered as held, so a restart's catch-up doesn't hold it again - it
     # said "Not made yet" twice for Mohammad Kanan. A fresh gavel still reads it.
     # With what it takes to make it after a restart, from the button alone.
