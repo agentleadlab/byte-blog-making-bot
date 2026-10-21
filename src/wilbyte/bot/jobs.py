@@ -13910,6 +13910,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         starts = _starts_on(text)
         if starts is not None:
             fields["launch"], launch_iso = f"{starts:%A, %B} {starts.day}", starts.isoformat()
+    if re.search(r"pool\s+member", text, re.IGNORECASE) and re.search(r"\bspark\b", text, re.IGNORECASE):
+        # A Spark buyer's agency is Spark - "on their agency field, obv put
+        # spark". FND Life's card went out with it blank.
+        fields["agency"] = "Spark"
     if fields.get("agency") and not agency_usable(fields["agency"]):
         fields["agency"] = ""
     if not fields.get("agency"):

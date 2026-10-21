@@ -4858,4 +4858,5 @@ def test_a_spark_posts_start_is_the_launch_date(monkeypatch):
     card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 21),
                            notes=["Purchased on Spark - pool membership.\nStarts - October 25, 2026"])
     assert card["launch_iso"] == "2026-10-25" and card["fields"]["launch"] == "Sunday, October 25"
+    assert card["fields"]["agency"] == "Spark" and "Agency: Spark" in card["desc"]
     assert not any("Launch date" in one for one in ordercards.doubts(card, today=date(2026, 10, 21))[0])
