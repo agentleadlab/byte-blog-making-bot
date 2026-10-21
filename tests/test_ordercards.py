@@ -4830,3 +4830,32 @@ def test_a_zelle_posts_own_lines_fill_the_card(monkeypatch):
     note_only = {"kind": "fresh", "source": "[10/21 05:01PM] Faith: 21 Trucker IUL leads\nAdd to current order",
                  "fields": {"name": "Jordan Holmes", "leads": "21", "package": "Trucker IUL"}, "launch_iso": ""}
     assert any("was the payment gavelled" in one for one in ordercards.doubts(note_only, today=date(2026, 10, 21))[0])
+
+
+def test_a_spark_posts_start_is_the_launch_date(monkeypatch):
+    """FND Life: "Starts October 25, 2026" on the Spark post, and the card went
+    out with no launch date - "I can't find a launch date on this card"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "FND Life", "email": "join@example.com", "states": "AL, AZ, AR",
+        "package": "Blue Collar IUL", "leads": "17-20"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/21 03:50PM] Capture Info: 🛒 New lead pool member on Spark\n"
+            "Blue Collar IUL — $700/wk · pool membership\n"
+            "A buyer just joined and paid for your pool on Spark. Fulfill this order from your Spark vendor "
+            "dashboard.\nBuyer FND Life\nPool Blue Collar IUL\nLead type blue-collar-iul\n"
+            "Order $700/wk · pool membership\nCPL range $35–$39\nExpected leads / wk 17–20\n"
+            "Starts October 25, 2026\nPaid through November 1, 2026\nStates AL, AZ, AR\n"
+            "Buyer email join@example.com")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 21),
+                           notes=["Purchased on Spark - pool membership.\nStarts - October 25, 2026"])
+    assert card["launch_iso"] == "2026-10-25" and card["fields"]["launch"] == "Sunday, October 25"
+    assert not any("Launch date" in one for one in ordercards.doubts(card, today=date(2026, 10, 21))[0])

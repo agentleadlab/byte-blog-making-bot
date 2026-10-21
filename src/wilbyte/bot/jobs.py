@@ -13224,6 +13224,25 @@ def invoice_form(text: str) -> dict:
     return found
 
 
+_MONTH_NUMBER = {name: at for at, name in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+     "november", "december"), start=1)}
+
+
+def _starts_on(text: str):
+    """The day a post's own "Starts" line gives - Spark's "Starts October 25,
+    2026" - or None."""
+    found = re.search(r"^\W*starts?\b\W*(?:on\W*)?([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b",
+                      str(text or ""), re.IGNORECASE | re.MULTILINE)
+    if not found:
+        return None
+    month = next((at for name, at in _MONTH_NUMBER.items() if name.startswith(found.group(1).casefold()[:3])), None)
+    try:
+        return date(int(found.group(3)), month, int(found.group(2))) if month else None
+    except ValueError:
+        return None
+
+
 def post_form(text: str) -> dict:
     """A payment post's own lines - "EMAIL: ...", "PHONE: ...", "STATES:
     ...", "LEADS: ..." - as {field: value}, the first post in the text only
@@ -13884,6 +13903,13 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 fields["launch"], launch_iso = "", ""
         if when is not None:
             fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
+    if not launch_iso:
+        # A Spark membership's own start - "Starts October 25, 2026" - which
+        # the reading took for nothing: FND Life's card had no launch date and
+        # sat waiting.
+        starts = _starts_on(text)
+        if starts is not None:
+            fields["launch"], launch_iso = f"{starts:%A, %B} {starts.day}", starts.isoformat()
     if fields.get("agency") and not agency_usable(fields["agency"]):
         fields["agency"] = ""
     if not fields.get("agency"):
