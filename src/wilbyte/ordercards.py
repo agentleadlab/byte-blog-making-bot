@@ -106,10 +106,21 @@ def changed_lines(before: str, after: str) -> list[str]:
             if line.strip() and _line_key(line) not in had]
 
 
+#: A link as Trello writes one once it's had the card - "[a@b.com](mailto:a@b.com)".
+_LINKED = re.compile(r"\[([^\]\n]*)\]\((?:mailto:|tel:|https?://)[^)\s]*\)")
+
+
+def _unlinked(text: str) -> str:
+    """The text with Trello's links back to what was written - Cole
+    Petersen's card was commented "New in Discord: Email: ..." with the same
+    address it already had, linked."""
+    return _LINKED.sub(r"\1", str(text or ""))
+
+
 def _line_key(line: str) -> str:
     """A line as compared: "Killian32cooper@gmail.com" is
-    "killian32cooper@gmail.com" - case and spacing aren't news."""
-    return " ".join(str(line or "").split()).casefold()
+    "killian32cooper@gmail.com" - case, spacing and Trello's links aren't news."""
+    return " ".join(_unlinked(line).split()).casefold()
 
 
 _STATUS = re.compile(r"\b(?:done|signed|live|scheduled|sent|ok(?:ay)?|thanks?|thank you|ty|got it|on it|"
@@ -138,7 +149,7 @@ _HOW = re.compile(r"\b(?:via|by|through|sms|text(?:ed)?|e-?mail(?:ed)?|sheet|dis
 
 
 def same_text(one: str, two: str) -> bool:
-    return " ".join(str(one or "").split()) == " ".join(str(two or "").split())
+    return " ".join(_unlinked(one).split()) == " ".join(_unlinked(two).split())
 
 
 # ------------------------------------------------------------- remembered

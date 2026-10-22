@@ -5141,3 +5141,13 @@ def test_cards_marked_checked_arent_named_again(monkeypatch):
     assert flagged == [] and looked == 0
     assert mentions.parse("<@1> aged lines ok https://trello.com/c/VlGannbA").action == "agedlinesok"
     assert mentions.parse("<@1> check aged lines").action == "agedlines"
+
+
+def test_an_email_trello_linked_isnt_new():
+    """Cole Petersen: "📝 New in Discord since this card was made: Email:
+    cole.petersen@..." - the address the card already had, as Trello links it."""
+    on_card = "Name: Cole Petersen\nEmail: [cole@example.com](mailto:cole@example.com)\nAgency: everlife"
+    ours = "Name: Cole Petersen\nEmail: cole@example.com\nAgency: everlife"
+    assert ordercards.changed_lines(on_card, ours) == []
+    assert ordercards.same_text(on_card, ours)
+    assert ordercards.changed_lines(on_card, ours.replace("everlife", "Spark")) == ["Agency: Spark"]
