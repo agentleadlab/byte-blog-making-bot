@@ -5151,3 +5151,38 @@ def test_an_email_trello_linked_isnt_new():
     assert ordercards.changed_lines(on_card, ours) == []
     assert ordercards.same_text(on_card, ours)
     assert ordercards.changed_lines(on_card, ours.replace("everlife", "Spark")) == ["Agency: Spark"]
+
+
+def test_an_email_and_phone_on_lines_of_their_own_go_on_the_card(monkeypatch):
+    """Aiden Adair: his invoice note had "+1 (801) 555-0141" and his email
+    on lines of their own, somebody else paid, and the card had neither."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Aiden Adair", "email": "boss@example.com", "phone": "+15550109999",
+        "states": "AL, AR", "package": "Text-Verified Mortgage Protection Leads", "leads": "50"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/22 01:00PM] Nova: New Payment | Payra\nNAME: Boss Person\nEMAIL: boss@example.com\n"
+            "PHONE: +15550109999\nAMOUNT: $1,449.00\nPRODUCT: Text-Verified Mortgage Protection Leads\n"
+            "Notes:\n> Ok I want 50 fresh mtg Tex verified standard they should be $28 a lead.\n"
+            "> Aiden Adair\n> +1 (801) 555-0141\n> Aiden.adair@example.com\n> EVERLIFE\n> Alabama\n"
+            "> Arkansas\n> Live Sat\n> Oct 24\nInternal Notes:\n> (none)")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 22), notes=[])
+    fields = card["fields"]
+    assert fields["name"] == "Aiden Adair"
+    assert fields["email"] == "Aiden.adair@example.com"
+    assert fields["phone"] == "+1 (801) 555-0141"
+
+
+def test_unlabelled_contact_isnt_guessed_from_two():
+    fields = jobs.with_unlabelled_contact({"email": "", "phone": ""},
+                                          ["a@example.com\nb@example.com\n801-555-0141\n801-555-0142"],
+                                          "New Payment\nEMAIL: payer@example.com")
+    assert fields == {"email": "", "phone": ""}

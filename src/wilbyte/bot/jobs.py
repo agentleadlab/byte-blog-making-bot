@@ -13423,6 +13423,48 @@ def with_invoice_form(fields: dict, form: dict) -> dict:
     return fields
 
 
+_ANY_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_ANY_PHONE = re.compile(r"(?<![\w])(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}(?![\w])")
+
+
+def with_unlabelled_contact(fields: dict, notes, text: str) -> dict:
+    """An email and phone the notes give on lines of their own, with no
+    "Email:" in front - Aiden Adair's invoice note had "+1 (801) 651-8641"
+    and "Aiden.adair@tryeverlife.com" and his card went out with neither.
+    Only when the card has none, only one that isn't the payer's, and only
+    when the notes give exactly one."""
+    from .. import ordercards as _cards
+
+    payer = post_form(text)
+    payer_email = str(payer.get("email") or "").casefold()
+    payer_phone = re.sub(r"\D", "", str(payer.get("phone") or ""))[-10:]
+    said = "\n".join(str(one) for one in notes or ())
+    fields = dict(fields)
+    # The payer's own, on a card for somebody else, is no better than none.
+    payer_name = _cards.paid_by(text)
+    # Not a business paying: Montaser Aidah's "Victory Freedom Llc" email is his.
+    if payer_name and fields.get("name") and not _cards.same_person(payer_name, str(fields["name"])) \
+            and not _cards._BUSINESS.search(payer_name):
+        if payer_email and str(fields.get("email") or "").casefold() == payer_email:
+            fields["email"] = ""
+        if payer_phone and re.sub(r"\D", "", str(fields.get("phone") or ""))[-10:] == payer_phone:
+            fields["phone"] = ""
+    if not str(fields.get("email") or "").strip():
+        emails = list(dict.fromkeys(one.strip(".") for one in _ANY_EMAIL.findall(said)
+                                    if one.strip(".").casefold() != payer_email))
+        if len({one.casefold() for one in emails}) == 1:
+            fields["email"] = emails[0]
+    if not str(fields.get("phone") or "").strip():
+        phones = {}
+        for one in _ANY_PHONE.findall(said):
+            digits = re.sub(r"\D", "", one)[-10:]
+            if len(digits) == 10 and digits != payer_phone:
+                phones.setdefault(digits, " ".join(one.split()))
+        if len(phones) == 1:
+            fields["phone"] = next(iter(phones.values()))
+    return fields
+
+
 def order_fields(got: dict, notes: list[str] = ()) -> dict:
     """Claude's reading of an order, tidied: nothing that only says it doesn't
     know, an ad-spend package's lead count as no cap, and Additional Notes as
@@ -13930,6 +13972,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             if from_post and not any(value.casefold() in str(one).casefold() or
                                      (digits and digits in re.sub(r"\D", "", str(one))) for one in notes or ()):
                 fields[key] = ""
+    fields = with_unlabelled_contact(fields, notes, text)
     launch_iso = str(got.get("launch_iso") or "")[:10]
     if not re.match(r"\d{4}-\d{2}-\d{2}$", launch_iso):
         launch_iso = ""
