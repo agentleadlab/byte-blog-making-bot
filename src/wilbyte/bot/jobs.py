@@ -5292,6 +5292,18 @@ def spread_to_lead_order(
                     if len(narrowed) == 1 and " ".join(narrowed[0].split()).casefold() in by_name:
                         shown_as = narrowed[0]
                         key = " ".join(shown_as.split()).casefold()
+            if key not in by_name and rules.family_of(spread.label):
+                # Still Standard or Plus: what the setup was done as - Therese's
+                # "TEXT VERIFIED MORTGAGE PROTECTION PLUS ON DISTRO HUB setup is
+                # complete" on Hudson Greaves's card, whose order said only
+                # "Fresh Mortgage Protection leads". The same kind of leads only.
+                done_as = _setup_comment_said(client, cards.get(spread.url), said_on)
+                if done_as and rules.family_of(done_as) == rules.family_of(spread.label) \
+                        and rules.tier_of(done_as):
+                    narrowed = rules.candidates(spread.label, list(by_name_shown), tier=rules.tier_of(done_as))
+                    if len(narrowed) == 1 and " ".join(narrowed[0].split()).casefold() in by_name:
+                        shown_as = narrowed[0]
+                        key = " ".join(shown_as.split()).casefold()
             if key not in by_name:
                 # Never invent one. The checklists on a Lead Order card are the
                 # lead types that exist, put there by hand, and a spread that
@@ -8394,6 +8406,22 @@ def _card_said(client, card_id, cache: dict) -> str:
         except Exception:
             cache[card_id] = ""
     return cache[card_id]
+
+
+def _setup_comment_said(client, card_id, cache: dict) -> str:
+    """The lead type an agent card's Distro Hub confirmation says was set up,
+    read once - "" when there's none, or the comments can't be read."""
+    from .. import agents
+
+    if not card_id:
+        return ""
+    key = f"setup:{card_id}"
+    if key not in cache:
+        try:
+            cache[key] = agents.setup_said(client.card_comments(card_id))
+        except Exception:
+            cache[key] = ""
+    return cache[key]
 
 
 def _their_card_disagrees(client, card_id, on_setup: str):

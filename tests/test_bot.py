@@ -7944,3 +7944,20 @@ def test_mtgplus_on_the_setup_card_goes_on_mtg_plus(config, monkeypatch):
     board = SpreadBoard(on_setup="25 MTGPLUS", their_card="Lead Type: Mortgage", checklists=MTG)
     _added, _conflicts, problems = spreading(board, monkeypatch, config)
     assert problems == [] and board.written[0][0] == "c1"
+
+
+def test_standard_or_plus_from_the_setup_confirmation(config, monkeypatch):
+    """Hudson Greaves: "Fresh Mortgage Protection leads" could be either;
+    Therese's confirmation says MORTGAGE PROTECTION PLUS."""
+    board = SpreadBoard(on_setup="20 Fresh Mortgage Protection leads",
+                        their_card="Lead Type/Package Selected: Fresh Mortgage Protection leads", checklists=MTG)
+    board.card_comments = lambda card_id: [
+        "@card ✅ TEXT VERIFIED MORTGAGE PROTECTION PLUS ON DISTRO HUB setup is complete for HUDSON GREAVES"]
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert problems == [] and board.written[0][0] == "c1"
+    # A confirmation for other leads says nothing about these.
+    board = SpreadBoard(on_setup="20 Fresh Mortgage Protection leads",
+                        their_card="Lead Type: Fresh Mortgage Protection leads", checklists=MTG)
+    board.card_comments = lambda card_id: ["TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete"]
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert board.written == [] and "doesn't say which" in problems[0]
