@@ -13284,6 +13284,17 @@ def spark_pool(text: str) -> dict:
     pool = re.search(r"^\W*pool\b(?!\s*member)\W*(.+)$", said, re.IGNORECASE | re.MULTILINE)
     if pool and pool.group(1).strip():
         found["pool"] = " ".join(pool.group(1).split())
+    # "Buyer Everlife" is the field's label and its value - the card went out
+    # as "New Agent - Buyer Everlife". The buyer is Everlife.
+    buyer = re.search(r"^\W*buyer\b(?!\s*e-?mail)[\s:*-]*(.+)$", said, re.IGNORECASE | re.MULTILINE)
+    if buyer and buyer.group(1).strip():
+        found["name"] = " ".join(buyer.group(1).split())
+    email = re.search(r"^\W*buyer\s*e-?mail\W*([^\s@]+@[^\s]+)", said, re.IGNORECASE | re.MULTILINE)
+    if email:
+        found["email"] = email.group(1).strip(" *")
+    starts = _starts_on(said)
+    if starts is not None:
+        found["starts"] = starts
     weekly = re.search(r"expected\s+leads\s*/\s*w(?:ee)?k\W*(\d+)(?:\s*(?:[-–—]|to)\s*(\d+))?", said, re.IGNORECASE)
     if weekly:
         found["leads"] = "-".join(one for one in weekly.groups() if one)
@@ -13805,6 +13816,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     if spark:
         # A pool membership buys leads a week from a pool, not ad spend.
         fields["package"] = spark.get("pool") or fields["package"]
+        for key in ("name", "email"):
+            if spark.get(key):
+                fields[key] = spark[key]
         if fields.get("leads") == NO_CAP or not re.search(r"\d", str(fields.get("leads") or "")):
             fields["leads"] = spark.get("leads", "")
     elif fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
@@ -13959,6 +13973,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 fields["launch"], launch_iso = "", ""
         if when is not None:
             fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
+    if spark.get("starts") is not None:
+        # The membership starts when Spark says - never a day read elsewhere.
+        starts = spark["starts"]
+        fields["launch"], launch_iso = f"{starts:%A, %B} {starts.day}", starts.isoformat()
     if not launch_iso:
         # A Spark membership's own start - "Starts October 25, 2026" - which
         # the reading took for nothing: FND Life's card had no launch date and

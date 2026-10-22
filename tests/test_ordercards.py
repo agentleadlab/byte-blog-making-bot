@@ -5012,3 +5012,34 @@ def test_discord_dates_are_written_out():
     assert jobs.discord_times("Starts <t:1792900800:D>") == "Starts October 25, 2026"
     assert jobs.discord_times("at <t:1792900800:t>") == "at 12:00 AM"
     assert jobs.discord_times("no date here") == "no date here"
+
+
+def test_a_spark_buyer_is_the_name_and_starts_is_the_launch(monkeypatch):
+    """"you dont include "buyer" as their name, its just Everlife" - the card
+    went out as "New Agent - Buyer Everlife", with no launch date."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Buyer Everlife", "email": "", "states": "AZ, AR, CA",
+        "package": "Pool Mortgage Protection - Volume", "leads": "", "launch": "Sunday, November 1"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/22 09:50AM] Capture Info: 🔁 Lead pool member paid for another week on Spark\n"
+            "Mortgage Protection - Volume — $700/wk · pool membership\n"
+            "This member paid for another week of your pool on Spark.\nBuyer Everlife\n"
+            "Pool Mortgage Protection - Volume\nLead type mortgage-protection-volume\n"
+            "Order $700/wk · pool membership\nCPL range $18–$22\nExpected leads / wk 31–38\n"
+            "Starts <t:1792900800:D>\nPaid through <t:1793505600:D>\nStates AZ, AR, CA\n"
+            "Buyer email everlife@example.com")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 22), notes=[])
+    fields = card["fields"]
+    assert fields["name"] == "Everlife" and card["name"] == "New Agent - Everlife"
+    assert fields["email"] == "everlife@example.com"
+    assert fields["package"] == "Mortgage Protection - Volume" and fields["leads"] == "31-38"
+    assert card["launch_iso"] == "2026-10-25", "Starts, not Paid through"
