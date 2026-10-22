@@ -10310,7 +10310,9 @@ def _aged_payment(message) -> bool:
     said = _all_of_it(message)
     # Anywhere on the PRODUCT line: Nova's "Text-Verified Aged IUL Leads"
     # put the word second, and Azriel Deskin's aged payment got no card.
-    return "new payment" in said.casefold() and bool(re.search(r"PRODUCT:[^\n]*\baged\b", said, re.IGNORECASE))
+    # Overflow goes out as aged, and made the same way.
+    return "new payment" in said.casefold() and bool(
+        re.search(r"PRODUCT:[^\n]*\b(?:aged|overflow)\b", said, re.IGNORECASE))
 
 
 #: "just like aged leads, everytime there's new capture info, auto-hammer it"

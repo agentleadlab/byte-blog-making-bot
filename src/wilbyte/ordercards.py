@@ -508,6 +508,11 @@ _BUSINESS = re.compile(
     r"consulting|ventures|capital|trust)\b\.?", re.IGNORECASE)
 
 
+#: "if it says overflow, take it to aged leads" - Christa Arriaga's
+#: "Text-Verified IUL leads - Overflow" went in as a new agent's setup.
+OVERFLOW = re.compile(r"\boverflow\b", re.IGNORECASE)
+
+
 def same_person(one: str, other: str) -> bool:
     """Whether two names share a name - "Mike Smith" and "Michael Smith" do,
     "Tony Moderno" and "Preston Bridges" don't."""
@@ -680,7 +685,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     product = " ".join(product.group(1).split()) if product else ""
     package = str(fields.get("package") or "")
     if product and not re.match(r"^[—\-–(]", product):
-        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE))
+        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE) or OVERFLOW.search(product))
         if aged_paid and kind != "aged":
             wrong.append(f"Lead type: the payment is for “{product}” - aged - but this reads as a new agent's order")
         family, _subtypes = setupcheck.product_of(product)

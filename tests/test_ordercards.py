@@ -5186,3 +5186,33 @@ def test_unlabelled_contact_isnt_guessed_from_two():
                                           ["a@example.com\nb@example.com\n801-555-0141\n801-555-0142"],
                                           "New Payment\nEMAIL: payer@example.com")
     assert fields == {"email": "", "phone": ""}
+
+
+def test_an_overflow_order_is_aged(monkeypatch):
+    """"if it says overflow, take it to aged leads" - Christa Arriaga's
+    "Text-Verified IUL leads - Overflow" went in as a new agent's setup."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Christa Arriaga", "email": "christa@example.com", "phone": "956-555-0160",
+        "states": "TX, KS, IL, VA, OH, MI", "package": "Text-Verified IUL leads - Overflow · IUL Standard 20 Leads",
+        "leads": "20"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("New Payment | Payra\nNAME: Christa Arriaga\nEMAIL: christa@example.com\nPHONE: 9565550160\n"
+            "AMOUNT: $400.00\nPRODUCT: Text-Verified IUL leads - Overflow\n"
+            "Notes:\n> (no notes on the invoice)\n[10/22 12:40PM] Kharyl: Christa Arriaga\n"
+            "TX, KS, IL, VA, OH, MI\nOverflow · IUL Standard 20 Leads\nTAKEOVER")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 22), notes=[])
+    assert card["kind"] == "aged" and card["name"].startswith("Aged Leads")
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 22))
+    assert not any("reads as" in one for one in wrong), wrong
+    message = SimpleNamespace(channel=SimpleNamespace(name="💸 | new-payment"), content=text, embeds=[],
+                              message_snapshots=[])
+    assert client._aged_payment(message)

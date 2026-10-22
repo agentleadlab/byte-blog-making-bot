@@ -13897,6 +13897,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         if named:
             fields["package"] = named
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
+    if _posted.OVERFLOW.search("\n".join([text, str(fields.get("package") or ""), *map(str, notes or ())])):
+        # Overflow leads go out as aged - "if it says overflow, take it to
+        # aged leads".
+        kind = "aged"
     # The invoice's own form, read as written - Claude's reading left
     # Mackenzie Ho's "States Leads In: all but new york" out and put the
     # product line's "Text-Verified Aged Veteran Leads" for her "Aged Veteran
@@ -14537,7 +14541,7 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
     product = " ".join(product.group(1).split()) if product else ""
     if product and not re.match(r"^[—\-–(]", product):
         kinds = {card["kind"] for card in cards}
-        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE))
+        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE) or ordercards.OVERFLOW.search(product))
         if aged_paid and "aged" not in kinds:
             wrong.append(f"Lead type: the payment is for “{product}” - aged - but no card here is aged")
         family, _subtypes = setupcheck.product_of(product)
