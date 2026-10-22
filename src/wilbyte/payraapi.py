@@ -268,8 +268,11 @@ _NOTE_KEY = re.compile(r"note|memo|comment|footer|terms|message|internal|instruc
 def note_fields(record: dict) -> list[tuple[str, str]]:
     """(field, what it says) for each of an invoice's note-like fields - to
     see which one the team's note is in."""
+    # "internal: True" is Payra's yes/no flag, not a note - Jackson Ruehl's
+    # invoice showed only that, which read as if it said something.
     return [(str(key), " ".join(str(value).split())[:300]) for key, value in (record or {}).items()
-            if _NOTE_KEY.search(str(key)) and value not in (None, "", [], {})]
+            if _NOTE_KEY.search(str(key)) and value not in (None, "", [], {})
+            and not isinstance(value, (bool, int, float))]
 
 
 def invoice_notes(record: dict) -> str:

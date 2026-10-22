@@ -989,3 +989,11 @@ def test_a_refusal_says_what_payra_said():
     blocked = payraapi._refused(SimpleNamespace(status_code=403, text="<html>Attention Required! | Cloudflare</html>",
                                                 json=not_json))
     assert "blocked Ryte" in str(blocked) and "accept the token" not in str(blocked)
+
+
+def test_a_yes_no_flag_is_not_a_note():
+    from wilbyte import payraapi
+
+    record = {"internal": True, "notes": "", "memo": "AGED IUL / TX, FL", "comment_count": 0}
+    assert payraapi.note_fields(record) == [("memo", "AGED IUL / TX, FL")]
+    assert payraapi.note_fields({"internal": True}) == []
