@@ -14829,6 +14829,11 @@ def has_new_agent_card(name: str, cards: list[dict]) -> dict | None:
 #: every order card, recheck and bank check reading it afresh drew
 #: "HTTP 429: Access to this resource has been throttled".
 PAYRA_FRESH_SECONDS = 90
+#: Pages of the last two days read at most - oldest first, so a page short
+#: and the newest payment is the one missed.
+PAYRA_RECENT_PAGES = 25
+#: How far back a payment not in the shared copy is read for, fresh.
+PAYRA_JUST_PAID = timedelta(hours=6)
 #: After a 429, the saved copy for this long before asking Payra again.
 PAYRA_THROTTLED_SECONDS = 300
 _PAYRA_RECENT: dict = {}
@@ -14860,7 +14865,8 @@ def payra_recent(config: Config, kind: str, *, now=None) -> dict:
         try:
             with payraapi.PayraClient(token, site, timeout=60.0) as client:
                 after = payraapi.when(now - timedelta(days=2))
-                for _page in range(5):
+                # Oldest first: five pages left a busy two days' newest out.
+                for _page in range(PAYRA_RECENT_PAGES):
                     got = client.changed(kind, after)
                     for record in got.get("records") or []:
                         one = slim(record)
@@ -15360,27 +15366,70 @@ def payra_payment_for(config: Config, *, name: str, amount: str = "", now=None) 
     if not (token and site and name):
         return None
     now = now or datetime.now(timezone.utc)
-    payments = payra_recent(config, "payments", now=now)
     wanted = payraapi._cents(amount)
-    found = []
-    for payment in payments.values():
-        if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
-            continue
-        try:
-            paid = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
-        if now - paid > timedelta(days=2):
-            continue
-        same = wanted is not None and payraapi._cents(payment.get("amount")) == wanted
-        found.append((same, paid, payment))
-    if wanted is not None and any(one[0] for one in found):
-        found = [one for one in found if one[0]]
-    if not found:
-        return None
-    found.sort(key=lambda one: one[1], reverse=True)
-    return found[0][2]
+
+    def theirs(payments):
+        found = []
+        for payment in payments.values():
+            if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
+                continue
+            try:
+                paid = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
+            if now - paid > timedelta(days=2):
+                continue
+            same = wanted is not None and payraapi._cents(payment.get("amount")) == wanted
+            found.append((same, paid, payment))
+        if wanted is not None and any(one[0] for one in found):
+            found = [one for one in found if one[0]]
+        if not found:
+            return None
+        found.sort(key=lambda one: one[1], reverse=True)
+        return found[0][2]
+
+    payments = payra_recent(config, "payments", now=now)
+    found = theirs(payments)
+    if found is None:
+        # Not in the shared copy - read up to 90 seconds before they paid.
+        # Remi Sampson's card payment was in Payra, and the card said it
+        # couldn't be found. The last few hours, read now.
+        fresh = payra_since(config, "payments", now - PAYRA_JUST_PAID)
+        found = theirs(fresh)
+        if found is None:
+            logging.getLogger("wilbyte.bot").info(
+                "No Payra payment for %s (%s) among %d recent and %d just read", name, amount or "any amount",
+                len(payments), len(fresh))
+    return found
+
+
+def payra_since(config: Config, kind: str, since: datetime) -> dict:
+    """Payra's `kind` changed since `since`, read now - not the shared copy.
+    {} when it can't be read."""
+    from .. import payraapi
+
+    token = str(getattr(config.secrets, "payra_api_token", "") or "").strip()
+    site = str(getattr(config.secrets, "payra_site_id", "") or "").strip()
+    if not (token and site):
+        return {}
+    found = {}
+    try:
+        with payraapi.PayraClient(token, site, timeout=60.0) as client:
+            after = payraapi.when(since)
+            for _page in range(PAYRA_RECENT_PAGES):
+                got = client.changed(kind, after)
+                for record in got.get("records") or []:
+                    one = payraapi.SLIM[kind](record)
+                    if one["id"]:
+                        found[one["id"]] = one
+                onward = str(got.get("next_updated_after") or "")
+                if not got.get("records") or not onward or onward == after:
+                    break
+                after = onward
+    except Exception as exc:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra's %s just now: %s", kind, _short(exc, 120))
+    return found
 
 
 def payra_payment_now(config: Config, payment_id: str) -> dict | None:

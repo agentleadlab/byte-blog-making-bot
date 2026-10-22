@@ -5043,3 +5043,61 @@ def test_a_spark_buyer_is_the_name_and_starts_is_the_launch(monkeypatch):
     assert fields["email"] == "everlife@example.com"
     assert fields["package"] == "Mortgage Protection - Volume" and fields["leads"] == "31-38"
     assert card["launch_iso"] == "2026-10-25", "Starts, not Paid through"
+
+
+def test_a_payment_not_in_the_shared_copy_is_read_fresh(monkeypatch):
+    """Remi Sampson paid by card and was in Payra; the shared copy, read a
+    minute before, didn't have it - "Couldn't find this payment in Payra"."""
+    from wilbyte import payraapi
+
+    remi = {"_id": "r1", "amount": 315, "status": "Captured", "customer_display": "Remi Sampson",
+            "payment_type": "card", "display_name": "Mastercard ****1111", "paid_on": "2026-10-22T14:48:00Z"}
+    asked = []
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def changed(self, kind, after):
+            asked.append(after)
+            return {"records": [remi]}
+
+    monkeypatch.setattr(payraapi, "PayraClient", Client)
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: {"old": {"id": "old"}})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    now = datetime(2026, 10, 22, 14, 50, tzinfo=timezone.utc)
+    found = jobs.payra_payment_for(config, name="Remi Sampson", amount="315.00", now=now)
+    assert found["id"] == "r1" and found["how"].startswith("Mastercard")
+    assert len(asked) == 1
+
+
+def test_the_recent_read_reaches_past_five_pages(monkeypatch):
+    from wilbyte import payraapi
+
+    pages = [{"records": [{"_id": f"p{at}", "paid_on": "2026-10-22T10:00:00Z"}], "next_updated_after": f"t{at}"}
+             for at in range(8)] + [{"records": []}]
+
+    class Client:
+        def __init__(self, *a, **k):
+            self.at = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def changed(self, kind, after):
+            self.at += 1
+            return pages[self.at - 1]
+
+    monkeypatch.setattr(payraapi, "PayraClient", Client)
+    monkeypatch.setattr(jobs, "_PAYRA_RECENT", {})
+    config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
+    assert "p7" in jobs.payra_recent(config, "payments")
