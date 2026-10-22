@@ -5346,3 +5346,38 @@ def test_more_charged_than_ryte_can_find_is_said(order, monkeypatch):
     asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
     said = [one[0] for one in order.responder.sent if "can't find" in one[0]]
     assert len(said) == 1 and "$279.45" in said[0] and "$144.90 paid for something" in said[0]
+
+
+def test_the_audit_finds_invoices_a_shared_charge_left_without_a_card(monkeypatch):
+    """"yes, check for other missed ones" - Dawson Clevenger's two, from his
+    post; Ahmed Ghazi's two from Payra's payment, each on its own card."""
+    own = {"id": "i13", "number": "INV-20313", "name": "Dawson Clevenger", "email": "dawson@example.com",
+           "total": 134.55, "notes": "Lead Type: Aged IUL - 180+ days\nStates Leads In: Idaho\n"
+                                      "Number of Requested Leads: 130", "created": "2026-10-20T14:59:00Z"}
+    ahmed = [{"id": f"a{n}", "number": f"INV-200{n}", "name": "Ahmed Ghazi", "total": total,
+              "notes": f"Lead Type: Aged FEX - 180+ days\nStates Leads In: TX\nNumber of Requested Leads: {count}",
+              "created": "2026-10-20T10:00:00Z"} for n, total, count in ((39, 225.0, 225), (40, 200.0, 200))]
+    invoices = {one["id"]: one for one in [own, *DAWSON_OTHERS, *ahmed]}
+    payments = {"pa": {"id": "pa", "customer": "Ahmed Ghazi", "amount": 425.0, "paid_on": "2026-10-21T15:00:00Z",
+                       "invoice_ids": ["a39", "a40"]}}
+    monkeypatch.setattr(jobs, "payra_kept", lambda config, kind, now=None: invoices if kind == "invoices" else payments)
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: invoices if kind == "invoices" else payments)
+    cards = [{"name": "Aged Leads - Dawson Clevenger", "url": "https://trello.com/c/ptI5Z4OV",
+              "desc": "Name: Dawson Clevenger\nPhone Number: +15555550171\nLead Type: Text-Veified Aged IUL Leads - "
+                      "Aged IUL 180+ days\nNumber of Leads Requested: 130\nStates: ID"},
+             {"name": "Aged Leads - Ahmed Ghazi", "url": "https://trello.com/c/a39",
+              "desc": "Lead Type: Aged FEX 180+\nNumber of Leads Requested: 225\nStates: TX"},
+             {"name": "Aged Leads - Ahmed Ghazi", "url": "https://trello.com/c/a40",
+              "desc": "Lead Type: Aged FEX 180+\nNumber of Leads Requested: 200\nStates: TX"}]
+    post = _message(DAWSON)
+    post.created_at = datetime(2026, 10, 21, 22, 59, tzinfo=timezone.utc)
+    since = datetime(2026, 10, 21, 4, 0, tzinfo=timezone.utc)
+    missed, lines = asyncio.run(client._audit_several(_bot(post), [post], cards, {}, since))
+    said = "\n".join(lines)
+    assert missed == 2, said
+    assert "INV-20313 ($134.55) 130 · Aged IUL - 180+ days · Idaho — <https://trello.com/c/ptI5Z4OV>" in said
+    assert "INV-20314 ($57.96) 10 · Aged IUL - 30-90 days" in said and said.count("**not on any card**") == 2
+    assert "✅ **Ahmed Ghazi** — $425.00" in said and "<https://trello.com/c/a40>" in said
+    # Its lines put on the card since: nothing missed.
+    cards[0]["desc"] += "\nAged IUL - 30-90 days: ID, TX\nAged IUL - 90-180 days: ID, OH\n160 (130 + 10 + 20)"
+    assert asyncio.run(client._audit_several(_bot(post), [post], cards, {}, since))[0] == 0

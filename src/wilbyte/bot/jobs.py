@@ -14866,7 +14866,7 @@ def order_cards_since(config: Config, since) -> list[dict]:
             continue
         if any(re.match(pattern, name, re.IGNORECASE) for pattern in _CARD_TITLE.values()):
             found.append({"id": str(one.get("id") or ""), "name": name, "closed": bool(one.get("closed")),
-                          "url": str(one.get("shortUrl") or one.get("url") or "")})
+                          "url": str(one.get("shortUrl") or one.get("url") or ""), "desc": str(one.get("desc") or "")})
     return found
 
 
@@ -15127,19 +15127,20 @@ def same_charge_said(invoice: dict) -> str:
 
 
 def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str = "", number: str = "",
-                      rest: int | None = None, paid_at=None, now=None) -> list[dict]:
+                      rest: int | None = None, paid_at=None, now=None, invoices=None, payments=None) -> list[dict]:
     """The other invoices one card charge paid besides the one its post
     names - Dawson Clevenger's $279.45 paid INV-20313, INV-20314 and
     INV-20315, and Nova posted only the first. The Payra payment's own
     invoices when it lists them; else theirs, from the last two days, whose
     totals come to the rest of the charge (`rest`, in cents). Slim invoices,
-    oldest first; [] when none are found."""
+    oldest first; [] when none are found. `invoices` and `payments` to look
+    in, by id, instead of Payra's last two days."""
     from itertools import combinations
 
     from .. import clearout, payraapi
 
     now = now or datetime.now(timezone.utc)
-    invoices = payra_recent(config, "invoices", now=now)
+    invoices = payra_recent(config, "invoices", now=now) if invoices is None else invoices
     digits = lambda one: re.sub(r"[^0-9]", "", str(one or "")).lstrip("0")  # noqa: E731
     own = digits(number)
     by_id = {str(one.get("id") or held_as): one for held_as, one in invoices.items()}
@@ -15154,7 +15155,8 @@ def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str
     if paid_at is not None and name and wanted is not None:
         paid_at = paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)
         best = None
-        for payment in payra_recent(config, "payments", now=now).values():
+        payments = payra_recent(config, "payments", now=now) if payments is None else payments
+        for payment in payments.values():
             if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
                 continue
             if payraapi._cents(payment.get("amount")) != wanted:
@@ -15189,7 +15191,10 @@ def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str
         except ValueError:
             continue
         made = made if made.tzinfo else made.replace(tzinfo=timezone.utc)
-        if now - made <= timedelta(days=2) and payraapi._cents(one.get("total")):
+        # Made in the two days before it was paid.
+        paid = paid_at or now
+        paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
+        if timedelta(hours=-1) <= paid - made <= timedelta(days=2) and payraapi._cents(one.get("total")):
             theirs.append(one)
     theirs = order(theirs)[-8:]
     for size in range(1, len(theirs) + 1):
@@ -15197,6 +15202,106 @@ def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str
             if abs(sum(payraapi._cents(one.get("total")) for one in some) - rest) <= 2 * size:
                 return list(some)
     return []
+
+
+def payra_kept(config: Config, kind: str, *, now=None) -> dict:
+    """Payra's `kind` as far back as the saved copy goes, with the last two
+    days read now over it. By id, slim."""
+    from .. import payraapi
+
+    try:
+        kept = dict(payraapi.load().get(kind) or {})
+    except Exception:
+        kept = {}
+    try:
+        kept.update(payra_recent(config, kind, now=now))
+    except Exception:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read Payra's %s now - the saved copy only", kind)
+    return kept
+
+
+def charges_of_several(config: Config, *, since, posts=(), now=None) -> list[dict]:
+    """Every card charge since then that paid more than one invoice - "check
+    for other missed ones" after Dawson Clevenger's. From Payra's payments
+    that list two invoices or more, and from payment posts charged more than
+    the invoice they show (`posts`: {"name", "email", "amount", "number",
+    "total", "paid_at", "link"}, totals in cents). [{"name", "amount",
+    "paid_at", "link", "invoices": [slim], "unplaced": cents}], newest last."""
+    from .. import payraapi
+
+    now = now or datetime.now(timezone.utc)
+    since = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+    invoices = payra_kept(config, "invoices", now=now)
+    payments = payra_kept(config, "payments", now=now)
+    digits = lambda one: re.sub(r"[^0-9]", "", str(one or "")).lstrip("0")  # noqa: E731
+    by_id = {str(one.get("id") or held_as): one for held_as, one in invoices.items()}
+    by_number = {digits(one.get("number")): one for one in invoices.values() if one.get("number")}
+    found, seen = [], set()
+
+    def when(stamp):
+        try:
+            got = datetime.fromisoformat(str(stamp or "").replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return got if got.tzinfo else got.replace(tzinfo=timezone.utc)
+
+    def add(entry):
+        key = tuple(sorted(digits(one.get("number")) or str(one.get("id")) for one in entry["invoices"]))
+        if key in seen and not entry.get("unplaced"):
+            return
+        seen.add(key)
+        found.append(entry)
+
+    for payment in payments.values():
+        paid = when(payment.get("paid_on"))
+        if payment.get("refund") or paid is None or paid < since:
+            continue
+        named = [by_id.get(str(one)) for one in [*(payment.get("invoice_ids") or []), payment.get("invoice_id")] if one]
+        named.append(by_number.get(digits(payment.get("invoice_number"))))
+        named = list({str(one.get("id") or one.get("number")): one for one in named if one is not None}.values())
+        if len(named) >= 2:
+            add({"name": str(payment.get("customer") or named[0].get("name") or ""), "amount": payment.get("amount"),
+                 "paid_at": paid, "link": "", "unplaced": 0,
+                 "invoices": sorted(named, key=lambda one: digits(one.get("number")).zfill(12))})
+    for post in posts or ():
+        charged, total = post.get("amount_cents"), post.get("total")
+        if charged is None or total is None or charged - total <= 100:
+            continue
+        others = payra_same_charge(config, name=post.get("name", ""), email=post.get("email", ""),
+                                   amount=post.get("amount", ""), number=post.get("number", ""),
+                                   rest=charged - total, paid_at=post.get("paid_at"), now=now,
+                                   invoices=invoices, payments=payments)
+        own = by_number.get(digits(post.get("number")))
+        covered = sum(payraapi._cents(one.get("total")) or 0 for one in others)
+        add({"name": post.get("name", ""), "amount": charged / 100, "paid_at": post.get("paid_at"),
+             "link": post.get("link", ""), "invoices": ([own] if own else []) + others,
+             "unplaced": max(charged - total - covered, 0) if charged - total - covered > 2 * (len(others) + 1) else 0})
+    found.sort(key=lambda one: one.get("paid_at") or since)
+    return found
+
+
+def invoice_on_a_card(invoice: dict, client_name: str, cards: list[dict]) -> dict | None:
+    """The board card an invoice's order is on - theirs, with its count and
+    (aged) its age written on it - or None. `cards` with their "desc"."""
+    from .. import clearout
+
+    form = invoice_form(invoice_said(invoice) or "")
+    count = re.search(r"\d[\d,]*", str(form.get("leads") or "")) or re.search(
+        r"×\s*(\d[\d,]*)", invoice_said(invoice) or "")
+    count = count.group(count.lastindex or 0) if count else ""
+    bucket = _AGE_BUCKET.search(str(form.get("package") or ""))
+    for card in cards:
+        who = re.split(r"\s+[-–—]\s+", str(card.get("name") or ""), maxsplit=1)[-1]
+        if clearout.name_match(client_name, who) < 2:
+            continue
+        desc = str(card.get("desc") or "")
+        if count and not re.search(rf"(?<![\d,]){re.escape(count)}(?![\d,])", desc):
+            continue
+        flat = lambda said: re.sub(r"\s+", "", str(said)).replace("–", "-")  # noqa: E731
+        if bucket and flat(bucket.group(0)) not in flat(desc):
+            continue
+        return card
+    return None
 
 
 def _other_product(paid_for: str, invoice: str) -> bool:

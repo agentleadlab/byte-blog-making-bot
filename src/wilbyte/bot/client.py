@@ -12283,6 +12283,71 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
     return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
 
 
+async def _audit_several(bot, posts, cards: list, held: dict, since) -> tuple[int, list[str]]:
+    """(how many invoices have no card, the audit's lines) for card charges
+    that paid more than one invoice - Dawson Clevenger's $279.45 paid three,
+    Nova posted one, and two never got a card. Each invoice the charge paid,
+    and the card it's on."""
+    from .. import ordercards
+
+    looked = []
+    for post in posts:
+        said = _all_of_it(post)
+        charged, total = ordercards.post_charge(said)
+        if charged is None or total is None or charged - total <= 100:
+            continue
+        looked.append({"name": (_PAID_NAME.search(said) or [None, ""])[1].strip(" *"),
+                       "email": (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *"),
+                       "amount": (_AMOUNT.search(said) or [None, ""])[1], "amount_cents": charged, "total": total,
+                       "number": ordercards.post_invoice(said)[0], "paid_at": post.created_at,
+                       "link": str(getattr(post, "jump_url", "") or "")})
+    try:
+        found = await asyncio.to_thread(partial(jobs.charges_of_several, bot.config, since=since, posts=looked))
+    except Exception as exc:
+        log.warning("Couldn't look for charges that paid several invoices", exc_info=True)
+        return 0, ["", f"⚠ Couldn't check for one charge paying several invoices: {_readable(exc)}"]
+    if not found:
+        return 0, ["", "💳 No charge paid more than one invoice."]
+    noted = {}
+    for order in held.values():
+        if isinstance(order, dict) and order.get("status") == "made":
+            for one in [order.get("invoice_id"), *(order.get("also_invoices") or ())]:
+                if one:
+                    noted[re.sub(r"[^0-9]", "", str(one)).lstrip("0")] = order
+    missed, lines = 0, ["", "**💳 One charge, several invoices — each invoice and its card:**"]
+    for entry in found:
+        amount = entry.get("amount")
+        money = f"${float(amount):,.2f}" if isinstance(amount, (int, float)) else str(amount or "")
+        head = f"**{entry['name'] or '?'}** — {money}" + (f" <{entry['link']}>" if entry.get("link") else "")
+        bits = []
+        for invoice in entry["invoices"]:
+            form = jobs.invoice_form(jobs.invoice_said(invoice) or "")
+            what = " · ".join(bit for bit in (form.get("leads"), form.get("package"), form.get("states")) if bit)
+            total = invoice.get("total")
+            label = f"{invoice.get('number') or invoice.get('id')}" + (
+                f" (${float(total):,.2f})" if isinstance(total, (int, float)) else "")
+            card = jobs.invoice_on_a_card(invoice, entry["name"], cards) if form or "×" in (
+                jobs.invoice_said(invoice) or "") else None
+            order = noted.get(re.sub(r"[^0-9]", "", str(invoice.get("number") or "")).lstrip("0"))
+            if card is not None:
+                bits.append(f"  ✅ {label} {what} — <{card.get('url', '')}>")
+            elif order is not None and order.get("also_invoices"):
+                bits.append(f"  ✅ {label} {what} — a line on <{order.get('url', '')}>")
+            elif not form:
+                bits.append(f"  ❓ {label} — no note on the invoice to match a card by: check by hand")
+            else:
+                missed += 1
+                bits.append(f"  ❌ {label} {what} — **not on any card**")
+        if entry.get("unplaced"):
+            missed += 1
+            bits.append(f"  ❌ ${entry['unplaced'] / 100:,.2f} of the charge — **no invoice found for it** in Payra")
+        lines += [("❌ " if any("❌" in bit for bit in bits) else "✅ ") + head, *bits]
+    if missed:
+        lines.insert(1, f"🚨 **{missed} invoice(s) paid in a shared charge have no card** — their leads may not "
+                        f"have gone out.")
+    return missed, lines
+
+
 async def _order_audit(bot, responder: Responder, said: str) -> None:
     """"did ryte created all of the cards that he can create already? did
     he not miss anything?" - every payment posted in #new-payment, and its
@@ -12323,8 +12388,10 @@ async def _order_audit(bot, responder: Responder, said: str) -> None:
                        ("ok", "**Done:**")):
         if sorted_out[how]:
             lines += ["", title] + sorted_out[how]
-    if not sorted_out["missing"]:
+    several = await _audit_several(bot, posts, cards, held, since + timedelta(days=2))
+    if not sorted_out["missing"] and not several[0]:
         lines.insert(1, "✅ Nothing missed.")
+    lines += several[1]
     chunk = ""
     for line in lines:
         if len(chunk) + len(line) > 1900:
