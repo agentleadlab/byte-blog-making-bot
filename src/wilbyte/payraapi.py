@@ -42,6 +42,25 @@ class PayraError(RuntimeError):
     pass
 
 
+def _refused(got) -> PayraError:
+    """A 401/403, with what Payra itself said - "Payra didn't accept the
+    token" for a whole morning, when nobody had changed it, said nothing
+    about why. A web page back (a firewall's) is no verdict on the token."""
+    text = " ".join(str(getattr(got, "text", "") or "").split())
+    try:
+        body = got.json()
+        said = "; ".join(str(body.get(key)) for key in ("message", "error", "errors", "code")
+                         if isinstance(body, dict) and body.get(key)) or text
+    except Exception:
+        said = text
+    said = said[:200]
+    if "<html" in text.casefold() or "cloudflare" in text.casefold():
+        return PayraError(f"Payra's site blocked Ryte's connection (HTTP {got.status_code}) - a firewall page, "
+                          "not a verdict on the token.")
+    return PayraError(f"Payra didn't accept the token (HTTP {got.status_code}"
+                      + (f": {said}" if said else "") + ") - check PAYRA_API_TOKEN in .env.")
+
+
 def when(moment: datetime) -> str:
     """A time as Payra takes it: "2026-08-26T23:02:07.316Z"."""
     moment = moment.astimezone(timezone.utc)
@@ -75,7 +94,7 @@ class PayraClient:
         if got.status_code == 404:
             return None
         if got.status_code in (401, 403):
-            raise PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env.")
+            raise _refused(got)
         if got.status_code >= 400:
             raise PayraError(f"Payra said HTTP {got.status_code}")
         body = got.json()
@@ -87,7 +106,7 @@ class PayraClient:
         url = f"{BASE}/site/{self.site_id}/{kind}?updated_after={quote(after, safe=':')}"
         got = self._http.get(url)
         if got.status_code in (401, 403):
-            raise PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env.")
+            raise _refused(got)
         if got.status_code >= 400:
             try:
                 said = "; ".join(str(one) for one in (got.json().get("errors") or []))

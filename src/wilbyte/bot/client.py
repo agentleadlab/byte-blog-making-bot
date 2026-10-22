@@ -14004,13 +14004,14 @@ async def payra_loop(bot: "WilByteBot") -> None:
             raise
         except Exception as exc:
             log.warning("Couldn't read Payra; trying again shortly", exc_info=True)
-            if "accept the token" in str(exc) and not getattr(bot, "payra_refused", None):
+            if (("accept the token" in str(exc) or "blocked Ryte" in str(exc))
+                    and not getattr(bot, "payra_refused", None)):
                 bot.payra_refused = datetime.now(timezone.utc)
-                await _payra_token_said(bot, working=False)
+                await _payra_token_said(bot, working=False, why=str(exc))
         await asyncio.sleep(PAYRA_SYNC_SECONDS)
 
 
-async def _payra_token_said(bot, *, working: bool) -> None:
+async def _payra_token_said(bot, *, working: bool, why: str = "") -> None:
     """Payra refusing RYTE's token, said once with Franklin tagged - from
     7:40 on 10/22 it was only in the log, and every bank-or-card check and
     invoice note lookup quietly found nothing. And said again when it works."""
@@ -14018,10 +14019,13 @@ async def _payra_token_said(bot, *, working: bool) -> None:
     if responder is None:
         return
     said = ("✅ Payra is reading again - bank/card checks and invoice notes are back." if working else
-            _card_ping(bot) + "🚨 **Payra stopped accepting Ryte's API token.** Until it's replaced I can't tell bank "
-            "from card, read invoice notes for aged states, or match payments - aged cards will say \"Couldn't find "
-            "this payment in Payra\". Make a new API token in Payra, put it in `.env` as `PAYRA_API_TOKEN`, and "
-            "restart Ryte.")
+            _card_ping(bot) + "🚨 **Payra is refusing Ryte.** Until it reads again I can't tell bank from card, "
+            "read invoice notes for aged states, or match payments - aged cards will say \"Couldn't find this "
+            f"payment in Payra\".\n-# What Payra said: {why or 'nothing'}\n"
+            + ("A firewall page, not the token: try again later, or from another connection."
+               if "blocked Ryte" in why else
+               "Check the API token in Payra is still active (or make a new one), put it in `.env` as "
+               "`PAYRA_API_TOKEN`, and restart Ryte."))
     try:
         await responder.send(said)
     except Exception:

@@ -970,3 +970,22 @@ def test_the_designed_email_is_read_off_gmail():
     payload = {"mimeType": "multipart/alternative", "parts": [part("text/plain", "Total Paid $1"),
                                                               part("text/html", "<b>Total Paid</b> $1")]}
     assert gmail._first_part(payload, "text/html") == "<b>Total Paid</b> $1"
+
+
+def test_a_refusal_says_what_payra_said():
+    """"i dont think we changed payra's api" - the refusal says Payra's own
+    reason, and a firewall's page isn't blamed on the token."""
+    from types import SimpleNamespace
+
+    import pytest
+
+    said = payraapi._refused(SimpleNamespace(status_code=401, text='{"message":"Token expired"}',
+                                             json=lambda: {"message": "Token expired"}))
+    assert "Token expired" in str(said) and "HTTP 401" in str(said) and "accept the token" in str(said)
+
+    def not_json():
+        raise ValueError("no")
+
+    blocked = payraapi._refused(SimpleNamespace(status_code=403, text="<html>Attention Required! | Cloudflare</html>",
+                                                json=not_json))
+    assert "blocked Ryte" in str(blocked) and "accept the token" not in str(blocked)
