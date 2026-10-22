@@ -13995,11 +13995,35 @@ async def payra_loop(bot: "WilByteBot") -> None:
             counts = await asyncio.to_thread(jobs.payra_sync, bot.config)
             if any(counts.values()):
                 log.info("Payra: %s", ", ".join(f"{n} {kind}" for kind, n in counts.items()))
+            if getattr(bot, "payra_refused", None):
+                bot.payra_refused = None
+                await _payra_token_said(bot, working=True)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             log.warning("Couldn't read Payra; trying again shortly", exc_info=True)
+            if "accept the token" in str(exc) and not getattr(bot, "payra_refused", None):
+                bot.payra_refused = datetime.now(timezone.utc)
+                await _payra_token_said(bot, working=False)
         await asyncio.sleep(PAYRA_SYNC_SECONDS)
+
+
+async def _payra_token_said(bot, *, working: bool) -> None:
+    """Payra refusing RYTE's token, said once with Franklin tagged - from
+    7:40 on 10/22 it was only in the log, and every bank-or-card check and
+    invoice note lookup quietly found nothing. And said again when it works."""
+    responder = _order_responder(bot)
+    if responder is None:
+        return
+    said = ("✅ Payra is reading again - bank/card checks and invoice notes are back." if working else
+            _card_ping(bot) + "🚨 **Payra stopped accepting Ryte's API token.** Until it's replaced I can't tell bank "
+            "from card, read invoice notes for aged states, or match payments - aged cards will say \"Couldn't find "
+            "this payment in Payra\". Make a new API token in Payra, put it in `.env` as `PAYRA_API_TOKEN`, and "
+            "restart Ryte.")
+    try:
+        await responder.send(said)
+    except Exception:
+        log.warning("Couldn't say Payra refused the token", exc_info=True)
 
 
 def _keep_payment(message_id, paid) -> None:

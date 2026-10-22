@@ -12972,26 +12972,53 @@ def read_team_request(config: Config, *, asker: str, asked: list[str], text: str
             "title": title or "Team request"}
 
 
-def _tasks_list(client, config):
-    """(card id, the checklist team requests go on - Concerns) - made if it
-    isn't there."""
+#: Items a checklist holds before the next one's started - Trello refuses
+#: past 200 ("CHECKLIST_TOO_MANY_CHECK_ITEMS"), and every team request since
+#: Concerns filled up was lost to it.
+TASKS_PER_LIST = 195
+
+
+def _tasks_list(client, config, *, full: bool = False):
+    """(card id, the checklist team requests go on - Concerns, or "Concerns
+    (2)", "(3)"... once one's full) - made if there's no room. `full`: the
+    newest one was refused for being full, whatever its count says."""
     from .. import teamtasks
 
     card, _lists = _ryte_card(client, config)
+    base = teamtasks.TASKS_LIST.casefold()
+    ours = []
     for one in client.card_checklists(str(card["id"])):
-        if str(one.get("name") or "").strip().casefold() == teamtasks.TASKS_LIST.casefold():
-            return str(card["id"]), one
+        name = " ".join(str(one.get("name") or "").split()).casefold()
+        if name == base:
+            ours.append((1, one))
+        else:
+            numbered = re.fullmatch(re.escape(base) + r"\s*\((\d+)\)", name)
+            if numbered:
+                ours.append((int(numbered.group(1)), one))
+    ours.sort(key=lambda pair: pair[0])
+    if ours:
+        number, newest = ours[-1]
+        if not full and len(newest.get("checkItems") or []) < TASKS_PER_LIST:
+            return str(card["id"]), newest
+        return str(card["id"]), client.create_checklist(str(card["id"]), f"{teamtasks.TASKS_LIST} ({number + 1})")
     return str(card["id"]), client.create_checklist(str(card["id"]), teamtasks.TASKS_LIST)
 
 
 def team_task_add(config: Config, task: dict) -> str:
-    """The request as an item on the Ryte Checklist, under Concerns. Its item id."""
-    from .. import teamtasks
+    """The request as an item on the Ryte Checklist, under Concerns - the
+    next Concerns checklist when that one's full. Its item id."""
+    from .. import teamtasks, trello
 
     client = open_trello(config)
     try:
         _card_id, tasks = _tasks_list(client, config)
-        item = client.add_check_item(str(tasks["id"]), teamtasks.item_name(task))
+        try:
+            item = client.add_check_item(str(tasks["id"]), teamtasks.item_name(task))
+        except trello.TrelloError as exc:
+            if "TOO_MANY_CHECK_ITEMS" not in str(exc):
+                raise
+            _card_id, tasks = _tasks_list(client, config, full=True)
+            item = client.add_check_item(str(tasks["id"]), teamtasks.item_name(task))
         return str(item["id"])
     finally:
         client.close()

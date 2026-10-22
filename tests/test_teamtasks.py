@@ -467,3 +467,67 @@ def test_the_6pm_card_comment_is_stopped():
 def test_the_nudges_are_stopped():
     """"it should also stop doing this now" - Still open with the team."""
     assert client.TEAM_NUDGES is False
+
+
+def test_a_full_concerns_list_goes_on_to_the_next(monkeypatch):
+    """CHECKLIST_TOO_MANY_CHECK_ITEMS: every team request since Concerns hit
+    Trello's 200 was lost. The next one goes on "Concerns (2)"."""
+    from tests.test_setupcheck import Board
+    from wilbyte import trello
+
+    board = Board(concerns=[f"old {i}" for i in range(jobs.TASKS_PER_LIST)])
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b", trello_franklin=""))
+    task = {"title": "Ian Nye - cap 5", "assignees": [{"id": "1", "name": "Nicole"}], "asker": "Faith",
+            "made": "2026-10-22T14:00+00:00"}
+    first = jobs.team_task_add(config, task)
+    second = jobs.team_task_add(config, dict(task, title="Drake Boren - states"))
+    named = "Concerns Needs to Be Addressed (2)"
+    assert [one["id"] for one in board._list(named)["checkItems"]] == [first, second]
+
+    # Trello says full before the count does: on to the next all the same.
+    board = Board(concerns=["one"])
+    adding = board.add_check_item
+
+    def refusing(list_id, name, checked=False):
+        if list_id == "concerns":
+            raise trello.TrelloError('POST /checklists/x/checkItems -> HTTP 403: {"error":"CHECKLIST_TOO_MANY_CHECK_ITEMS"}')
+        return adding(list_id, name, checked)
+
+    board.add_check_item = refusing
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    item = jobs.team_task_add(config, task)
+    assert [one["id"] for one in board._list(named)["checkItems"]] == [item]
+
+
+def test_payra_refusing_the_token_is_said_once_and_its_return_too(monkeypatch):
+    """From 7:40 on 10/22 Payra refused Ryte's token and it was only in the log."""
+    import asyncio as _asyncio
+
+    from wilbyte import payraapi
+
+    said = []
+    runs = iter([payraapi.PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env."),
+                 payraapi.PayraError("Payra didn't accept the token - check PAYRA_API_TOKEN in .env."),
+                 {"payments": 1}])
+
+    def syncing(config):
+        got = next(runs)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    class Responder:
+        async def send(self, text):
+            said.append(text)
+
+    closed = iter([False, False, False, True])
+    bot = SimpleNamespace(config=SimpleNamespace(secrets=SimpleNamespace(discord_notify_user_id="42")),
+                          is_closed=lambda: next(closed))
+    monkeypatch.setattr(jobs, "payra_sync", syncing)
+    monkeypatch.setattr(client, "PAYRA_SYNC_SECONDS", 0)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    _asyncio.run(client.payra_loop(bot))
+    assert len(said) == 2
+    assert said[0].startswith("<@42> ") and "PAYRA_API_TOKEN" in said[0]
+    assert "reading again" in said[1]
