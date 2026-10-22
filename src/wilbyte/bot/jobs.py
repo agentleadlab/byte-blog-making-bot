@@ -13243,6 +13243,53 @@ def _starts_on(text: str):
         return None
 
 
+_DISCORD_TIME = re.compile(r"<t:(-?\d{1,12})(?::([tTdDfFR]))?>")
+
+
+def discord_times(text: str, timezone_name: str = "America/New_York") -> str:
+    """Discord's own dates - "<t:1792900800:D>", which the app shows as
+    October 25, 2026 - written out. Capture Info's Spark posts came with
+    them, and FND Life's "Starts" wasn't read as a date at all."""
+    from zoneinfo import ZoneInfo
+
+    try:
+        zone = ZoneInfo(timezone_name or "America/New_York")
+    except Exception:
+        zone = ZoneInfo("America/New_York")
+
+    def written(found):
+        try:
+            when = datetime.fromtimestamp(int(found.group(1)), tz=timezone.utc).astimezone(zone)
+        except (OverflowError, OSError, ValueError):
+            return found.group(0)
+        day = f"{when:%B} {when.day}, {when.year}"
+        if found.group(2) in ("t", "T"):
+            return f"{when:%I:%M %p}".lstrip("0")
+        if found.group(2) in ("f", "F"):
+            return f"{day} {when:%I:%M %p}".replace(" 0", " ")
+        return day
+
+    return _DISCORD_TIME.sub(written, str(text or ""))
+
+
+def spark_pool(text: str) -> dict:
+    """A Spark pool membership's own terms: {"pool": "IUL - Volume", "leads":
+    "38-50"} - the pool bought and the leads a week it expects. {} when it
+    isn't a Spark pool member post. FND Life's $700/wk went out as "Spark
+    Standard", "No cap (ad spend)" - read as Phoenix-style ad spend."""
+    said = str(text or "")
+    if not (re.search(r"pool\s+member", said, re.IGNORECASE) and re.search(r"\bspark\b", said, re.IGNORECASE)):
+        return {}
+    found = {}
+    pool = re.search(r"^\W*pool\b(?!\s*member)\W*(.+)$", said, re.IGNORECASE | re.MULTILINE)
+    if pool and pool.group(1).strip():
+        found["pool"] = " ".join(pool.group(1).split())
+    weekly = re.search(r"expected\s+leads\s*/\s*w(?:ee)?k\W*(\d+)(?:\s*(?:[-–—]|to)\s*(\d+))?", said, re.IGNORECASE)
+    if weekly:
+        found["leads"] = "-".join(one for one in weekly.groups() if one)
+    return found
+
+
 def post_form(text: str) -> dict:
     """A payment post's own lines - "EMAIL: ...", "PHONE: ...", "STATES:
     ...", "LEADS: ..." - as {field: value}, the first post in the text only
@@ -13628,6 +13675,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     # Nova's posts quote the invoice's notes: "> Same states" went on a card
     # as the States, quote mark and all.
     text = re.sub(r"^(\s*)>+[ \t]?", r"\1", str(text or ""), flags=re.MULTILINE)
+    zone = getattr(getattr(config, "schedule", None), "timezone", "") or "America/New_York"
+    text = discord_times(text, zone)
+    notes = [discord_times(one, zone) for one in notes or ()]
     config.secrets.require("anthropic_api_key")
     client = Anthropic(api_key=config.secrets.anthropic_api_key)
     properties = {
@@ -13751,7 +13801,13 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     if on_the_post and not any(str(one).startswith("Payra invoice note:") for one in notes or ()):
         notes = [f"Payra invoice note: {on_the_post}", *(notes or ())]
     fields = order_fields(got, notes)
-    if fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
+    spark = spark_pool(text)
+    if spark:
+        # A pool membership buys leads a week from a pool, not ad spend.
+        fields["package"] = spark.get("pool") or fields["package"]
+        if fields.get("leads") == NO_CAP or not re.search(r"\d", str(fields.get("leads") or "")):
+            fields["leads"] = spark.get("leads", "")
+    elif fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
         # Ad spend: the agency the order names, and Standard or Plus.
         paid = re.search(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
         named = ad_spend_package(text, paid.group(1) if paid else "")

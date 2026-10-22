@@ -4973,3 +4973,42 @@ def test_an_aged_order_made_before_its_tag_isnt_tagged(order, monkeypatch):
     asyncio.run(client._order_sweep(_bot(message)))
     assert ordercards.load()["950"]["status"] == "made"
     assert not [one for one, _v in order.responder.sent if f"<@{FRANKLIN}>" in str(one)]
+
+
+def test_a_spark_pool_membership_isnt_ad_spend_and_its_discord_dates_are_read(monkeypatch):
+    """FND Life's second pool: "Spark Standard", "No cap (ad spend)" and no
+    launch date - held for "the order doesn't say Phoenix / ad spend". The
+    post's dates came as Discord's <t:1792900800:D>."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "FND Life", "email": "join@example.com", "states": "AL, AZ, AR",
+        "package": "Spark Standard", "leads": "No cap (ad spend)"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/22 01:50AM] Capture Info: 🛒 New lead pool member on Spark\n"
+            "IUL - Volume — $700/wk · pool membership\n"
+            "A buyer just joined and paid for your pool on Spark.\nBuyer FND Life\nPool IUL - Volume\n"
+            "Order $700/wk · pool membership\nCPL range $14–$18\nExpected leads / wk 38–50\n"
+            "Starts <t:1792900800:D>\nPaid through <t:1793505600:D>\nStates AL, AZ, AR\n"
+            "Buyer email join@example.com")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 22),
+                           notes=["Purchased on Spark - pool membership.\nStarts - <t:1792900800:D>"])
+    fields = card["fields"]
+    assert fields["package"] == "IUL - Volume" and fields["leads"] == "38-50" and fields["agency"] == "Spark"
+    assert card["launch_iso"] == "2026-10-25"
+    assert "<t:" not in card["desc"] and "October 25, 2026" in card["desc"]
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 22))
+    assert not any("ad spend" in one or "Launch" in one for one in wrong), wrong
+
+
+def test_discord_dates_are_written_out():
+    assert jobs.discord_times("Starts <t:1792900800:D>") == "Starts October 25, 2026"
+    assert jobs.discord_times("at <t:1792900800:t>") == "at 12:00 AM"
+    assert jobs.discord_times("no date here") == "no date here"

@@ -10334,7 +10334,8 @@ def _spark_note(message) -> str:
             name = " ".join(str(getattr(field, "name", "") or "").split())
             if name.casefold() in _SPARK_KEPT:
                 lines.append(f"{name} - {' '.join(str(getattr(field, 'value', '') or '').split())}")
-    return "\n".join(lines)
+    zone = "America/New_York"
+    return jobs.discord_times("\n".join(lines), zone)
 
 
 async def _spark_from_post(bot, message, *, wait: float | None = None, catching_up: bool = False) -> str:
