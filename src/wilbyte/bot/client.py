@@ -12287,30 +12287,51 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
 DOUBLE_CHARGE_GAP = timedelta(minutes=10)
 
 
-def _audit_doubles(posts, zone=timezone.utc) -> list[str]:
+def _audit_doubles(posts, zone=timezone.utc, held: dict | None = None) -> list[str]:
     """The audit's lines for charges that look made twice - Gauri Beaston's
-    $336.38 and $336.36 at 6:27pm. A list to look at; [] when none."""
-    from .. import clearout, payraapi
+    $336.38 and $336.36 at 6:27pm. Not two that say they're two orders: a
+    different product (Matthew Odierno's $1,035 Trucker IUL and $1,035 Ad
+    Spend) or a different invoice (Wiser Charles' INV-20057 and INV-20058).
+    One line for each lot. A list to look at; [] when none."""
+    from .. import clearout, ordercards, payraapi
 
-    seen, found = [], []
+    held = held or {}
+    groups = []
     for post in posts:
         said = _all_of_it(post)
         name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
         cents = payraapi._cents((_AMOUNT.search(said) or [None, ""])[1])
         if not name or not cents:
             continue
-        for other_name, other_cents, other in seen:
-            if clearout.name_match(name, other_name) >= 2 and abs(cents - other_cents) <= 100 \
-                    and abs(post.created_at - other.created_at) <= DOUBLE_CHARGE_GAP:
-                found.append(f"• **{name}** — ${other_cents / 100:,.2f} at "
-                             f"{other.created_at.astimezone(zone):%-I:%M%p %m/%d}".replace("AM", "am").replace("PM", "pm")
-                             + f" and ${cents / 100:,.2f} at {post.created_at.astimezone(zone):%-I:%M%p}".lower()
-                             + f": <{other.jump_url}> <{post.jump_url}>")
-        seen.append((name, cents, post))
+        product = " ".join(((_PRODUCT.search(said) or [None, ""])[1]).split()).casefold()
+        invoice = ordercards.post_invoice(said)[0] or str((held.get(str(post.id)) or {}).get("invoice_id") or "")
+        one = {"name": name, "cents": cents, "product": product, "invoice": invoice, "post": post}
+        for group in groups:
+            last = group[-1]
+            if clearout.name_match(name, last["name"]) < 2 or abs(cents - last["cents"]) > 100 \
+                    or abs(post.created_at - last["post"].created_at) > DOUBLE_CHARGE_GAP:
+                continue
+            if product and last["product"] and product != last["product"]:
+                continue
+            if invoice and last["invoice"] and invoice != last["invoice"]:
+                continue
+            group.append(one)
+            break
+        else:
+            groups.append([one])
+    found = []
+    for group in groups:
+        if len(group) < 2:
+            continue
+        first = group[0]["post"].created_at.astimezone(zone)
+        found.append(f"• **{group[0]['name']}** — {len(group)} charges on {first:%m/%d}: " + ", ".join(
+            f"${one['cents'] / 100:,.2f} at {one['post'].created_at.astimezone(zone):%-I:%M%p}".replace(
+                "AM", "am").replace("PM", "pm") for one in group)
+            + " " + " ".join(f"<{one['post'].jump_url}>" for one in group))
     if not found:
         return []
-    return ["", "**⚠ Charged twice? Same person, about the same amount, minutes apart — check Payra before both "
-            "are treated as orders:**", *found]
+    return ["", "**⚠ Charged twice? Same person, same product, about the same amount, minutes apart — check "
+            "Payra before both are treated as orders:**", *found]
 
 
 async def _audit_several(bot, posts, cards: list, held: dict, since) -> tuple[int, list[str]]:
@@ -12422,7 +12443,7 @@ async def _order_audit(bot, responder: Responder, said: str) -> None:
     if not sorted_out["missing"] and not several[0]:
         lines.insert(1, "✅ Nothing missed.")
     lines += several[1]
-    lines += _audit_doubles(posts, zone)
+    lines += _audit_doubles(posts, zone, held)
     chunk = ""
     for line in lines:
         if len(chunk) + len(line) > 1900:

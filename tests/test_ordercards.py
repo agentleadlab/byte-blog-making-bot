@@ -5421,3 +5421,16 @@ def test_the_audit_names_a_charge_that_looks_made_twice():
     assert said.count("**Gauri Beaston**") == 1 and "$336.38" in said and "$336.36" in said
     assert "Somebody Else" not in said and "$289.80" not in said
     assert client._audit_doubles(posts[2:]) == []
+    # Bram Gutierrez's three: one line. Matthew Odierno's two products and
+    # Wiser Charles' two invoices: two orders, not named.
+    bram = [post(10 + at, "New Payment | Payra\nNAME: Bram Gutierrez\nAMOUNT: $298.08\nPRODUCT: Trucker", minute)
+            for at, minute in enumerate((44, 46, 47))]
+    said = "\n".join(client._audit_doubles(bram))
+    assert said.count("Bram Gutierrez") == 1 and "3 charges" in said
+    odierno = [post(20, "New Payment | Payra\nNAME: Matthew Odierno\nAMOUNT: $1035.00\nPRODUCT: Trucker IUL", 28),
+               post(21, "New Payment | Payra\nNAME: Matthew Odierno\nAMOUNT: $1035.00\nPRODUCT: Ad Spend", 32)]
+    assert client._audit_doubles(odierno) == []
+    wiser = [post(30, "New Payment | Payra\nNAME: Wiser Charles\nAMOUNT: $103.5\nPRODUCT: Aged Leads (VET)", 35),
+             post(31, "New Payment | Payra\nNAME: Wiser Charles\nAMOUNT: $103.5\nPRODUCT: Aged Leads (VET)", 38)]
+    assert client._audit_doubles(wiser, held={"30": {"invoice_id": "i57"}, "31": {"invoice_id": "i58"}}) == []
+    assert len(client._audit_doubles(wiser)) == 3
