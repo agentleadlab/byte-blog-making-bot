@@ -5229,3 +5229,120 @@ def test_an_overflow_order_is_a_new_agents_card_on_aged_leads(monkeypatch):
                                                            order_aged_list=""))
     got = jobs.order_card_make(board_config, "fresh", card)
     assert made == [("a", "bottom")] and got["list"] == "Aged Leads Order Done"
+
+
+
+DAWSON = ("[10/21 06:59PM] Nova: @here\nNew Payment | Payra\nNAME: Dawson Clevenger\nEMAIL: dawson@example.com\n"
+          "PHONE: +15555550171\nAMOUNT: $279.45\nPRODUCT: Text-Veified Aged IUL Leads\n"
+          "INVOICE: INV-20313 · card •••• 8002 · 10/21/2026 5:59 PM\n**Subtotal:** $130.00\n"
+          "**Automatic Dual Pricing:** $4.55\n**Total:** $134.55\n**Notes:**\n> Name: Dawson Clevenger\n"
+          "> Email: dawson@example.com\n> Phone Number: +15555550171\n"
+          "> Lead Type: Aged IUL - 180+ days [AGED - $1/Lead]\n> States Leads In: Idaho\n"
+          "> Number of Requested Leads: 130\n**Internal Notes:**\n> (none)")
+
+DAWSON_OTHERS = [
+    {"id": "i14", "number": "INV-20314", "name": "Dawson Clevenger", "email": "dawson@example.com", "total": 57.96,
+     "notes": "Name: Dawson Clevenger\nLead Type: Aged IUL - 30-90 days [AGED - $8/Lead]\n"
+              "States Leads In: Idaho, texas, michigan, ohio, virginia, nevada, minnesota\n"
+              "Number of Requested Leads: 10", "created": "2026-10-20T15:00:00Z"},
+    {"id": "i15", "number": "INV-20315", "name": "Dawson Clevenger", "email": "dawson@example.com", "total": 86.94,
+     "notes": "Name: Dawson Clevenger\nLead Type: Aged IUL - 90-180 days [AGED - $6/Lead]\n"
+              "States Leads In: Idaho, ohio, michigan, minnesota, Nevada, Texas, Virginia\n"
+              "Number of Requested Leads: 20", "created": "2026-10-20T15:01:00Z"},
+]
+
+
+def test_a_charge_bigger_than_its_invoice_is_seen():
+    assert ordercards.post_charge(DAWSON) == (27945, 13455)
+    assert ordercards.post_charge("AMOUNT: $152.14\n**Subtotal:** $147.00\n**Total:** $152.14") == (15214, 15214)
+    assert ordercards.post_charge("AMOUNT: $50") == (5000, None)
+
+
+def test_the_other_invoices_one_charge_paid_are_found(monkeypatch):
+    now = datetime(2026, 10, 21, 23, 5, tzinfo=timezone.utc)
+    own = {"id": "i13", "number": "INV-20313", "name": "Dawson Clevenger", "email": "dawson@example.com",
+           "total": 134.55, "notes": "Lead Type: Aged IUL - 180+ days", "created": "2026-10-20T14:59:00Z"}
+    stranger = {"id": "x", "number": "INV-20316", "name": "Somebody Else", "total": 57.96,
+                "notes": "x", "created": "2026-10-20T15:00:00Z"}
+    invoices = {one["id"]: one for one in [own, *DAWSON_OTHERS, stranger]}
+    payments = {"p": {"id": "p", "customer": "Dawson Clevenger", "amount": 279.45,
+                      "paid_on": "2026-10-21T22:59:00Z", "invoice_ids": ["i13", "i14", "i15"]}}
+    monkeypatch.setattr(jobs, "payra_recent", lambda config, kind, now=None: invoices if kind == "invoices" else payments)
+    paid_at = datetime(2026, 10, 21, 22, 59, tzinfo=timezone.utc)
+    got = jobs.payra_same_charge(CONFIG, name="Dawson Clevenger", email="dawson@example.com", amount="279.45",
+                                 number="INV-20313", rest=27945 - 13455, paid_at=paid_at, now=now)
+    assert [one["number"] for one in got] == ["INV-20314", "INV-20315"]
+
+    # The payment not listing them: theirs whose totals make up the rest.
+    payments.clear()
+    got = jobs.payra_same_charge(CONFIG, name="Dawson Clevenger", email="dawson@example.com", amount="279.45",
+                                 number="INV-20313", rest=27945 - 13455, paid_at=paid_at, now=now)
+    assert [one["number"] for one in got] == ["INV-20314", "INV-20315"]
+    assert jobs.payra_same_charge(CONFIG, name="Dawson Clevenger", amount="279.45", number="INV-20313",
+                                  rest=5000, paid_at=paid_at, now=now) == []
+
+
+def test_dawson_every_invoice_of_the_charge_is_a_line_on_his_aged_card(monkeypatch):
+    """"we missed dawasons payment" - $279.45 paid three invoices, and his
+    card had only the 130 of the 180+ in Idaho."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Dawson Clevenger", "states": "ID", "email": "dawson@example.com",
+        "package": "Aged IUL - 180+ days", "leads": "130"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    notes = [jobs.same_charge_said(one) for one in DAWSON_OTHERS]
+    card = jobs.read_order(config, text=DAWSON, images=[], today=date(2026, 10, 21), notes=notes)
+    assert [(one["package"], one["leads"]) for one in card["parts"]] == [
+        ("Aged IUL - 180+ days", "130"), ("Aged IUL - 30-90 days", "10"), ("Aged IUL - 90-180 days", "20")]
+    assert card["fields"]["states"] == "ID" and card["fields"]["leads"] == "130"
+    [aged] = jobs.split_order(card, today=date(2026, 10, 21))
+    fields = aged["fields"]
+    assert fields["leads"] == "160 (130 + 10 + 20)"
+    assert "Aged IUL - 30-90 days: ID, TX, MI, OH, VA, NV, MN" in fields["states"]
+    assert "Aged IUL - 90-180 days: ID, OH, MI, MN, NV, TX, VA" in fields["states"]
+    assert jobs.split_doubts([aged], today=date(2026, 10, 21)) == []
+
+
+def test_dawson_the_aged_card_is_made_with_the_other_invoices(order, monkeypatch):
+    _note_is(monkeypatch, lambda config, **kw: "")
+    asked = {}
+
+    def same(config, **kw):
+        asked.update(kw)
+        return DAWSON_OTHERS
+
+    monkeypatch.setattr(jobs, "payra_same_charge", same)
+    message = _message(DAWSON)
+    assert asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0)) == "made"
+    assert asked["number"] == "INV-20313" and asked["rest"] == 27945 - 13455
+    assert [one.split(")")[0] for one in order.notes] == [
+        "Payra invoice note: (paid in the same charge - INV-20314, $57.96",
+        "Payra invoice note: (paid in the same charge - INV-20315, $86.94"]
+    assert ordercards.load()["900"]["also_invoices"] == ["INV-20314", "INV-20315"]
+    assert not any("can't find" in one[0] for one in order.responder.sent)
+
+    # Nova posting INV-20314 on its own afterwards: no second card.
+    later = _message(DAWSON.replace("INV-20313", "INV-20314").replace("$279.45", "$57.96"))
+    later.id = 901
+    made = len(order.made)
+    assert asyncio.run(client._aged_from_invoice(_bot(later), later, wait=0)) == "already"
+    assert len(order.made) == made
+    assert "already on their card" in order.responder.sent[-1][0]
+
+
+def test_more_charged_than_ryte_can_find_is_said(order, monkeypatch):
+    _note_is(monkeypatch, lambda config, **kw: "")
+    monkeypatch.setattr(jobs, "payra_same_charge", lambda config, **kw: [])
+    client._SAME_CHARGE_SAID.clear()
+    message = _message(DAWSON)
+    asyncio.run(client._aged_from_invoice(_bot(message), message, wait=0))
+    said = [one[0] for one in order.responder.sent if "can't find" in one[0]]
+    assert len(said) == 1 and "$279.45" in said[0] and "$144.90 paid for something" in said[0]

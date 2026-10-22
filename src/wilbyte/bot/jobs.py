@@ -13878,7 +13878,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     from .. import ordercards as _posted
 
     _number, on_the_post = _posted.post_invoice(text)
-    if on_the_post and not any(str(one).startswith("Payra invoice note:") for one in notes or ()):
+    if on_the_post and not any(str(one).startswith("Payra invoice note:") and not same_charge_note(one)
+                               for one in notes or ()):
         notes = [f"Payra invoice note: {on_the_post}", *(notes or ())]
     fields = order_fields(got, notes)
     spark = spark_pool(text)
@@ -13906,7 +13907,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     # product line's "Text-Verified Aged Veteran Leads" for her "Aged Veteran
     # - 180+ days".
     form = invoice_form("\n".join(str(one)[len("Payra invoice note:"):] for one in notes or ()
-                                  if str(one).startswith("Payra invoice note:")))
+                                  if str(one).startswith("Payra invoice note:") and not same_charge_note(one)))
     fields = with_invoice_form(fields, form)
     # And the payment post's own labelled lines - Nova's Zelle post for Jordan
     # Holmes had EMAIL, PHONE and every state, and his card had none of them.
@@ -14097,6 +14098,19 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     parts = [{key: " ".join(str((one or {}).get(key) or "").split())
               for key in ("kind", "package", "leads", "states", "launch_iso")}
              for one in got.get("parts") or [] if isinstance(one, dict)]
+    # Other invoices the same charge paid: a line each, as their own forms
+    # say - Dawson Clevenger's 10 of the 30-90 and 20 of the 90-180 in seven
+    # states, besides the 130 of the 180+ in Idaho his post showed.
+    also = [str(one) for one in notes or () if same_charge_note(one)]
+    if also:
+        source += "\n" + "\n".join(also)
+        forms = [form] + [invoice_form(one) for one in also]
+        if all(one.get("package") and re.search(r"\d", str(one.get("leads") or "")) for one in forms):
+            parts = [{"kind": "aged" if re.search(r"\baged\b", one["package"], re.IGNORECASE) else "fresh",
+                      "package": one["package"], "leads": re.search(r"\d[\d,]*", one["leads"]).group(0),
+                      "states": _form_states(one.get("states") or ""),
+                      "launch_iso": "" if re.search(r"\baged\b", one["package"], re.IGNORECASE) else launch_iso}
+                     for one in forms]
     if not {"aged", "fresh"} <= {one["kind"] for one in parts}:
         # Read as one card when its own lead type says both: Allen Coleman's
         # "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90" went out as one New
@@ -15093,6 +15107,96 @@ def _invoice_paid_against(config: Config, *, name: str, amount: str, paid_at, no
         return None
     found.sort(key=lambda one: one[0])
     return found[0][1], found[0][2]
+
+
+#: How an invoice paid in the same charge as the post's own is put in the
+#: order's notes - a Payra invoice note, marked as another one's.
+SAME_CHARGE_NOTE = "Payra invoice note: (paid in the same charge"
+
+
+def same_charge_note(note) -> bool:
+    return str(note or "").startswith(SAME_CHARGE_NOTE)
+
+
+def same_charge_said(invoice: dict) -> str:
+    """An invoice paid in the same charge, as the order's notes put it."""
+    total = invoice.get("total")
+    money = f", ${float(total):,.2f}" if isinstance(total, (int, float)) else ""
+    return (f"{SAME_CHARGE_NOTE} - {invoice.get('number') or 'another invoice'}{money})\n"
+            + (invoice_said(invoice) or "(no note on it)"))
+
+
+def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str = "", number: str = "",
+                      rest: int | None = None, paid_at=None, now=None) -> list[dict]:
+    """The other invoices one card charge paid besides the one its post
+    names - Dawson Clevenger's $279.45 paid INV-20313, INV-20314 and
+    INV-20315, and Nova posted only the first. The Payra payment's own
+    invoices when it lists them; else theirs, from the last two days, whose
+    totals come to the rest of the charge (`rest`, in cents). Slim invoices,
+    oldest first; [] when none are found."""
+    from itertools import combinations
+
+    from .. import clearout, payraapi
+
+    now = now or datetime.now(timezone.utc)
+    invoices = payra_recent(config, "invoices", now=now)
+    digits = lambda one: re.sub(r"[^0-9]", "", str(one or "")).lstrip("0")  # noqa: E731
+    own = digits(number)
+    by_id = {str(one.get("id") or held_as): one for held_as, one in invoices.items()}
+    by_number = {digits(one.get("number")): one for one in invoices.values() if one.get("number")}
+    email = str(email or "").strip().casefold()
+
+    def order(found):
+        return sorted({str(one.get("id") or one.get("number")): one for one in found}.values(),
+                      key=lambda one: (digits(one.get("number")).zfill(12), str(one.get("created") or "")))
+
+    wanted = payraapi._cents(amount)
+    if paid_at is not None and name and wanted is not None:
+        paid_at = paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)
+        best = None
+        for payment in payra_recent(config, "payments", now=now).values():
+            if payment.get("refund") or clearout.name_match(name, payment.get("customer", "")) < 2:
+                continue
+            if payraapi._cents(payment.get("amount")) != wanted:
+                continue
+            try:
+                paid = datetime.fromisoformat(str(payment.get("paid_on") or "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            paid = paid if paid.tzinfo else paid.replace(tzinfo=timezone.utc)
+            if abs(paid - paid_at) <= PAYMENT_POST_GAP and (best is None or abs(paid - paid_at) < best[0]):
+                best = (abs(paid - paid_at), payment)
+        if best is not None:
+            payment = best[1]
+            named = [by_id.get(str(one)) for one in [*(payment.get("invoice_ids") or []), payment.get("invoice_id")]
+                     if one]
+            named.append(by_number.get(digits(payment.get("invoice_number"))))
+            found = [one for one in named if one is not None and digits(one.get("number")) != own]
+            if found:
+                return order(found)
+    if not rest or rest <= 0:
+        return []
+    # Not listed on the payment: theirs, made in the last two days, whose
+    # totals add up to what the charge has left over.
+    theirs = []
+    for one in invoices.values():
+        if digits(one.get("number")) == own or not one.get("active", True):
+            continue
+        if not ((email and one.get("email") == email) or clearout.name_match(name, one.get("name", "")) >= 2):
+            continue
+        try:
+            made = datetime.fromisoformat(str(one.get("created") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        made = made if made.tzinfo else made.replace(tzinfo=timezone.utc)
+        if now - made <= timedelta(days=2) and payraapi._cents(one.get("total")):
+            theirs.append(one)
+    theirs = order(theirs)[-8:]
+    for size in range(1, len(theirs) + 1):
+        for some in combinations(theirs, size):
+            if abs(sum(payraapi._cents(one.get("total")) for one in some) - rest) <= 2 * size:
+                return list(some)
+    return []
 
 
 def _other_product(paid_for: str, invoice: str) -> bool:

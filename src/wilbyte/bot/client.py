@@ -10413,11 +10413,23 @@ async def _aged_from_invoice(bot, message, *, wait: float | None = None, catchin
     # "aged leads should be automatic add with states, thread or no thread
     # while relying on invoice if it has no states/thread added": the thread
     # first, the invoice's note beside it, and the card made either way.
+    number, _notes = ordercards.post_invoice(said)
+    other = _paid_with_another(key, number)
+    if other is not None:
+        # Already a line on the card of the post whose charge paid it.
+        await _order_note(key, status="made", merged=True, card_id=other.get("card_id"), url=other.get("url"),
+                          name=other.get("name"), client=other.get("client"), invoice_id=number)
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send(f"🔨 **{name or 'This payment'}** — {number} was paid in an earlier charge and is "
+                                 f"already on their card: {other.get('url') or ''}", quiet=True)
+        return "already"
+    also = await _same_charge(bot, key, message, said)
     log.info("Making %s's aged card%s", name, " with the invoice note" if note else "")
     await _order_gavelled(bot, SimpleNamespace(
         message_id=message.id, channel_id=message.channel.id, user_id=0,
         guild_id=getattr(getattr(message, "guild", None), "id", None), member=None,
-        extra_notes=(f"Payra invoice note: {note}",) if note else (), aged_only=True,
+        extra_notes=((f"Payra invoice note: {note}",) if note else ()) + also, aged_only=True,
         catching_up=catching_up))
     return "made"
 
@@ -10567,7 +10579,9 @@ async def _order_gavelled(bot, payload) -> None:
         held = await asyncio.to_thread(ordercards.load)
         # A waiting aged order keeps what it's waited for and whether that
         # was said - it's said once.
-        before = held.get(key) if (held.get(key) or {}).get("status") == "waiting" else {}
+        before = held.get(key) if (held.get(key) or {}).get("status") == "waiting" else {
+            # Which invoices it's for, worked out just before: kept.
+            name: value for name, value in (held.get(key) or {}).items() if name in ("invoice_id", "also_invoices")}
         held[key] = {**before, "status": "reading", "channel_id": str(payload.channel_id), "by": str(payload.user_id)}
         await asyncio.to_thread(ordercards.save, held)
     try:
@@ -10631,8 +10645,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             payload = _payload_copy(payload, extra_notes=(_spark_note(message),))
         if not getattr(payload, "extra_notes", ()):
             note = await _order_invoice_note(bot, message)
-            if note:
-                payload = _payload_copy(payload, extra_notes=(f"Payra invoice note: {note}",))
+            # The other invoices its charge paid, read with it.
+            also = await _same_charge(bot, key, message)
+            if note or also:
+                payload = _payload_copy(payload, extra_notes=((f"Payra invoice note: {note}",) if note else ())
+                                        + also)
         card, examples, thread_id = await _order_read(bot, message, extra=getattr(payload, "extra_notes", ()))
     except Exception as exc:
         log.exception("Couldn't read the gavelled order")
@@ -11202,6 +11219,77 @@ async def _invoice_for(bot, key: str, *, name: str, email: str, amount: str, pro
         if invoice_id and key:
             await _order_note(key, invoice_id=invoice_id)
         return note
+
+
+#: Payment posts already said to have paid more than their invoice, so the
+#: aged path and the gavel's reading it again say it once.
+_SAME_CHARGE_SAID: set = set()
+
+
+def _paid_with_another(key: str, number: str) -> dict | None:
+    """The order another payment post made that this post's invoice was
+    already on - paid in that one's charge - or None."""
+    from .. import ordercards
+
+    digits = re.sub(r"[^0-9]", "", str(number or "")).lstrip("0")
+    if not digits:
+        return None
+    for other, order in ordercards.load().items():
+        if other == key or not isinstance(order, dict):
+            continue
+        if any(re.sub(r"[^0-9]", "", str(one)).lstrip("0") == digits for one in order.get("also_invoices") or ()):
+            return order
+    return None
+
+
+async def _same_charge(bot, key: str, message, said: str = "") -> tuple[str, ...]:
+    """The other invoices a payment post's charge paid, as notes for its
+    card - Dawson Clevenger's $279.45 paid three invoices, Nova posted one,
+    and the 10 and the 20 leads of the other two never got a card. Said,
+    and tagged, when more was charged than the invoices Ryte can find."""
+    from .. import ordercards
+
+    said = said or _all_of_it(message)
+    if "payra" not in said.casefold():
+        return ()
+    charged, total = ordercards.post_charge(said)
+    if charged is None or total is None or charged - total <= 100:
+        return ()
+    number, _notes = ordercards.post_invoice(said)
+    name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
+    email = (_PAID_EMAIL.search(said) or [None, ""])[1].strip(" *")
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    try:
+        found = await asyncio.to_thread(partial(
+            jobs.payra_same_charge, bot.config, name=name, email=email, amount=amount, number=number,
+            rest=charged - total, paid_at=getattr(message, "created_at", None)))
+    except Exception:
+        log.warning("Couldn't look up the other invoices %s's charge paid", name, exc_info=True)
+        found = []
+    held = await asyncio.to_thread(ordercards.load)
+    # One Nova did post on its own has its own card from it.
+    posted = {re.sub(r"[^0-9]", "", str(one.get("invoice_id") or "")).lstrip("0")
+              for other, one in held.items() if other != key and isinstance(one, dict)}
+    found = [one for one in found if re.sub(r"[^0-9]", "", str(one.get("number") or "")).lstrip("0") not in posted]
+    from .. import payraapi
+
+    covered = sum(payraapi._cents(one.get("total")) or 0 for one in found)
+    if found:
+        await _order_note(key, also_invoices=[str(one.get("number") or one.get("id")) for one in found])
+    short = charged - total - covered
+    if short > 2 * (len(found) + 1) and key not in _SAME_CHARGE_SAID:
+        _SAME_CHARGE_SAID.add(key)
+        responder = _order_responder(bot)
+        if responder is not None:
+            link = str(getattr(message, "jump_url", "") or "")
+            await responder.send(
+                _card_ping(bot) + f"💳 ⚠ **{name or 'A payment'}** was charged **${charged / 100:,.2f}**, but this "
+                f"post's invoice{' ' + number if number else ''} is ${total / 100:,.2f}"
+                + (f" and the other invoices I found ({', '.join(str(one.get('number')) for one in found)}) "
+                   f"come to ${covered / 100:,.2f}" if found else "")
+                + f" — **${short / 100:,.2f} paid for something I can't find.** Check their invoices in Payra so "
+                f"no order is missed. <{link}>", quiet=True)
+    return tuple(jobs.same_charge_said(one) for one in found)
 
 
 async def _order_payment(bot, message) -> tuple[dict | None, bool]:

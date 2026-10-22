@@ -450,6 +450,26 @@ def post_invoice(said: str) -> tuple[str, str]:
     return (number.group(1).upper().lstrip("#") if number else ""), "\n".join(kept)
 
 
+_POST_AMOUNT = re.compile(r"^\W*AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE | re.MULTILINE)
+_POST_TOTAL = re.compile(r"^\W*Total:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE | re.MULTILINE)
+
+
+def post_charge(said: str) -> tuple[int | None, int | None]:
+    """(what the card was charged, what the post's own invoice comes to), in
+    cents - None for one the post doesn't give. More charged than the
+    invoice is a charge that paid other invoices too: Dawson Clevenger's
+    $279.45 paid INV-20313 ($134.55), INV-20314 and INV-20315, Nova posted
+    the first, and the other two lines were never made."""
+    def cents(found):
+        try:
+            return round(float(found.group(1).replace(",", "")) * 100) if found else None
+        except ValueError:
+            return None
+
+    said = str(said or "")
+    return cents(_POST_AMOUNT.search(said)), cents(_POST_TOTAL.search(said))
+
+
 #: "for his agent Matthew Stewart", "on behalf of", "leads ... go to Matthew".
 _PAYING_FOR = re.compile(
     r"\bfor\s+(?:his|her|their|my|our)\s+(?:agent|recruit|downline|team\s*mate|teammate|producer)s?\b"
