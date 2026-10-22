@@ -15111,7 +15111,7 @@ def payra_invoices_since(config: Config, since) -> list[dict]:
     return found
 
 
-def _one_line_wrong(said: str, desc: str) -> tuple[list[str], str]:
+def _one_line_wrong(said: str, desc: str, *, counts_ok=()) -> tuple[list[str], str]:
     """A one-line aged order's invoice form against its card: (what's wrong,
     what it should be). Nothing to compare - no form on the invoice, or
     states it doesn't name ("same as before") - is nothing wrong."""
@@ -15150,7 +15150,8 @@ def _one_line_wrong(said: str, desc: str) -> tuple[list[str], str]:
     counts = re.findall(r"^\W*number\s*of\s*(?:requested\s*)?leads[^:\n]*:\s*(\d[\d,]*)", said,
                         re.IGNORECASE | re.MULTILINE)
     have_count = re.search(r"\d[\d,]*", leads)
-    if len(counts) == 1 and have_count and int(counts[0].replace(",", "")) != int(have_count.group(0).replace(",", "")):
+    if (len(counts) == 1 and have_count and int(counts[0].replace(",", "")) != int(have_count.group(0).replace(",", ""))
+            and int(have_count.group(0).replace(",", "")) not in set(counts_ok)):
         wrong.append(f"the invoice is for {counts[0]} leads, the card {have_count.group(0)}")
     if len(counts) == 1:
         should.append(f"{counts[0]} leads")
@@ -15162,6 +15163,35 @@ def _one_line_wrong(said: str, desc: str) -> tuple[list[str], str]:
     if want_age and have_age and re.sub(r"\s", "", want_age.group(0)) != re.sub(r"\s", "", have_age.group(0)):
         wrong.append(f"the invoice is for {want_age.group(0)} days, the card says {have_age.group(0)}")
     return wrong, " · ".join(one for one in should if one)
+
+
+#: Aged cards Franklin has looked at and called right - "this was done" -
+#: so the check doesn't name them again.
+AGED_OK_PATH = None
+
+
+def _aged_ok_path() -> Path:
+    from ..state import _state_dir
+
+    return AGED_OK_PATH or (_state_dir() / "aged-lines-ok.json")
+
+
+def aged_lines_ok() -> set:
+    try:
+        held = json.loads(_aged_ok_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {str(one) for one in held} if isinstance(held, list) else set()
+
+
+def aged_lines_mark_ok(text: str) -> list[str]:
+    """The Trello cards linked in `text` remembered as checked. Their codes."""
+    codes = list(dict.fromkeys(re.findall(r"trello\.com/c/([A-Za-z0-9]{6,12})", text or "")))
+    if codes:
+        where = _aged_ok_path()
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(json.dumps(sorted(aged_lines_ok() | set(codes))), encoding="utf-8")
+    return codes
 
 
 def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) -> tuple[list[str], int]:
@@ -15192,9 +15222,13 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
         return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
     flagged, looked = [], 0
+    checked = aged_lines_ok()
     for card in cards or []:
         title = " ".join(str(card.get("name") or "").split())
         if not re.match(r"\s*aged\s+leads?\b", title, re.IGNORECASE):
+            continue
+        code = (re.search(r"/c/([A-Za-z0-9]+)", str(card.get("shortUrl") or card.get("url") or "")) or [None, ""])[1]
+        if checked & {code, str(card.get("id") or "")} - {""}:
             continue
         try:
             made = datetime.fromtimestamp(int(str(card.get("id") or "")[:8], 16), tz=timezone.utc)
@@ -15220,6 +15254,13 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
             if theirs and when is not None and made - timedelta(days=3) <= when <= made + timedelta(days=1):
                 near.append((abs((made - when).total_seconds()), invoice))
         first_wrong = None
+        # A count the client's invoices come to together is right too -
+        # Preston Pennington's 200 on two invoices of 100.
+        their_counts = [int(one.replace(",", "")) for _gap, invoice in near
+                        for one in re.findall(r"^\W*number\s*of\s*(?:requested\s*)?leads[^:\n]*:\s*(\d[\d,]*)",
+                                              invoice_said(invoice), re.IGNORECASE | re.MULTILINE)]
+        counts_ok = set(their_counts) | ({sum(their_counts)} if len(their_counts) > 1 else set())
+        card_families = _families(package + " " + title)
         for _gap, invoice in sorted(near, key=lambda one: one[0]):
             said = invoice_said(invoice)
             lines = ordercards._lines_with_states(said)
@@ -15235,7 +15276,12 @@ def check_aged_lines(config: Config, *, days: int = 7, now=None, invoices=None) 
                 # invoice from the same week isn't this card's.
                 if not re.search(r"\baged\b", said, re.IGNORECASE):
                     continue
-                wrong, should = _one_line_wrong(said, desc)
+                # Their Vets card against their FEX invoice is another order's
+                # - Shyanne Tower's second card was held up against her first.
+                form_families = _families(invoice_form(said).get("package", ""))
+                if card_families and form_families and not card_families & form_families:
+                    continue
+                wrong, should = _one_line_wrong(said, desc, counts_ok=counts_ok)
                 if not wrong:
                     first_wrong = None
                     break

@@ -5101,3 +5101,43 @@ def test_the_recent_read_reaches_past_five_pages(monkeypatch):
     monkeypatch.setattr(jobs, "_PAYRA_RECENT", {})
     config = SimpleNamespace(secrets=SimpleNamespace(payra_api_token="t", payra_site_id="s"))
     assert "p7" in jobs.payra_recent(config, "payments")
+
+
+def test_check_aged_lines_leaves_another_lead_types_invoice_alone(monkeypatch):
+    """Shyanne Tower's Vets card was held up against her FEX invoice."""
+    flagged, _ = _one_line_case(
+        monkeypatch, "Lead Type: Text-Verified Aged Veteran Leads - Aged Vet 90-180 days\n"
+                     "Number of Leads Requested: 50\nStates: WA, TX, LA, TN\n",
+        "Lead Type: Aged Final Expense - 90-180+ days\nStates Leads In: WY, TN, SC, TX\n"
+        "Number of Requested Leads: 50")
+    assert flagged == []
+
+
+def test_check_aged_lines_takes_their_invoices_counts_together(monkeypatch):
+    """Preston Pennington's 200 was two invoices of 100."""
+    made = int(datetime(2026, 10, 19, 14, 42, tzinfo=timezone.utc).timestamp())
+    card = {"id": f"{made:08x}0000000000000005", "name": "Aged Leads - Preston Pennington", "shortUrl": "u",
+            "desc": "Email: p2@example.com\nLead Type: Aged IUL 180+\nNumber of Leads Requested: 200\nStates: VA\n"}
+    one = {"id": "a", "number": "INV-A", "name": "Preston Pennington", "email": "p2@example.com", "lines": [],
+           "created": "2026-10-19T14:30:00Z", "description": "",
+           "notes": "Lead Type: Aged IUL - 180+ days\nStates Leads In: VA\nNumber of Requested Leads: 100"}
+    two = dict(one, id="b", number="INV-B", created="2026-10-19T14:35:00Z")
+    config = _aged_board(monkeypatch, [card])
+    flagged, _ = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                       invoices=[one, two])
+    assert flagged == []
+
+
+def test_cards_marked_checked_arent_named_again(monkeypatch):
+    """"this was done" - Patrick Moreno and Mateo Lyon, named every time."""
+    config = _aged_board(monkeypatch, [dict(_aged_card("AL, CA", "Aged Vets 30-90"),
+                                            shortUrl="https://trello.com/c/VlGannbA")])
+    flagged, _ = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                       invoices=[MATEO_INVOICE])
+    assert len(flagged) == 1
+    assert jobs.aged_lines_mark_ok("aged lines ok <https://trello.com/c/VlGannbA>") == ["VlGannbA"]
+    flagged, looked = jobs.check_aged_lines(config, now=datetime(2026, 10, 19, 23, tzinfo=timezone.utc),
+                                            invoices=[MATEO_INVOICE])
+    assert flagged == [] and looked == 0
+    assert mentions.parse("<@1> aged lines ok https://trello.com/c/VlGannbA").action == "agedlinesok"
+    assert mentions.parse("<@1> check aged lines").action == "agedlines"

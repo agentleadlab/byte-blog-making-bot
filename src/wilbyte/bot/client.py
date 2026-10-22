@@ -1962,6 +1962,14 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_check(bot, responder)
                 return
 
+            if request.action == "agedlinesok":
+                marked = jobs.aged_lines_mark_ok(request.brief + " " + (message.content or ""))
+                await responder.send(f"✅ Marked {len(marked)} card(s) as checked - `check aged lines` won't name "
+                                     "them again." if marked else
+                                     "Paste the Trello link(s) of the cards you've checked: "
+                                     "`@Ryte aged lines ok https://trello.com/c/...`")
+                return
+
             if request.action == "agedlines":
                 await _aged_lines_check(bot, responder, int(request.brief) if (request.brief or "").isdigit() else 7)
                 return
@@ -12353,7 +12361,8 @@ async def _aged_lines_check(bot, responder: Responder, days: int = 7) -> None:
         return
     said = (f"⚠ **{len(flagged)} of {looked} Aged Leads card(s) don't match their invoice** — check "
             "what was delivered to each:\n" + "\n".join(f"• {one}" for one in flagged)
-            + "\n-# Nothing was changed. Fix the card and the delivery tabs by hand.")
+            + "\n-# Nothing was changed. Fix the card and the delivery tabs by hand. A card that's right (the "
+            "thread changed it, say): `@Ryte aged lines ok <its link>` and it isn't named again.")
     for at in range(0, len(said), 1900):
         await responder.send(said[at:at + 1900])
 

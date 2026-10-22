@@ -922,6 +922,9 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*(?:(?:check\s+(?:the\s+)?)?tags?\s+check|check\s+(?:the\s+)?(?:tags|comments|checklists?)|"
                 r"(?:tags?|comments?)\s+(?:to\s+)?checklists?)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="tagcheck", brief=text)
+    # "aged lines ok <links>" - cards looked at and right; not named again.
+    if re.match(r"\s*aged\s+(?:lines?|cards?)\s+(?:ok|okay|checked|fine|done|right)\b", text, re.IGNORECASE):
+        return MentionRequest(action="agedlinesok", brief=text)
     # "check aged lines" - every recent Aged Leads card against its invoice,
     # line by line. "check aged lines 14 days" looks further back.
     aged_lines = re.match(r"\s*(?:check\s+(?:the\s+)?aged\s+(?:lines?|cards?|states)|aged\s+lines?\s+check)"
