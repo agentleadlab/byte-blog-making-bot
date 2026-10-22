@@ -163,3 +163,13 @@ def test_an_aged_lead_order_is_never_asked_for_a_launch_date(monkeypatch):
 def test_what_was_bought_is_kept_short():
     long = "This payment is for a list of aged leads provided by Agent Lead Lab. The leads may include people"
     assert len(paidsetup._short_line(long)) <= 60 and paidsetup._short_line(long).endswith("…")
+
+
+def test_a_card_whose_email_trello_turned_into_a_link_is_still_theirs():
+    """"Ronny - no card on the board": his card, "New Agent - Ronny
+    Mehajia/Mejia", had its email as Trello writes it once edited."""
+    paid = _paid(name="Ronny", email="ronny@example.com", phone="5550100009")
+    linked = _card("Ronny Mehajia/Mejia", "Email: [ronny@example.com](mailto:ronny@example.com)")
+    assert paidsetup.their_cards(paid, [linked]) == [linked]
+    anywhere = _card("Ronny Mehajia/Mejia", "Notes:\nreach him at ronny@example.com")
+    assert paidsetup.their_cards(paid, [anywhere]) == [anywhere]

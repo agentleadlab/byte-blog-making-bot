@@ -116,7 +116,7 @@ def their_cards(paid: Paid, cards: list[dict]) -> list[dict]:
         if not rules.is_client_card(title):
             continue
         desc = str(card.get("desc") or "")
-        if paid.email and card_email(desc) == paid.email:
+        if paid.email and (card_email(desc) == paid.email or paid.email in desc.casefold()):
             found.append(card)
         elif paid.phone and paid.phone in phones_in(desc):
             found.append(card)

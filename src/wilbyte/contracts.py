@@ -70,7 +70,9 @@ def same_name(one: str, other: str) -> bool:
     return bool(bare(one)) and bare(one) == bare(other)
 
 
-_EMAIL = re.compile(r"\bemail\s*:\s*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", re.IGNORECASE)
+# "Email: [x@y.com](mailto:x@y.com)" too - Trello's editor links an address
+# the moment somebody edits the card, and Ronny's card stopped being his.
+_EMAIL = re.compile(r"\bemail\s*:\W*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", re.IGNORECASE)
 
 
 def card_email(desc: str) -> str:
