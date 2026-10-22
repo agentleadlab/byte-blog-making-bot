@@ -4952,3 +4952,14 @@ def test_the_hubs_own_confirmation_is_not_a_note_saying_so():
     """Read by `wrong_setup`, and carried over on copied cards."""
     assert not agents.already_set_up(EDUARDO_SETUP)
     assert not agents.already_set_up(MATTHEW_SETUP[0])
+
+
+def test_a_family_and_tier_typed_as_one_word():
+    """Drake Boren's "25 MTGPLUS" matched no checklist on Lead Order 10/23/26."""
+    from wilbyte import agents
+
+    lists = ["OTP MTG Standard", "OTP MTG Plus", "OTP IUL Plus", "OTP VET Standard"]
+    assert agents.match_checklist("25 MTGPLUS", lists) == "OTP MTG Plus"
+    assert agents.match_checklist("10 vetstandard", lists) == "OTP VET Standard"
+    assert agents.candidates("25 MTGPLUS", lists, tier=agents.tier_of("25 MTGPLUS")) == ["OTP MTG Plus"]
+    assert agents.unglued("Mortgage Plus") == "Mortgage Plus"

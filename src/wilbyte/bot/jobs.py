@@ -5278,6 +5278,20 @@ def spread_to_lead_order(
                 if len(narrowed) == 1 and " ".join(narrowed[0].split()).casefold() in by_name:
                     shown_as = narrowed[0]
                     key = " ".join(shown_as.split()).casefold()
+            if key not in by_name and rules.family_of(spread.label) is None \
+                    and not rules.qualifiers_of(spread.label):
+                # A tier with no lead type - Katrina Hall's "2.0" on the setup
+                # card. Their own card's lead type says which leads, when it
+                # names one kind; the setup line still says which tier.
+                theirs = rules.find_lead_type(_card_said(client, cards.get(spread.url), said_on))
+                kinds = rules.families_in(theirs)
+                if len(kinds) == 1:
+                    whole = f"{spread.label} {theirs}"
+                    narrowed = rules.candidates(whole, list(by_name_shown),
+                                                tier=rules.tier_of(spread.label) or rules.tier_of(theirs))
+                    if len(narrowed) == 1 and " ".join(narrowed[0].split()).casefold() in by_name:
+                        shown_as = narrowed[0]
+                        key = " ".join(shown_as.split()).casefold()
             if key not in by_name:
                 # Never invent one. The checklists on a Lead Order card are the
                 # lead types that exist, put there by hand, and a spread that

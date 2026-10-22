@@ -491,7 +491,19 @@ def _learned_as(kind: str, text: str) -> set[str]:
     return found
 
 
+# A family and a tier typed as one word - Drake Boren's "25 MTGPLUS" matched
+# no checklist on Lead Order 10/23/26 - taken as the two words they are.
+_GLUED = re.compile(
+    r"\b(mtg|iul|siul|fex|vets?|widows?|phx|phnx|bc)(plus|standards?|stndr?ds?|basics?)\b", re.IGNORECASE)
+
+
+def unglued(text: str) -> str:
+    """"MTGPLUS" as "MTG PLUS", "IULSTANDARD" as "IUL STANDARD"."""
+    return _GLUED.sub(r"\1 \2", text or "")
+
+
 def family_of(text: str) -> str | None:
+    text = unglued(text)
     for name, pattern in FAMILIES:
         if pattern.search(text or ""):
             return name
@@ -509,6 +521,7 @@ def families_in(text: str) -> set[str]:
     words, and `family_of` picking whichever comes first in the table is a
     coin toss dressed as an answer.
     """
+    text = unglued(text)
     return {
         name for name, pattern in FAMILIES if pattern.search(text or "")
     } | _learned_as("family", text)
@@ -537,6 +550,7 @@ def trucker_only(text: str) -> bool:
 
 def tier_of(text: str) -> str | None:
     """Standard beats Plus when both are said - "basic" is the stronger word."""
+    text = unglued(text)
     said = _learned_as("tier", text)
     text = without_package_name(text)
     if trucker_only(text) and STANDARD.search(text):
@@ -575,6 +589,7 @@ def despell(text: str) -> str:
     """
     from difflib import get_close_matches
 
+    text = unglued(text)
     known = set(_VOCABULARY)
 
     def fixed(word: str) -> str:
@@ -795,6 +810,7 @@ def words_it_cannot_place(text: str) -> list[str]:
 
 
 def qualifiers_of(text: str) -> frozenset[str]:
+    text = unglued(text)
     return frozenset(
         {name for name, pattern in QUALIFIERS if pattern.search(text or "")}
         | _learned_as("qualifier", text)

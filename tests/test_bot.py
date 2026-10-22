@@ -7925,3 +7925,22 @@ def test_tag_check_files_every_missing_tag_without_a_button(monkeypatch):
     assert asked == {"everything": True}, "reports included"
     assert "Missed and now added — 2" in said and "KARL GOLD" in said
     assert mentions.parse("tag check").action == "tagcheck"
+
+
+def test_a_tier_alone_on_the_setup_card_takes_the_lead_type_from_their_card(config, monkeypatch):
+    """Katrina Hall: "2.0" on the setup card - "doesn't match any checklist"."""
+    lists = ("OTP PHNX Standard", "OTP PHNX Plus", "OTP VET Plus")
+    board = SpreadBoard(on_setup="2.0", their_card="Lead Type: Phoenix", checklists=lists)
+    added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert problems == [] and board.written == [("c1", f"{AGENT_URL} 2.0")]
+    # Their card naming two kinds: still asked.
+    board = SpreadBoard(on_setup="2.0", their_card="Lead Type: Phoenix and Vets", checklists=lists)
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert board.written == [] and problems
+
+
+def test_mtgplus_on_the_setup_card_goes_on_mtg_plus(config, monkeypatch):
+    """Drake Boren's "25 MTGPLUS"."""
+    board = SpreadBoard(on_setup="25 MTGPLUS", their_card="Lead Type: Mortgage", checklists=MTG)
+    _added, _conflicts, problems = spreading(board, monkeypatch, config)
+    assert problems == [] and board.written[0][0] == "c1"
