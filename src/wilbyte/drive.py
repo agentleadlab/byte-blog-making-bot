@@ -167,6 +167,23 @@ class DriveClient:
             raise DriveError("Drive made that folder but sent no id back.")
         return got
 
+    def kept_here(self) -> int:
+        """How many folders and pictures Ryte has put in the configured
+        folder (up to 10) - under `drive.file` the folder itself may be out
+        of sight while what Ryte made in it isn't."""
+        try:
+            reply = self._client.get(
+                FILES,
+                params={"q": f"'{self._folder}' in parents and trashed = false",
+                        "fields": "files(id)", "pageSize": 10},
+                headers={"Authorization": f"Bearer {self._access_token()}"},
+            )
+        except httpx.HTTPError as exc:
+            raise DriveError(f"Couldn't reach Drive: {exc}") from exc
+        if reply.status_code >= 400:
+            raise DriveError(self._refused(reply.status_code, reply.text))
+        return len(reply.json().get("files") or [])
+
     def about(self, file_id: str) -> dict:
         """One file's name, type, size, folder and whether it's in the bin -
         for checking a picture is really there before its channel goes."""

@@ -81,7 +81,15 @@ def _drive(secrets) -> tuple:
         return None, "no clients folder set"
     with drive.open_drive(secrets) as client:
         found = client.about(gsheets.folder_id_in(secrets.clients_drive_folder))
-    return (True, "clients folder found") if found else (False, "clients folder not found or not shared")
+        if found:
+            return True, "clients folder found"
+        # Ryte's Drive permission only sees what Ryte made: a folder somebody
+        # else made and shared reads as missing even when uploads into it work.
+        kept = client.kept_here()
+    if kept:
+        return True, f"clients folder in use - {kept}{'+' if kept >= 10 else ''} thing(s) Ryte kept there"
+    return None, ("signed in; the clients folder can't be seen until Ryte has kept a picture in it "
+                  "(only used when a quiet channel is cleared out)")
 
 
 def _gmail(secrets) -> tuple:

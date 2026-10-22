@@ -123,3 +123,33 @@ def test_each_probe_runs_against_its_service_once_keys_are_there(monkeypatch):
     assert health._hub(config.secrets) == (True, "read only - 2 fulfilled agent(s)")
     assert health._wordpress(config)[0]
     assert {"board_lists", "changed", "list_blog_sites", "page", "token", "meetings", "owner", "me"} <= set(called)
+
+
+def test_a_drive_folder_ryte_cant_see_isnt_called_missing(monkeypatch):
+    """"❌ Google Drive — clients folder not found or not shared" - Ryte's
+    Drive permission only sees what Ryte made, so a shared folder reads as
+    missing even when pictures go into it."""
+    from wilbyte import drive
+
+    kept = [0]
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def about(self, file_id):
+            return {}
+
+        def kept_here(self):
+            return kept[0]
+
+    monkeypatch.setattr(drive, "open_drive", lambda secrets: Client())
+    secrets = NS(clients_drive_folder="https://drive.google.com/drive/folders/abcdefghijklmnop")
+    ok, said = health._drive(secrets)
+    assert ok is None and "can't be seen" in said
+    kept[0] = 3
+    ok, said = health._drive(secrets)
+    assert ok is True and "3 thing(s)" in said
