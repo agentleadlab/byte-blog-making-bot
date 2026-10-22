@@ -5381,3 +5381,43 @@ def test_the_audit_finds_invoices_a_shared_charge_left_without_a_card(monkeypatc
     # Its lines put on the card since: nothing missed.
     cards[0]["desc"] += "\nAged IUL - 30-90 days: ID, TX\nAged IUL - 90-180 days: ID, OH\n160 (130 + 10 + 20)"
     assert asyncio.run(client._audit_several(_bot(post), [post], cards, {}, since))[0] == 0
+
+
+def test_invoices_without_the_card_fee_still_make_up_the_charge(monkeypatch):
+    """Payra keeps Dawson's invoices at $130, $56 and $84 - the 3.5% card fee
+    goes on at the charge - and the audit said "$144.90 ... no invoice found".
+    Gavin Casella's $1,035 named two subscription invoices that don't come to
+    it: not one charge for both."""
+    own = {"id": "i13", "number": "INV-20313", "name": "Dawson Clevenger", "total": 130.0,
+           "notes": "Lead Type: Aged IUL - 180+ days\nNumber of Requested Leads: 130", "created": "2026-10-20T14:59:00Z"}
+    others = [dict(DAWSON_OTHERS[0], total=56.0), dict(DAWSON_OTHERS[1], total=84.0)]
+    gavin = [{"id": f"g{n}", "number": number, "name": "Gavin Casella", "total": total, "notes": "",
+              "created": "2026-10-15T10:00:00Z"} for n, number, total in ((1, "SFVFF9Y-1", 1000.0), (2, "SKURX9G-1", 1050.0))]
+    invoices = {one["id"]: one for one in [own, *others, *gavin]}
+    payments = {"pg": {"id": "pg", "customer": "Gavin Casella", "amount": 1035.0, "paid_on": "2026-10-22T17:18:00Z",
+                       "invoice_ids": ["g1", "g2"]}}
+    monkeypatch.setattr(jobs, "payra_kept", lambda config, kind, now=None: invoices if kind == "invoices" else payments)
+    paid_at = datetime(2026, 10, 21, 22, 59, tzinfo=timezone.utc)
+    got = jobs.charges_of_several(CONFIG, since=datetime(2026, 10, 16, tzinfo=timezone.utc), posts=[
+        {"name": "Dawson Clevenger", "email": "dawson@example.com", "amount": "279.45", "amount_cents": 27945,
+         "total": 13455, "number": "INV-20313", "paid_at": paid_at, "link": ""}],
+        now=datetime(2026, 10, 22, 20, 0, tzinfo=timezone.utc))
+    assert [[one["number"] for one in entry["invoices"]] for entry in got] == [["INV-20313", "INV-20314", "INV-20315"]]
+    assert got[0]["unplaced"] == 0
+    assert jobs.charge_left(14490, 14000) == 0 and jobs.charge_left(14490, 5600) == 14490 - 5796
+
+
+def test_the_audit_names_a_charge_that_looks_made_twice():
+    def post(i, text, minute):
+        return SimpleNamespace(id=i, content=text, embeds=[], message_snapshots=[], author=SimpleNamespace(bot=True),
+                               created_at=datetime(2026, 10, 22, 22, minute, tzinfo=timezone.utc),
+                               jump_url=f"https://discord.com/channels/1/700/{i}", reactions=[])
+
+    posts = [post(1, "New Payment | Payra\nNAME: Gauri Beaston\nAMOUNT: $336.38", 27),
+             post(2, "New Payment | Payra\nNAME: Gauri Beaston\nAMOUNT: $336.36", 27),
+             post(3, "New Payment | Payra\nNAME: Gauri Beaston\nAMOUNT: $289.80", 30),
+             post(4, "New Payment | Payra\nNAME: Somebody Else\nAMOUNT: $336.38", 28)]
+    said = "\n".join(client._audit_doubles(posts))
+    assert said.count("**Gauri Beaston**") == 1 and "$336.38" in said and "$336.36" in said
+    assert "Somebody Else" not in said and "$289.80" not in said
+    assert client._audit_doubles(posts[2:]) == []

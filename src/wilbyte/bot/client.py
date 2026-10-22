@@ -11276,8 +11276,8 @@ async def _same_charge(bot, key: str, message, said: str = "") -> tuple[str, ...
     covered = sum(payraapi._cents(one.get("total")) or 0 for one in found)
     if found:
         await _order_note(key, also_invoices=[str(one.get("number") or one.get("id")) for one in found])
-    short = charged - total - covered
-    if short > 2 * (len(found) + 1) and key not in _SAME_CHARGE_SAID:
+    short = jobs.charge_left(charged - total, covered)
+    if short and key not in _SAME_CHARGE_SAID:
         _SAME_CHARGE_SAID.add(key)
         responder = _order_responder(bot)
         if responder is not None:
@@ -12283,6 +12283,36 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
     return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
 
 
+#: Two charges this close, to the same person, for about the same.
+DOUBLE_CHARGE_GAP = timedelta(minutes=10)
+
+
+def _audit_doubles(posts, zone=timezone.utc) -> list[str]:
+    """The audit's lines for charges that look made twice - Gauri Beaston's
+    $336.38 and $336.36 at 6:27pm. A list to look at; [] when none."""
+    from .. import clearout, payraapi
+
+    seen, found = [], []
+    for post in posts:
+        said = _all_of_it(post)
+        name = (_PAID_NAME.search(said) or [None, ""])[1].strip(" *")
+        cents = payraapi._cents((_AMOUNT.search(said) or [None, ""])[1])
+        if not name or not cents:
+            continue
+        for other_name, other_cents, other in seen:
+            if clearout.name_match(name, other_name) >= 2 and abs(cents - other_cents) <= 100 \
+                    and abs(post.created_at - other.created_at) <= DOUBLE_CHARGE_GAP:
+                found.append(f"• **{name}** — ${other_cents / 100:,.2f} at "
+                             f"{other.created_at.astimezone(zone):%-I:%M%p %m/%d}".replace("AM", "am").replace("PM", "pm")
+                             + f" and ${cents / 100:,.2f} at {post.created_at.astimezone(zone):%-I:%M%p}".lower()
+                             + f": <{other.jump_url}> <{post.jump_url}>")
+        seen.append((name, cents, post))
+    if not found:
+        return []
+    return ["", "**⚠ Charged twice? Same person, about the same amount, minutes apart — check Payra before both "
+            "are treated as orders:**", *found]
+
+
 async def _audit_several(bot, posts, cards: list, held: dict, since) -> tuple[int, list[str]]:
     """(how many invoices have no card, the audit's lines) for card charges
     that paid more than one invoice - Dawson Clevenger's $279.45 paid three,
@@ -12392,6 +12422,7 @@ async def _order_audit(bot, responder: Responder, said: str) -> None:
     if not sorted_out["missing"] and not several[0]:
         lines.insert(1, "✅ Nothing missed.")
     lines += several[1]
+    lines += _audit_doubles(posts, zone)
     chunk = ""
     for line in lines:
         if len(chunk) + len(line) > 1900:

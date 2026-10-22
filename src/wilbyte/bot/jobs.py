@@ -15109,6 +15109,27 @@ def _invoice_paid_against(config: Config, *, name: str, amount: str, paid_at, no
     return found[0][1], found[0][2]
 
 
+#: Payra's card fee - "Automatic Dual Pricing" - put on at the charge, not
+#: on the invoice: Dawson Clevenger's $130, $56 and $84 invoices were
+#: charged $279.45.
+CARD_FEE = 0.035
+
+
+def charge_covers(invoice_cents: int, charged_cents: int, *, many: int = 1) -> bool:
+    """Whether invoices coming to `invoice_cents` are what was charged -
+    as they are, or with the card fee on top."""
+    slack = 2 * max(many, 1) + 1
+    return (abs(invoice_cents - charged_cents) <= slack
+            or abs(round(invoice_cents * (1 + CARD_FEE)) - charged_cents) <= slack)
+
+
+def charge_left(charged_cents: int, invoice_cents: int) -> int:
+    """What of a charge the invoices don't account for, the card fee aside."""
+    if invoice_cents and charged_cents <= round(invoice_cents * (1 + CARD_FEE)) + 2:
+        return 0
+    return max(charged_cents - round(invoice_cents * (1 + CARD_FEE)), 0) if invoice_cents else charged_cents
+
+
 #: How an invoice paid in the same charge as the post's own is put in the
 #: order's notes - a Payra invoice note, marked as another one's.
 SAME_CHARGE_NOTE = "Payra invoice note: (paid in the same charge"
@@ -15199,7 +15220,7 @@ def payra_same_charge(config: Config, *, name: str, email: str = "", amount: str
     theirs = order(theirs)[-8:]
     for size in range(1, len(theirs) + 1):
         for some in combinations(theirs, size):
-            if abs(sum(payraapi._cents(one.get("total")) for one in some) - rest) <= 2 * size:
+            if charge_covers(sum(payraapi._cents(one.get("total")) for one in some), rest, many=size):
                 return list(some)
     return []
 
@@ -15259,7 +15280,10 @@ def charges_of_several(config: Config, *, since, posts=(), now=None) -> list[dic
         named = [by_id.get(str(one)) for one in [*(payment.get("invoice_ids") or []), payment.get("invoice_id")] if one]
         named.append(by_number.get(digits(payment.get("invoice_number"))))
         named = list({str(one.get("id") or one.get("number")): one for one in named if one is not None}.values())
-        if len(named) >= 2:
+        # Paid together only when they come to the charge: Gavin Casella's
+        # $1,035 ad spend named two subscription invoices of $1,000 and $1,050.
+        together = sum(payraapi._cents(one.get("total")) or 0 for one in named)
+        if len(named) >= 2 and charge_covers(together, payraapi._cents(payment.get("amount")) or 0, many=len(named)):
             add({"name": str(payment.get("customer") or named[0].get("name") or ""), "amount": payment.get("amount"),
                  "paid_at": paid, "link": "", "unplaced": 0,
                  "invoices": sorted(named, key=lambda one: digits(one.get("number")).zfill(12))})
@@ -15275,7 +15299,7 @@ def charges_of_several(config: Config, *, since, posts=(), now=None) -> list[dic
         covered = sum(payraapi._cents(one.get("total")) or 0 for one in others)
         add({"name": post.get("name", ""), "amount": charged / 100, "paid_at": post.get("paid_at"),
              "link": post.get("link", ""), "invoices": ([own] if own else []) + others,
-             "unplaced": max(charged - total - covered, 0) if charged - total - covered > 2 * (len(others) + 1) else 0})
+             "unplaced": charge_left(charged - total, covered)})
     found.sort(key=lambda one: one.get("paid_at") or since)
     return found
 
