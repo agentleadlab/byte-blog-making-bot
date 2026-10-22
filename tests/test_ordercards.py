@@ -5188,9 +5188,9 @@ def test_unlabelled_contact_isnt_guessed_from_two():
     assert fields == {"email": "", "phone": ""}
 
 
-def test_an_overflow_order_is_aged(monkeypatch):
-    """"if it says overflow, take it to aged leads" - Christa Arriaga's
-    "Text-Verified IUL leads - Overflow" went in as a new agent's setup."""
+def test_an_overflow_order_is_a_new_agents_card_on_aged_leads(monkeypatch):
+    """"if it says overflow, take it to aged leads ... it'll be treated as new
+    agent but on aged leads" - Christa Arriaga's card went to In Que."""
     import sys
     import types
 
@@ -5210,9 +5210,22 @@ def test_an_overflow_order_is_aged(monkeypatch):
             "Notes:\n> (no notes on the invoice)\n[10/22 12:40PM] Kharyl: Christa Arriaga\n"
             "TX, KS, IL, VA, OH, MI\nOverflow · IUL Standard 20 Leads\nTAKEOVER")
     card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 22), notes=[])
-    assert card["kind"] == "aged" and card["name"].startswith("Aged Leads")
-    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 22))
-    assert not any("reads as" in one for one in wrong), wrong
-    message = SimpleNamespace(channel=SimpleNamespace(name="💸 | new-payment"), content=text, embeds=[],
-                              message_snapshots=[])
-    assert client._aged_payment(message)
+    assert card["kind"] == "fresh" and card["name"] == "New Agent - Christa Arriaga" and card["overflow"]
+
+    made = []
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "q", "name": "In Que"}, {"id": "a", "name": "Aged Leads Order Done"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "_create_once", lambda client, list_id, name, position: (
+        made.append((list_id, position)) or {"id": "c1", "shortUrl": "u"}))
+    monkeypatch.setattr(jobs, "_described", lambda client, card_id, card: [])
+    board_config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b", order_fresh_list="",
+                                                           order_aged_list=""))
+    got = jobs.order_card_make(board_config, "fresh", card)
+    assert made == [("a", "bottom")] and got["list"] == "Aged Leads Order Done"

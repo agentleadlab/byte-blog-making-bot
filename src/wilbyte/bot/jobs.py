@@ -13897,10 +13897,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         if named:
             fields["package"] = named
     kind = "aged" if str(got.get("kind") or "").casefold() == "aged" else "fresh"
-    if _posted.OVERFLOW.search("\n".join([text, str(fields.get("package") or ""), *map(str, notes or ())])):
-        # Overflow leads go out as aged - "if it says overflow, take it to
-        # aged leads".
-        kind = "aged"
+    # "if it says overflow, take it to aged leads ... it'll be treated as new
+    # agent but on aged leads" - a New Agent card, in Aged Leads Order Done.
+    overflow = kind == "fresh" and bool(_posted.OVERFLOW.search(
+        "\n".join([text, str(fields.get("package") or ""), *map(str, notes or ())])))
     # The invoice's own form, read as written - Claude's reading left
     # Mackenzie Ho's "States Leads In: all but new york" out and put the
     # product line's "Text-Verified Aged Veteran Leads" for her "Aged Veteran
@@ -14110,6 +14110,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             **({"agents": agents} if agents and kind == "fresh" else {}),
             **({"launch_conflict": [one.isoformat() for one in launch_conflict]} if launch_conflict else {}),
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
+            **({"overflow": True} if overflow else {}),
             "parts": [one for one in parts if one["kind"] in ("fresh", "aged") and one["package"]],
             "name": f"{'New Agent' if kind == 'fresh' else 'Aged Leads'} - {client_name or 'New client'}",
             "desc": order_desc(fields, kind), "due": "",
@@ -14541,7 +14542,7 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
     product = " ".join(product.group(1).split()) if product else ""
     if product and not re.match(r"^[—\-–(]", product):
         kinds = {card["kind"] for card in cards}
-        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE) or ordercards.OVERFLOW.search(product))
+        aged_paid = bool(re.search(r"\baged\b", product, re.IGNORECASE))
         if aged_paid and "aged" not in kinds:
             wrong.append(f"Lead type: the payment is for “{product}” - aged - but no card here is aged")
         family, _subtypes = setupcheck.product_of(product)
@@ -14559,19 +14560,21 @@ def order_card_make(config: Config, kind: str, card: dict, *, list_name: str = "
 
     client = open_trello(config)
     try:
-        wanted = (config.secrets.order_fresh_list if kind == "fresh" else config.secrets.order_aged_list) or ""
+        # An Overflow order is a new agent's card that lives with the aged.
+        place = "aged" if card.get("overflow") else kind
+        wanted = (config.secrets.order_fresh_list if place == "fresh" else config.secrets.order_aged_list) or ""
         lists = client.board_lists(config.secrets.trello_board_id)
         where = trello.find_list(lists, list_name) if list_name else None
         if list_name and where is None:
             raise ValueError(f"There's no “{list_name}” list on the board.")
-        where = where or ordercards.list_for(kind, lists, wanted=wanted)
+        where = where or ordercards.list_for(place, lists, wanted=wanted)
         if where is None:
-            raise ValueError(f"There's no {'Queue' if kind == 'fresh' else 'Aged Leads Order Done'} list on the board"
+            raise ValueError(f"There's no {'Queue' if place == 'fresh' else 'Aged Leads Order Done'} list on the board"
                              + (f" called “{wanted}”" if wanted else "") + ".")
         # "when creating a new aged leads card, JUST THE AGED LEADS, put them
         # below the list" - new agents stay on top.
         made = _create_once(client, str(where["id"]), card["name"],
-                            position="bottom" if kind == "aged" and not list_name else "top")
+                            position="bottom" if place == "aged" and not list_name else "top")
         card_id = str(made.get("id") or "")
         out = {"id": card_id, "url": str(made.get("shortUrl") or made.get("url") or ""),
                "list": str(where.get("name") or "")}
