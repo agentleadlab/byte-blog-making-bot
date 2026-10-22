@@ -8746,8 +8746,10 @@ CHECKLIST_PAUSED = True
 #: The team's agent-related requests in the Growth server - "@Nicole greff"
 #: - on the Ryte Checklist under Concerns, ticked when done, and Franklin
 #: pinged in Ryte The Goat about the ones still open: "just ping me on our
-#: own server that way ill remind them". On while the setup check is paused.
-TEAM_TASKS_ON = True
+#: own server that way ill remind them". Off: "he doesnt need to do this"
+#: (10/22) - nothing put on the card, ticked or pinged about. "@Ryte track"
+#: still puts one on by hand.
+TEAM_TASKS_ON = False
 #: Open this long, and Franklin is pinged about it - once, then once more
 #: the next day.
 TEAM_REMIND_AFTER = timedelta(hours=4)

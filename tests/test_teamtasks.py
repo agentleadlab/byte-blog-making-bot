@@ -255,10 +255,10 @@ async def _done(value):
 
 # ------------------------------------------------------------- paused, and not
 
-def test_the_setup_check_is_paused_and_team_requests_are_on():
-    """"pause but dont delete" - then "as well as the reminders/task on
-    trello on threads, ryte should be on the look out on them"."""
-    assert client.CHECKLIST_PAUSED is True and client.TEAM_TASKS_ON is True
+def test_the_setup_check_is_paused_and_team_requests_are_off():
+    """"pause but dont delete" - then team requests on the card, then "he
+    doesnt need to do this" (10/22): off too."""
+    assert client.CHECKLIST_PAUSED is True and client.TEAM_TASKS_ON is False
     # The Trello wrong-leads check keeps its own ten minutes.
     assert client.SETUP_CHECK_SECONDS == 600 and client.CHECKLIST_EVERY_SECONDS == 30 * 60
     assert teamtasks.TASKS_LIST == "Concerns Needs to Be Addressed"
