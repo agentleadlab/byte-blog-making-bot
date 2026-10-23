@@ -6158,7 +6158,15 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
         for name in names:
             cards = rules.named_that(name, every)
             if not cards:
-                problems.append(f"I can't find a New Agent card for “{name}” anywhere on the board.")
+                # Not in a card's title: named in one - an agency, a business,
+                # the person a card is for - "Livia Rose" wasn't a title.
+                words = [word for word in re.split(r"\W+", name.casefold()) if word]
+                cards = [card for card in every if words and rules.is_client_card(str(card.get("name") or ""))
+                         and all(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", str(card.get("desc") or "").casefold())
+                                 for word in words)][:6]
+            if not cards:
+                problems.append(f"I can't find a New Agent card for “{name}” anywhere on the board - not in a "
+                                f"card's title or what's written on one.")
                 continue
             theirs = []
             for card in cards:

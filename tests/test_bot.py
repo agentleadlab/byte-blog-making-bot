@@ -7988,3 +7988,25 @@ def test_two_sheets_asked_for_one_answer_each(monkeypatch):
     assert all(one["sheets"] for one in found)
     found, problems = jobs.agent_sheet(config, "sheet for Livia Rose and Nobody Here")
     assert [one["agent"] for one in found] == ["Livia Rose"] and "Nobody Here" in problems[0]
+
+
+def test_a_sheet_for_a_name_written_on_a_card_not_in_its_title(monkeypatch):
+    from types import SimpleNamespace
+
+    cards = [{"id": "x", "name": "New Agent - Jordan Example", "url": "https://trello.com/c/x",
+              "desc": "Name: Jordan Example\nAgency: Livia Rose Insurance"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def card_comments(self, card_id):
+            return ["Sheet link: https://docs.google.com/spreadsheets/d/xSHEET/edit"]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    found, problems = jobs.agent_sheet(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")),
+                                       "find me Livia Rose, Google sheet")
+    assert problems == [] and found[0]["agent"] == "Jordan Example" and found[0]["sheets"]
