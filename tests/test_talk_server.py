@@ -109,3 +109,18 @@ def test_a_tag_in_growth_is_answered_unless_its_on_a_payment(monkeypatch):
     on_order = tagged("<@99>", thread)
     asyncio.run(client.WilByteBot.on_message(bot, on_order))
     assert answered == [here] and noted == [on_order]
+
+
+def test_rytes_own_role_tagged_is_ryte_tagged():
+    """"@Ryte trello daycheck" with the @Ryte off the list being Ryte's role -
+    no answer. Somebody else's role still isn't Ryte."""
+    own = SimpleNamespace(id=777, tags=SimpleNamespace(bot_id=99))
+    other = SimpleNamespace(id=888, tags=None)
+    message = said("<@&777> trello daycheck", roles=[own])
+    message.mentions = []
+    assert client.is_direct_mention(message, RYTE)
+    assert client.talks_to_ryte(message, CONFIG, RYTE)
+    team = said("<@&888> heads up", roles=[other])
+    team.mentions = []
+    assert not client.is_direct_mention(team, RYTE)
+    assert not client.talks_to_ryte(team, CONFIG, RYTE)

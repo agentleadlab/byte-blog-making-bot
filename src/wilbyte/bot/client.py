@@ -933,9 +933,25 @@ def is_direct_mention(message, bot_user) -> bool:
         return False
     if message.mention_everyone:
         return False
+    # Or Ryte's own role - the one Discord gives every bot, named after it.
+    # Picking "@Ryte" off the list can put that in instead of Ryte, and
+    # "@Ryte trello daycheck" got no answer.
+    if _own_role_mentioned(message, bot_user):
+        return True
     if bot_user not in message.mentions:
         return False
     return bool(re.search(rf"<@!?{bot_user.id}>", message.content or ""))
+
+
+def _own_role_mentioned(message, bot_user) -> bool:
+    """Whether the message tags the role that is Ryte's own - the bot's
+    managed role - typed in the text, not just held."""
+    for role in getattr(message, "role_mentions", None) or []:
+        tags = getattr(role, "tags", None)
+        if getattr(tags, "bot_id", None) == getattr(bot_user, "id", object()) \
+                and re.search(rf"<@&{role.id}>", message.content or ""):
+            return True
+    return False
 
 
 # ------------------------------------------------------------- watching a channel
@@ -1019,7 +1035,8 @@ def talks_to_ryte(message, config: Config, bot_user) -> bool:
     content = str(getattr(message, "content", "") or "")
     if not content.strip() and not getattr(message, "attachments", None):
         return False
-    if getattr(message, "mention_everyone", False) or getattr(message, "role_mentions", None):
+    if getattr(message, "mention_everyone", False) or (
+            getattr(message, "role_mentions", None) and not _own_role_mentioned(message, bot_user)):
         return False
     typed = set(re.findall(r"<@!?(\d+)>", content))
     if typed - {str(bot_user.id)}:
@@ -5885,6 +5902,9 @@ async def _wrong_days(responder: Responder, config: Config) -> None:
     written before it started asking are still there, and each one is leads
     ordered for the wrong day.
     """
+    # Said at once: reading every Lead Order and setup card takes a minute,
+    # and silence read as not answering.
+    await responder.send("🔎 Checking the Lead Order and setup cards for anybody on the wrong day…")
     try:
         findings, problems = await asyncio.to_thread(jobs.wrong_day_lines, config)
     except PIPELINE_ERRORS as exc:
