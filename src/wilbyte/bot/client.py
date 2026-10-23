@@ -8736,7 +8736,7 @@ async def _offer_to_move(responder: Responder, config: Config, group) -> None:
         label="Tell Therese" if hub_only else f"Move to {first.live:%a %b %d}",
         emoji="📅",
     )
-    setup = (f"\nThe setup on their card says **{first.setup_day:%a %b %d}** - so the hub's set for the wrong day."
+    setup = (f"\nThe hub has them starting **{first.setup_day:%a %b %d}** - set for the wrong day."
              if first.setup_day is not None else "")
     if hub_only:
         text = (f"📅 **Set up for the wrong day:** **[{first.agent}](<{first.card_url}>)** goes live "

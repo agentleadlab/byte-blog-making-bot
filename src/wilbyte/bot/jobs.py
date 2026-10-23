@@ -8258,6 +8258,37 @@ _LAUNCH_READS: dict = {}
 LIVE_MOVED_AHEAD = 7
 
 
+def _hub_start_days(config: Config, today) -> list[tuple[str, date]] | None:
+    """(name, start date) for every hub agent not done, starting from a week
+    back - None when the hub can't be read, so nothing's said about it."""
+    from .. import hub
+
+    if not str(getattr(config.secrets, "hub_api_token", "") or "").strip():
+        return None
+    try:
+        found = hub.agents(config.secrets, status="all")
+    except Exception as exc:
+        logging.getLogger("wilbyte.bot").warning("Couldn't read the hub's start dates: %s", _short(exc, 120))
+        return None
+    return [(one.name, one.start_date) for one in found
+            if one.start_date is not None and one.start_date >= today - timedelta(days=7)
+            and str(one.status or "").casefold() not in hub.DONE_WORDS]
+
+
+def _hub_day_off(hub_days, name: str, launch) -> date | None:
+    """The day the hub has them starting when it isn't `launch` - None when
+    it's right, they aren't on it, or it couldn't be read. Any of their
+    orders on that day is right."""
+    from .. import clearout
+
+    if not hub_days or not name:
+        return None
+    theirs = sorted({day for who, day in hub_days if clearout.name_match(name, who) >= 2})
+    if not theirs or launch in theirs:
+        return None
+    return min(theirs, key=lambda day: abs((day - launch).days))
+
+
 def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
     """Agents on a setup card for a day they no longer go live on.
     ([livemoved.Moved], problems). Reads only."""
@@ -8270,6 +8301,11 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
     zone = config.schedule.timezone
     days = [today + timedelta(days=n) for n in range(LIVE_MOVED_AHEAD + 1)]
     recent = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc) - timedelta(days=30)
+    # The hub's own start dates - what it's set for. Not the setup comments:
+    # Nova writes "Ready to go live Sat Oct 24" under Therese's name for
+    # agents set up right on the hub for Sun and Mon - "these were setup
+    # correctly on hub but nova commented incorrectly".
+    hub_days = _hub_start_days(config, today)
     client = open_trello(config)
     found, problems = [], []
     try:
@@ -8314,10 +8350,12 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                             notes, str(card.get("desc") or ""),
                             made=made.date() if made else today, timezone=zone,
                         )
-                        setup_day = livemoved.setup_launch(notes, timezone=zone)[0]
+                        setup_day = None
                         _LAUNCH_READS[card_id] = (touched, (launch, note, setup_day))
                     if launch is None:
                         continue
+                    agent_name = name or rules.agent_name(str(card.get("name") or ""))
+                    setup_day = _hub_day_off(hub_days, agent_name, launch)
                     hub_wrong = setup_day is not None and setup_day != launch
                     if rules.setup_covers(title, launch) and not hub_wrong:
                         continue

@@ -4758,3 +4758,57 @@ def test_ethan_davis_hub_isnt_wrong_off_novas_note():
               "text": "@card ✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete for ETHAN DAVIS\n"
                       "Ready to go live Mon, Oct 26"}]
     assert livemoved.setup_launch(notes, timezone="America/New_York")[0] == date(2026, 10, 26)
+
+
+def test_the_hubs_own_start_date_not_novas_comment(monkeypatch):
+    """"these were setup correctly on hub but nova commented incorrectly" -
+    FND Life on Sunday's setup card, set for Sunday on the hub, Nova's "Ready
+    to go live Sat Oct 24" under it. Bryson: the hub says Monday."""
+    from datetime import date
+    from types import SimpleNamespace
+
+    from wilbyte import hub
+    from wilbyte.bot import jobs
+
+    def card(i, name, desc):
+        return {"id": f"6ada0000{i * 16}", "name": f"New Agent - {name}", "shortUrl": f"https://trello.com/c/{i}",
+                "dateLastActivity": "2026-10-23T17:00:00Z", "desc": desc}
+
+    fnd = card("a", "FND Life", "Name: FND Life\nLaunch Date: Sunday, October 25")
+    bryson = card("b", "Bryson Fabrizio", "Name: Bryson Fabrizio\nLaunch Date: Friday, October 23")
+    sunday = {"id": "6ada0000" + "c" * 16, "name": "Agent Setup Going Live Sunday 10/25"}
+    weekend = {"id": "6ada0000" + "d" * 16, "name": "Agent Setup Going Live Saturday-Monday 10/24-10/26"}
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [fnd, bryson, sunday, weekend]
+
+        def card_checklists(self, card_id):
+            who = fnd if card_id == sunday["id"] else bryson
+            return [{"id": "cl", "name": "Therese", "checkItems": [
+                {"id": "it", "name": f"[{who['name']}]({who['shortUrl']}) 20 VET"}]}]
+
+        def card_notes(self, card_id):
+            return [{"when": "2026-10-23T16:30:00Z", "author": "Therese Guba",
+                     "text": "@card ✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete\n"
+                             "Ready to go live Sat, Oct 24"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(hub, "agents", lambda secrets, status="fulfilled", timeout=30.0: [
+        hub.HubAgent(id="1", name="FND Life", status="scheduled", start_date=date(2026, 10, 25)),
+        hub.HubAgent(id="2", name="Bryson Fabrizio", status="unsigned", start_date=date(2026, 10, 26)),
+        hub.HubAgent(id="3", name="Bryson Fabrizio", status="done", start_date=date(2026, 10, 23))])
+    jobs._LAUNCH_READS.clear()
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b", hub_api_token="t"),
+                             schedule=SimpleNamespace(timezone="America/New_York"))
+    found, problems = jobs.live_dates_moved(config, today=date(2026, 10, 23))
+    assert problems == [] and [one.agent for one in found] == ["Bryson Fabrizio"]
+    assert found[0].live == date(2026, 10, 23) and found[0].setup_day == date(2026, 10, 26)
+    # The hub not readable: nothing said about it, the move still is.
+    monkeypatch.setattr(hub, "agents", lambda *a, **k: (_ for _ in ()).throw(hub.HubError("down")))
+    jobs._LAUNCH_READS.clear()
+    found, _ = jobs.live_dates_moved(config, today=date(2026, 10, 23))
+    assert [one.agent for one in found] == ["Bryson Fabrizio"] and found[0].setup_day is None

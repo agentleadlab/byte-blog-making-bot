@@ -39,9 +39,9 @@ class Moved:
     item_id: str = ""
     item_name: str = ""
     ticked: bool = False
-    #: The day the setup confirmation says, when it isn't the day they go
-    #: live - Therese's "Ready to go live Wednesday" after the client asked
-    #: for Thursday. The hub is set for this day.
+    #: The day the hub has them starting, when it isn't the day they go
+    #: live - read off the hub itself, not the setup comment (Nova's says
+    #: the wrong day for agents set up right).
     setup_day: date | None = None
     #: The line is on the right setup card; only the hub's day is wrong.
     hub_only: bool = False
