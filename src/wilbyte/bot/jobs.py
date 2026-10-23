@@ -13477,6 +13477,25 @@ _FORM_LABELS = (
 _AGE_BUCKET = re.compile(r"\b\d{2,3}\s*(?:\+|[-–]\s*\d{2,3})")
 
 
+_LEAD_WORD = re.compile(r"\b(?:aged|vets?|veterans?|fex|final\s+expense|iul|mtg|mortgage|widows?|truckers?|"
+                        r"blue\s+collar|spanish|leads?)\b", re.IGNORECASE)
+
+
+def count_beside_lead_type(text: str) -> int | None:
+    """How many leads, off a line that says so beside the lead type - Jake
+    Scott's "90, 30-90 aged vets" was held for "how many leads". The age
+    range comes off first so its numbers aren't the count; a line with a
+    phone, or more than one number left, says nothing. The first such line."""
+    for line in str(text or "").splitlines():
+        if not _LEAD_WORD.search(line) or re.search(r"\d{3}[-.\s]\d{3}[-.\s]\d{4}|\$", line):
+            continue
+        rest = _AGE_BUCKET.sub(" ", line)
+        numbers = re.findall(r"(?<![\d/:.])(\d{1,4})(?![\d/:.%])", rest)
+        if len(numbers) == 1 and int(numbers[0]) > 0:
+            return int(numbers[0])
+    return None
+
+
 def invoice_form(text: str) -> dict:
     """The invoice's form lines - "States Leads In: all but new york", "Lead
     Type: Aged Veteran - 180+ days [AGED - $1/Lead]" - as {field: value}, the
@@ -14336,7 +14355,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # "180+ days ALL" over the stock list, and "37 leads" of the 90-180:
         # no total written down, so it was left blank and Alexis Lesme's
         # card was held for want of a count. All of them is a number.
-        counted = ordercards.all_counted(source)
+        counted = ordercards.all_counted(source) or count_beside_lead_type(
+            "\n".join([*(str(one) for one in notes or ()), text]))
         if counted:
             fields["leads"] = str(counted)
     parts = [{key: " ".join(str((one or {}).get(key) or "").split())

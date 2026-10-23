@@ -5464,3 +5464,33 @@ def test_an_aged_count_off_the_invoice_line(monkeypatch):
     assert filled["fields"]["leads"] == "50" and client._aged_gaps(filled) == []
     assert "Number of Leads Requested: 50" in filled["desc"] and filled["missing"] == []
     assert not any("50" in one and "isn't" in one for one in ordercards.doubts(filled, today=date(2026, 10, 23))[0])
+
+
+def test_jake_scotts_count_beside_the_lead_type(monkeypatch):
+    """"90, 30-90 aged vets" in the Zelle notes, and the card held for "how
+    many leads"."""
+    import sys
+    import types
+
+    assert jobs.count_beside_lead_type("90, 30-90 aged vets") == 90
+    assert jobs.count_beside_lead_type("Aged Vets 30-90") is None, "the age range isn't the count"
+    assert jobs.count_beside_lead_type("Lead Type: Aged IUL - 180+ days [AGED - $1/Lead]") is None
+    assert jobs.count_beside_lead_type("816-730-0147 vets") is None
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Jake Scott", "states": "MD, CA, FL, GA, TX", "agency": "AEP",
+        "package": "Aged Vets 30-90", "leads": ""})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/23 06:50PM] Nova: New Payment | Zelle\nNAME: Jake Scott\nAMOUNT: $300\n"
+            "PRODUCT: — (match to their order)\n[10/23 06:50PM] Kharyl: Paid via Zelle (Chase)\nJake scott\n"
+            "js.aep@example.com\n555-010-0147\n90, 30-90 aged vets\nMD,CA,FL,GA,TX\naep")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 23))
+    assert card["fields"]["leads"] == "90"
+    assert client._aged_gaps(card) == []
+    assert not any("90" in one for one in ordercards.doubts(card, today=date(2026, 10, 23))[0])
