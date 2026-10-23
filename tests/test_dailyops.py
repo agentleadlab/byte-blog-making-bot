@@ -4685,3 +4685,61 @@ def test_tagged_with_no_list_on_that_card_goes_on_theirs_elsewhere(monkeypatch, 
     assert added == ["Therese (on 💻 Ops 10/23/26)", "Nicole"]
     assert items == [("cl-Therese", "See the comment https://trello.com/c/ADS#comment-c9"),
                      ("cl-Nicole", "See the comment https://trello.com/c/ADS#comment-c9")]
+
+
+def test_novas_setup_note_isnt_a_new_go_live_day():
+    """Bryson Fabrizio: Faith's "Live today instead Friday October 23" on his
+    card, and Nova's "Set up by Nova ... launch 2026-10-24" newer - read as
+    his day, so he stayed on Saturday-Monday's setup card."""
+    from datetime import date
+
+    from wilbyte import livemoved
+
+    notes = [{"when": "2026-10-23T16:05:00Z", "author": "Therese Guba",
+              "text": "🛠 Set up by Nova:\n· created on the hub — NEW SETUPS, no leads until someone says go, "
+                      "launch 2026-10-24\n· Discord: made #bryson-fabrizio-mtg"}]
+    desc = ("Name: Bryson Fabrizio\nLaunch Date: Friday, October 23\nAgency: Wolfpack\n\n"
+            "Live Monday Oct 26\nLive today instead Friday October 23 - disregard Monday")
+    launch, note = livemoved.current_launch(notes, desc, made=date(2026, 10, 23), timezone="America/New_York")
+    assert launch == date(2026, 10, 23) and note is None
+    assert livemoved.setup_launch(notes, timezone="America/New_York")[0] == date(2026, 10, 24)
+
+
+def test_bryson_fabrizio_moved_to_today_is_flagged(monkeypatch):
+    """"this should be live today" - on Saturday-Monday's setup card, Faith's
+    "Live today instead Friday October 23", Nova's setup for 10/24."""
+    from datetime import date
+    from types import SimpleNamespace
+
+    from wilbyte.bot import jobs
+
+    agent = {"id": "6ada0000aaaaaaaaaaaaaaaa", "name": "New Agent - Bryson Fabrizio",
+             "shortUrl": "https://trello.com/c/BRYSON", "dateLastActivity": "2026-10-23T17:00:00Z",
+             "desc": "Name: Bryson Fabrizio\nLaunch Date: Friday, October 23\n\nLive Monday Oct 26\n"
+                     "Live today instead Friday October 23 - disregard Monday"}
+    setup = {"id": "6ada0000bbbbbbbbbbbbbbbb", "name": "Agent Setup Going Live Saturday-Monday 10/24-10/26"}
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [agent, setup]
+
+        def card_checklists(self, card_id):
+            return [{"id": "cl", "name": "Therese", "checkItems": [
+                {"id": "it", "name": "[New Agent - Bryson Fabrizio](https://trello.com/c/BRYSON) 35 MTG"}]}]
+
+        def card_notes(self, card_id):
+            return [{"when": "2026-10-23T16:30:00Z", "author": "Therese Guba",
+                     "text": "🛠 Set up by Nova:\n· created on the hub — NEW SETUPS, launch 2026-10-24"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    jobs._LAUNCH_READS.clear()
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"),
+                             schedule=SimpleNamespace(timezone="America/New_York"))
+    found, problems = jobs.live_dates_moved(config, today=date(2026, 10, 23))
+    assert problems == [] and len(found) == 1
+    one = found[0]
+    assert one.agent == "Bryson Fabrizio" and one.live == date(2026, 10, 23)
+    assert one.setup_day == date(2026, 10, 24) and not one.hub_only
