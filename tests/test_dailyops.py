@@ -4652,3 +4652,36 @@ def test_a_name_at_the_front_of_the_message_is_still_a_tag():
     assert dailyops.tag_asked("tag therese new sheet for petar", known) == (
         "new sheet for petar", ["thereseguba"], [])
     assert dailyops.tag_asked("tag therese guba new sheet for petar", known)[1] == ["thereseguba"]
+
+
+def test_tagged_with_no_list_on_that_card_goes_on_theirs_elsewhere(monkeypatch, config):
+    """"theerse is not on ads": Therese and Nicole tagged on Ads with a
+    screenshot - Nicole's list is on Ads, Therese's on Ops."""
+    from wilbyte.bot import jobs
+
+    items = []
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return [{"id": "ads", "name": "📊 Ads 10/23/26"}, {"id": "ops", "name": "💻 Ops 10/23/26"},
+                    {"id": "gen", "name": "💎 General 10/23/26"}]
+
+        def card_checklists(self, card_id):
+            return {"ads": [{"id": "cl-Nicole", "name": "Nicole", "checkItems": []}],
+                    "ops": [{"id": "cl-Therese", "name": "Therese", "checkItems": []}],
+                    "gen": [{"id": "cl-Elisa", "name": "Elisa", "checkItems": []}]}[card_id]
+
+        def add_check_item(self, checklist_id, name, **kw):
+            items.append((checklist_id, name))
+            return {"id": "i"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    check = {"card_id": "ads", "comment_id": "c9", "link": "https://trello.com/c/ADS#comment-c9",
+             "people": ["Therese", "Nicole"], "text": "https://trello.com/c/EVAN"}
+    added = jobs.tag_items_fill(config, check)
+    assert added == ["Therese (on 💻 Ops 10/23/26)", "Nicole"]
+    assert items == [("cl-Therese", "See the comment https://trello.com/c/ADS#comment-c9"),
+                     ("cl-Nicole", "See the comment https://trello.com/c/ADS#comment-c9")]

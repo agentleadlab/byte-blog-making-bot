@@ -3393,6 +3393,9 @@ def _tags_on(config, client, every, members, day, problems) -> list:
     # attached to them, so I left them: OTP MTG PLUS relaunch setup sc" was a
     # "huh?". Which file, for whom, and where - one line each.
     for one in nothing_said:
+        if tagged.VIA_RYTE.search(one.text or ""):
+            # Ryte's own, for somebody: it puts the tagged on their lists itself.
+            continue
         file = tagged.attached_name(one.text)
         if len(file) > 80:
             file = file[:77] + "…"
@@ -4808,13 +4811,29 @@ def tag_items_fill(config: Config, check: dict) -> list[str]:
         held = client.card_checklists(check["card_id"])
         by_name = {" ".join(str(one.get("name") or "").split()).casefold(): one for one in held}
         task = " ".join(str(check.get("text") or "").split())
+        if not re.sub(r"https?://\S+", "", task).strip(" -–—:"):
+            # Only a link and a screenshot: "See the comment" says more.
+            task = ""
         for first in check.get("people") or []:
             who = " ".join(str(first).split()).casefold()
             # "Nicole" or "Nicole - Ads": the list with their name as a word.
             found = by_name.get(who) or next(
                 (one for name, one in by_name.items() if who and re.search(rf"\b{re.escape(who)}\b", name)), None)
             if found is None:
-                logging.getLogger("wilbyte.bot").warning("Tagged %s, and the card has no checklist of theirs", first)
+                # Not on this card: their checklist on another of the day's
+                # cards - "theerse is not on ads": tagged on Ads, her list is
+                # on Ops. The comment's link takes her to it.
+                elsewhere = _their_list_elsewhere(client, config, check["card_id"], who)
+                if elsewhere is None:
+                    logging.getLogger("wilbyte.bot").warning("Tagged %s, and no card today has a checklist of theirs",
+                                                             first)
+                    continue
+                other_card, found = elsewhere
+                if any(check["comment_id"] in str(item.get("name") or "") for item in found.get("checkItems") or []):
+                    continue
+                client.add_check_item(str(found.get("id") or ""),
+                                      f"{task or 'See the comment'} {check.get('link') or ''}".strip())
+                added.append(f"{first} (on {other_card})")
                 continue
             linked = [item for item in found.get("checkItems") or []
                       if check["comment_id"] in str(item.get("name") or "")]
@@ -4831,6 +4850,35 @@ def tag_items_fill(config: Config, check: dict) -> list[str]:
     finally:
         client.close()
     return added
+
+
+def _their_list_elsewhere(client, config: Config, card_id: str, who: str):
+    """(card title, checklist) for this person on another of the same day's
+    cards - General, Ops, Ads, Lead Order in that order - or None."""
+    from .. import dailyops
+
+    try:
+        every = client.board_cards(config.secrets.trello_board_id)
+    except Exception:
+        return None
+    here = next((one for one in every if str(one.get("id") or "") == str(card_id)), None)
+    key = dailyops.parse_card_title(str((here or {}).get("name") or ""))
+    if not key:
+        return None
+    covering = dailyops.cards_covering(every, key[1])
+    for kind in ("general", "ops", "ads", "lead_order"):
+        other = covering.get(kind)
+        if other is None or str(other.get("id") or "") == str(card_id):
+            continue
+        try:
+            lists = client.card_checklists(str(other.get("id") or ""))
+        except Exception:
+            continue
+        for one in lists:
+            name = " ".join(str(one.get("name") or "").split()).casefold()
+            if name == who or re.search(rf"\b{re.escape(who)}\b", name):
+                return str(other.get("name") or ""), one
+    return None
 
 
 def _card_with_their_checklist(client, card: dict, covering: dict, handles, members) -> dict | None:
