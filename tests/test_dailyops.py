@@ -4797,6 +4797,7 @@ def test_the_hubs_own_start_date_not_novas_comment(monkeypatch):
             pass
 
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "HUB_DAY_CHECK", True)
     monkeypatch.setattr(hub, "agents", lambda secrets, status="fulfilled", timeout=30.0: [
         hub.HubAgent(id="1", name="FND Life", status="scheduled", start_date=date(2026, 10, 25)),
         hub.HubAgent(id="2", name="Bryson Fabrizio", status="unsigned", start_date=date(2026, 10, 26)),

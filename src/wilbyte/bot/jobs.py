@@ -8258,12 +8258,18 @@ _LAUNCH_READS: dict = {}
 LIVE_MOVED_AHEAD = 7
 
 
+#: Off until the hub field that is the go-live day is known: `start_date`
+#: isn't - every agent came back "Sat Oct 24", and Bryson Fabrizio's hub page
+#: says 2026-10-26 where `start_date` gave the 24th.
+HUB_DAY_CHECK = False
+
+
 def _hub_start_days(config: Config, today) -> list[tuple[str, date]] | None:
     """(name, start date) for every hub agent not done, starting from a week
     back - None when the hub can't be read, so nothing's said about it."""
     from .. import hub
 
-    if not str(getattr(config.secrets, "hub_api_token", "") or "").strip():
+    if not HUB_DAY_CHECK or not str(getattr(config.secrets, "hub_api_token", "") or "").strip():
         return None
     try:
         found = hub.agents(config.secrets, status="all")
