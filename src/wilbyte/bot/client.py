@@ -2229,7 +2229,7 @@ async def _restore_state(bot: "WilByteBot", responder: Responder, config: Config
     files = [one for one in getattr(message, "attachments", []) or []
              if str(one.filename).endswith((".tar.gz", ".tgz", ".zip"))]
     if not files:
-        await responder.send("Attach the **ryte-state.tar.gz** that `scripts/pack-state.sh` made on the Mac.")
+        await responder.send("Attach the **ryte-state-<date>.tar.gz** that `scripts/pack-state.sh` made on the Mac.")
         return
     try:
         found = statemove.read(await files[0].read())

@@ -57,7 +57,7 @@ stopped in step 7, and the Railway copy only goes live in step 8.
 ## 6. Pack the Mac's memory (Mac still running)
 
 - [ ] On the Mac, in the RYTE folder: `bash scripts/pack-state.sh`
-      → `ryte-state.tar.gz` on the Desktop. It carries the ledger, payments,
+      → `ryte-state-<date>.tar.gz` on the Desktop. It carries the ledger, payments,
       orders, Faith's texts, the keep list - and posts still to publish.
 
 ## 7. The switch - pick a quiet time (after 10 PM)
@@ -68,7 +68,7 @@ stopped in step 7, and the Railway copy only goes live in step 8.
 
 ## 8. Bring the memory across
 
-- [ ] In Ryte The Goat: **`@Ryte restore state`** with `ryte-state.tar.gz`
+- [ ] In Ryte The Goat: **`@Ryte restore state`** with `ryte-state-<date>.tar.gz`
       attached → **Restore it**. RYTE deletes the message (client data) and
       restarts.
 - [ ] If the file is too big for Discord: tell Claude - there's another way in.

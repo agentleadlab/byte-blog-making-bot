@@ -11,7 +11,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-out="$HOME/Desktop/ryte-state.tar.gz"
+# Dated, so one backup doesn't overwrite the last.
+out="$HOME/Desktop/ryte-state-$(date +%Y-%m-%d).tar.gz"
 folders=()
 [ -d state ] && folders+=(state)
 [ -d corpus ] && folders+=(corpus)
@@ -30,4 +31,7 @@ fi
 tar -czf "$out" --exclude='*.tmp' --exclude='.DS_Store' --exclude='state/update-blocked' \
   "${folders[@]}" ${payloads[@]+"${payloads[@]}"}
 printf '\n\033[32m✓ Packed\033[0m %s (%s)\n\n' "$out" "$(du -h "$out" | cut -f1)"
-printf 'Next: in Discord, @Ryte restore state - with that file attached.\n\n'
+printf 'Backup made. Copy it somewhere off this Mac (Google Drive, iCloud, a USB stick) - it has\n'
+printf 'client data in it, so keep it private.\n\n'
+printf 'Only when moving RYTE to a new machine: @Ryte restore state there, with this file attached.\n'
+printf 'Not here - it would swap the memory RYTE has now for this copy.\n\n'
