@@ -761,3 +761,13 @@ def test_add_to_trello_wins_over_a_sheet_in_the_message():
     request = parse("<@1> add to trello tag therese new sheet for petar")
     assert request.action == "comment" and request.brief == "tag therese new sheet for petar"
     assert parse("<@1> new sheet for petar").action == "agentsheet"
+
+
+def test_add_to_trello_after_what_its_about():
+    """Faith's webhook link on the first line, "@Ryte add to trello tag
+    therese" under it."""
+    asked = parse(f"https://app.runspark.ai/api/webhook/leads/lw_x\n\n{BOT} add to trello tag therese")
+    assert asked.action == "comment"
+    assert asked.brief.startswith("tag therese") and "https://app.runspark.ai/api/webhook/leads/lw_x" in asked.brief
+    # A link and a question about it is still a question.
+    assert parse(f"https://example.com/x\n{BOT} what is this").action != "comment"

@@ -85,3 +85,17 @@ def test_he_says_what_a_command_does_in_its_own_words():
     Done, and `trello unticked` isn't about those at all."""
     system, _messages = _built()
     assert "in the command list's" in system and "no wider and no narrower" in system
+
+
+def test_the_chat_sees_every_command_and_never_says_it_cant():
+    """"posting it to a card isn't something I do; I only talk here" - the
+    command list was cut at 3,500 characters, all copy commands."""
+    from datetime import date
+
+    from wilbyte import chat
+    from wilbyte.bot import mentions
+
+    system, _ = chat.build("hi", who="Faith", today=date(2026, 10, 23), history=[], sops=[],
+                           commands=mentions.HELP_TEXT)
+    assert "add to trello" in system and "hub fields" in system
+    assert "never say you *can't*" in system

@@ -875,11 +875,25 @@ def faith_voice_draft(text: str) -> str | None:
     return str(text)[found.end():].strip()
 
 
+def _ask_first(text: str) -> str:
+    """"add to trello" on a line after what it's about, brought to the
+    front with that underneath - Faith's webhook link, then "@Ryte add to
+    trello tag therese", got "posting it to a card isn't something I do"."""
+    lines = str(text or "").splitlines()
+    if not lines or TRELLO_ASK.match(lines[0]):
+        return text
+    for at, line in enumerate(lines[1:], start=1):
+        if TRELLO_ASK.match(line):
+            above = "\n".join(one for one in lines[:at] if one.strip())
+            return "\n".join([*lines[at:], above]).strip()
+    return text
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
 
-    text = ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip()
+    text = _ask_first(ROLE_MENTION_RE.sub(" ", MENTION_RE.sub(" ", content or "")).strip())
     lowered = text.lower()
 
     # "@Ryte respond" with a screenshot of a thread, or the agent's words

@@ -17,6 +17,11 @@ from datetime import date
 
 log = logging.getLogger("wilbyte.bot")
 
+#: All of the command list - cut at 3,500 characters it was only the copy
+#: commands, and RYTE told Franklin "posting it to a card isn't something I
+#: do; I only talk here".
+COMMANDS_SHOWN = 24000
+
 #: How much of the channel is read before answering - enough to follow a
 #: conversation, not so much that an old one is answered instead.
 HISTORY = 8
@@ -36,8 +41,12 @@ How you answer:
 conversation. Never make up numbers, names, dates, prices, policies or what is on \
 the board. When you don't know, say so with style and, if one fits, name the \
 command that would find out, in backticks.
-- You only talk in this mode. Never say you did, filed, moved, ticked, sent or \
-checked something. If they want something done, point them to the command.
+- This reply is talk only. Never say you did, filed, moved, ticked, sent or \
+checked something here. But never say you *can't* do something your commands do - \
+you file on Trello, make order cards, find sheets and cards, check the board, \
+the hub, Payra and more. If they want something done, give the exact command to \
+type, in backticks - `@RYTE add to trello <what to say>` puts something on the \
+day's cards.
 - Don't list your commands unless asked - that's what `@RYTE commands` is for. \
 Mention one at most, when it helps - and say what it does in the command list's \
 own words, no wider and no narrower: which list, which cards, which day.
@@ -66,7 +75,7 @@ def build(question: str, *, who: str, today: date, history: list[str], sops: lis
     """(system, messages) for one answer. Kept apart from the call so what
     RYTE is told can be read and tested without a key."""
     system = PERSONA + "\n" + FACTS + "\nYour commands, for pointing people at the " \
-        "right one (don't recite them):\n" + commands[:3500]
+        "right one (don't recite them):\n" + commands[:COMMANDS_SHOWN]
     parts = [f"Today is {today:%A, %B %-d, %Y}."]
     if sops:
         parts.append("SOPs in the library that may answer this:\n" + "\n".join(
