@@ -6148,6 +6148,53 @@ def _off_the_setup_card(config: Config, setup: dict, every: list) -> tuple:
     return found, 0, []
 
 
+def cards_for_name(config: Config, name: str) -> tuple[list[dict], bool]:
+    """Every client card on the board for a name, archived ones too - "did
+    we create a card for Fransisco Pedemonte" was answered "I can't go
+    rummaging through last week's board". ([{"name", "url", "list",
+    "closed", "made"}], whether the match is only a close spelling): the
+    name as typed first, else one spelled a letter or two differently -
+    Payra had "Fransico", the question "Fransisco"."""
+    from difflib import SequenceMatcher
+
+    from .. import agents as rules
+
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+        try:
+            lists = {str(one.get("id")): str(one.get("name") or "")
+                     for one in client.board_lists(config.secrets.trello_board_id)}
+        except Exception:
+            lists = {}
+    finally:
+        client.close()
+    found, close = rules.named_that(name, every), False
+    if not found:
+        wanted = [word for word in re.findall(r"[a-z]+", name.casefold()) if len(word) >= 3]
+
+        def near(word, theirs):
+            return any(SequenceMatcher(None, word, one).ratio() >= 0.8 for one in theirs)
+
+        for card in every:
+            title = str(card.get("name") or "")
+            if not rules.is_client_card(title):
+                continue
+            theirs = re.findall(r"[a-z]+", rules.agent_name(title).casefold())
+            # Every word close to one of theirs, the last name included.
+            if wanted and all(near(word, theirs) for word in wanted):
+                found.append(card)
+        close = bool(found)
+    out = []
+    for card in found:
+        made = rules.made_at(str(card.get("id") or ""))
+        out.append({"name": str(card.get("name") or ""), "url": str(card.get("shortUrl") or card.get("url") or ""),
+                    "list": lists.get(str(card.get("idList") or ""), ""), "closed": bool(card.get("closed")),
+                    "made": made})
+    out.sort(key=lambda one: one["made"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return out, close
+
+
 def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
     """The setup sheet for the agent somebody named. (found, problems). Reads only.
 

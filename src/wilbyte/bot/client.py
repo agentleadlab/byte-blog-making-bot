@@ -1713,6 +1713,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
                 return
 
+            if request.action == "cardfind":
+                await _card_find(responder, config, request.brief or "")
+                return
+
             if request.action == "payrafind":
                 await responder.send(
                     f"🔎 Looking through Payra for “{request.brief}” — a page at a time, "
@@ -2783,6 +2787,29 @@ async def _send_contract(responder: Responder, config: Config, said: str) -> Non
     if problem:
         lines.append(f"⚠ {problem}")
     await responder.send("\n".join(lines) or "Nothing came back, which shouldn't happen.")
+
+
+async def _card_find(responder: Responder, config: Config, name: str) -> None:
+    """"did we create a card for Fransisco Pedemonte?" - their cards on the
+    board, archived ones too, newest first."""
+    try:
+        found, close = await asyncio.to_thread(jobs.cards_for_name, config, name)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read the board: {_readable(exc)}")
+        return
+    if not found:
+        await responder.send(f"❌ No card for **{name}** anywhere on the board — open or archived, under that name "
+                             f"or one spelled close to it.")
+        return
+    zone = ZoneInfo(config.schedule.timezone)
+    lines = [f"🗂 **{name}** — {len(found)} card(s)" + (" (spelled a little differently)" if close else "") + ":"]
+    for one in found[:10]:
+        made = f"made {one['made'].astimezone(zone):%a %b %-d}" if one.get("made") else ""
+        where = "archived" if one["closed"] else (one["list"] or "")
+        lines.append(f"• **{one['name']}** — " + " · ".join(bit for bit in (made, where) if bit) + f" <{one['url']}>")
+    if len(found) > 10:
+        lines.append(f"…and {len(found) - 10} more.")
+    await responder.send("\n".join(lines))
 
 
 async def _send_sheet(responder: Responder, config: Config, said: str) -> None:

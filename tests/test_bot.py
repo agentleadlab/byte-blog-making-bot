@@ -8022,3 +8022,30 @@ def test_a_comment_ryte_posts_for_somebody_says_who_asked():
     # The signature isn't part of the job when the tag is read back.
     assert "via Ryte" not in tagged.strip_mentions(said)
     assert tagged.strip_mentions(said) == "Nicole to follow up on this item"
+
+
+def test_cards_found_for_a_name_spelled_a_little_differently(monkeypatch):
+    """"did we create a card for Fransisco Pedemonte" - Payra had "Fransico"."""
+    from types import SimpleNamespace
+
+    cards = [{"id": "6ad0f00000000000000000aa", "name": "New Agent - Fransico Pedemonte", "idList": "L1",
+              "shortUrl": "https://trello.com/c/fp", "closed": True},
+             {"id": "6ad0f00000000000000000bb", "name": "New Agent - Somebody Else", "idList": "L1"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def board_lists(self, board_id):
+            return [{"id": "L1", "name": "Done"}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    found, close = jobs.cards_for_name(config, "Fransisco Pedemonte")
+    assert close and [one["name"] for one in found] == ["New Agent - Fransico Pedemonte"] and found[0]["closed"]
+    found, close = jobs.cards_for_name(config, "Fransico Pedemonte")
+    assert not close and len(found) == 1
+    assert jobs.cards_for_name(config, "Francis Peterson") == ([], False)

@@ -964,3 +964,24 @@ def test_catching_up_never_goes_backwards():
     payra.remember(data, 900, _paid("C D", "c@x.com", "", 1))
 
     assert data["newest"] == "901"
+
+
+@pytest.mark.parametrize("typed, who", [
+    ("did we create a card for Fransisco Pedemonte payment October 16?", "Fransisco Pedemonte"),
+    ("does Tyler Diaz have a card", "Tyler Diaz"),
+    ("is there a card for Remi Sampson?", "Remi Sampson"),
+    ("did we make an aged leads card for Dawson Clevenger on Oct 21", "Dawson Clevenger"),
+    ("card for Jenelle Cloud", "Jenelle Cloud"),
+])
+def test_whose_card_was_asked_about(typed, who):
+    from wilbyte.bot import mentions
+
+    assert mentions.card_asked_for(typed) == who
+    asked = mentions.parse(f"<@1> {typed}")
+    assert asked.action == "cardfind" and asked.brief == who
+
+
+def test_add_to_trello_isnt_a_card_question():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> add to trello card for Faith: cap at 10").action != "cardfind"

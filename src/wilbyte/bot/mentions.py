@@ -586,6 +586,34 @@ WHEN_LIVE = re.compile(
 # turns up in ordinary copy: "email about the new lead sheet we published" is a
 # brief, not a lookup. So the word has to be followed by "for"/"of", or be the
 # last thing in the message.
+#: "did we create a card for Fransisco Pedemonte payment October 16?",
+#: "does Tyler Diaz have a card", "is there a card for Remi".
+_CARD_ASKED = re.compile(
+    r"\b(?:did\s+(?:we|you|ryte|anyone|somebody)\s+(?:create|make|do|add|file)|is\s+there|was\s+there|"
+    r"do\s+we\s+have|have\s+we\s+got|find(?:\s+me)?|any|look\s+up)\s+(?:a|an|the|any)?\s*"
+    r"(?:new\s+agent\s+|aged\s+leads?\s+|trello\s+)?cards?\s+(?:for|of|on)\s+(?P<who>.+)"
+    r"|\b(?:does|did|has)\s+(?P<who2>.+?)\s+(?:have|got|get|has)\s+(?:a|an|any|their|his|her)?\s*"
+    r"(?:new\s+agent\s+|aged\s+leads?\s+|trello\s+)?cards?\b"
+    r"|^\s*(?:card|cards)\s+(?:for\s+)?(?P<who3>.+)",
+    re.IGNORECASE,
+)
+_CARD_NAME_END = re.compile(
+    r"\s*(?:'s|’s)?\s*(?:\b(?:payment|paid|order|invoice|purchase)s?\b.*|\b(?:on|from|for|in)\s+"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|mon|tue|wed|thu|fri|sat|sun|\d).*|"
+    r"\b(?:yesterday|today|last\s+week)\b.*)?[\s.?!]*$", re.IGNORECASE)
+
+
+def card_asked_for(text: str) -> str:
+    """Whose card was asked about - "Fransisco Pedemonte" out of "did we
+    create a card for Fransisco Pedemonte payment October 16?" - or ""."""
+    found = _CARD_ASKED.search(" ".join(str(text or "").split()))
+    if not found:
+        return ""
+    who = found.group("who") or found.group("who2") or found.group("who3") or ""
+    who = _CARD_NAME_END.sub("", who).strip(" -–—:,")
+    return "" if who.casefold() in ("it", "this", "that", "them", "him", "her", "") else who
+
+
 SHEET_ASKED = re.compile(
     r"\b(?:sheets?|spreadsheets?)\s+(?:links?\s+)?(?:for|of)\b"
     r"|\b(?:sheets?|spreadsheets?)(?:\s+links?)?\s*[.?!]*\s*$"
@@ -1007,6 +1035,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="update", brief=text)
     if re.match(r"\s*(?:cost|costs|spend|spending|claude\s+(?:cost|spend|usage))\s*\??\s*$", text, re.IGNORECASE):
         return MentionRequest(action="cost", brief=text)
+    # "did we create a card for Fransisco Pedemonte payment October 16?" -
+    # the board searched, archived cards too.
+    if not re.search(r"\b(?:add|put)\s+(?:to|on)\s+(?:trello|the\s+board)\b", text, re.IGNORECASE) \
+            and card_asked_for(_without_links(text)):
+        return MentionRequest(action="cardfind", brief=card_asked_for(_without_links(text)))
     finding = re.match(r"\s*payra\s+(?:find|search|look\s*up|lookup)\s+(.+?)\s*$", text, re.IGNORECASE)
     if finding:
         return MentionRequest(action="payrafind", brief=finding.group(1))
