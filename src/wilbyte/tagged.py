@@ -386,9 +386,19 @@ MARKDOWN = (
 SOMETHING = re.compile(r"[0-9A-Za-z]")
 
 
+#: How Ryte signs a comment it posted because somebody asked - "theres no
+#: way thats me": Ryte comments as Franklin, and "Nicole to follow up on
+#: this item" couldn't be told from Franklin's own. Not part of the job.
+VIA_RYTE = re.compile(r"\s*(?:-#\s*)?[—–-]\s*via Ryte\b[^\n]*", re.IGNORECASE)
+
+
+def without_signature(text: str) -> str:
+    return VIA_RYTE.sub("", text or "")
+
+
 def plain(text: str) -> str:
     """A description line with its markdown taken off, as it looks on the card."""
-    said = text or ""
+    said = without_signature(text)
     for pattern, into in MARKDOWN:
         said = pattern.sub(into, said)
     return " ".join(said.split())
@@ -903,7 +913,7 @@ def summary_prompt(notes: list[Note], people: dict) -> str:
         lines.append(
             f"[{note.comment_id}] on “{note.card_title}”, "
             f"by {note.author or 'somebody'}, tagging {who or 'nobody'}:\n"
-            f"{note.text.strip()}"
+            f"{without_signature(note.text).strip()}"
         )
     return (
         "These are comments on a lead-generation team's daily Trello cards. "

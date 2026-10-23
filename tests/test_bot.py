@@ -4532,7 +4532,7 @@ def _putting(monkeypatch, said, *, answering=None):
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=(), pictures=()):
+    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by=""):
         posted.update({"kind": kind, "day": day, "text": text, "tag": list(tag)})
         return f"💎 General {day:%m/%d/%y}", "https://trello.com/c/AAA", []
 
@@ -4659,7 +4659,7 @@ def _telling_the_room(monkeypatch, *, where="", answering=None, before=None,
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=(), pictures=()):
+    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by=""):
         posted.update({"kind": kind, "day": day, "text": text})
         return "💻 Ops 09/14/26", "https://trello.com/c/AAA", []
 
@@ -7866,7 +7866,7 @@ def test_an_ask_about_a_client_goes_on_their_card_too(monkeypatch):
     monkeypatch.setattr(bot_client.jobs, "comment_on_daily",
                         lambda config, **kw: posted.append(kw) or ("📊 Ads 10/16/26", "https://trello.com/c/A/x", []))
     monkeypatch.setattr(bot_client.jobs, "comment_on_client_card",
-                        lambda config, card, text, pictures=(): theirs.append((card["id"], text)) or card["shortUrl"])
+                        lambda config, card, text, pictures=(), asked_by="": theirs.append((card["id"], text)) or card["shortUrl"])
     said = []
 
     class Responder:
@@ -8010,3 +8010,15 @@ def test_a_sheet_for_a_name_written_on_a_card_not_in_its_title(monkeypatch):
     found, problems = jobs.agent_sheet(SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b")),
                                        "find me Livia Rose, Google sheet")
     assert problems == [] and found[0]["agent"] == "Jordan Example" and found[0]["sheets"]
+
+
+def test_a_comment_ryte_posts_for_somebody_says_who_asked():
+    """"theres no way thats me" - Ryte comments as Franklin."""
+    from wilbyte import tagged
+
+    said = jobs.signed("@nic0l3\nNicole to follow up on this item", "Kenneth")
+    assert said.endswith("— via Ryte, asked by Kenneth on Discord")
+    assert jobs.signed("x", "") == "x"
+    # The signature isn't part of the job when the tag is read back.
+    assert "via Ryte" not in tagged.strip_mentions(said)
+    assert tagged.strip_mentions(said) == "Nicole to follow up on this item"

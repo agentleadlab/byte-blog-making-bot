@@ -3148,7 +3148,8 @@ async def _offer_to_file_it(bot: "WilByteBot", message, where: str) -> None:
 
     try:
         title, url, problems = await asyncio.to_thread(
-            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag)
+            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag,
+                    asked_by=_asker(message))
         )
     except PIPELINE_ERRORS as exc:
         await message.reply(
@@ -3348,6 +3349,12 @@ async def _the_one_before(message):
     return None
 
 
+def _asker(message) -> str:
+    """Who asked Ryte, by their Discord name - signed on what it posts."""
+    author = getattr(message, "author", None)
+    return str(getattr(author, "display_name", "") or getattr(author, "name", "") or "")
+
+
 async def _comment_on_card(
     responder: Responder, config: Config, said: str, message=None
 ) -> None:
@@ -3434,7 +3441,8 @@ async def _comment_on_card(
         text = f"{text}\n{theirs.get('shortUrl') or theirs.get('url') or ''}".strip()
     try:
         title, url, problems = await asyncio.to_thread(
-            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures)
+            partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures,
+                    asked_by=_asker(message))
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
@@ -3443,7 +3451,8 @@ async def _comment_on_card(
         task = re.sub(r"https?://trello\.com/\S+", "", text).strip()
         try:
             on = await asyncio.to_thread(partial(
-                jobs.comment_on_client_card, config, theirs, f"📌 {task}\n— also on {title}: {url}", pictures))
+                jobs.comment_on_client_card, config, theirs, f"📌 {task}\n— also on {title}: {url}", pictures,
+                _asker(message)))
             problems.append(f"✅ On **{theirs.get('name')}**'s card too: <{on}>")
             from .. import agents as _agents
 

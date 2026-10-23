@@ -4833,8 +4833,15 @@ def tag_items_fill(config: Config, check: dict) -> list[str]:
     return added
 
 
+def signed(text: str, asked_by: str = "") -> str:
+    """A comment Ryte posts for somebody, signed with who asked - it posts as
+    Franklin, and "theres no way thats me"."""
+    who = " ".join(str(asked_by or "").split())
+    return f"{text}\n\n— via Ryte, asked by {who} on Discord" if who else text
+
+
 def comment_on_daily(
-    config: Config, *, kind: str, day: date, text: str, tag=(), pictures=(),
+    config: Config, *, kind: str, day: date, text: str, tag=(), pictures=(), asked_by: str = "",
 ) -> tuple[str, str, list[str]]:
     """Say something on one of the four dated cards. (title, url, problems).
 
@@ -4892,9 +4899,11 @@ def comment_on_daily(
         if shown:
             said = (said + "\n\n" + "\n".join(f"![{one.rsplit('/', 1)[-1]}]({one})" for one in shown)).strip()
         try:
-            posted = client.add_comment(str(card.get("id") or ""), said) or {}
+            posted = client.add_comment(str(card.get("id") or ""), signed(said, asked_by)) or {}
         except Exception as exc:
             return title, "", [f"Couldn't comment on {title!r} — {_short(exc, 160)}"]
+        logging.getLogger("wilbyte.bot").info("Commented on %s for %s: %s", title, asked_by or "?",
+                                              " ".join(said.split())[:120])
         problems = [f"Nobody on the board is called {one} — not tagged." for one in strangers]
         # "why are you creating multiple checklist bro" / "still doing
         # thisssss" - the board's own automation turns a comment that tags
@@ -5097,13 +5106,14 @@ def card_made_since(config: Config, client: str, *, since, kind: str = "") -> di
     return found[0] if found else None
 
 
-def comment_on_client_card(config: Config, card: dict, text: str, pictures=()) -> str:
+def comment_on_client_card(config: Config, card: dict, text: str, pictures=(), asked_by: str = "") -> str:
     """The task on the client's own card, with its screenshots. Its link."""
     board = open_trello(config)
     try:
         shown, _missed = _pictures_onto(board, str(card.get("id") or ""), pictures)
         said = text + ("\n\n" + "\n".join(f"![{one.rsplit('/', 1)[-1]}]({one})" for one in shown) if shown else "")
-        board.add_comment(str(card.get("id") or ""), said.strip())
+        board.add_comment(str(card.get("id") or ""), signed(said.strip(), asked_by))
+        logging.getLogger("wilbyte.bot").info("Commented on %s for %s", card.get("name"), asked_by or "?")
     finally:
         board.close()
     return str(card.get("shortUrl") or card.get("url") or "")
