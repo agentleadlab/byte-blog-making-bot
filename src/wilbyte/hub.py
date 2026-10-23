@@ -362,7 +362,12 @@ def working(one: Checked) -> str:
 def key(agent: HubAgent) -> str:
     """Which order this is. Not `fulfilled_at`: that's the row's last save,
     and a later edit would make the same order look new."""
-    return f"{agent.id}|{agent.start_date or ''}|{agent.ordered}"
+    # The start as it was always read here - UTC's day - so orders already
+    # checked keep their key now `start_date` is the nearest midnight's.
+    raw = (agent.raw or {}).get("start_date")
+    moment = _moment(raw) if raw else None
+    start = moment.date() if moment is not None else agent.start_date
+    return f"{agent.id}|{start or ''}|{agent.ordered}"
 
 
 def due(found: list[HubAgent], *, now: datetime, said: dict) -> list[HubAgent]:

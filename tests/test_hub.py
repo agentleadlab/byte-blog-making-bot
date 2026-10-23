@@ -528,3 +528,10 @@ def test_a_start_moment_is_its_own_midnights_day():
     assert hub._day("2026-10-23T04:00:00Z") == date(2026, 10, 23)       # New York midnight
     assert hub._day("2026-10-23T00:00:00+00:00") == date(2026, 10, 23)  # UTC midnight
     assert hub._day("2026-10-23") == date(2026, 10, 23)
+
+
+def test_an_orders_key_is_as_before():
+    from wilbyte import hub
+
+    one = hub.read({"id": "7", "name": "Cross Lengsavath", "start_date": "2026-10-22T16:00:00.000Z", "ordered": 25})
+    assert hub.key(one) == "7|2026-10-22|25"
