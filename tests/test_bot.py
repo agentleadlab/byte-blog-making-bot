@@ -8142,3 +8142,46 @@ def test_daycheck_lists_every_setup_card_agent_on_the_wrong_day(monkeypatch, con
     said.clear()
     asyncio.run(run())
     assert "on the day they go live" in said[-1]
+
+
+def test_only_therese_tagged_with_no_card_named_goes_on_ops_once(monkeypatch):
+    """Faith's webhook "MTG leads for Aiden Adair" went on General, and
+    Therese got it there and again on her Ops list."""
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    posted, items = [], []
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "gen", "name": "💎 General 10/23/26", "url": "u-gen"},
+                    {"id": "ops", "name": "💻 Ops 10/23/26", "url": "u-ops"}]
+
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"}]
+
+        def card_checklists(self, card_id):
+            return [{"id": f"{card_id}-Therese", "name": "Therese", "checkItems": []}]
+
+        def add_check_item(self, checklist_id, name, **kw):
+            items.append(checklist_id)
+            return {"id": "i"}
+
+        def add_comment(self, card_id, text):
+            posted.append(card_id)
+            return {"id": "c"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "tag_check_later", lambda **kw: None)
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    title, _url, problems = jobs.comment_on_daily(
+        config, kind="general", day=_date(2026, 10, 23), guessed=True,
+        text="tag therese\nhttps://app.example.com/api/webhook/leads/lw_x\nMTG leads for Aiden Adair")
+    assert posted == ["ops"] and title == "💻 Ops 10/23/26"
+    assert not any("checklist on" in one for one in problems), problems

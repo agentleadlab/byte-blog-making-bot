@@ -4967,11 +4967,20 @@ def comment_on_daily(
         if handles:
             said = " ".join(f"@{one}" for one in handles) + ("\n" + said if said else "")
         if guessed and handles:
-            # Nobody named the card: the one whose checklists have who was
-            # tagged. Faith's "add to trello tag therese" went on Ads, where
-            # Therese has no checklist - her work is on Ops.
-            card = _card_with_their_checklist(client, card, dailyops.cards_covering(every, day), handles,
-                                              members) or card
+            covering = dailyops.cards_covering(every, day)
+            full_names = {str(one.get("username") or ""): str(one.get("fullName") or "") for one in members or []}
+            firsts = [(full_names.get(one) or one).split()[0].casefold() for one in handles]
+            ops_people = {one.casefold() for one in agents.OPS_PEOPLE}
+            if covering.get("ops") is not None and firsts and all(one in ops_people for one in firsts):
+                # Only Ops people tagged - Therese: on Ops, once. Faith's
+                # webhook for Aiden Adair went on General, and Therese got it
+                # there and again on her Ops list.
+                card, kind = covering["ops"], "ops"
+            else:
+                # Nobody named the card: the one whose checklists have who was
+                # tagged. Faith's "add to trello tag therese" went on Ads, where
+                # Therese has no checklist - her work is on Ops.
+                card = _card_with_their_checklist(client, card, covering, handles, members) or card
 
         title = str(card.get("name") or "")
         body = said.split("\n", 1)[1] if handles and "\n" in said else ("" if handles else said)
