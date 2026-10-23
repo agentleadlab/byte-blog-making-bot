@@ -4702,7 +4702,8 @@ def test_novas_setup_note_isnt_a_new_go_live_day():
             "Live Monday Oct 26\nLive today instead Friday October 23 - disregard Monday")
     launch, note = livemoved.current_launch(notes, desc, made=date(2026, 10, 23), timezone="America/New_York")
     assert launch == date(2026, 10, 23) and note is None
-    assert livemoved.setup_launch(notes, timezone="America/New_York")[0] == date(2026, 10, 24)
+    # Nor the hub's day: it's changed after Nova writes it.
+    assert livemoved.setup_launch(notes, timezone="America/New_York")[0] is None
 
 
 def test_bryson_fabrizio_moved_to_today_is_flagged(monkeypatch):
@@ -4741,5 +4742,19 @@ def test_bryson_fabrizio_moved_to_today_is_flagged(monkeypatch):
     found, problems = jobs.live_dates_moved(config, today=date(2026, 10, 23))
     assert problems == [] and len(found) == 1
     one = found[0]
-    assert one.agent == "Bryson Fabrizio" and one.live == date(2026, 10, 23)
-    assert one.setup_day == date(2026, 10, 24) and not one.hub_only
+    assert one.agent == "Bryson Fabrizio" and one.live == date(2026, 10, 23) and not one.hub_only
+
+
+def test_ethan_davis_hub_isnt_wrong_off_novas_note():
+    """Therese's "Ready to go live Mon, Oct 26" under Nova's "launch
+    2026-10-24": the confirmation is the hub's day."""
+    from datetime import date
+
+    from wilbyte import livemoved
+
+    notes = [{"when": "2026-10-23T16:40:00Z", "author": "Therese Guba",
+              "text": "🛠 Set up by Nova:\n· created on the hub — NEW SETUPS, launch 2026-10-24"},
+             {"when": "2026-10-23T16:30:00Z", "author": "Therese Guba",
+              "text": "@card ✅ TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete for ETHAN DAVIS\n"
+                      "Ready to go live Mon, Oct 26"}]
+    assert livemoved.setup_launch(notes, timezone="America/New_York")[0] == date(2026, 10, 26)

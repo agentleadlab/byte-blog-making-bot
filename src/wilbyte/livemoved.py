@@ -61,6 +61,9 @@ SETUP_SAID = re.compile(r"setup\s+is\s+complete|on\s+distro\s+hub|ready\s+to\s+g
                         r"|set\s*up\s+by\s+nova|created\s+on\s+the\s+hub", re.IGNORECASE)
 
 
+NOVA_SETUP = re.compile(r"set\s*up\s+by\s+nova|created\s+on\s+the\s+hub", re.IGNORECASE)
+
+
 def _local(stamp: str, zone) -> datetime | None:
     try:
         moment = datetime.fromisoformat(str(stamp or "").replace("Z", "+00:00"))
@@ -99,13 +102,13 @@ def setup_launch(notes: list[dict], *, timezone: str):
         when = _local(note.get("when"), zone)
         if when is None or not SETUP_SAID.search(str(note.get("text") or "")):
             continue
-        # Nova writes the hub's day as a date: "launch 2026-10-24".
-        iso = re.search(r"\blaunch\s+(\d{4})-(\d{2})-(\d{2})\b", str(note.get("text") or ""), re.IGNORECASE)
-        try:
-            found = date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3))) if iso else None
-        except ValueError:
-            found = None
-        found = found or rules.find_launch(str(note.get("text") or ""), today=when.date())
+        # Not Nova's note: the day it writes is the one the hub was made with,
+        # and it's changed after - Ethan Davis's said 2026-10-24 under
+        # Therese's "Ready to go live Mon, Oct 26", and was taken for a hub
+        # set for the wrong day.
+        if NOVA_SETUP.search(str(note.get("text") or "")):
+            continue
+        found = rules.find_launch(str(note.get("text") or ""), today=when.date())
         if found is not None:
             return found, note
     return None, None
