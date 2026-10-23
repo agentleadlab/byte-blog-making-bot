@@ -1029,6 +1029,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # A person's name - a word or four, not "it" or "the board".
     if who and len(who.split()) <= 4 and not re.match(r"(?:the|it|this|that|my|our|everyone|everybody)\b", who, re.IGNORECASE):
         return MentionRequest(action="hubcheck", brief=who)
+    if re.match(r"\s*(?:back\s*up|backup)(?:\s+(?:now|yourself|your\s+memory))?\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="backupnow", brief=text)
     if re.match(r"\s*restore\s+(?:your\s+|the\s+|my\s+)?(?:state|memory)\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="restorestate", brief=text)
     if re.match(r"\s*(?:update|update\s+(?:now|yourself)|restart|pull)\s*[.?!]*\s*$", text, re.IGNORECASE):
@@ -1526,6 +1528,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > New ones are checked by themselves and only the short ones said
 > @RYTE **update** — take a newly pushed version now instead of at the next
 > check (every 2 minutes). Never with a run open
+> @RYTE **backup now** — my memory into iCloud Drive › Ryte Backups this minute. It
+> happens by itself every night from 3am too; the last 14 nights are kept
 > @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the
 > chargeback tracker on its own, shown with a button first. Or **add to tracker
 > Megan Lucas** to find her notice above. Never twice for the same person

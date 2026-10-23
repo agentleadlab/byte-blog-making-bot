@@ -396,6 +396,8 @@ class WilByteBot(discord.Client):
                     _also_running(self.loop.create_task(setup_check_pass_loop(self)))
             if getattr(self.config.secrets, "trello_key", None) and TEAM_TASKS_ON:
                 _also_running(self.loop.create_task(team_tasks_loop(self)))
+            # "make it back up every night to icloud".
+            _also_running(self.loop.create_task(backup_loop(self)))
             # Notes in an order's thread the card missed - a restart in the
             # two minutes after one is posted loses its update otherwise.
             if getattr(self.config.secrets, "trello_key", None):
@@ -1722,6 +1724,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 from .. import usage
 
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
+                return
+
+            if request.action == "backupnow":
+                await _backup_now(bot, responder)
                 return
 
             if request.action == "cardfind":
@@ -14263,6 +14269,72 @@ async def _payments_in(bot: "WilByteBot", year: int, month: int) -> tuple[list, 
 
 #: How often Payra is asked what changed.
 PAYRA_SYNC_SECONDS = 600
+
+
+#: The nightly backup goes once it's this hour, local time, or later.
+BACKUP_HOUR = 3
+BACKUP_CHECK_SECONDS = 20 * 60
+
+
+async def backup_loop(bot: "WilByteBot") -> None:
+    """RYTE's memory into iCloud Drive's "Ryte Backups" every night from 3am -
+    or the first time it's on after, when the Mac was asleep. A failure is
+    said in #announcements once a night, not every pass."""
+    from .. import backup
+
+    folder = backup.where()
+    if folder is None:
+        log.info("Nightly backup: no iCloud Drive here and no RYTE_BACKUP_DIR - not backing up")
+        return
+    said_on = None
+    while not bot.is_closed():
+        now = datetime.now(ZoneInfo(bot.config.schedule.timezone))
+        today = now.date()
+        if now.hour >= BACKUP_HOUR and not backup.done_for(folder, today):
+            try:
+                made = await asyncio.to_thread(backup.pack, folder, today)
+                log.info("Backed up to %s (%s)", made, _size(made))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("Nightly backup failed", exc_info=True)
+                if said_on != today:
+                    said_on = today
+                    channel = _announce_channel(bot)
+                    if channel is not None:
+                        try:
+                            await channel.send(f"⚠ Couldn't make tonight's backup in {folder}: {_readable(exc)} — "
+                                               f"I'll try again in {BACKUP_CHECK_SECONDS // 60} minutes.")
+                        except Exception:
+                            pass
+        await asyncio.sleep(BACKUP_CHECK_SECONDS)
+
+
+def _size(path) -> str:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "?"
+    return f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else f"{size // 1024} KB"
+
+
+async def _backup_now(bot, responder: Responder) -> None:
+    """"@Ryte backup now" - the backup made this minute, and what's kept."""
+    from .. import backup
+
+    folder = backup.where()
+    if folder is None:
+        await responder.send("No iCloud Drive on this machine (and no RYTE_BACKUP_DIR set), so I've nowhere to back up to.")
+        return
+    try:
+        made = await asyncio.to_thread(backup.pack, folder, _today(bot.config))
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't back up: {_readable(exc)}")
+        return
+    kept = sorted(folder.glob(backup.NAME.format(day="*")))
+    await responder.send(f"💾 Backed up — **{made.name}** ({_size(made)}) in iCloud Drive › {folder.name}. "
+                         f"{len(kept)} kept (the last {backup.KEEP} nights); a new one every night from "
+                         f"{BACKUP_HOUR}am.")
 
 
 async def payra_loop(bot: "WilByteBot") -> None:
