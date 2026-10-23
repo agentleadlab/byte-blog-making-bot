@@ -5494,3 +5494,11 @@ def test_jake_scotts_count_beside_the_lead_type(monkeypatch):
     assert card["fields"]["leads"] == "90"
     assert client._aged_gaps(card) == []
     assert not any("90" in one for one in ordercards.doubts(card, today=date(2026, 10, 23))[0])
+
+
+def test_overflow_typed_in_a_hurry():
+    """Karli Kelley's "OVERLFLOW BC" went to the Queue."""
+    for typed in ("OVERLFLOW BC", "overflow", "Over flow", "over-flow", "OVERFLW", "overflowed"):
+        assert ordercards.OVERFLOW.search(typed), typed
+    for other in ("overall flow", "workflow", "over follow", "Flow state"):
+        assert not ordercards.OVERFLOW.search(other), other

@@ -530,7 +530,8 @@ _BUSINESS = re.compile(
 
 #: "if it says overflow, take it to aged leads ... it'll be treated as new
 #: agent but on aged leads" - Christa Arriaga's card went to In Que.
-OVERFLOW = re.compile(r"\boverflow\b", re.IGNORECASE)
+#: Typed in a hurry too: Karli Kelley's "OVERLFLOW BC" went to the Queue.
+OVERFLOW = re.compile(r"\bove?r[\s-]*l?f+l*o*w(?:s|ed|ing)?\b", re.IGNORECASE)
 
 
 def same_person(one: str, other: str) -> bool:
