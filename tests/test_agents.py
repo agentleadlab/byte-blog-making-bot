@@ -3222,6 +3222,8 @@ def test_the_agent_asked_about(typed, name):
         ("google sheet vitality key", "vitality key"),
         ("send me the sheet for soar life agency", "soar life agency"),
         ("sheet", ""),
+        ("Find me Essentials & Livia Rose, Google sheet.", "Essentials & Livia Rose"),
+        ("find me Livia Rose google sheet link", "Livia Rose"),
     ],
 )
 def test_the_agent_whose_sheet_was_asked_for(typed, name):
@@ -4963,3 +4965,10 @@ def test_a_family_and_tier_typed_as_one_word():
     assert agents.match_checklist("10 vetstandard", lists) == "OTP VET Standard"
     assert agents.candidates("25 MTGPLUS", lists, tier=agents.tier_of("25 MTGPLUS")) == ["OTP MTG Plus"]
     assert agents.unglued("Mortgage Plus") == "Mortgage Plus"
+
+
+def test_several_sheets_asked_for_at_once():
+    """"Find me Essentials & Livia Rose, Google sheet." - two."""
+    assert agents.who_wants_sheets("Find me Essentials & Livia Rose, Google sheet.") == ["Essentials", "Livia Rose"]
+    assert agents.who_wants_sheets("sheet for Faith") == ["Faith"]
+    assert agents.who_wants_sheets("sheets for Faith, Connor Tuttle and Jay") == ["Faith", "Connor Tuttle", "Jay"]

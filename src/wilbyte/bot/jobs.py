@@ -6147,29 +6147,37 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
     """
     from .. import agents as rules
 
-    name = rules.who_wants_a_sheet(asked)
-    if not name:
+    names = rules.who_wants_sheets(asked)
+    if not names:
         return [], ["Whose sheet do you want? Try `@RYTE sheet for Faith`."]
 
     client = open_trello(config)
     try:
         every = client.board_cards(config.secrets.trello_board_id, archived=True)
-        cards = rules.named_that(name, every)
-        if not cards:
-            return [], [f"I can't find a New Agent card for “{name}” anywhere on the board."]
-
-        found = []
-        for card in cards:
-            links = rules.sheet_links(rules.in_order_written(client.card_comments(str(card.get("id") or ""))))
-            found.append({
-                **card,
-                "agent": rules.agent_name(str(card.get("name") or "")),
-                "sheets": links,
-            })
-        # The ones that have a sheet first: an agent set up twice has two, and
-        # an agent not set up yet has none and is not the answer to lead with.
-        found.sort(key=lambda one: not one["sheets"])
-        return found, []
+        found, problems = [], []
+        for name in names:
+            cards = rules.named_that(name, every)
+            if not cards:
+                problems.append(f"I can't find a New Agent card for “{name}” anywhere on the board.")
+                continue
+            theirs = []
+            for card in cards:
+                links = rules.sheet_links(rules.in_order_written(client.card_comments(str(card.get("id") or ""))))
+                theirs.append({
+                    **card,
+                    "agent": rules.agent_name(str(card.get("name") or "")),
+                    "sheets": links,
+                })
+            # The ones that have a sheet first: an agent set up twice has two,
+            # and an agent not set up yet has none and is not the answer to
+            # lead with.
+            theirs.sort(key=lambda one: not one["sheets"])
+            found += theirs
+        # One name and nothing for it: said as before. Several, and the ones
+        # found are given with the ones that weren't.
+        if not found:
+            return [], problems
+        return found, problems
     finally:
         client.close()
 

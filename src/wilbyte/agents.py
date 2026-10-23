@@ -659,14 +659,26 @@ def who_asked_about(text: str) -> str:
 _SHEET_BEFORE = re.compile(
     r"^\s*(?:can\s+you\s+|please\s+)?(?:send|give|show|get|find|pull|share)?\s*"
     r"(?:me\s+|us\s+)?(?:the\s+|a\s+|an\s+)?"
-    r"(?:google\s+)?(?:sheet\s+link|spreadsheet|sheet)?\s*(?:link\s+)?"
+    r"(?:google\s+)?(?:sheets?\s+links?|spreadsheets?|sheets?)?\s*(?:links?\s+)?"
     r"(?:for|of|on|to)?\s*",
     re.IGNORECASE,
 )
 _SHEET_AFTER = re.compile(
-    r"\s*(?:'s|s')?\s*(?:google\s+)?(?:sheet\s+link|spreadsheet|sheet)\s*(?:link)?\s*\??\s*$",
+    # "Find me Essentials & Livia Rose, Google sheet." - the comma and the
+    # full stop as well.
+    r"[\s,]*(?:'s|s'|’s)?[\s,]*(?:google\s+)?(?:sheets?\s+links?|spreadsheets?|sheets?)\s*(?:links?)?\s*[.?!]*\s*$",
     re.IGNORECASE,
 )
+
+
+def who_wants_sheets(text: str) -> list[str]:
+    """Everybody whose setup sheet was asked for - "Essentials & Livia Rose"
+    is two. One name when only one was asked about."""
+    name = who_wants_a_sheet(text)
+    if not name:
+        return []
+    names = [" ".join(one.split()) for one in re.split(r"\s*(?:&|\+|,|;|\band\b)\s*", name, flags=re.IGNORECASE)]
+    return [one for one in names if one] or [name]
 
 
 def who_wants_a_sheet(text: str) -> str:

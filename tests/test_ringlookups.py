@@ -694,6 +694,7 @@ def test_nothing_found_says_what_was_searched(monkeypatch):
     ("what do we text clients who want to pause", "askfaith"),
     ("when did Faith go live?", "whenlive"),
     ("sheet for Faith", "agentsheet"),
+    ("Find me Essentials & Livia Rose, Google sheet.", "agentsheet"),
     ("how do we use the tracker", "findsop"),
     ("respond what do i send", "respond"),
     # Luna's, word for word: "agent" used to file new agents off In Que

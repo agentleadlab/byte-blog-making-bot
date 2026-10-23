@@ -2781,16 +2781,17 @@ async def _send_sheet(responder: Responder, config: Config, said: str) -> None:
         await responder.send(embed=embeds.error(f"Couldn't read the board\n{exc}"))
         return
 
-    if problems:
+    if problems and not found:
         await responder.send("\n".join(problems))
         return
+    also = ("\n" + "\n".join(problems)) if problems else ""
     if len(found) == 1:
-        await responder.send(_said_sheet(found[0]))
+        await responder.send(_said_sheet(found[0]) + also)
         return
     await responder.send(
-        f"{len(found)} agents match that:\n"
-        + "\n".join(f"• {_said_sheet(one)}" for one in found[:8])
-        + (f"\n…and {len(found) - 8} more." if len(found) > 8 else "")
+        f"{len(found)} cards match that:\n"
+        + "\n".join(f"• {_said_sheet(one)}" for one in found[:12])
+        + (f"\n…and {len(found) - 12} more." if len(found) > 12 else "") + also
     )
 
 

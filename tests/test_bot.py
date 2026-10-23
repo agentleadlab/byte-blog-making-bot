@@ -7961,3 +7961,30 @@ def test_standard_or_plus_from_the_setup_confirmation(config, monkeypatch):
     board.card_comments = lambda card_id: ["TEXT VERIFIED VETERAN PLUS ON DISTRO HUB setup is complete"]
     _added, _conflicts, problems = spreading(board, monkeypatch, config)
     assert board.written == [] and "doesn't say which" in problems[0]
+
+
+def test_two_sheets_asked_for_one_answer_each(monkeypatch):
+    """"Find me Essentials & Livia Rose, Google sheet." - Ryte said it
+    couldn't hunt down Google Sheets."""
+    from types import SimpleNamespace
+
+    cards = [{"id": "e", "name": "New Agent - Essentials Insurance", "url": "https://trello.com/c/e"},
+             {"id": "l", "name": "New Agent - Livia Rose", "url": "https://trello.com/c/l"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def card_comments(self, card_id):
+            return [f"✅ setup is complete\\nSheet link: https://docs.google.com/spreadsheets/d/{card_id}SHEET/edit"]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    found, problems = jobs.agent_sheet(config, "Find me Essentials & Livia Rose, Google sheet.")
+    assert problems == [] and [one["agent"] for one in found] == ["Essentials Insurance", "Livia Rose"]
+    assert all(one["sheets"] for one in found)
+    found, problems = jobs.agent_sheet(config, "sheet for Livia Rose and Nobody Here")
+    assert [one["agent"] for one in found] == ["Livia Rose"] and "Nobody Here" in problems[0]
