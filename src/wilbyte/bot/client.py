@@ -526,7 +526,9 @@ class WilByteBot(discord.Client):
             # In the Growth server a tag with no command in it is somebody
             # pointing RYTE at an order - the gavel does the rest, and RYTE
             # has nothing to say there.
-            if _in_setup_guild(self, getattr(message, "guild", None)) and mentions.parse(
+            # Only on a payment, though - "respond if tagged here remember?":
+            # "@Ryte are u here" in Growth's #trello-manager got silence.
+            if _in_setup_guild(self, getattr(message, "guild", None)) and _on_a_payment(message) and mentions.parse(
                     message.content or "").action == "help":
                 if not getattr(message.author, "bot", False):
                     _order_note_posted(self, message)
@@ -992,6 +994,15 @@ def _someone_elses_channel(message) -> bool:
     category = getattr(channel, "category", None) or getattr(getattr(channel, "parent", None), "category", None)
     name = _plain_letters(getattr(category, "name", "") or "")
     return bool(name) and "ryte" not in name and "gabi" in name
+
+
+def _on_a_payment(message) -> bool:
+    """Whether a message is in the payments channel or a payment's thread -
+    where a bare tag points Ryte at the order rather than talks to it."""
+    channel = getattr(message, "channel", None)
+    names = [str(getattr(channel, "name", "") or ""),
+             str(getattr(getattr(channel, "parent", None), "name", "") or "")]
+    return any("payment" in name.casefold() for name in names)
 
 
 def talks_to_ryte(message, config: Config, bot_user) -> bool:

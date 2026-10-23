@@ -393,9 +393,11 @@ def test_a_tag_with_no_command_in_growth_gets_no_answer(monkeypatch):
     def said(text, guild):
         return SimpleNamespace(content=text, guild=guild, author=SimpleNamespace(id=FRANKLIN, bot=False),
                                mentions=[me], role_mentions=[], mention_everyone=False, reference=None,
-                               channel=SimpleNamespace(id=1))
+                               channel=SimpleNamespace(id=1, name="Cole Petersen · $51.75",
+                                                       parent=SimpleNamespace(name="💸 | new-payment")))
 
     monkeypatch.setattr(client, "is_direct_mention", lambda message, user: True)
+    # In a payment's thread: pointing Ryte at the order.
     asyncio.run(client.WilByteBot.on_message(fake, said(f"<@{RYTE}> Cole Petersen 25 aged", "growth")))
     assert answered == []
     asyncio.run(client.WilByteBot.on_message(fake, said(f"<@{RYTE}> checklist", "growth")))

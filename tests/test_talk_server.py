@@ -80,3 +80,32 @@ def test_the_server_renamed_the_goat_and_the_best():
     thread.channel = SimpleNamespace(id=12, category=None,
                                      parent=SimpleNamespace(category=SimpleNamespace(name="Gabi The Best")))
     assert not client.talks_to_ryte(thread, CONFIG, RYTE)
+
+
+def test_a_tag_in_growth_is_answered_unless_its_on_a_payment(monkeypatch):
+    """"respond if tagged here remember?" - "@Ryte are u here" in Growth's
+    #trello-manager got silence. A bare tag on a payment still points Ryte at
+    the order and says nothing."""
+    import asyncio
+
+    answered, noted = [], []
+    monkeypatch.setattr(client, "is_direct_mention", lambda message, user: True)
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, guild: True)
+    monkeypatch.setattr(client, "_order_note_posted", lambda bot, message: noted.append(message))
+
+    async def answer(bot, message, **kw):
+        answered.append(message)
+
+    monkeypatch.setattr(client, "answer_mention", answer)
+    bot = SimpleNamespace(user=SimpleNamespace(id=99))
+
+    def tagged(text, channel):
+        return SimpleNamespace(content=text, author=SimpleNamespace(id=5, bot=False), guild=GROWTH, channel=channel)
+
+    here = tagged("<@99> are u here", SimpleNamespace(id=1, name="trello-manager", parent=None))
+    asyncio.run(client.WilByteBot.on_message(bot, here))
+    assert answered == [here]
+    thread = SimpleNamespace(id=2, name="Jackson Ruehl · $152.14", parent=SimpleNamespace(name="💸 | new-payment"))
+    on_order = tagged("<@99>", thread)
+    asyncio.run(client.WilByteBot.on_message(bot, on_order))
+    assert answered == [here] and noted == [on_order]
