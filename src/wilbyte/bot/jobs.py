@@ -4833,6 +4833,33 @@ def tag_items_fill(config: Config, check: dict) -> list[str]:
     return added
 
 
+def _card_with_their_checklist(client, card: dict, covering: dict, handles, members) -> dict | None:
+    """The day card that has a checklist for somebody tagged - `card` when it
+    does, another of the day's cards when only that one does, None when
+    none of them do. General, then Ops, Ads, Lead Order."""
+    from .. import tagged
+
+    full = {str(one.get("username") or ""): str(one.get("fullName") or "") for one in members or []}
+    people = [full.get(one, "") for one in handles if full.get(one)]
+    if not people:
+        return None
+
+    def theirs(one) -> bool:
+        try:
+            names = [str(c.get("name") or "") for c in client.card_checklists(str(one.get("id") or ""))]
+        except Exception:
+            return False
+        return any(tagged.checklist_for(person, names) for person in people)
+
+    if theirs(card):
+        return card
+    for kind in ("general", "ops", "ads", "lead_order"):
+        other = covering.get(kind)
+        if other is not None and other.get("id") != card.get("id") and theirs(other):
+            return other
+    return None
+
+
 def signed(text: str, asked_by: str = "") -> str:
     """A comment Ryte posts for somebody, signed with who asked - it posts as
     Franklin, and "theres no way thats me"."""
@@ -4842,6 +4869,7 @@ def signed(text: str, asked_by: str = "") -> str:
 
 def comment_on_daily(
     config: Config, *, kind: str, day: date, text: str, tag=(), pictures=(), asked_by: str = "",
+    guessed: bool = False,
 ) -> tuple[str, str, list[str]]:
     """Say something on one of the four dated cards. (title, url, problems).
 
@@ -4890,6 +4918,12 @@ def comment_on_daily(
                 strangers.append(str(name))
         if handles:
             said = " ".join(f"@{one}" for one in handles) + ("\n" + said if said else "")
+        if guessed and handles:
+            # Nobody named the card: the one whose checklists have who was
+            # tagged. Faith's "add to trello tag therese" went on Ads, where
+            # Therese has no checklist - her work is on Ops.
+            card = _card_with_their_checklist(client, card, dailyops.cards_covering(every, day), handles,
+                                              members) or card
 
         title = str(card.get("name") or "")
         body = said.split("\n", 1)[1] if handles and "\n" in said else ("" if handles else said)

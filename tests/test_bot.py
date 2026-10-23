@@ -4532,7 +4532,7 @@ def _putting(monkeypatch, said, *, answering=None):
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by=""):
+    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by="", guessed=False):
         posted.update({"kind": kind, "day": day, "text": text, "tag": list(tag)})
         return f"💎 General {day:%m/%d/%y}", "https://trello.com/c/AAA", []
 
@@ -4659,7 +4659,7 @@ def _telling_the_room(monkeypatch, *, where="", answering=None, before=None,
 
     posted = {}
 
-    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by=""):
+    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by="", guessed=False):
         posted.update({"kind": kind, "day": day, "text": text})
         return "💻 Ops 09/14/26", "https://trello.com/c/AAA", []
 
@@ -8049,3 +8049,57 @@ def test_cards_found_for_a_name_spelled_a_little_differently(monkeypatch):
     found, close = jobs.cards_for_name(config, "Fransico Pedemonte")
     assert not close and len(found) == 1
     assert jobs.cards_for_name(config, "Francis Peterson") == ([], False)
+
+
+def test_a_link_after_a_tag_keeps_its_https():
+    """"@thereseguba //trello.com/c/DCEtE4zV" - "tag therese" read up to the
+    colon in https:."""
+    from wilbyte import dailyops
+
+    known = dailyops.who_is_known([{"username": "thereseguba", "fullName": "Therese Guba"}])
+    said, handles, _ = dailyops.tag_asked("tag therese check scott\nhttps://trello.com/c/DCEtE4zV", known)
+    said, more = dailyops.tag_phrase_out(said, known)
+    assert "https://trello.com/c/DCEtE4zV" in said and "thereseguba" in handles + more
+    # A colon that isn't a link's still ends the names.
+    said, handles, _ = dailyops.tag_asked("add to general and tag nicole: three links", {"nicole": "nic0l3"})
+    assert handles == ["nic0l3"] and said.strip().endswith("three links")
+
+
+def test_a_guessed_card_goes_where_the_tagged_person_has_a_checklist(monkeypatch):
+    """Faith's "add to trello tag therese" went on Ads; Therese's checklist
+    is on Ops."""
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    posted = []
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "ads", "name": "📊 Ads 10/23/26", "url": "u-ads"},
+                    {"id": "ops", "name": "💻 Ops 10/23/26", "url": "u-ops"}]
+
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"}]
+
+        def card_checklists(self, card_id):
+            return [{"name": "Therese", "checkItems": []}] if card_id == "ops" else [{"name": "Jenn", "checkItems": []}]
+
+        def add_comment(self, card_id, text):
+            posted.append(card_id)
+            return {"id": "c"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    title, url, _problems = jobs.comment_on_daily(config, kind="ads", day=_date(2026, 10, 23),
+                                                  text="tag therese\ncheck Scott's CRM", guessed=True)
+    assert posted == ["ops"] and title == "💻 Ops 10/23/26"
+    # Named by whoever asked: where they said.
+    posted.clear()
+    jobs.comment_on_daily(config, kind="ads", day=_date(2026, 10, 23), text="tag therese\ncheck Scott's CRM")
+    assert posted == ["ads"]

@@ -3480,7 +3480,7 @@ async def _comment_on_card(
     try:
         title, url, problems = await asyncio.to_thread(
             partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures,
-                    asked_by=_asker(message))
+                    asked_by=_asker(message), guessed=guessed)
         )
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))

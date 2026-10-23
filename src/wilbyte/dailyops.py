@@ -413,7 +413,9 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
 _TAG_ASKED = re.compile(
     r"(?:\band\s+)?(?:\bplease\s+)?\btags?\s+"
     r"(?P<who>[A-Za-z0-9_. ]+?(?:\s*(?:,|&|\band\b)\s*[A-Za-z0-9_. ]+?)*)"
-    r"\s*(?::|$)",
+    # Not the colon of a link: "tag therese ... https://trello.com/c/..."
+    # lost its "https:" and went on the board as "//trello.com/...".
+    r"\s*(?::(?!//)|$)",
     re.IGNORECASE,
 )
 _AND_ALSO = re.compile(r"\s*(?:,|&|\band\b)\s*", re.IGNORECASE)
