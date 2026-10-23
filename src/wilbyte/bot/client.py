@@ -10849,6 +10849,10 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             if same:
                 await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
                 return
+    if kind == "aged" and "how many leads" in _aged_gaps(card):
+        # No count in the notes: the invoice's own line - Lajuana Jackson's
+        # INV-20471 said QTY 50 and the card was held for "how many leads".
+        card = await _count_off_the_invoice(bot, message, card)
     # "Be Sure to not fail here": what was read, held up against the order.
     # Anything that doesn't add up and the card waits for a person.
     wrong, missing = ordercards.doubts(card, today=_today(bot.config))
@@ -11123,6 +11127,29 @@ async def _order_same_states(bot, message, card: dict) -> None:
             card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
             card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
             return
+
+
+async def _count_off_the_invoice(bot, message, card: dict) -> dict:
+    """The card with its lead count from the Payra invoice's line - its
+    quantity - when the notes give none. As it was when there's no one line
+    to read it off."""
+    from .. import ordercards
+
+    number, _notes = ordercards.post_invoice(_all_of_it(message))
+    if not number:
+        return card
+    try:
+        found = await asyncio.to_thread(jobs.invoice_line_count, bot.config, number)
+    except Exception:
+        log.warning("Couldn't read %s's lines for a lead count", number, exc_info=True)
+        return card
+    if not found:
+        return card
+    count, line = found
+    fields = dict(card.get("fields") or {}, leads=str(count))
+    return {**card, "fields": fields, "desc": jobs.order_desc(fields, "aged"),
+            "source": f"{card.get('source') or ''}\nPayra invoice {number} line: {line}",
+            "missing": [one for one in card.get("missing") or [] if "number of leads" not in one.casefold()]}
 
 
 def _aged_gaps(card: dict) -> list[str]:

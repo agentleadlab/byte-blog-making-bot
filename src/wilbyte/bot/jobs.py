@@ -15453,6 +15453,32 @@ def charges_of_several(config: Config, *, since, posts=(), now=None) -> list[dic
     return found
 
 
+def invoice_line_count(config: Config, number: str) -> tuple[int, str] | None:
+    """(how many leads, the line) off an invoice's one aged line - its
+    quantity. None when the invoice isn't found, has several lines for
+    leads, or a quantity that isn't a count (1 package)."""
+    from .. import payraapi
+
+    digits = re.sub(r"[^0-9]", "", str(number or "")).lstrip("0")
+    if not digits:
+        return None
+    invoice = next((one for one in payra_kept(config, "invoices").values()
+                    if re.sub(r"[^0-9]", "", str(one.get("number") or "")).lstrip("0") == digits), None)
+    lines = [one for one in (invoice or {}).get("lines") or [] if isinstance(one, dict)]
+    leads = [one for one in lines if re.search(r"\blead", str(payraapi._first(one, "name", "description", "item",
+                                                                               "product", "title") or ""), re.I)]
+    if len(leads) != 1:
+        return None
+    many = payraapi._first(leads[0], "quantity", "qty", "count")
+    try:
+        count = int(float(str(many)))
+    except (TypeError, ValueError):
+        return None
+    if count <= 1 or float(str(many)) != count:
+        return None
+    return count, payraapi.line_text(leads[0])
+
+
 def invoice_on_a_card(invoice: dict, client_name: str, cards: list[dict]) -> dict | None:
     """The board card an invoice's order is on - theirs, with its count and
     (aged) its age written on it - or None. `cards` with their "desc"."""

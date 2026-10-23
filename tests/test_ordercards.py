@@ -5436,3 +5436,31 @@ def test_the_audit_names_a_charge_that_looks_made_twice():
              post(31, "New Payment | Payra\nNAME: Wiser Charles\nAMOUNT: $103.5\nPRODUCT: Aged Leads (VET)", 38)]
     assert client._audit_doubles(wiser, held={"30": {"invoice_id": "i57"}, "31": {"invoice_id": "i58"}}) == []
     assert len(client._audit_doubles(wiser)) == 3
+
+
+def test_an_aged_count_off_the_invoice_line(monkeypatch):
+    """Lajuana Jackson's INV-20471: "Aged vets 30-90", ten states, no count
+    in the notes - and QTY 50 on the invoice. Held for "how many leads"."""
+    invoices = {"i": {"id": "i", "number": "INV-20471", "lines": [
+        {"name": "Text-Verified Aged Veteran Leads", "quantity": 50, "price": 7.13}]},
+        "p": {"id": "p", "number": "INV-20472", "lines": [{"name": "Lead Package", "quantity": 1}]},
+        "two": {"id": "two", "number": "INV-20473", "lines": [
+            {"name": "Aged Vet Leads", "quantity": 20}, {"name": "Aged FEX Leads", "quantity": 30}]}}
+    monkeypatch.setattr(jobs, "payra_kept", lambda config, kind, now=None: invoices)
+    count, line = jobs.invoice_line_count(CONFIG, "INV-20471")
+    assert count == 50 and "× 50" in line
+    assert jobs.invoice_line_count(CONFIG, "INV-20472") is None, "1 package isn't a lead count"
+    assert jobs.invoice_line_count(CONFIG, "INV-20473") is None, "two lines - which count?"
+    assert jobs.invoice_line_count(CONFIG, "INV-99999") is None
+
+    message = _message("New Payment | Payra\nNAME: Lajuana Jackson\nAMOUNT: $253.57\n"
+                       "PRODUCT: Text-Verified Aged Veteran Leads\nINVOICE: INV-20471 · card •••• 1111\n"
+                       "**Notes:**\n> Name: Lajuana Jackson\n> Lead type: Aged vets 30-90\n"
+                       "> States: GA MD HI TX FL MI OH TN VA SC\n> Notes: GTC")
+    card = {"kind": "aged", "fields": {"name": "Lajuana Jackson", "package": "Aged vets 30-90",
+                                       "states": "GA, MD, HI, TX, FL, MI, OH, TN, VA, SC", "leads": ""},
+            "source": message.content, "missing": ["Number of Leads Requested"]}
+    filled = asyncio.run(client._count_off_the_invoice(_bot(message), message, card))
+    assert filled["fields"]["leads"] == "50" and client._aged_gaps(filled) == []
+    assert "Number of Leads Requested: 50" in filled["desc"] and filled["missing"] == []
+    assert not any("50" in one and "isn't" in one for one in ordercards.doubts(filled, today=date(2026, 10, 23))[0])
