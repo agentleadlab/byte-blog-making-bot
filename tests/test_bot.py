@@ -8103,3 +8103,42 @@ def test_a_guessed_card_goes_where_the_tagged_person_has_a_checklist(monkeypatch
     posted.clear()
     jobs.comment_on_daily(config, kind="ads", day=_date(2026, 10, 23), text="tag therese\ncheck Scott's CRM")
     assert posted == ["ads"]
+
+
+def test_daycheck_lists_every_setup_card_agent_on_the_wrong_day(monkeypatch, config):
+    """"how do i check if there are wrong live dates again?" - the setup cards
+    too, said before or not."""
+    import asyncio
+    from datetime import date as _date
+
+    from wilbyte import livemoved
+    from wilbyte.bot import client as bot_client
+
+    said, offered = [], []
+
+    class R:
+        async def send(self, text=None, **kw):
+            said.append(text or "")
+
+    moved = livemoved.Moved(agent="Bryson Fabrizio", card_url="https://trello.com/c/B",
+                            setup_card="Agent Setup Going Live Saturday-Monday 10/24-10/26", checklist="Therese",
+                            live=_date(2026, 10, 23))
+    monkeypatch.setattr(jobs, "wrong_day_lines", lambda config: ([], []))
+    monkeypatch.setattr(jobs, "board_day", lambda config: _date(2026, 10, 23))
+    monkeypatch.setattr(jobs, "live_dates_moved", lambda config, today: ([moved], []))
+
+    async def offer(responder, config, group):
+        offered.append(group)
+
+    monkeypatch.setattr(bot_client, "_offer_to_move", offer)
+
+    async def run():
+        await bot_client._wrong_days(R(), config)
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert "1 agent(s) on a setup card for the wrong day" in said[-1] and offered == [[moved]]
+    monkeypatch.setattr(jobs, "live_dates_moved", lambda config, today: ([], []))
+    said.clear()
+    asyncio.run(run())
+    assert "on the day they go live" in said[-1]

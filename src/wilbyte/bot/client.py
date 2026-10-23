@@ -5895,6 +5895,26 @@ async def _wrong_days(responder: Responder, config: Config) -> None:
     if problems:
         note += "\n⚠ " + "\n⚠ ".join(problems)
     await responder.send(note)
+    # "how do i check if there are wrong live dates again?" - the setup cards
+    # too, every agent on the wrong day now, already said or not: the loop
+    # says each once and a message scrolled away was the only list there was.
+    try:
+        day = await asyncio.to_thread(jobs.board_day, config)
+        moved, trouble = await asyncio.to_thread(jobs.live_dates_moved, config, today=day)
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't check the setup cards: {_readable(exc)}")
+        return
+    if not moved:
+        await responder.send(f"📅 Every agent on a setup card for the next {jobs.LIVE_MOVED_AHEAD} days is on the "
+                             f"day they go live, and their hub's set for it. 👍"
+                             + ("\n⚠ " + "\n⚠ ".join(trouble) if trouble else ""))
+        return
+    groups = _by_agent(moved)
+    await responder.send(f"📅 **{len(groups)} agent(s) on a setup card for the wrong day** (or with the hub set for "
+                         f"another) — one message each, with its button:"
+                         + ("\n⚠ " + "\n⚠ ".join(trouble) if trouble else ""))
+    for group in groups:
+        _also_running(asyncio.create_task(_offer_to_move(responder, config, group)))
 
 
 async def _tagged_tasks(responder: Responder, config: Config, said: str) -> None:
