@@ -63,3 +63,20 @@ def test_a_refusal_untagged_says_nothing(monkeypatch):
     assert replies == []
     asyncio.run(client.handle_mention(bot, message))
     assert replies == ["You need the Lab role."]
+
+
+def test_the_server_renamed_the_goat_and_the_best():
+    """Ryte went quiet untagged once the server was renamed "The Goat & The
+    Best" - and Gabi's channels in it are Gabi's."""
+    merged = SimpleNamespace(id=4, name="The Goat & The Best")
+    ryte_side = said("ryte", guild=merged)
+    ryte_side.channel = SimpleNamespace(id=10, category=SimpleNamespace(name="Ryte The Goat"))
+    assert client.talks_to_ryte(ryte_side, CONFIG, RYTE)
+    gabi_side = said("test", guild=merged)
+    gabi_side.channel = SimpleNamespace(id=11, category=SimpleNamespace(name="Gabi The Best"))
+    assert not client.talks_to_ryte(gabi_side, CONFIG, RYTE)
+    # A thread under one of Gabi's channels too.
+    thread = said("test", guild=merged)
+    thread.channel = SimpleNamespace(id=12, category=None,
+                                     parent=SimpleNamespace(category=SimpleNamespace(name="Gabi The Best")))
+    assert not client.talks_to_ryte(thread, CONFIG, RYTE)

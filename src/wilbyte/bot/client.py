@@ -979,7 +979,19 @@ def _talk_guild(guild, config: Config) -> bool:
     wanted = (getattr(config.secrets, "discord_talk_guild_id", "") or "").strip()
     if wanted.isdigit():
         return str(getattr(guild, "id", "")) == wanted
-    return "rytethegoat" in _plain_letters(getattr(guild, "name", ""))
+    # Renamed "The Goat & The Best" when Gabi moved in - and Ryte went quiet
+    # there, waiting for a tag.
+    return "thegoat" in _plain_letters(getattr(guild, "name", ""))
+
+
+def _someone_elses_channel(message) -> bool:
+    """A channel in another bot's part of the server - "Gabi The Best" is
+    Gabi's, in the same server as Ryte's channels. Not Ryte's to answer
+    untagged."""
+    channel = getattr(message, "channel", None)
+    category = getattr(channel, "category", None) or getattr(getattr(channel, "parent", None), "category", None)
+    name = _plain_letters(getattr(category, "name", "") or "")
+    return bool(name) and "ryte" not in name and "gabi" in name
 
 
 def talks_to_ryte(message, config: Config, bot_user) -> bool:
@@ -989,7 +1001,7 @@ def talks_to_ryte(message, config: Config, bot_user) -> bool:
     role, or a reply to somebody who isn't RYTE. Everywhere else, a tag."""
     if bot_user is None or getattr(message.author, "bot", False):
         return False
-    if not _talk_guild(getattr(message, "guild", None), config):
+    if not _talk_guild(getattr(message, "guild", None), config) or _someone_elses_channel(message):
         return False
     content = str(getattr(message, "content", "") or "")
     if not content.strip() and not getattr(message, "attachments", None):
