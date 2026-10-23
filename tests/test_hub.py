@@ -515,3 +515,16 @@ def test_hub_fields_is_a_command():
 
     got = mentions.parse("<@1> hub fields Gavin Littledike")
     assert (got.action, got.brief) == ("hubfields", "Gavin Littledike")
+
+
+def test_a_start_moment_is_its_own_midnights_day():
+    """Cross Lengsavath going live Friday read as Thursday: the hub's start
+    is midnight in Manila, 4pm the day before in UTC."""
+    from datetime import date
+
+    from wilbyte import hub
+
+    assert hub._day("2026-10-22T16:00:00.000Z") == date(2026, 10, 23)   # Manila midnight
+    assert hub._day("2026-10-23T04:00:00Z") == date(2026, 10, 23)       # New York midnight
+    assert hub._day("2026-10-23T00:00:00+00:00") == date(2026, 10, 23)  # UTC midnight
+    assert hub._day("2026-10-23") == date(2026, 10, 23)

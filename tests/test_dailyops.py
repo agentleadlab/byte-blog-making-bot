@@ -4812,3 +4812,16 @@ def test_the_hubs_own_start_date_not_novas_comment(monkeypatch):
     jobs._LAUNCH_READS.clear()
     found, _ = jobs.live_dates_moved(config, today=date(2026, 10, 23))
     assert [one.agent for one in found] == ["Bryson Fabrizio"] and found[0].setup_day is None
+
+
+def test_a_hub_order_started_already_isnt_a_wrong_day():
+    """Jessica Aguirre: her new order Friday, her Oct 17 one still running on
+    the hub."""
+    from datetime import date
+
+    from wilbyte.bot import jobs
+
+    days = [("Jessica Aguirre", date(2026, 10, 17))]
+    assert jobs._hub_day_off(days, "Jessica Aguirre", date(2026, 10, 23), date(2026, 10, 23)) is None
+    days.append(("Jessica Aguirre", date(2026, 10, 26)))
+    assert jobs._hub_day_off(days, "Jessica Aguirre", date(2026, 10, 23), date(2026, 10, 23)) == date(2026, 10, 26)

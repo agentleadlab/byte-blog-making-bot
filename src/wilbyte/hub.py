@@ -90,9 +90,13 @@ def _int(said) -> int | None:
 
 
 def _day(said) -> date | None:
+    """A day the hub gives as a date, or as the moment it starts. A moment
+    is a midnight somewhere - Manila's is 4pm the day before in UTC, and
+    Cross Lengsavath's Friday read as Thursday - so the nearest midnight's
+    day: twelve hours on, in UTC."""
     moment = _moment(said)
     if moment is not None:
-        return moment.date()
+        return (moment.astimezone(timezone.utc) + timedelta(hours=12)).date()
     try:
         return date.fromisoformat(str(said or "").strip()[:10])
     except ValueError:

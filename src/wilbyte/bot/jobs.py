@@ -8275,15 +8275,18 @@ def _hub_start_days(config: Config, today) -> list[tuple[str, date]] | None:
             and str(one.status or "").casefold() not in hub.DONE_WORDS]
 
 
-def _hub_day_off(hub_days, name: str, launch) -> date | None:
+def _hub_day_off(hub_days, name: str, launch, today=None) -> date | None:
     """The day the hub has them starting when it isn't `launch` - None when
     it's right, they aren't on it, or it couldn't be read. Any of their
-    orders on that day is right."""
+    orders on that day is right. One started already is leads flowing - a
+    re-order on the same record: Jessica Aguirre's Oct 17 under her Friday
+    order - and isn't a wrong day."""
     from .. import clearout
 
     if not hub_days or not name:
         return None
-    theirs = sorted({day for who, day in hub_days if clearout.name_match(name, who) >= 2})
+    theirs = sorted({day for who, day in hub_days if clearout.name_match(name, who) >= 2
+                     and (today is None or day >= today)})
     if not theirs or launch in theirs:
         return None
     return min(theirs, key=lambda day: abs((day - launch).days))
@@ -8355,7 +8358,7 @@ def live_dates_moved(config: Config, *, today=None) -> tuple[list, list[str]]:
                     if launch is None:
                         continue
                     agent_name = name or rules.agent_name(str(card.get("name") or ""))
-                    setup_day = _hub_day_off(hub_days, agent_name, launch)
+                    setup_day = _hub_day_off(hub_days, agent_name, launch, today)
                     hub_wrong = setup_day is not None and setup_day != launch
                     if rules.setup_covers(title, launch) and not hub_wrong:
                         continue
