@@ -9021,6 +9021,22 @@ def read_agents(config: Config, *, day=None):
                 )
             )
 
+        # And the ones moved to Done before they were filed - Kevin Westbrook
+        # and Isaiah Wright, set up by Nova and moved there inside a minute,
+        # were never put on Ads or Ops. Made in the last day, on no setup,
+        # Ads or Ops card, and not live yet.
+        for card in _done_unfiled(client, lists, every_card, day):
+            detail, (said, copied) = _card_read(client, card)
+            agent = agents.read_agent({**card, **detail}, text=str(detail.get("desc") or ""),
+                                      comments=tuple(said), copied=copied, today=day)
+            if agent is None or agent.launch is None or agent.launch < day:
+                continue
+            plan = _plan_for(client, agent, day=day, tomorrow=tomorrow, dated=dated,
+                             every_card=every_card, parked=False)
+            if plan.doable:
+                plan.move_to = ""
+                plans.append(plan)
+
         where = {
             name: str(by_name[name.casefold()].get("id") or "")
             for name in (agents.PARKED, agents.AUTOMATION, agents.DONE)
@@ -9039,6 +9055,66 @@ def read_agents(config: Config, *, day=None):
         return plans, where, missing, typos
     finally:
         client.close()
+
+
+#: New Agent cards in Done looked at for being filed: {card id: last activity}
+#: - each looked at again only when it changes.
+_DONE_LOOKED: dict = {}
+#: How new a card in Done has to be to be looked at.
+DONE_UNFILED_HOURS = 24
+#: An unfiled one in Done is looked at again this often - it may still be
+#: being written, and the filing waits for that.
+DONE_RETRY_SECONDS = 120
+_DONE_RETRY: dict = {}
+
+
+def _done_unfiled(client, lists, every_card, day) -> list[dict]:
+    """New Agent cards in Done, made in the last DONE_UNFILED_HOURS, whose
+    link is on no setup, Ads or Ops card - filed by nobody."""
+    from .. import agents, dailyops, trello
+
+    done = trello.find_list(lists, agents.DONE)
+    if done is None:
+        return []
+    since = datetime.now(timezone.utc) - timedelta(hours=DONE_UNFILED_HOURS)
+    fresh = [card for card in every_card
+             if str(card.get("idList") or "") == str(done.get("id") or "")
+             and agents.is_agent_card(str(card.get("name") or ""))
+             and (card_made_at(str(card.get("id") or "")) or since) > since
+             and _DONE_LOOKED.get(str(card.get("id") or "")) != str(card.get("dateLastActivity") or "")]
+    # Not filed yet: looked at again every couple of minutes, not every pass.
+    import time as _time
+
+    now = _time.monotonic()
+    fresh = [card for card in fresh if now - _DONE_RETRY.get(str(card.get("id") or ""), -1e9) >= DONE_RETRY_SECONDS]
+    if not fresh:
+        return []
+    for card in fresh:
+        _DONE_RETRY[str(card.get("id") or "")] = now
+    # Every line on the setup cards and the next week's Ads and Ops cards.
+    holders = [card for card in every_card if agents.is_setup_card(str(card.get("name") or ""))]
+    for ahead in range(0, 8):
+        covering = dailyops.cards_covering(every_card, day + timedelta(days=ahead))
+        holders += [covering[kind] for kind in ("ads", "ops") if covering.get(kind)]
+    lines = []
+    for holder in {str(one.get("id") or ""): one for one in holders}.values():
+        try:
+            for checklist in client.card_checklists(str(holder.get("id") or "")):
+                lines += [str(item.get("name") or "") for item in checklist.get("checkItems") or []]
+        except Exception:
+            return []  # can't tell - file nobody twice
+    found = []
+    for card in fresh:
+        links = {str(card.get(key) or "") for key in ("url", "shortUrl")} - {""}
+        short = trello.linked_card_id(str(card.get("shortUrl") or card.get("url") or ""))
+        if short:
+            links.add(short)
+        if any(link in line for line in lines for link in links):
+            # Filed: not looked at again until it changes.
+            _DONE_LOOKED[str(card.get("id") or "")] = str(card.get("dateLastActivity") or "")
+        else:
+            found.append(card)
+    return found
 
 
 def _cards_of(client, board_id, lists) -> list[dict]:

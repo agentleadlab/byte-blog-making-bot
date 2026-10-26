@@ -4841,3 +4841,36 @@ def test_next_monday_said_on_a_monday_is_a_week_on():
     assert agents.find_launch(said, today=monday) == date(2026, 11, 2)
     assert agents.find_launch("live Monday", today=monday) == monday
     assert agents.find_launch("go live next Tuesday", today=monday) == date(2026, 10, 27)
+
+
+def test_a_new_agent_moved_to_done_before_filing_is_found(monkeypatch):
+    """"even this is not on the ads card bro" - Kevin Westbrook, set up by Nova
+    and moved to Done before Ryte filed him. One already on a list isn't."""
+    from datetime import date, datetime, timedelta, timezone
+
+    from wilbyte.bot import jobs
+
+    jobs._DONE_LOOKED.clear()
+    jobs._DONE_RETRY.clear()
+    hour_ago = format(int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()), "08x")
+    kevin = {"id": hour_ago + "a" * 16, "name": "New Agent - Kevin Westbrook", "idList": "done",
+             "shortUrl": "https://trello.com/c/KEVIN", "dateLastActivity": "x"}
+    filed = {"id": hour_ago + "b" * 16, "name": "New Agent - Rodrigo Garcia", "idList": "done",
+             "shortUrl": "https://trello.com/c/RODRIGO", "dateLastActivity": "y"}
+    old = {"id": "5a000000" + "c" * 16, "name": "New Agent - Old One", "idList": "done",
+           "shortUrl": "https://trello.com/c/OLD", "dateLastActivity": "z"}
+    ads = {"id": "ads", "name": "📊 Ads 10/26/26"}
+    setup = {"id": "setup", "name": "Agent Setup Going Live Tuesday 10/27"}
+
+    class Board:
+        def card_checklists(self, card_id):
+            if card_id == "setup":
+                return [{"name": "Therese", "checkItems": [
+                    {"name": "[New Agent - Rodrigo Garcia](https://trello.com/c/RODRIGO) 25 VET"}]}]
+            return [{"name": "Nicole", "checkItems": []}]
+
+    lists = [{"id": "done", "name": "Done"}]
+    found = jobs._done_unfiled(Board(), lists, [kevin, filed, old, ads, setup], date(2026, 10, 26))
+    assert [one["name"] for one in found] == ["New Agent - Kevin Westbrook"]
+    # Looked at again in a couple of minutes, not every pass.
+    assert jobs._done_unfiled(Board(), lists, [kevin, filed, old, ads, setup], date(2026, 10, 26)) == []
