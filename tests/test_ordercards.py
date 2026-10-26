@@ -2152,10 +2152,18 @@ def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
     assert how == "ok" and "(archived)" in line
     # Keegan Sundberg's $79.18 after the $1,240 that has its card.
     ordercards.save(dict(ordercards.load(), **{"8": {"status": "made", "client": "Keegan Sundberg",
-                                                      "url": "https://trello.com/c/keegan"}}))
+                                                      "url": "https://trello.com/c/keegan",
+                                                      "made_at": "2026-10-14T18:30:00+00:00"}}))
     second = post(9, "New Payment | Payra\nNAME: Keegan Sundberg\nAMOUNT: $79.18\nPRODUCT: Text-Verified Trucker IUL")
     how, line = client._audit_line(second, ordercards.load(), [])
     assert how == "ok" and "trello.com/c/keegan" in line
+    # Hayden Keltner's payment a week on: his old order's card isn't this one's.
+    later = post(10, "New Payment | Payra\nNAME: Keegan Sundberg\nAMOUNT: $809.37\nPRODUCT: VET",
+                 at=datetime(2026, 10, 21, 16, 23, tzinfo=timezone.utc))
+    assert client._audit_line(later, ordercards.load(), [])[0] == "waiting"
+    old_card = [{"id": "6ada0000" + "a" * 16, "name": "New Agent - Keegan Sundberg", "url": "https://trello.com/c/old"}]
+    old_card[0]["id"] = format(int(datetime(2026, 10, 14, tzinfo=timezone.utc).timestamp()), "08x") + "a" * 16
+    assert client._audit_line(later, ordercards.load(), old_card)[0] == "waiting"
     today = date(2026, 10, 15)
     assert client._audit_days("order audit", today) == [today]
     assert client._audit_days("order audit yesterday", today) == [date(2026, 10, 14)]
@@ -5563,3 +5571,11 @@ def test_an_agency_off_their_earlier_card(monkeypatch):
     assert jobs.agency_from_earlier_cards(config, name="Jacob Martin", email="jmartin@example.com") == (
         "AEP", "Aged Leads - Jacob Martin")
     assert jobs.agency_from_earlier_cards(config, name="Nobody Here", email="none@example.com") is None
+
+
+def test_a_plain_audit_on_monday_takes_in_the_weekend():
+    """"when i order audit monday, can it include the weekends"."""
+    monday = date(2026, 10, 26)
+    assert client._audit_days("order audit", monday) == [date(2026, 10, 24), date(2026, 10, 25), monday]
+    assert client._audit_days("order audit", date(2026, 10, 27)) == [date(2026, 10, 27)]
+    assert client._audit_days("order audit 2 days", monday) == [date(2026, 10, 25), monday]

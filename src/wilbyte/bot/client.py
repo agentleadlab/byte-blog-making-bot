@@ -12375,7 +12375,9 @@ def _audit_days(said: str, today: date) -> list[date]:
     if "yesterday" in said:
         return [today - timedelta(days=1)]
     many = re.search(r"(\d+)\s*days?", said)
-    n = min(max(int(many.group(1)), 1), 7) if many else 1
+    # A plain one on Monday takes in the weekend - "when i order audit
+    # monday, can it include the weekends".
+    n = min(max(int(many.group(1)), 1), 7) if many else (3 if today.weekday() == 0 else 1)
     return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
 
 
@@ -12410,10 +12412,28 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
                            f"{' and '.join(order.get('gaps') or ['the details'])}: <{post.jump_url}>")
     # A card for them on the board, archived or not, or one RYTE made for
     # another of their payments - Keegan Sundberg's $79.18 after his $1,240.
-    found = jobs.has_new_agent_card(name, cards)
+    # A card made around this payment: from half a day before it - the same
+    # order's other payment, Keegan Sundberg's $79.18 after his $1,240 - on.
+    # Not their card from an older order.
+    def made_around(card) -> bool:
+        made = jobs.card_made_at(str(card.get("id") or ""))
+        return made is None or made >= post.created_at - timedelta(hours=12)
+
+    found = jobs.has_new_agent_card(name, [one for one in cards if made_around(one)])
     if found is None:
+        # Only one made around this payment - Hayden Keltner's two payments
+        # on the 26th were "has a card" off his card from the 19th, and a
+        # repeat client's new order with no card would read as done.
+        def near(one) -> bool:
+            try:
+                made = datetime.fromisoformat(str(one.get("made_at") or ""))
+            except ValueError:
+                return False
+            made = made if made.tzinfo else made.replace(tzinfo=timezone.utc)
+            return timedelta(days=-1) <= made - post.created_at <= timedelta(days=3)
+
         mine = [one for one in held.values() if isinstance(one, dict) and one.get("status") == "made"
-                and clearout.name_match(name, str(one.get("client") or "")) >= 2]
+                and clearout.name_match(name, str(one.get("client") or "")) >= 2 and near(one)]
         found = {"url": mine[-1].get("url", "")} if mine else None
     if found:
         put_away = " (archived)" if found.get("closed") else ""
