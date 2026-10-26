@@ -4826,3 +4826,18 @@ def test_a_hub_order_started_already_isnt_a_wrong_day():
     assert jobs._hub_day_off(days, "Jessica Aguirre", date(2026, 10, 23), date(2026, 10, 23)) is None
     days.append(("Jessica Aguirre", date(2026, 10, 26)))
     assert jobs._hub_day_off(days, "Jessica Aguirre", date(2026, 10, 23), date(2026, 10, 23)) == date(2026, 10, 26)
+
+
+def test_next_monday_said_on_a_monday_is_a_week_on():
+    """Dan Smith: "do not start tomorrow, set him to go live next Monday",
+    written Monday Oct 26 - Ryte offered to move him to that same Monday."""
+    from datetime import date
+
+    from wilbyte import agents
+
+    monday = date(2026, 10, 26)
+    said = ("📌 tag nicole Dan Smith bought 30 OTP vet leads + 5 free bonus leads - do not start tomorrow, "
+            "set him to go live next Monday")
+    assert agents.find_launch(said, today=monday) == date(2026, 11, 2)
+    assert agents.find_launch("live Monday", today=monday) == monday
+    assert agents.find_launch("go live next Tuesday", today=monday) == date(2026, 10, 27)

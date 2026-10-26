@@ -2116,6 +2116,10 @@ def _date_in(sentence: str, *, today: date) -> date | None:
     for index, name in enumerate(_WEEKDAYS):
         if re.search(rf"\b{name}\b|\b{_SHORT_DAYS[index]}\b", said):
             ahead = (index - today.weekday()) % 7
+            # "next Monday" said on a Monday is a week on - Dan Smith's "set
+            # him to go live next Monday", written Monday, was read as that day.
+            if ahead == 0 and re.search(rf"\bnext\s+(?:week\s+)?(?:{name}|{_SHORT_DAYS[index]})\b", said):
+                ahead = 7
             return today + timedelta(days=ahead)
     return None
 
