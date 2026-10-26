@@ -5616,3 +5616,28 @@ def test_an_order_line_with_who_its_for_after_a_dash(monkeypatch):
     monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
     config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
     assert jobs.agency_from_earlier_cards(config, name="Garret Sekelsky", email="g@example.com") is None
+
+
+def test_asap_written_on_a_day_thats_gone_is_today(monkeypatch):
+    """Geno Glaze paid Saturday - "start asap", "once signs he is live today" -
+    gavelled Monday and held as "Sat 10/24 is too far from today"."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Geno Glaze", "package": "Text-Verified Veteran leads (OTP VET)", "leads": "30",
+        "states": "", "launch": "today", "launch_iso": "2026-10-24"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/24 09:10AM] Nova: New Payment | Payra\nNAME: Geno Glaze\nAMOUNT: $1,000\n"
+            "PRODUCT: Text-Verified Veteran leads\n**INVOICE:** INV-20500\n**Notes:**\n> 5-8\n> start asap\n"
+            "> 30 OTP VET + leads\n**Internal Notes:**\n> check schedule. otherwise once signs he is live today")
+    monday = date(2026, 10, 26)
+    card = jobs.read_order(config, text=text, images=[], today=monday)
+    assert card["launch_iso"] == "2026-10-26" and card["fields"]["launch"] == "Monday, October 26"
+    assert not any("too far" in one for one in ordercards.doubts(card, today=monday)[0])

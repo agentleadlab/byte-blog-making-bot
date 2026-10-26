@@ -14042,6 +14042,11 @@ def _same_contact_as_payer(text: str, notes, name: str) -> bool:
     return False
 
 
+#: An order that starts as soon as it can - so a day that's passed is today.
+_ASAP = re.compile(r"\basap\b|\bas\s+soon\s+as\b|\bright\s+away\b|\bonce\s+(?:he|she|they|it)(?:'s|\s+is)?\s+"
+                   r"sign|\bwhen\s+(?:he|she|they)\s+signs?\b|\bonce\s+signed\b", re.IGNORECASE)
+
+
 def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = (),
                request: str = "", agencies=()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -
@@ -14356,6 +14361,18 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                 fields["launch"], launch_iso = "", ""
         if when is not None:
             fields["launch"], launch_iso = f"{when:%A, %B} {when.day}", when.isoformat()
+    if launch_iso and not spark:
+        # "start asap" / "once signs he is live today" written Saturday and
+        # gavelled Monday: the day it was written is gone, and asap is the
+        # first day it can be - today. Geno Glaze's was held as Sat 10/24,
+        # "too far from today".
+        try:
+            read_as = date.fromisoformat(launch_iso)
+        except ValueError:
+            read_as = None
+        if read_as is not None and read_as < today and _ASAP.search(source):
+            fields["launch"], launch_iso = f"{today:%A, %B} {today.day}", today.isoformat()
+            launch_conflict = []
     if spark.get("starts") is not None:
         # The membership starts when Spark says - never a day read elsewhere.
         starts = spark["starts"]
