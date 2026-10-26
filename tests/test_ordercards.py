@@ -5594,3 +5594,25 @@ def test_a_time_and_today_is_when_they_start():
     for not_a_start in ("Schedule: 8 am to 8 pm EST", "every Monday 9am", "call me at 3pm",
                         "INVOICE: INV-20488 · card •••• 8622 · 10/24/2026 9:12 AM"):
         assert not ordercards.says_when(not_a_start), not_a_start
+
+
+def test_an_order_line_with_who_its_for_after_a_dash(monkeypatch):
+    """Garret Sekelsky paid; the invoice said "50 Aged Vets - Santiago
+    Basualdo / 30-90" - the card went out as Garret's, with "Agency: Bailey
+    Lawrence" off his earlier card (one of his agents)."""
+    assert jobs.name_in_notes(["50 Aged Vets - Santiago Basualdo\n30-90"]) == "Santiago Basualdo"
+    assert jobs.name_in_notes(["50 Aged Vets - 30-90 days"]) == ""
+    cards = [{"id": "6a000000aaaaaaaaaaaaaaaa", "name": "Aged Leads - Garret Sekelsky",
+              "desc": "Email: g@example.com\nAgency: Bailey Lawrence"},
+             {"id": "6a100000bbbbbbbbbbbbbbbb", "name": "New Agent - Bailey Lawrence", "desc": "Agency: BANK"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    assert jobs.agency_from_earlier_cards(config, name="Garret Sekelsky", email="g@example.com") is None

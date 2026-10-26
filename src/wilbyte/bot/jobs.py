@@ -13459,13 +13459,20 @@ _NOT_NAME_WORDS = re.compile(
     r"notes?|name|email|phone|number|ringy|integration|discount|code|invoice)\b", re.IGNORECASE)
 
 
+#: An order line with who it's for after a dash - "50 Aged Vets - Santiago
+#: Basualdo", which Garret Sekelsky paid for and went out as his.
+_DASH_NAME = re.compile(r"^\s*\d[\d,]*\s+[^\n\-–—]{2,40}?\s+[-–—]\s*"
+                        r"([A-Z][a-z'’\-]+(?:\s+[A-Z][a-z'’\-]+){1,2})\s*[.,]?\s*$")
+
+
 def name_in_notes(notes) -> str:
     """The one person the team's notes name on a line of its own - "Camden
-    Misquez" under "7 OTP VETS" - or "" for none or more than one."""
+    Misquez" under "7 OTP VETS" - or after an order line's dash - "50 Aged
+    Vets - Santiago Basualdo" - or "" for none or more than one."""
     found = []
     for note in notes or ():
         for line in str(note or "").splitlines():
-            match = _A_NAME.match(line)
+            match = _A_NAME.match(line) or _DASH_NAME.match(line)
             if not match or _NOT_NAME_WORDS.search(match.group(1)):
                 continue
             name = " ".join(match.group(1).split())
@@ -15634,7 +15641,11 @@ def agency_from_earlier_cards(config: Config, *, name: str = "", email: str = ""
             continue
         said = re.search(r"^\W*Agency\W*:[ \t]*(\S[^\n]*)$", desc, re.MULTILINE | re.IGNORECASE)
         agency = said.group(1).strip(" *") if said else ""
-        if agency and agency_usable(agency):
+        # Not another client's name: Garret Sekelsky's card had "Agency:
+        # Bailey Lawrence" - one of his agents - and it went on the next.
+        if agency and agency_usable(agency) and not any(
+                clearout.name_match(agency, rules.agent_name(str(other.get("name") or ""))) >= 2
+                for other in every if rules.is_client_card(str(other.get("name") or ""))):
             found.append((rules.made_at(str(card.get("id") or "")), agency, title))
     if not found:
         return None
