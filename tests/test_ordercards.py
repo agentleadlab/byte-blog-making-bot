@@ -3310,11 +3310,15 @@ def test_aged_and_new_agent_leads_split_into_their_cards():
     assert aged["kind"] == "aged" and aged["name"] == "Aged Leads - Patrick Moreno"
     assert aged["fields"]["leads"] == "16,838 (5,659 + 11,029 + 50 + 100)"
     assert "Aged Vets 30-90: TX" in aged["fields"]["states"]
-    assert "• 5,659 Aged Vets 180+ — Nationwide" in aged["desc"] and "34 OTP Vets — states to come" in aged["desc"]
+    # "ON AGED LEADS, DONT ADD THE FRESH ORDER ON THE DESCRIPTION, but on
+    # fresh add both".
+    assert "• 5,659 Aged Vets 180+ — Nationwide" in aged["desc"] and "OTP Vets" not in aged["desc"]
+    for one in (vets, iuls):
+        assert agents.AGED_REFERENCE in one["desc"] and "• 5,659 Aged Vets 180+ — Nationwide" in one["desc"]
     assert "ALL AGED VETS DELIVERED TODAY" in aged["desc"]
     assert "• 100 Aged IULs 30-90 — 25 NC, 25 GA, 25 FL, 25 TX" in aged["desc"], "25 each, as Faith wrote it"
     assert "waiting for states" not in aged["desc"] and "Sunday" not in aged["desc"]
-    assert "• 25 OTP IULs" in aged["desc"] and "25 25" not in aged["desc"]
+    assert "OTP IULs" not in aged["desc"] and "25 25" not in aged["desc"]
     assert vets["kind"] == "fresh" and vets["fields"]["leads"] == "34" and not vets["fields"]["states"]
     assert not vets["fields"]["launch"], "waits for its states and its date"
     assert "No states yet" in vets["desc"]

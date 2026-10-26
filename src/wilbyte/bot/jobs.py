@@ -14488,7 +14488,7 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     card for each new-agent line - "yes build it that way" (Patrick Moreno:
     four aged lines delivered today, 34 OTP Vets waiting on states, 25 OTP
     IULs live Sunday). [] when the order isn't one of those."""
-    from .. import ordercards
+    from .. import agents as agents_mod, ordercards
 
     parts = [dict(one) for one in card.get("parts") or []]
     kinds = [one.get("kind") for one in parts]
@@ -14565,10 +14565,10 @@ def split_order(card: dict, *, today=None) -> list[dict]:
     said = "\n".join(_once_each(bit for bit in str(base.get("notes") or "").splitlines()
                                 if not bit.startswith("Paid via Zelle") and about_aged(bit)))
     fields["notes"] = "\n".join(
+        # Only the aged lines - "ON AGED LEADS, DONT ADD THE FRESH ORDER ON THE
+        # DESCRIPTION, but on fresh add both".
         [*zelle, "Order lines - each with its own states:" if not fresh else "Order lines:",
          *(f"• {line(one)}" for one in aged)]
-        + (["", "New-agent leads in the same order, on their own New Agent cards:", *(f"• {one}" for one in also)]
-           if also else [])
         # Notes that are the invoice's already say so - Skyler Liljenquist's
         # read "From the thread:" over "From the Payra invoice:".
         + (["", *([] if said.strip().startswith("From the Payra invoice:") else ["From the thread:"]), said.strip()]
@@ -14617,6 +14617,9 @@ def split_order(card: dict, *, today=None) -> list[dict]:
             [*zelle, *([] if codes else ["No states yet - they'll be posted in the thread."]),
              f"Part of a bigger order of {client}'s - the rest of it is on the Aged Leads card and its own "
              f"New Agent cards."]
+            # The whole order on the New Agent card - "on fresh add both" -
+            # the aged lines under a heading the filing doesn't read.
+            + (["", agents_mod.AGED_REFERENCE, *(f"• {line(other)}" for other in aged), ""] if aged else [])
             + (["", *([] if setup[0].startswith("From the Payra invoice:") else ["From the thread:"]), *setup]
                if setup else []))
         out.append({"kind": "fresh", "client": client, "fields": fields, "name": f"New Agent - {client}",

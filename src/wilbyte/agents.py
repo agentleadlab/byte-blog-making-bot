@@ -1012,10 +1012,24 @@ def named_lead_types(text: str) -> list[str]:
     return [field] if field else []
 
 
+#: The heading a New Agent card lists the order's aged lines under - "on
+#: fresh add both". What's under it, to the next blank line, is the aged
+#: card's and isn't set up: never read as this card's lead type.
+AGED_REFERENCE = "Also in this order - aged leads, on their Aged Leads card (not set up here):"
+
+
 def _phrases_in(text: str) -> list[str]:
     """The lines of `text` that name a kind of leads, in order."""
     said = []
+    skipping = False
     for line in (text or "").splitlines():
+        if line.strip().startswith(AGED_REFERENCE):
+            skipping = True
+            continue
+        if skipping:
+            if not line.strip():
+                skipping = False
+            continue
         phrase = tidy_lead_type(" ".join(line.split()))
         if not phrase or len(phrase.split()) > MOST_WORDS:
             continue
