@@ -5502,3 +5502,35 @@ def test_overflow_typed_in_a_hurry():
         assert ordercards.OVERFLOW.search(typed), typed
     for other in ("overall flow", "workflow", "over follow", "Flow state"):
         assert not ordercards.OVERFLOW.search(other), other
+
+
+def test_the_payer_under_a_nickname_is_the_payer(monkeypatch):
+    """Jacob Martin paid; the notes say "Name: jacoby" with his own email -
+    the card went out as jacoby, no email or phone, and was held."""
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "jacoby", "states": "MO, KS, OH, TX", "package": "Aged Vets 30-90 days",
+        "leads": "20"})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/24 10:13AM] Nova: New Payment | Payra\nNAME: Jacob Martin\nEMAIL: jmartin@example.com\n"
+            "PHONE: +15555550199\nAMOUNT: $101.43\nPRODUCT: Text-Verified Aged Veteran Leads\n"
+            "**INVOICE:** INV-20488 · card •••• 8622\n**Notes:**\n> Name: jacoby\n> Email: jmartin@example.com\n"
+            "> Lead Type: Aged Vets 30-90 days\n> States Leads In: MO, KS, OH, TX\n"
+            "> Number of Requested Leads: 20\n**Internal Notes:**\n> (none)")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 24))
+    fields = card["fields"]
+    assert card["client"] == "Jacob Martin" and fields["email"] == "jmartin@example.com"
+    assert fields["phone"] == "+15555550199"
+    assert ordercards.doubts(card, today=date(2026, 10, 24))[0] == []
+    # Somebody else's email under the other name: still somebody else.
+    note = "Name: jacoby\nEmail: someone@example.com\nStates Leads In: MO"
+    assert not jobs._same_contact_as_payer(text, [note], "jacoby")
+    assert jobs._same_contact_as_payer(text, [note.replace("someone", "jmartin")], "jacoby")

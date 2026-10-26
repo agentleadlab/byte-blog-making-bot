@@ -14017,6 +14017,24 @@ def order_card_fill_agency(config: Config, card_id: str, agency: str) -> str:
         client.close()
 
 
+def _same_contact_as_payer(text: str, notes, name: str) -> bool:
+    """Whether the note naming `name` gives the payment's own email or phone
+    - the payer under a nickname, not somebody else."""
+    paid_email = re.search(r"^\W*EMAIL:\**\s*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", text or "", re.MULTILINE | re.IGNORECASE)
+    paid_phone = re.search(r"^\W*PHONE:\**\s*([+\d()][\d()\s.\-+]{6,})", text or "", re.MULTILINE | re.IGNORECASE)
+    paid_digits = re.sub(r"\D", "", paid_phone.group(1))[-10:] if paid_phone else ""
+    for said in notes or ():
+        if not re.search(rf"name\s*:\s*{re.escape(name)}\b", said, re.IGNORECASE):
+            continue
+        email = re.search(r"e-?mail\W*:?\s*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", said, re.IGNORECASE)
+        if email and paid_email and email.group(1).casefold() == paid_email.group(1).casefold():
+            return True
+        for phone in re.findall(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", said):
+            if paid_digits and len(paid_digits) == 10 and re.sub(r"\D", "", phone)[-10:] == paid_digits:
+                return True
+    return False
+
+
 def read_order(config: Config, *, text: str, images: list[str], today, notes: list[str] = (),
                request: str = "", agencies=()) -> dict:
     """An order as posted in Discord - the payment and the team's notes -
@@ -14212,6 +14230,17 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     if written:
         if named and not any(_cards.same_person(named, one) for one in written):
             named = ""
+        # The payer under another name - Jacob Martin's notes said "Name:
+        # jacoby" with his own email, and the card went out as jacoby with no
+        # email or phone. Same email or phone as the payment: the payer.
+        if len(written) == 1 and payer and not _cards.same_person(payer, written[0]) \
+                and _same_contact_as_payer(text, [*(str(one) for one in notes or ()), on_post or ""], written[0]):
+            written = [payer]
+            fields["name"] = client_name = payer
+            for key, label in (("email", "EMAIL"), ("phone", "PHONE")):
+                found = re.search(rf"^\W*{label}:\**\s*(\S[^\n]*)", text, re.MULTILINE | re.IGNORECASE)
+                if found and not str(fields.get(key) or "").strip():
+                    fields[key] = found.group(1).strip(" *")
         # Not when the order says it's for somebody else: Hayden Keltner's
         # "Name: Hayden Keltner ... for his agent Matthew Stewart".
         if len(written) == 1 and client_name and not _cards.same_person(client_name, written[0]) \
