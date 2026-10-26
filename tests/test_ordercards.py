@@ -5534,3 +5534,28 @@ def test_the_payer_under_a_nickname_is_the_payer(monkeypatch):
     note = "Name: jacoby\nEmail: someone@example.com\nStates Leads In: MO"
     assert not jobs._same_contact_as_payer(text, [note], "jacoby")
     assert jobs._same_contact_as_payer(text, [note.replace("someone", "jmartin")], "jacoby")
+
+
+def test_an_agency_off_their_earlier_card(monkeypatch):
+    """"it has no agency?" - Jacob Martin's re-order: nothing in the notes or
+    #lead-lab, his earlier card says AEP."""
+    cards = [
+        {"id": "6a000000aaaaaaaaaaaaaaaa", "name": "Aged Leads - Jacob Martin",
+         "desc": "Name: Jacob Martin\nEmail: jmartin@example.com\nAgency: AEP"},
+        {"id": "6a100000bbbbbbbbbbbbbbbb", "name": "New Agent - Jacob Martinez",
+         "desc": "Name: Jacob Martinez\nEmail: other@example.com\nAgency: Wolfpack"},
+        {"id": "6a200000cccccccccccccccc", "name": "New Agent - J. Martin",
+         "desc": "Email: jmartin@example.com\nAgency: F"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    assert jobs.agency_from_earlier_cards(config, name="Jacob Martin", email="jmartin@example.com") == (
+        "AEP", "Aged Leads - Jacob Martin")
+    assert jobs.agency_from_earlier_cards(config, name="Nobody Here", email="none@example.com") is None

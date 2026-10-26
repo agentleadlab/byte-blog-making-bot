@@ -15606,6 +15606,39 @@ def charges_of_several(config: Config, *, since, posts=(), now=None) -> list[dic
     return found
 
 
+def agency_from_earlier_cards(config: Config, *, name: str = "", email: str = "") -> tuple[str, str] | None:
+    """(agency, the card it's on) off this client's newest earlier card that
+    names one - Jacob Martin's aged re-order went out with no Agency. Their
+    email on the card first, else their whole name in its title. None when
+    no earlier card says."""
+    from .. import agents as rules, clearout
+
+    email = str(email or "").strip().casefold()
+    client = open_trello(config)
+    try:
+        every = client.board_cards(config.secrets.trello_board_id, archived=True)
+    finally:
+        client.close()
+    found = []
+    for card in every:
+        title = str(card.get("name") or "")
+        if not rules.is_client_card(title):
+            continue
+        desc = str(card.get("desc") or "")
+        theirs = (email and email in desc.casefold()) or (
+            name and clearout.name_match(name, rules.agent_name(title)) >= 2)
+        if not theirs:
+            continue
+        said = re.search(r"^\W*Agency\W*:[ \t]*(\S[^\n]*)$", desc, re.MULTILINE | re.IGNORECASE)
+        agency = said.group(1).strip(" *") if said else ""
+        if agency and agency_usable(agency):
+            found.append((rules.made_at(str(card.get("id") or "")), agency, title))
+    if not found:
+        return None
+    found.sort(key=lambda one: one[0] or datetime.min.replace(tzinfo=timezone.utc))
+    return found[-1][1], found[-1][2]
+
+
 def invoice_line_count(config: Config, number: str) -> tuple[int, str] | None:
     """(how many leads, the line) off an invoice's one aged line - its
     quantity. None when the invoice isn't found, has several lines for

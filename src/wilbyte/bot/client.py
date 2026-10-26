@@ -10889,6 +10889,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             if same:
                 await _order_onto_card(bot, payload, key, responder, message, card, existing, link)
                 return
+    if "agency" in (card.get("fields") or {}) and not (card.get("fields") or {}).get("agency"):
+        # Nothing in the notes or #lead-lab: their earlier card's.
+        card = await _agency_off_earlier_cards(bot, card, kind)
     if kind == "aged" and "how many leads" in _aged_gaps(card):
         # No count in the notes: the invoice's own line - Lajuana Jackson's
         # INV-20471 said QTY 50 and the card was held for "how many leads".
@@ -10973,8 +10976,10 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                    f"posted in the thread." if card.get("missing") else "")
                 # Why the Agency is blank, so it can be put right.
                 + ("\n-# Agency blank — no New Lead Request in #lead-lab matches their email, phone or name, "
-                   "and the notes don't name one." if "agency" in (card.get("fields") or {})
+                   "the notes don't name one, and no earlier card of theirs does." if "agency" in (card.get("fields") or {})
                    and not (card.get("fields") or {}).get("agency") and not card.get("lead_request") else "")
+                + (f"\n-# Agency {card['fields'].get('agency')} — off their earlier card, {card['agency_from']}."
+                   if card.get("agency_from") else "")
                 + (f"\n⚠ **Agency blank** — their #lead-lab request says just “{card['agency_unclear']}”. "
                    f"Which agency is that? Put it on the card." if card.get("agency_unclear") else ""))
         ack = _ORDER_ACKS.pop(key, None)
@@ -11167,6 +11172,24 @@ async def _order_same_states(bot, message, card: dict) -> None:
             card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
             card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
             return
+
+
+async def _agency_off_earlier_cards(bot, card: dict, kind: str) -> dict:
+    """The card with the Agency off the client's earlier card, when one says -
+    and said on the card's message. As it was otherwise."""
+    fields = card.get("fields") or {}
+    try:
+        found = await asyncio.to_thread(partial(jobs.agency_from_earlier_cards, bot.config,
+                                                name=str(card.get("client") or fields.get("name") or ""),
+                                                email=str(fields.get("email") or "")))
+    except Exception:
+        log.warning("Couldn't look at %s's earlier cards for an agency", card.get("client"), exc_info=True)
+        return card
+    if not found:
+        return card
+    agency, where = found
+    fields = dict(fields, agency=agency)
+    return {**card, "fields": fields, "desc": jobs.order_desc(fields, kind), "agency_from": where}
 
 
 async def _count_off_the_invoice(bot, message, card: dict) -> dict:
