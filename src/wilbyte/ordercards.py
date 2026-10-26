@@ -366,6 +366,11 @@ def clock_day_as_start(text: str) -> str:
     return CLOCK_DAY.sub(start, str(text or ""))
 
 
+#: The order changed to another product after it was paid.
+SWITCHED = re.compile(r"\b(?:switch|chang|swap|convert|mov)\w*\s+(?:the\s+|his\s+|her\s+|their\s+)?"
+                      r"(?:order|leads?|it)\s+(?:to|into|over\s+to)\b|\binstead\s+of\b", re.IGNORECASE)
+
+
 #: "Same states last time", "same states as before", "states same as last".
 SAME_STATES = re.compile(
     r"\bsame\s+states?\b|\bstates?\s*:?\s*(?:are\s+)?(?:the\s+)?same\b|"
@@ -742,7 +747,11 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         # Against what the payment says, not the other way: "Aged Leads
         # (IUL)" paid and "50 Aged IUL Spanish (30-90)" written is the order
         # being more exact, not another product (Leonardo Lopez).
-        if package and all(setupcheck.same_product(product, one) is False for one in parts or [package]):
+        # Unless the order says it was switched - Ben Jacob paid for Trucker
+        # IUL and Faith wrote "Instead of Trucker IUL's / Switch order to 45
+        # Text Verified Veteran leads".
+        if package and all(setupcheck.same_product(product, one) is False for one in parts or [package]) \
+                and not SWITCHED.search(source):
             wrong.append(f"Lead type: the payment post says “{product}” but the order"
                          + (" (its Payra invoice)" if "payra invoice note" in source.casefold() else "")
                          + f" says “{package}” — which one did they buy?")

@@ -5641,3 +5641,16 @@ def test_asap_written_on_a_day_thats_gone_is_today(monkeypatch):
     card = jobs.read_order(config, text=text, images=[], today=monday)
     assert card["launch_iso"] == "2026-10-26" and card["fields"]["launch"] == "Monday, October 26"
     assert not any("too far" in one for one in ordercards.doubts(card, today=monday)[0])
+
+
+def test_an_order_switched_to_another_product_isnt_held_for_it():
+    """Ben Jacob paid for Trucker IUL; "Instead of Trucker IUL's / Switch
+    order to 45 Text Verified Veteran leads"."""
+    source = ("NAME: Ben Jacob\nPRODUCT: Text-Verified Trucker IUL Leads\n"
+              "[10/26 01:22PM] Faith: Instead of Trucker IUL's\nSwitch order to 45 Text Verified Veteran leads")
+    card = {"kind": "fresh", "client": "Ben Jacob", "source": source, "launch_iso": "2026-11-02",
+            "fields": {"name": "Ben Jacob", "package": "Text-Verified Veteran Leads", "leads": "45",
+                       "states": "PA, VA", "launch": "Monday, November 2"}}
+    assert not any("Lead type" in one for one in ordercards.doubts(card, today=date(2026, 10, 26))[0])
+    unswitched = dict(card, source=source.split("\n[")[0])
+    assert any("Lead type" in one for one in ordercards.doubts(unswitched, today=date(2026, 10, 26))[0])
