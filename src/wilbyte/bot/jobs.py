@@ -14500,6 +14500,14 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     parts = [{key: " ".join(str((one or {}).get(key) or "").split())
               for key in ("kind", "package", "leads", "states", "launch_iso")}
              for one in got.get("parts") or [] if isinstance(one, dict)]
+    # Each line aged or not by its own words, not the payment's: Skyler
+    # Liljenquist's "100 - $1/lead (180+) Mortgage protection" and "10 - Text
+    # Verified MTG PLUS" were both read as aged - the product said Aged - and
+    # went on one Aged Leads card.
+    for one in parts:
+        own = line_kind(one.get("package") or "")
+        if own:
+            one["kind"] = own
     # Other invoices the same charge paid: a line each, as their own forms
     # say - Dawson Clevenger's 10 of the 30-90 and 20 of the 90-180 in seven
     # states, besides the 130 of the 180+ in Idaho his post showed.
@@ -14543,6 +14551,29 @@ _PART_JOIN = re.compile(r"\s+\+\s+|\s*&\s*(?=\d)|,\s*(?=\d)|\s+and\s+(?=\d)|\s*;
 _FRESH_WORD = re.compile(r"\bfresh\b|\botp\b|text[\s-]*verified|\bnew\s+agent\b", re.IGNORECASE)
 
 
+#: What makes an order line aged in its own words: the word, an age range
+#: ("180+", "30-90 days"), or aged pricing ("$1/lead" - fresh leads are $35 on).
+_AGED_LINE = re.compile(r"\baged\b|\b\d{2,3}\s*\+|\b\d{2,3}\s*[-–]\s*\d{2,3}\s*(?:days?\b|\)|$)|"
+                        r"\(\s*\d{2,3}\s*[-–]\s*\d{2,3}\s*\)|\$\s*(?:[1-9]|1[0-5])(?:\.\d+)?\s*/\s*lead",
+                        re.IGNORECASE)
+
+
+def line_kind(package: str) -> str:
+    """"aged", "fresh", or "" when an order line's own words don't say."""
+    package = str(package or "")
+    aged = bool(_AGED_LINE.search(package))
+    fresh = bool(_FRESH_WORD.search(package)) and not re.search(r"\baged\b", package, re.IGNORECASE)
+    if aged and not fresh:
+        return "aged"
+    if fresh and not aged:
+        return "fresh"
+    # "Text-Verified Aged ..." is aged; a fresh word beside an age range alone
+    # says nothing either way.
+    if aged and re.search(r"\baged\b", package, re.IGNORECASE):
+        return "aged"
+    return ""
+
+
 def parts_from_package(fields: dict, launch_iso: str = "") -> list[dict]:
     """The order's lines out of a lead type that joins an aged line and a
     new-agent one - "20 Fresh OTP Mtg PRO + 20 Aged Mtg Pro 30-90" - each
@@ -14554,14 +14585,11 @@ def parts_from_package(fields: dict, launch_iso: str = "") -> list[dict]:
         return []
     parts = []
     for piece in pieces:
-        count = re.match(r"\s*(\d[\d,]*)\s+", piece)
-        if re.search(r"\baged\b", piece, re.IGNORECASE):
-            kind = "aged"
-        elif _FRESH_WORD.search(piece):
-            kind = "fresh"
-        else:
+        count = re.match(r"\s*(\d[\d,]*)\s*(?:[-–—:x×]\s*)?(?=\S)", piece)
+        kind = line_kind(piece)
+        if not kind:
             return []
-        parts.append({"kind": kind, "package": piece[count.end():] if count else piece,
+        parts.append({"kind": kind, "package": piece[count.end():].strip(" -–—") if count else piece,
                       "leads": count.group(1).replace(",", "") if count else "",
                       "states": str(fields.get("states") or ""),
                       "launch_iso": launch_iso if kind == "fresh" else ""})

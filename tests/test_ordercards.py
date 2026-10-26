@@ -5654,3 +5654,45 @@ def test_an_order_switched_to_another_product_isnt_held_for_it():
     assert not any("Lead type" in one for one in ordercards.doubts(card, today=date(2026, 10, 26))[0])
     unswitched = dict(card, source=source.split("\n[")[0])
     assert any("Lead type" in one for one in ordercards.doubts(unswitched, today=date(2026, 10, 26))[0])
+
+
+def test_each_line_aged_or_not_by_its_own_words(monkeypatch):
+    """Skyler Liljenquist paid "Text-Verified Aged Mortgage Protection Leads";
+    Kharyl's thread: "100 - $1/lead (180+) Mortgage protection / 10 - Text
+    Verified MTG PLUS / EVERLIFE, LIVE TOM OCT 27". Both lines were read as
+    aged and went on one Aged Leads card."""
+    import sys
+    import types
+
+    assert jobs.line_kind("100 - $1/lead (180+) Mortgage protection") == "aged"
+    assert jobs.line_kind("10 - Text Verified MTG PLUS") == "fresh"
+    assert jobs.line_kind("Text-Verified Aged Veteran Leads") == "aged"
+    assert jobs.line_kind("Text Verified Veteran Leads [FRESH - $45/Lead]") == "fresh"
+    assert jobs.line_kind("Mortgage Protection") == ""
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "aged", "name": "Skyler Liljenquist", "states": "AL, AZ, CO, FL", "agency": "EVERLIFE",
+        "package": "$1/lead (180+) Mortgage protection + Text Verified MTG PLUS", "leads": "110",
+        "launch": "Tuesday, October 27", "launch_iso": "2026-10-27",
+        "parts": [{"kind": "aged", "package": "$1/lead (180+) Mortgage protection", "leads": "100",
+                   "states": "AL, AZ, CO, FL"},
+                  {"kind": "aged", "package": "Text Verified MTG PLUS", "leads": "10", "states": "AL, AZ, CO, FL",
+                   "launch_iso": "2026-10-27"}]})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/26 04:16PM] Nova: New Payment | Payra\nNAME: Skyler Liljenquist\nEMAIL: skyler@example.com\n"
+            "AMOUNT: $548.55\nPRODUCT: Text-Verified Aged Mortgage Protection Leads\n"
+            "[10/26 04:17PM] Kharyl: Skyler Liljenquist\nAL, AZ, CO, FL\n100 - $1/lead (180+) Mortgage protection\n"
+            "10 - Text Verified MTG PLUS\nEVERLIFE, LIVE TOM OCT 27")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 26))
+    assert [one["kind"] for one in card["parts"]] == ["aged", "fresh"]
+    cards = jobs.split_order(card, today=date(2026, 10, 26))
+    assert [one["kind"] for one in cards] == ["aged", "fresh"]
+    aged, fresh = cards
+    assert aged["fields"]["leads"] == "100" and "MTG PLUS" not in aged["desc"]
+    assert fresh["fields"]["leads"] == "10" and fresh["fields"]["launch"] == "Tuesday, October 27"
