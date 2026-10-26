@@ -342,6 +342,30 @@ _LAUNCH_WORD = re.compile(
     r"deliver\w*|send(?:ing)?\s+leads|leads?\s+(?:on|from|begin|start)|set[\s-]?up\s+(?:for|on))\b", re.IGNORECASE)
 
 
+#: A time of day beside a day said relatively - "2:30 PM EST today" (Hutchinson
+#: Yang) - is when they start, with no "live" or "start" in it. Not a date
+#: and a time: every payment post has "10/24/2026 9:12 AM".
+_CLOCK = r"\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)(?:\s*(?:[ecmp][sd]?t|eastern|central|pacific))?"
+_DAY_WORD = r"\b(?:today|tonight|tomorrow|tmrw|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?)\b"
+CLOCK_DAY = re.compile(rf"^(?!.*\d{{1,2}}/\d{{1,2}}).*(?:{_CLOCK}.*{_DAY_WORD}|{_DAY_WORD}.*{_CLOCK}).*$",
+                       re.IGNORECASE | re.MULTILINE)
+
+
+def clock_day_as_start(text: str) -> str:
+    """Each line that's a time and a day - "2:30 PM EST today" - read as
+    "start 2:30 PM EST today"."""
+    def start(found):
+        line = found.group(0)
+        # A schedule isn't a start: "Mon-Fri 9am-5pm", "8 am to 8 pm EST".
+        if len(re.findall(_CLOCK, line, re.IGNORECASE)) != 1 or re.search(
+                rf"{_DAY_WORD}\s*(?:-|–|to|thru|through)\s*{_DAY_WORD}|\b(?:schedule|hours|between|every|"
+                rf"weekdays?|weekends?|no\s+\w+days?)\b", line, re.IGNORECASE):
+            return line
+        return "start " + line.strip()
+
+    return CLOCK_DAY.sub(start, str(text or ""))
+
+
 #: "Same states last time", "same states as before", "states same as last".
 SAME_STATES = re.compile(
     r"\bsame\s+states?\b|\bstates?\s*:?\s*(?:are\s+)?(?:the\s+)?same\b|"
@@ -552,7 +576,7 @@ def says_when(source: str) -> bool:
     """Whether the order says when they launch: a launch word and a day or
     date - leaving out the time each message was posted, which RYTE adds as
     it reads them."""
-    said = _STAMP.sub("", INVOICE_BOILERPLATE.sub(" ", str(source or "")))
+    said = clock_day_as_start(_STAMP.sub("", INVOICE_BOILERPLATE.sub(" ", str(source or ""))))
     # Not the payment post's "INVOICE: INV-20162 · card •••• 7872 ·
     # 10/19/2026 8:50 AM" - a date on every post since Oct 19.
     said = "\n".join(line for line in said.splitlines()

@@ -1907,7 +1907,9 @@ def find_launch(text: str, *, today: date) -> date | None:
     isn't, and the calendar date is the one that stays true - so every sentence
     is looked at for a real date before any of them is read for a relative one.
     """
-    text = _not_these_days(spelled_out(text))
+    from .ordercards import clock_day_as_start
+
+    text = _not_these_days(spelled_out(clock_day_as_start(text)))
     said = [
         sentence
         for pattern in _WHEN_SAID

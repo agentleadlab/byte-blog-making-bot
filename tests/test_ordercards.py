@@ -5579,3 +5579,18 @@ def test_a_plain_audit_on_monday_takes_in_the_weekend():
     assert client._audit_days("order audit", monday) == [date(2026, 10, 24), date(2026, 10, 25), monday]
     assert client._audit_days("order audit", date(2026, 10, 27)) == [date(2026, 10, 27)]
     assert client._audit_days("order audit 2 days", monday) == [date(2026, 10, 25), monday]
+
+
+def test_a_time_and_today_is_when_they_start():
+    """Hutchinson Yang: "25 OTP VETS / 2:30 PM EST today / Same states" -
+    parked in Franklin (Admin) with no launch date."""
+    from wilbyte import agents
+
+    monday = date(2026, 10, 26)
+    assert agents.find_launch("25 OTP VETS\n2:30 PM EST today\nSame states", today=monday) == monday
+    assert ordercards.says_when("25 OTP VETS\n2:30 PM EST today")
+    assert agents.find_launch("Friday 9am EST", today=monday) == date(2026, 10, 30)
+    # A schedule, the payment's own stamp, or a time with no day: no start.
+    for not_a_start in ("Schedule: 8 am to 8 pm EST", "every Monday 9am", "call me at 3pm",
+                        "INVOICE: INV-20488 · card •••• 8622 · 10/24/2026 9:12 AM"):
+        assert not ordercards.says_when(not_a_start), not_a_start
