@@ -10429,22 +10429,25 @@ SPARK_AUTO_FROM = datetime(2026, 10, 21, 16, 30, tzinfo=timezone.utc)
 #: A minute for the team to write anything under it first.
 SPARK_WAIT_SECONDS = 60
 #: What of the post goes on the card's notes, as Spark wrote it.
-_SPARK_KEPT = ("pool", "order", "cpl range", "expected leads / wk", "starts", "paid through", "membership",
-               "routing token")
+_SPARK_KEPT = ("pool", "order", "cpl range", "price / lead", "expected leads / wk", "starts", "paid through",
+               "membership", "routing token")
 
 
 def _spark_member(message) -> bool:
     """Capture Info's new pool member post in #spark."""
     if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != "spark":
         return False
-    said = _all_of_it(message).casefold()
-    return "pool member" in said and "spark" in said
+    # And a one-time order - "veteran-widows — 20 leads · one-time pack" for
+    # Soar Life Agency: "why no auto hammer on spark".
+    return jobs.spark_post(_all_of_it(message))
 
 
 def _spark_note(message) -> str:
     """The post's own terms for the card's notes - and "Purchased on Spark",
     which is how a card is known as Spark's: no contract to sign."""
-    lines = ["Purchased on Spark - pool membership."]
+    one_time = bool(jobs.SPARK_ORDER.search(_all_of_it(message)))
+    lines = ["Purchased on Spark - one-time pack. Starts as soon as it's set up." if one_time else
+             "Purchased on Spark - pool membership."]
     for embed in getattr(message, "embeds", None) or []:
         if getattr(embed, "title", None):
             lines.append(str(embed.title))

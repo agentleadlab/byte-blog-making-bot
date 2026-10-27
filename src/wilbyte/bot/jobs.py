@@ -13657,15 +13657,40 @@ def discord_times(text: str, timezone_name: str = "America/New_York") -> str:
     return _DISCORD_TIME.sub(written, str(text or ""))
 
 
+#: Capture Info's one-time order on Spark.
+SPARK_ORDER = re.compile(r"\blead\s+order\s+on\s+spark\b|\bone-?time\s+pack\b", re.IGNORECASE)
+
+
+def spark_post(text: str) -> bool:
+    """Capture Info's post of something bought on Spark - a pool membership
+    or a one-time order."""
+    said = str(text or "")
+    return bool(re.search(r"\bspark\b", said, re.IGNORECASE)) and bool(
+        re.search(r"pool\s+member", said, re.IGNORECASE) or SPARK_ORDER.search(said))
+
+
 def spark_pool(text: str) -> dict:
     """A Spark pool membership's own terms: {"pool": "IUL - Volume", "leads":
     "38-50"} - the pool bought and the leads a week it expects. {} when it
     isn't a Spark pool member post. FND Life's $700/wk went out as "Spark
     Standard", "No cap (ad spend)" - read as Phoenix-style ad spend."""
     said = str(text or "")
-    if not (re.search(r"pool\s+member", said, re.IGNORECASE) and re.search(r"\bspark\b", said, re.IGNORECASE)):
+    if not spark_post(said):
         return {}
     found = {}
+    if SPARK_ORDER.search(said):
+        # "New lead order on Spark" - a one-time pack: "veteran-widows — 20
+        # leads · one-time pack" for Soar Life Agency got no card.
+        found["one_time"] = True
+        kind = re.search(r"^\W*lead\s+type\W*([a-z]+(?:-[a-z]+)*)\s*$", said, re.IGNORECASE | re.MULTILINE)
+        if kind:
+            found["pool"] = " ".join(one.capitalize() for one in kind.group(1).split("-")) + " - one-time pack"
+        count = re.search(r"^\W*order\W*(\d[\d,]*)\s*leads?\b", said, re.IGNORECASE | re.MULTILINE)
+        if count:
+            found["leads"] = count.group(1).replace(",", "")
+        states = re.search(r"^\W*(?i:states?)\W*([A-Z]{2}(?:\s*,\s*[A-Z]{2})*)\s*$", said, re.MULTILINE)
+        if states:
+            found["states"] = ", ".join(re.findall(r"[A-Z]{2}", states.group(1)))
     pool = re.search(r"^\W*pool\b(?!\s*member)\W*(.+)$", said, re.IGNORECASE | re.MULTILINE)
     if pool and pool.group(1).strip():
         found["pool"] = " ".join(pool.group(1).split())
@@ -14278,8 +14303,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         for key in ("name", "email"):
             if spark.get(key):
                 fields[key] = spark[key]
-        if fields.get("leads") == NO_CAP or not re.search(r"\d", str(fields.get("leads") or "")):
+        if fields.get("leads") == NO_CAP or not re.search(r"\d", str(fields.get("leads") or "")) or (
+                spark.get("one_time") and spark.get("leads")):
             fields["leads"] = spark.get("leads", "")
+        if spark.get("states"):
+            # As Spark wrote them: what the buyer bought.
+            fields["states"] = spark["states"]
     elif fields.get("leads") == NO_CAP or _AD_SPEND.search(str(fields.get("package") or "")):
         # Ad spend: the agency the order names, and Standard or Plus.
         paid = re.search(r"AMOUNT:\**\s*\$?\s*([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
@@ -14464,6 +14493,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         # The membership starts when Spark says - never a day read elsewhere.
         starts = spark["starts"]
         fields["launch"], launch_iso = f"{starts:%A, %B} {starts.day}", starts.isoformat()
+    elif spark.get("one_time"):
+        # Bought and paid: filled from today.
+        fields["launch"], launch_iso = f"{today:%A, %B} {today.day}", today.isoformat()
     if not launch_iso:
         # A Spark membership's own start - "Starts October 25, 2026" - which
         # the reading took for nothing: FND Life's card had no launch date and
@@ -14471,7 +14503,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         starts = _starts_on(text)
         if starts is not None:
             fields["launch"], launch_iso = f"{starts:%A, %B} {starts.day}", starts.isoformat()
-    if re.search(r"pool\s+member", text, re.IGNORECASE) and re.search(r"\bspark\b", text, re.IGNORECASE):
+    if spark_post(text):
         # A Spark buyer's agency is Spark - "on their agency field, obv put
         # spark". FND Life's card went out with it blank.
         fields["agency"] = "Spark"

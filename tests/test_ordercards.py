@@ -5865,3 +5865,66 @@ def test_a_state_is_only_left_off_a_line_read_whole():
     # "Carolna" might be the SC read in: held for a person, not taken off.
     source = "States: NJ, MO, Carolna, TX"
     assert ordercards.states_off_the_order("NJ, MO, SC, TX", source) == ("NJ, MO, SC, TX", [])
+
+
+def _spark_order_post(i=961):
+    fields = [SimpleNamespace(name=name, value=value) for name, value in (
+        ("Buyer", "Soar Life Agency"), ("Lead type", "veteran-widows"), ("Order", "20 leads · one-time pack"),
+        ("Price / lead", "$25"), ("States", "AL, AR, GA, IL, NV, OR, SC, TX"),
+        ("Buyer email", "soar@example.com"), ("Routing token", "lw_0000"))]
+    message = _message("🛒 New lead order on Spark")
+    message.embeds = [SimpleNamespace(title="veteran-widows — 20 leads · one-time pack",
+                                      description="A buyer just purchased on Spark. Fulfill this order from your "
+                                                  "Spark vendor dashboard.",
+                                      fields=fields, url=None, footer=None, author=None)]
+    message.id, message.channel.name = i, "👑 | spark"
+    message.author.display_name = "Capture Info"
+    return message
+
+
+def test_a_spark_one_time_order_is_hammered_too(order, monkeypatch):
+    """"why no auto hammer on spark" - Soar Life Agency's 20 veteran-widows,
+    a one-time pack, got no card."""
+    order.kind = "fresh"
+    message = _spark_order_post()
+    assert client._spark_member(message)
+    sold = _message("💰 A lead you delivered was marked sold on Spark")
+    sold.channel.name = "👑 | spark"
+    assert not client._spark_member(sold)
+    assert asyncio.run(client._spark_from_post(_bot(message), message, wait=0)) == "made"
+    note = order.notes[0]
+    assert note.startswith("Purchased on Spark - one-time pack") and "Price / lead - $25" in note
+    text = client._all_of_it(message)
+    found = jobs.spark_pool(text)
+    assert found["pool"] == "Veteran Widows - one-time pack" and found["leads"] == "20"
+    assert found["states"] == "AL, AR, GA, IL, NV, OR, SC, TX" and found["name"] == "Soar Life Agency"
+
+
+def test_a_spark_one_time_order_reads_as_its_card(monkeypatch):
+    import sys
+    import types
+
+    class Anthropic:
+        def __init__(self, **kw):
+            self.messages = SimpleNamespace(create=lambda **kw: "reply")
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(jobs, "_tool_input", lambda response, name: {
+        "kind": "fresh", "name": "Buyer Soar Life Agency", "email": "", "states": "AL, AR",
+        "package": "veteran-widows", "leads": "No cap (ad spend)", "launch": ""})
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key="k", require=lambda *a: None),
+                             copy=SimpleNamespace(model="claude-opus-5-5"))
+    text = ("[10/27 02:31PM] Capture Info: 🛒 New lead order on Spark\nveteran-widows — 20 leads · one-time pack\n"
+            "A buyer just purchased on Spark. Fulfill this order from your Spark vendor dashboard.\n"
+            "Buyer Soar Life Agency\nLead type veteran-widows\nOrder 20 leads · one-time pack\nPrice / lead $25\n"
+            "States AL, AR, GA, IL, NV, OR, SC, TX\nBuyer email soar@example.com\n"
+            "Purchased on Spark - one-time pack. Starts as soon as it's set up.")
+    card = jobs.read_order(config, text=text, images=[], today=date(2026, 10, 27),
+                           notes=["Purchased on Spark - one-time pack. Starts as soon as it's set up."])
+    fields = card["fields"]
+    assert card["name"] == "New Agent - Soar Life Agency" and fields["email"] == "soar@example.com"
+    assert fields["package"] == "Veteran Widows - one-time pack" and fields["leads"] == "20"
+    assert fields["states"] == "AL, AR, GA, IL, NV, OR, SC, TX" and fields["agency"] == "Spark"
+    assert card["launch_iso"] == "2026-10-27"
+    wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 27))
+    assert wrong == [], wrong
