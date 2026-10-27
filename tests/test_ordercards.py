@@ -5840,3 +5840,28 @@ def test_a_state_read_in_that_the_order_never_says_is_left_off():
         "name": "Robert Allaraj", "states": "NJ, MO, ME, OH, PA, TX, VA, WV, GA",
         "package": "Text-Verified Mortgage Protection Leads", "leads": "25"}}, today=date(2026, 10, 27))
     assert any("SC left off" in one for one in missing)
+
+
+def test_a_state_typed_with_a_letter_doubled_is_that_state():
+    """"but he does have sc, its just wrong seplling" - Robert Allaraj's
+    "States: NJ MO ME OH PA SCC TX VA WV GA"."""
+    source = ("NAME: Robert Allaraj\nNotes:\nName: Robert Allaraj\nLead Type: OTP Mtg\n"
+              "States: NJ MO ME OH PA SCC TX VA WV GA\nNotes:")
+    card = "NJ, MO, ME, OH, PA, SC, TX, VA, WV, GA"
+    assert ordercards.typo_codes(source) == {"SC": "SCC"}
+    assert ordercards.states_off_the_order(card, source) == (card, [])
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": source, "fields": {
+        "name": "Robert Allaraj", "states": card, "package": "OTP Mtg", "leads": "25"}}, today=date(2026, 10, 27))
+    assert not any("States" in one for one in wrong), wrong
+    # Left off by the reading: said.
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": source, "fields": {
+        "name": "Robert Allaraj", "states": "NJ, MO, ME, OH, PA, TX, VA, WV, GA", "package": "OTP Mtg",
+        "leads": "25"}}, today=date(2026, 10, 27))
+    assert any("also says SC" in one for one in wrong)
+    assert ordercards.typo_codes("States: ALL except NY\nOTP MTG leads for TX FL GA") == {}
+
+
+def test_a_state_is_only_left_off_a_line_read_whole():
+    # "Carolna" might be the SC read in: held for a person, not taken off.
+    source = "States: NJ, MO, Carolna, TX"
+    assert ordercards.states_off_the_order("NJ, MO, SC, TX", source) == ("NJ, MO, SC, TX", [])

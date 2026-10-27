@@ -318,12 +318,23 @@ def states_off_the_order(states: str, source: str) -> tuple[str, list[str]]:
     if not unsaid or len(unsaid) == len(on_card):
         return states, []
     team, invoice = _invoice_split(source)
-    listed, _where = _states_listed(team)
+    listed, where = _states_listed(team)
     if not listed:
-        listed, _where = _states_listed(invoice)
+        listed, where = _states_listed(invoice)
     kept = [code for code in on_card if code not in unsaid]
     if not listed or set(kept) != set(listed):
         return states, []
+    # Only off a line read whole: anything on it that isn't a state, "and" or
+    # "states" might be the one read in, spelled wrong - "SCC" was SC.
+    names = sorted(US_STATES.values(), key=len, reverse=True)
+    for line in set(where.values()):
+        rest = re.sub(r"^.*?\bstates?\b\s*:?", "", line, flags=re.IGNORECASE) if re.search(
+            r"\bstates?\b\s*:", line, re.IGNORECASE) else line
+        rest = re.sub("|".join(map(re.escape, names)), " ", rest, flags=re.IGNORECASE)
+        left = [word for word in re.findall(r"[A-Za-z]+", rest)
+                if not (len(word) == 2 and word.upper() in US_STATES) and word.casefold() not in ("and", "states", "state")]
+        if left:
+            return states, []
     return ", ".join(kept), unsaid
 
 
@@ -377,6 +388,8 @@ STATE_SHORT = {
 
 
 def _said_state(code: str, source: str) -> bool:
+    if code in typo_codes(source):
+        return True
     upper = str(source or "").upper()
     name = US_STATES[code]
     said = str(source or "").casefold()
@@ -398,6 +411,27 @@ def _said_state(code: str, source: str) -> bool:
     words = re.findall(r"[a-z]+", str(source or "").casefold())
     size = len(name.split())
     return any(_apart(" ".join(words[at:at + size]), name) <= slack for at in range(len(words) - size + 1))
+
+
+#: Words that look like a state with a letter doubled, and aren't one.
+_NOT_DOUBLED = {"ALL", "ILL", "INN", "ADD", "OFF", "SEE", "TOO", "MEE", "GAA"}
+
+
+def typo_codes(text: str) -> dict[str, str]:
+    """State codes typed with a letter doubled on a line that lists states -
+    Robert Allaraj's "States: NJ MO ME OH PA SCC TX VA WV GA" is SC, and SC
+    was taken off his card as never said. {code: as typed}."""
+    found = {}
+    for line in _state_lines(text):
+        for word in re.findall(r"(?<![A-Za-z])([A-Z]{3})(?![A-Za-z])", line):
+            if word in _NOT_DOUBLED or word.upper() in US_STATES:
+                continue
+            for at in range(2):
+                if word[at] == word[at + 1]:
+                    code = word[:at] + word[at + 1:]
+                    if code in US_STATES:
+                        found.setdefault(code, word)
+    return found
 
 
 def _state_lines(source: str) -> list[str]:
@@ -435,7 +469,8 @@ def _states_listed(source: str) -> tuple[list[str], dict]:
         # "FL, IA, ... TX (GA & NJ ...)" was held for GA and NJ, which the
         # card was right to leave off.
         listed_part = re.sub(r"\([^)]*(?:\)|$)", " ", line)
-        for code in _CODE.findall(listed_part):
+        # "SCC" is SC.
+        for code in [*_CODE.findall(listed_part), *typo_codes(listed_part)]:
             if code.upper() in US_STATES and code.isupper() and code.upper() not in where:
                 listed.append(code.upper())
                 where[code.upper()] = " ".join(line.split())
