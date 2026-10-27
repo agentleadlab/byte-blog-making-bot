@@ -1968,6 +1968,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _gavel_allow(bot, responder, message, allowed=request.action == "gavelallow")
                 return
 
+            if request.action == "statescheck":
+                await _states_check(bot, responder, request.brief or "")
+                return
+
             if request.action == "orderaudit":
                 await _order_audit(bot, responder, request.brief or "")
                 return
@@ -12573,6 +12577,83 @@ async def _audit_several(bot, posts, cards: list, held: dict, since) -> tuple[in
         lines.insert(1, f"🚨 **{missed} invoice(s) paid in a shared charge have no card** — their leads may not "
                         f"have gone out.")
     return missed, lines
+
+
+#: How far back "states check" looks when not told.
+STATES_CHECK_DAYS = 30
+
+
+async def _states_check(bot, responder: Responder, said: str) -> None:
+    """"@Ryte states check" - every order card made lately, its states as
+    they are on the board now, held up against its post and thread as
+    written: no Claude, so nothing is read wrong twice."""
+    from .. import ordercards
+
+    days = re.search(r"(\d{1,3})\s*days?", said or "", re.IGNORECASE)
+    days = int(days.group(1)) if days else STATES_CHECK_DAYS
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    held = await asyncio.to_thread(ordercards.load)
+    made = []
+    for key, order in held.items():
+        if not isinstance(order, dict) or order.get("status") != "made" or order.get("merged"):
+            continue
+        try:
+            when = datetime.fromisoformat(str(order.get("made_at") or ""))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= since:
+            made.append((key, order))
+    await responder.send(f"🔎 Checking the states on {len(made)} order card(s) from the last {days} days "
+                         f"against their threads…", quiet=True)
+    wrong, unread = [], []
+    client = await asyncio.to_thread(jobs.open_trello, bot.config)
+    try:
+        for key, order in made:
+            try:
+                channel = bot.get_channel(int(order["message_channel_id"])) or \
+                    await bot.fetch_channel(int(order["message_channel_id"]))
+                message = await channel.fetch_message(int(key))
+                text, _images, _thread, notes = await _order_said(bot, message,
+                                                                  threads=tuple(order.get("threads") or ()))
+            except Exception:
+                unread.append(str(order.get("name") or order.get("client") or key))
+                continue
+            source = "\n".join([text, *notes, *(order.get("extra_notes") or ())])
+            cards = []
+            for part in (order.get("parts") or [order]):
+                card_id = part.get("card_id")
+                states = str((part.get("fields") or {}).get("states") or "")
+                if card_id:
+                    try:
+                        detail = await asyncio.to_thread(client.card_detail, card_id)
+                        states = jobs.card_states(detail.get("desc") or "") or states
+                    except Exception:
+                        pass
+                cards.append({"name": part.get("name") or order.get("name"), "url": part.get("url") or "",
+                              "kind": part.get("kind") or order.get("kind") or "fresh", "states": states})
+            wrong += jobs.states_recheck(source, cards)
+    finally:
+        client.close()
+    if not wrong:
+        lines = [f"✅ No order card from the last {days} days has states its thread said to leave out, or "
+                 f"packets sent as one list."]
+    else:
+        lines = [f"💸 **{len(wrong)} card(s) with states that don't match their thread** — fix the card and the "
+                 f"hub:", *wrong]
+    if unread:
+        lines.append(f"-# Couldn't read the thread of: {', '.join(unread[:15])}"
+                     + (f" and {len(unread) - 15} more" if len(unread) > 15 else ""))
+    lines.append("-# Screenshots aren't read here - only what's written.")
+    chunk = ""
+    for line in lines:
+        if chunk and len(chunk) + len(line) + 1 > 1900:
+            await responder.send(chunk)
+            chunk = ""
+        chunk = f"{chunk}\n{line}" if chunk else line[:1900]
+    if chunk:
+        await responder.send(chunk)
 
 
 async def _order_audit(bot, responder: Responder, said: str) -> None:

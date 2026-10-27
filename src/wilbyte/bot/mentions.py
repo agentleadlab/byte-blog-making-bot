@@ -1004,6 +1004,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*(?:(?:order|card|payment)s?\s+(?:audit|check\s*up)|audit\s+(?:the\s+)?(?:orders?|cards?|payments?)|"
                 r"(?:did\s+you|what\s+did\s+you)\s+miss|missed\s+(?:orders?|cards?))\b", text, re.IGNORECASE):
         return MentionRequest(action="orderaudit", brief=text)
+    # "were losing moneyyyyyyyy because of this" - every order card's states
+    # against what its thread says.
+    if re.match(r"\s*(?:check\s+(?:the\s+)?(?:order\s+|card\s+)?states|(?:order\s+|card\s+)?states?\s+"
+                r"(?:check|recheck|audit))\b", text, re.IGNORECASE):
+        return MentionRequest(action="statescheck", brief=text)
     if re.match(r"\s*backfill\s+(?:the\s+)?(?:orders?|cards?|new\s*agents?)\b", text, re.IGNORECASE):
         return MentionRequest(action="orderbackfill", brief=text)
     if (re.match(r"\s*(?:live|going\s+live)\s+list\s*[.?!]*\s*$", text, re.IGNORECASE)
@@ -1621,6 +1626,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > **order <message link>** — the gavel by asking; **order check** — is the gavel set up right?
 > **gavel allow @someone** / **gavel remove @someone** — whose gavel makes cards.
 > **backfill orders** — today's new agents paid with no card, made on one button.
+> **states check** (or **states check 60 days**) — every order card made in the last 30 days, its states held up against its thread: states the order said to leave out, and aged orders in packets sent as one list.
 > **order audit** (or **order audit yesterday** / **order audit 3 days**) — every payment in #new-payment and whether it has its card; what's missing first.
 > **remove duplicates** — the same line twice on one person's checklist, on the day cards: the copies off, the first kept.
 > **tag check** — every comment on today's cards that tags somebody, onto their checklist if it isn't there yet - all of them, reports included, no button.

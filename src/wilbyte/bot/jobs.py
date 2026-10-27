@@ -16385,3 +16385,38 @@ def order_bank_settled(config: Config, card_id: str, text: str) -> str:
         return "moved" if moved else "left"
     finally:
         client.close()
+
+
+_STATES_LINE = re.compile(r"^[ \t]*States[ \t]*:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
+
+
+def card_states(desc: str) -> str:
+    """The States line of a card's description, as it is now."""
+    found = _STATES_LINE.search(str(desc or ""))
+    return " ".join(found.group(1).split()) if found else ""
+
+
+def states_recheck(source: str, cards: list[dict]) -> list[str]:
+    """What's wrong with the states on an order's cards, held up against what
+    its post and thread say - "were losing moneyyyyyyyy because of this":
+    states the order leaves out sent as the ones ordered (Shahan Uddin's "no
+    ny ak no ha" as "NY, AK"), and an aged order in packets sent as one list.
+    `cards`: {"name", "kind", "states", "url"}. A line each."""
+    from .. import ordercards
+
+    found = []
+    packets = ordercards.PACKETS.findall(source)
+    in_packets = len(packets) >= 2 or any(ordercards._count_word(one) >= 2 for one in packets)
+    for card in cards:
+        states = str(card.get("states") or "")
+        wrong = []
+        for bit in states.split(";"):
+            if not ordercards._ALL_BUT.search(bit):
+                wrong += ordercards._ordered_but_left_out(ordercards._codes(bit.rsplit(":", 1)[-1]), source)
+        if card.get("kind") == "aged" and in_packets and ";" not in states:
+            wrong.append("the order is in packets with their own states, and the card has one list")
+        if wrong:
+            found.append(f"⚠ **{card.get('name')}** — States: {states or '(none)'} — " + "; ".join(
+                dict.fromkeys(one.replace("States: ", "") for one in wrong)) + f" {card.get('url') or ''}".rstrip())
+    return found
+

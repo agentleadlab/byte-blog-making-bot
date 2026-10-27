@@ -5758,3 +5758,21 @@ def test_an_aged_order_in_packets_is_held_as_one_states_list():
         "name": "Mohammad Kanan", "states": "TX", "package": "Aged Vets 30-90", "leads": "100"}},
         today=date(2026, 10, 26))
     assert not any("packets" in one for one in wrong)
+
+
+def test_states_check_finds_the_cards_that_cost_money():
+    """"were losing moneyyyyyyyy because of this" - every card held up
+    against its thread."""
+    from wilbyte.bot import mentions as m
+
+    assert m.parse("<@1> states check").action == "statescheck"
+    assert m.parse("<@1> check states 60 days").action == "statescheck"
+    assert jobs.card_states("Name: Shahan Uddin\nStates: NY, AK\nLead Type: OTP Vets") == "NY, AK"
+    found = jobs.states_recheck(KANAN, [
+        {"name": "New Agent - Shahan Uddin", "kind": "fresh", "states": "NY, AK", "url": "https://trello.com/c/x"},
+        {"name": "Aged Leads - Mohammad Kanan", "kind": "aged", "states": "All states except NY, AK, HI"}])
+    assert len(found) == 1 and "Shahan Uddin" in found[0] and "no ny ak no ha" in found[0]
+    packets = "6 batch of orders\n600 Aged Vets\n2 packets of this: AR, GA\n2 others packets all states except ny ak ha"
+    found = jobs.states_recheck(packets, [{"name": "Aged Leads - Kanan Kapital Llc", "kind": "aged",
+                                           "states": "AR, CA, GA"}])
+    assert len(found) == 1 and "packets" in found[0]
