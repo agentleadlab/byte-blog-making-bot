@@ -316,13 +316,33 @@ def an_update(text: str) -> bool:
     update on a current tasks)". A checklist is what is left to do, and a line
     saying something is finished arrives on it already true.
     """
-    said = strip_mentions(text or "")
+    # The attachment off, and a tag typed onto the word before it -
+    # "integrated@franklinmaymaldonado" - taken off too.
+    said = strip_mentions(_ATTACHED.sub(" ", text or ""))
+    said = re.sub(r"@[\w.]+", " ", said)
+    said = " ".join(word for word in said.split() if not JUST_A_FILE.match(word))
     said = re.sub(r"^[\W_]+", "", said).strip()
     first = (said.split() or [""])[0].casefold().strip(".,:;!?")
     if first in _ALREADY_DID:
         return True
     if _past_tense(first) and not _STILL_ASKING.search(said):
         return True
+    # Who it's about first, then that it's done: "Hutch Yang removed
+    # call-ins", "Aakash Devkota Ringy integrated" - Therese's updates, put on
+    # Frank's and Faith's lists as jobs. The verb a letter out still counts:
+    # she typed "removec" - but not "changes", and not a question ("Is
+    # Connor's CRM connected").
+    words = said.split()
+    lead = 0
+    while lead < min(len(words), 4) and words[lead][:1].isupper() and words[lead].casefold() not in (
+            "please", "pls", "can", "could", "send", "tell", "make", "set", "add",
+            "is", "are", "was", "were", "did", "does", "do", "has", "have", "why", "how", "when"):
+        lead += 1
+    if (1 <= lead < len(words) and len(words) <= _REPORT_WORDS and not _STILL_ASKING.search(said)
+            and not said.rstrip().endswith("?")):
+        verb = words[lead].casefold().strip(".,:;!?")
+        if _past_tense(verb) or (len(verb) > 5 and verb[-1] not in "sd" and _past_tense(verb[:-1] + "d")):
+            return True
     return bool(
         said
         and len(said.split()) <= _REPORT_WORDS

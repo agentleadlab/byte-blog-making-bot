@@ -4874,3 +4874,16 @@ def test_a_new_agent_moved_to_done_before_filing_is_found(monkeypatch):
     assert [one["name"] for one in found] == ["New Agent - Kevin Westbrook"]
     # Looked at again in a couple of minutes, not every pass.
     assert jobs._done_unfiled(Board(), lists, [kevin, filed, old, ads, setup], date(2026, 10, 26)) == []
+
+
+def test_an_update_that_starts_with_who_its_about():
+    """Therese's "Hutch Yang removec call-ins@franklinmaymaldonado" and
+    "Aakash Devkota Ringy integrated" went on Frank's and Faith's lists."""
+    from wilbyte import tagged
+
+    assert tagged.an_update("Hutch Yang removec call-ins@franklinmaymaldonado @faithhannahcalla")
+    assert tagged.an_update("Aakash Devkota Ringy integrated@franklinmaymaldonado @faithhannahcalla "
+                            "![image.png](https://trello.com/1/x/image.png)")
+    for job in ("Tyler Diaz needs a test lead", "Send Tyler Diaz the test lead",
+                "Kevin Westbrook signed, set him up please", "Thierry Schuller wants leads Mon-Fri"):
+        assert not tagged.an_update(job), job
