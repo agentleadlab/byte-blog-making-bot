@@ -233,6 +233,100 @@ def _codes(text: str) -> list[str]:
     return [one.upper() for one in _CODE.findall(str(text or "")) if one.upper() in US_STATES]
 
 
+_LEAVE_OUT_WORD = re.compile(r"(?i)^(?:no|except|excluding|excl|without|minus|besides)$")
+_LEAVE_OUT_JOIN = re.compile(r"(?i)^(?:and|or|&|/|,|nor)$")
+#: What a client writes for a state that isn't its code: Mohammad Kanan's
+#: "no ny ak no ha" - Hawaii.
+_LEAVE_OUT_ALIAS = {"HA": "HI"}
+
+
+def left_out_groups(text: str) -> list[tuple[list[str], str]]:
+    """The states an order leaves out, a group per place it says so, with
+    the words as written: "100 Aged Vets, 30-90 no ny ak no ha" ->
+    [(["NY", "AK", "HI"], "no ny ak no ha")]. Shahan Uddin's card went out
+    with "States: NY, AK" - the two states he was NOT to get."""
+    groups = []
+    for line in str(text or "").splitlines():
+        tokens = re.findall(r"[A-Za-z]+|[,&/]", line)
+        at = 0
+        while at < len(tokens):
+            if not _LEAVE_OUT_WORD.match(tokens[at]):
+                at += 1
+                continue
+            start, codes, last = at, [], at
+            at += 1
+            while at < len(tokens):
+                word = tokens[at]
+                code = _LEAVE_OUT_ALIAS.get(word.upper(), word.upper())
+                if len(word) == 2 and code in US_STATES and word.casefold() not in ("in", "or", "me", "hi", "oh"):
+                    codes.append(code)
+                    last = at
+                elif len(word) == 2 and word.isupper() and code in US_STATES:
+                    codes.append(code)
+                    last = at
+                elif _LEAVE_OUT_WORD.match(word) or _LEAVE_OUT_JOIN.match(word):
+                    pass
+                else:
+                    break
+                at += 1
+            if codes:
+                groups.append((list(dict.fromkeys(codes)), " ".join(tokens[start:last + 1]).replace(" ,", ",")))
+    return groups
+
+
+def _ordered_but_left_out(on_card: list[str], source: str) -> list[str]:
+    """States on a card that the order only ever says to leave out: Shahan
+    Uddin's "no ny ak no ha" went out as "States: NY, AK"."""
+    groups = left_out_groups(source)
+    if not groups:
+        return []
+    outside = source
+    for _codes_out, said_out in groups:
+        outside = re.sub(r"\s+".join(map(re.escape, said_out.replace(",", " , ").split())), " ",
+                         outside, flags=re.IGNORECASE)
+    wrong = []
+    for code in on_card:
+        where = next((said_out for codes_out, said_out in groups if code in codes_out), "")
+        if where and not _said_state(code, outside):
+            wrong.append(f"States: {code} is on the card, but the order says to leave it out (“{where}”)")
+    return wrong
+
+
+#: An order in packets or batches: "6 batch of orders", "2 packets of this",
+#: "one packet".
+PACKETS = re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|another|other)?\s*"
+                     r"(?:other\s+|more\s+|separate\s+)?(?:packets?|batch(?:es)?)\b", re.IGNORECASE)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                 "nine": 9, "ten": 10}
+
+
+def _count_word(said: str) -> int:
+    said = str(said or "").casefold()
+    return int(said) if said.isdigit() else _NUMBER_WORDS.get(said, 0)
+
+
+def left_out_states(text: str) -> list[str]:
+    """Every state the order says to leave out - see `left_out_groups`."""
+    return list(dict.fromkeys(code for codes, _said in left_out_groups(text) for code in codes))
+
+
+def states_left_out_fixed(states: str, source: str) -> str:
+    """States read as the very ones the order leaves out, written as what
+    they are: "NY, AK" off "no ny ak no ha" -> "All states except NY, AK,
+    HI". Anything else as it was."""
+    states = str(states or "")
+    if not states.strip() or _ALL_BUT.search(states):
+        return states
+    on_card = _codes(states)
+    if not on_card or re.search(r"\d", states):
+        return states
+    groups = [codes for codes, _said in left_out_groups(source) if set(codes) & set(on_card)]
+    left_out = list(dict.fromkeys(code for codes in groups for code in codes))
+    if not left_out or not set(on_card) <= set(left_out):
+        return states
+    return "All states except " + ", ".join(left_out)
+
+
 def _apart(one: str, other: str) -> int:
     """How many letters to change to make one the other."""
     before = list(range(len(other) + 1))
@@ -706,8 +800,10 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         pass
     elif _ALL_BUT.search(states):
         left_out = _codes(_ALL_BUT.split(states, maxsplit=1)[-1])
+        # "ha" for Hawaii is said, as Hawaii.
+        said_out = set(left_out_states(source))
         for code in left_out:
-            if not _said_state(code, source):
+            if code not in said_out and not _said_state(code, source):
                 wrong.append(f"States: {code} is left out on the card but isn't in the order")
     else:
         on_card = _codes(states)
@@ -716,6 +812,7 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         for code in on_card:
             if not _said_state(code, source):
                 wrong.append(f"States: {code} is on the card but isn't in the order")
+        wrong += _ordered_but_left_out(on_card, source)
         # The team's own lines first. The Payra invoice's note only when the
         # thread lists none, and never its Description or Lines - the
         # product's own wording: Collin Williams' card was held for "IN, MD,
@@ -729,6 +826,23 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             shown = next((line for code in left for line in [where.get(code, "")] if line), "")
             wrong.append(f"States: the order also says {', '.join(left)} - not on the card"
                          + (f" (“{shown[:160]}”)" if shown else ""))
+
+    # Each line's own states the same way: the order's lines go on cards of
+    # their own.
+    for part in card.get("parts") or []:
+        said = str((part or {}).get("states") or "")
+        if said and not _ALL_BUT.search(said):
+            wrong += [f"{part.get('package') or 'A line'}: {one}"
+                      for one in _ordered_but_left_out(_codes(said), source)]
+    # Packets with states of their own, read as one list: Mohammad Kanan's
+    # 600 Aged Vets in six packets - one of fifteen states, two of six, two
+    # of "all states except ny ak ha" - went out as one States list of every
+    # state named, the "all except" packets lost.
+    packets = PACKETS.findall(source)
+    if kind == "aged" and len(card.get("parts") or []) < 2 and (
+            len(packets) >= 2 or any(_count_word(one) >= 2 for one in packets)):
+        wrong.append("States: the order is in packets or batches, each with its own states - one States list "
+                     "sends every packet the same ones. Each packet needs its own line and count")
 
     # Lead type, against the payment's product line.
     product = re.search(r"PRODUCT:\**\s*([^\n]*)", source, re.IGNORECASE)

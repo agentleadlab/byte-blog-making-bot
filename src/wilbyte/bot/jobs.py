@@ -14148,7 +14148,10 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "else paid.")},
         "email": {"type": "string", "description": "Their email."},
         "phone": {"type": "string", "description": "Their phone number, as written."},
-        "states": {"type": "string", "description": "The states, as two-letter codes separated by commas: 'TX, AL, CA'."},
+        "states": {"type": "string", "description": (
+            "The states, as two-letter codes separated by commas: 'TX, AL, CA'. When the order leaves states "
+            "OUT - 'no ny ak no ha', 'all but NY', 'except TX' - write 'All states except NY, AK, HI': never list "
+            "the left-out states as if they were the ones ordered. 'ha' is Hawaii (HI).")},
         "package": {"type": "string", "description": (
             "The lead type / package bought, e.g. 'Text-Verified Trucker IUL (OTP)'. The notes win over the "
             "payment's product line when they're more exact. An order split across lead types names each with "
@@ -14191,7 +14194,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
             "'Aged Vets 30-90', 'Aged Vets 90-180', 'Aged FEX 180+'): every line of the order, in the order "
             "written, each as its own part, with THAT line's own count and THAT line's own states - never the "
             "states of every line put together. Match each count to its line from the invoice's lines and "
-            "notes. Empty when the order is one line."),
+            "notes. An aged order in packets or batches with different states ('1 packet: AR, CA ...', '2 "
+            "packets of this: AR, GA ...', '2 other packets all states except ny ak ha') is a part per set of "
+            "states, with its own count - 600 in 6 packets is 100 a packet. Empty when the order is one line."),
             "items": {"type": "object", "properties": {
                 "kind": {"type": "string", "enum": ["fresh", "aged"]},
                 "package": {"type": "string", "description": "That line's lead type, as written: "
@@ -14203,6 +14208,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
                     "keep each state's count: '25 NC, 25 GA, 25 FL, 25 TX'.")},
                 "launch_iso": {"type": "string", "description": (
                     "A fresh line's go-live date as YYYY-MM-DD when the order gives one for that line, else empty.")},
+                "name": {"type": "string", "description": (
+                    "Who THAT line is for, when the order sends its lines to different people: '43 OTP Vets to "
+                    "Shahan Uddin ... 100 Aged Vets to Mohammad Kanan'. Empty when every line is for the client.")},
             }, "required": ["kind", "package", "leads", "states", "launch_iso"]}},
     }
     tool = {"name": "order", "description": "The order's details for its Trello card.",
@@ -14498,8 +14506,16 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
         if counted:
             fields["leads"] = str(counted)
     parts = [{key: " ".join(str((one or {}).get(key) or "").split())
-              for key in ("kind", "package", "leads", "states", "launch_iso")}
+              for key in ("kind", "package", "leads", "states", "launch_iso", "name")}
              for one in got.get("parts") or [] if isinstance(one, dict)]
+    # States read as the ones the order leaves out: "no ny ak no ha" went on
+    # Shahan Uddin's card as "States: NY, AK".
+    said_all = "\n".join([source, *(str(one) for one in notes or ())])
+    fields["states"] = ordercards.states_left_out_fixed(fields.get("states") or "", said_all)
+    for one in parts:
+        one["states"] = ordercards.states_left_out_fixed(one.get("states") or "", said_all)
+        if not one.get("name"):
+            one.pop("name", None)
     # Each line aged or not by its own words, not the payment's: Skyler
     # Liljenquist's "100 - $1/lead (180+) Mortgage protection" and "10 - Text
     # Verified MTG PLUS" were both read as aged - the product said Aged - and
@@ -14701,7 +14717,10 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         # read "From the thread:" over "From the Payra invoice:".
         + (["", *([] if said.strip().startswith("From the Payra invoice:") else ["From the thread:"]), said.strip()]
            if said.strip() else []))
-    out.append({"kind": "aged", "client": client, "fields": fields, "name": f"Aged Leads - {client}",
+    aged_for = _line_for(aged, client)
+    if aged_for != client:
+        fields = _for_somebody_else(fields, aged_for)
+    out.append({"kind": "aged", "client": aged_for, "fields": fields, "name": f"Aged Leads - {aged_for}",
                 "desc": order_desc(fields, "aged"), "launch_iso": "", "source": source})
     says_when = ordercards.says_when(source)
     today = today or date.today()
@@ -14730,7 +14749,10 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         fields["package"] = one["package"]
         fields["leads"] = f"{count}" if count is not None else ""
         codes = ordercards._codes(one.get("states") or "")
-        fields["states"] = ", ".join(codes) if codes else ""
+        # "All states except NY, AK, HI" is three states left out, not three
+        # ordered.
+        fields["states"] = (" ".join(str(one.get("states")).split()) if ordercards._ALL_BUT.search(
+            str(one.get("states") or "")) else ", ".join(codes) if codes else "")
         when = own_day(one) or whole or ""
         fields["launch"] = f"{when:%A, %B} {when.day}" if when else ""
         # Nothing of the other lines - no lead type, count or day: the filing
@@ -14750,10 +14772,35 @@ def split_order(card: dict, *, today=None) -> list[dict]:
             + (["", agents_mod.AGED_REFERENCE, *(f"• {line(other)}" for other in aged), ""] if aged else [])
             + (["", *([] if setup[0].startswith("From the Payra invoice:") else ["From the thread:"]), *setup]
                if setup else []))
-        out.append({"kind": "fresh", "client": client, "fields": fields, "name": f"New Agent - {client}",
+        fresh_for = _line_for([one], client)
+        if fresh_for != client:
+            fields = _for_somebody_else(fields, fresh_for)
+        out.append({"kind": "fresh", "client": fresh_for, "fields": fields, "name": f"New Agent - {fresh_for}",
                     "desc": order_desc(fields, "fresh"), "launch_iso": when.isoformat() if when else "",
                     "source": source})
     return out
+
+
+def _line_for(lines: list[dict], client: str) -> str:
+    """Who order lines are for when the order sends them to somebody of their
+    own - Faith's "43 OTP Vets to Shahan Uddin ... 100 Aged Vets ... to
+    Mohammad Kanan" - else the client."""
+    from .. import ordercards
+
+    named = list(dict.fromkeys(" ".join(str(one.get("name") or "").split()) for one in lines))
+    if len(named) == 1 and named[0] and not ordercards.same_person(named[0], client):
+        return named[0]
+    return client
+
+
+def _for_somebody_else(fields: dict, name: str) -> dict:
+    """A card's fields for another person on the same order: their name, and
+    not the client's email or phone - an email with their name in it is
+    theirs (Shahan Uddin's "shahanuddin2005@...")."""
+    words = [one for one in re.findall(r"[a-z]{3,}", name.casefold())]
+    email = str(fields.get("email") or "")
+    mine = bool(words) and any(one in email.split("@")[0].casefold() for one in words)
+    return dict(fields, name=name, email=email if mine else "", phone=fields.get("phone") if mine else "")
 
 
 #: A line of dashes - "* - - - - - -" - between one agent and the next.
@@ -14957,9 +15004,15 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
             elif count is not None and ordercards.only_a_cap(count, source):
                 wrong.append(f"{name}: {count:,} is the daily cap the order gives, not how many they bought")
         states = " ".join(str(fields.get("states") or "").split())
+        # "ha" for Hawaii, left out, is said: "All states except NY, AK, HI".
+        said_out = set(ordercards.left_out_states(source)) if ordercards._ALL_BUT.search(states) else set()
         for code in ordercards._codes(states):
-            if not ordercards._said_state(code, source):
+            if code not in said_out and not ordercards._said_state(code, source):
                 wrong.append(f"{name}: {code} isn't in the order")
+        for bit in states.split(";"):
+            if not ordercards._ALL_BUT.search(bit):
+                wrong += [f"{name}: {one}" for one in ordercards._ordered_but_left_out(
+                    ordercards._codes(bit.rsplit(":", 1)[-1]), source)]
         listed = bool(ordercards._codes(states) or re.search(r"\ball\b", states, re.IGNORECASE)
                       or ordercards.SAME_STATES.search(states) or ordercards._SAME_ANSWER.match(states))
         if kind == "aged":

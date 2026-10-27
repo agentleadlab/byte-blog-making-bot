@@ -5696,3 +5696,65 @@ def test_each_line_aged_or_not_by_its_own_words(monkeypatch):
     aged, fresh = cards
     assert aged["fields"]["leads"] == "100" and "MTG PLUS" not in aged["desc"]
     assert fresh["fields"]["leads"] == "10" and fresh["fields"]["launch"] == "Tuesday, October 27"
+
+
+KANAN = ("New Payment | Zelle\nNAME: Kanan Kapital Llc\nAMOUNT: $2,005.00\nMETHOD: Zelle (Chase)\n"
+         "PRODUCT: — (match to their order)\n"
+         "[10/26 12:02PM] Faith: 43 OTP Vets to Shahan Uddin\nLive Tuesday\n\n"
+         "100 Aged Vets, 30-90 no ny ak no ha to Mohammad Kanan\n"
+         "Shahanuddin2005@example.com Email that the high intents no ny ak no ha")
+
+
+def test_states_the_order_leaves_out_arent_the_states():
+    """Shahan Uddin's card went out with "States: NY, AK" off "no ny ak no
+    ha" - the states he was NOT to get."""
+    assert ordercards.left_out_groups("100 Aged Vets, 30-90 no ny ak no ha to Mohammad Kanan") == [
+        (["NY", "AK", "HI"], "no ny ak no ha")]
+    assert ordercards.left_out_states("2 others packets all states except ny ak ha") == ["NY", "AK", "HI"]
+    assert ordercards.left_out_groups("No leads after 9pm, not in the morning") == []
+    assert ordercards.states_left_out_fixed("NY, AK", KANAN) == "All states except NY, AK, HI"
+    assert ordercards.states_left_out_fixed("TX, FL", KANAN) == "TX, FL"
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": KANAN, "fields": {
+        "name": "Shahan Uddin", "states": "NY, AK", "package": "OTP Vets", "leads": "43"}}, today=date(2026, 10, 26))
+    assert any("NY is on the card, but the order says to leave it out" in one for one in wrong)
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": KANAN, "fields": {
+        "name": "Shahan Uddin", "states": "All states except NY, AK, HI", "package": "OTP Vets", "leads": "43"}},
+        today=date(2026, 10, 26))
+    assert not any("States" in one for one in wrong), wrong
+
+
+def test_each_line_goes_to_the_person_the_order_sends_it_to():
+    """"43 OTP Vets to Shahan Uddin ... 100 Aged Vets ... to Mohammad Kanan":
+    two cards, each for its own person, and the left-out states kept as left
+    out on the New Agent card."""
+    card = {"kind": "fresh", "client": "Shahan Uddin", "source": KANAN, "fields": {
+        "name": "Shahan Uddin", "email": "Shahanuddin2005@example.com", "phone": "", "agency": "",
+        "notes": "Paid via Zelle (Chase)"},
+        "parts": [
+            {"kind": "fresh", "package": "OTP Vets", "leads": "43", "launch_iso": "2026-10-27",
+             "states": "All states except NY, AK, HI", "name": "Shahan Uddin"},
+            {"kind": "aged", "package": "Aged Vets 30-90", "leads": "100", "launch_iso": "",
+             "states": "All states except NY, AK, HI", "name": "Mohammad Kanan"}]}
+    aged, fresh = jobs.split_order(card, today=date(2026, 10, 26))
+    assert aged["name"] == "Aged Leads - Mohammad Kanan" and aged["fields"]["email"] == ""
+    assert fresh["name"] == "New Agent - Shahan Uddin"
+    assert fresh["fields"]["email"] == "Shahanuddin2005@example.com"
+    assert fresh["fields"]["states"] == "All states except NY, AK, HI"
+    assert not [one for one in jobs.split_doubts([aged, fresh], today=date(2026, 10, 26)) if "isn't in" in one
+                or "leave it out" in one]
+
+
+def test_an_aged_order_in_packets_is_held_as_one_states_list():
+    """Mohammad Kanan's 600 Aged Vets in six packets went out as one list of
+    every state named - the two "all states except ny ak ha" packets lost."""
+    source = ("NAME: Kanan Kapital Llc\n6 batch of orders\n600 Aged Vets\n30-90\nplease see ss for states\n"
+              "This is one packet: AR, CA, CO, FL\n2 packets of this: AR, GA, MA\n"
+              "And 2 others packets all states except ny ak ha")
+    wrong, _ = ordercards.doubts({"kind": "aged", "source": source, "fields": {
+        "name": "Mohammad Kanan", "states": "AR, CA, CO, FL, GA, MA", "package": "Aged Vets 30-90",
+        "leads": "600"}}, today=date(2026, 10, 26))
+    assert any("packets or batches" in one for one in wrong)
+    wrong, _ = ordercards.doubts({"kind": "aged", "source": "100 Aged Vets 30-90, TX, one batch", "fields": {
+        "name": "Mohammad Kanan", "states": "TX", "package": "Aged Vets 30-90", "leads": "100"}},
+        today=date(2026, 10, 26))
+    assert not any("packets" in one for one in wrong)
