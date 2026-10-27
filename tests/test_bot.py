@@ -8188,3 +8188,52 @@ def test_only_therese_tagged_with_no_card_named_goes_on_ops_once(monkeypatch):
         text="tag therese\nhttps://app.example.com/api/webhook/leads/lw_x\nMTG leads for Aiden Adair")
     assert posted == ["ops"] and title == "💻 Ops 10/23/26"
     assert not any("checklist on" in one for one in problems), problems
+
+
+def test_somebody_only_named_in_the_task_doesnt_choose_the_card(monkeypatch):
+    """Faith's "add to trello tag therese" with Hadassah's screenshot - "can
+    you tell kharyl!" in it - went on General, where Kharyl has a list: "WHY
+    ON GENERAL< THIS IS OPS OR ADS"."""
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    posted = []
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "gen", "name": "💎 General 10/27/26", "url": "u-gen"},
+                    {"id": "ads", "name": "📊 Ads 10/27/26", "url": "u-ads"},
+                    {"id": "ops", "name": "💻 Ops 10/27/26", "url": "u-ops"}]
+
+        def board_members(self, board_id):
+            return [{"username": "thereseguba", "fullName": "Therese Guba"},
+                    {"username": "kharylmayecanizares", "fullName": "Kharyl Mae Canizares"}]
+
+        def card_checklists(self, card_id):
+            return {"gen": [{"id": "g-k", "name": "Kharyl", "checkItems": []}],
+                    "ops": [{"id": "o-t", "name": "Therese", "checkItems": []}]}.get(card_id, [])
+
+        def add_check_item(self, checklist_id, name, **kw):
+            return {"id": "i"}
+
+        def add_comment(self, card_id, text):
+            posted.append(card_id)
+            return {"id": "c"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "tag_check_later", lambda **kw: None)
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    for kind in ("ads", "general"):
+        posted.clear()
+        title, _url, _problems = jobs.comment_on_daily(
+            config, kind=kind, day=_date(2026, 10, 27), guessed=True,
+            text="tag therese\nHadassah ordered new leads - deliver them to her existing Google Sheet (tell "
+                 "Kharyl), and process her 2 lead replacements")
+        assert posted == ["ops"], (kind, posted)
+    assert jobs._ADS_WORDS.search("process her 2 lead replacements")

@@ -4884,7 +4884,7 @@ def _their_list_elsewhere(client, config: Config, card_id: str, who: str):
 def _card_with_their_checklist(client, card: dict, covering: dict, handles, members) -> dict | None:
     """The day card that has a checklist for somebody tagged - `card` when it
     does, another of the day's cards when only that one does, None when
-    none of them do. General, then Ops, Ads, Lead Order."""
+    none of them do. Ops, Ads, Lead Order, then General."""
     from .. import tagged
 
     full = {str(one.get("username") or ""): str(one.get("fullName") or "") for one in members or []}
@@ -4901,7 +4901,9 @@ def _card_with_their_checklist(client, card: dict, covering: dict, handles, memb
 
     if theirs(card):
         return card
-    for kind in ("general", "ops", "ads", "lead_order"):
+    # General last: ads or ops work for somebody with no list there goes to
+    # the work card that has their list, not back to General.
+    for kind in ("ops", "ads", "lead_order", "general"):
         other = covering.get(kind)
         if other is not None and other.get("id") != card.get("id") and theirs(other):
             return other
@@ -4950,6 +4952,10 @@ def comment_on_daily(
         for who in more:
             if who not in handles:
                 handles.append(who)
+        # Who was asked to be tagged - not everybody the words name: Faith's
+        # "add to trello tag therese" read "(tell Kharyl)" off the screenshot,
+        # and Kharyl's General checklist took it to General.
+        asked = list(handles)
         # "if they mention any name, @ them on trello" - a teammate named in
         # what's said is tagged as well as one asked for.
         for who in dailyops.people_named(said, members):
@@ -4960,6 +4966,8 @@ def comment_on_daily(
         # collate all logins" reaches Franklin's checklist only as a tag.
         for name in tag or ():
             who = known.get(" ".join(str(name).split()).casefold())
+            if who and who not in asked:
+                asked.append(who)
             if who and who not in handles:
                 handles.append(who)
             elif not who:
@@ -4969,7 +4977,8 @@ def comment_on_daily(
         if guessed and handles:
             covering = dailyops.cards_covering(every, day)
             full_names = {str(one.get("username") or ""): str(one.get("fullName") or "") for one in members or []}
-            firsts = [(full_names.get(one) or one).split()[0].casefold() for one in handles]
+            placing = asked or handles
+            firsts = [(full_names.get(one) or one).split()[0].casefold() for one in placing]
             ops_people = {one.casefold() for one in agents.OPS_PEOPLE}
             if covering.get("ops") is not None and firsts and all(one in ops_people for one in firsts):
                 # Only Ops people tagged - Therese: on Ops, once. Faith's
@@ -4980,7 +4989,7 @@ def comment_on_daily(
                 # Nobody named the card: the one whose checklists have who was
                 # tagged. Faith's "add to trello tag therese" went on Ads, where
                 # Therese has no checklist - her work is on Ops.
-                card = _card_with_their_checklist(client, card, covering, handles, members) or card
+                card = _card_with_their_checklist(client, card, covering, placing, members) or card
 
         title = str(card.get("name") or "")
         body = said.split("\n", 1)[1] if handles and "\n" in said else ("" if handles else said)
@@ -5045,7 +5054,7 @@ def comment_on_daily(
 _ADS_WORDS = re.compile(
     r"\b(?:caps?|capped|daily\s+cap|leads?\s+(?:per|a)\s+day|/\s*day|pause[ds]?|unpause|resume|turn\s+(?:on|off)|"
     r"sched(?:ule)?[sd]?|drip|ads?|campaigns?|budget|spend|pixel|meta|facebook|fb|widows?|vets?|fex|iul|trucker|"
-    r"mtg|otp|states?|replacement|replace|weekdays?|weekends?|mon\s*-\s*fri)\b"
+    r"mtg|otp|states?|replacements?|replaced?|weekdays?|weekends?|mon\s*-\s*fri)\b"
     # Hours - "Alexis Lesme's sched From 10am- 6pm ideally" went on General.
     r"|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|–|to)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b"
     r"|\b(?:after|before|from|until|till)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)\b", re.IGNORECASE)
@@ -5120,7 +5129,12 @@ def trello_ask_kind(config: Config, text: str, pictures=(), found: dict | None =
         if found is not None:
             found["client"] = " ".join(str(got.get("client") or "").split())
         card = got.get("card") if got.get("card") in ("general", "ads", "ops") else by_words
-        return card, " ".join(str(got.get("task") or said).split())
+        task = " ".join(str(got.get("task") or said).split())
+        if card == "general":
+            # The task read off the screenshot saying ads or ops work - "lead
+            # replacements", "her existing Google Sheet" - isn't General's.
+            card = "ads" if _ADS_WORDS.search(task) else "ops" if _OPS_WORDS.search(task) else card
+        return card, task
     except Exception:
         logging.getLogger("wilbyte.bot").warning("Couldn't ask where the Trello ask goes", exc_info=True)
         if found is not None and pictures:
