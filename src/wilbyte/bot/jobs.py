@@ -5044,8 +5044,11 @@ def comment_on_daily(
 #: What goes on the Ads card - "this is ads related so checklist is on ads".
 _ADS_WORDS = re.compile(
     r"\b(?:caps?|capped|daily\s+cap|leads?\s+(?:per|a)\s+day|/\s*day|pause[ds]?|unpause|resume|turn\s+(?:on|off)|"
-    r"schedule|drip|ads?|campaigns?|budget|spend|pixel|meta|facebook|fb|widows?|vets?|fex|iul|trucker|mtg|otp|"
-    r"states?|replacement|replace)\b", re.IGNORECASE)
+    r"sched(?:ule)?[sd]?|drip|ads?|campaigns?|budget|spend|pixel|meta|facebook|fb|widows?|vets?|fex|iul|trucker|"
+    r"mtg|otp|states?|replacement|replace|weekdays?|weekends?|mon\s*-\s*fri)\b"
+    # Hours - "Alexis Lesme's sched From 10am- 6pm ideally" went on General.
+    r"|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|–|to)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b"
+    r"|\b(?:after|before|from|until|till)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)\b", re.IGNORECASE)
 #: What goes on the Ops card.
 _OPS_WORDS = re.compile(r"\b(?:ringy|crm|sid|token|twilio|a2p|sheet|zap|zapier|webhook|discord\s+channel|"
                         r"sms|text\s+line|number\s+port)\b", re.IGNORECASE)

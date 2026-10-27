@@ -7771,6 +7771,9 @@ def test_an_ask_with_no_card_goes_where_it_belongs(monkeypatch):
     assert jobs.trello_ask_kind(config, "@Nicole widows eod 1 cap for Heather")[0] == "ads"
     assert jobs.trello_ask_kind(config, "@Therese here's the Ringy SID and token for Tom")[0] == "ops"
     assert jobs.trello_ask_kind(config, "let's collate all logins please team")[0] == "general"
+    # Kharyl's for Nicole went on General.
+    assert jobs.trello_ask_kind(config, "@nic0l3 Alexis Lesme's sched From 10am- 6pm ideally")[0] == "ads"
+    assert jobs.trello_ask_kind(config, "meeting at 3pm tomorrow team")[0] == "general"
 
 
 def test_a_tag_and_a_screenshot_gets_a_task_and_the_ads_card(monkeypatch):

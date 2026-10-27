@@ -3451,11 +3451,9 @@ async def _comment_on_card(
         if replied is not None and (replied.content or "").strip():
             text = _as_somebody_said(replied)
             tag = _tagged_in(replied, bot_id=getattr(getattr(message, "guild", None), "me", None))
-            if not kind:
-                # Said rather than refused. General is where anything that is
-                # not ops or ads work lives, and the message names the card it
-                # landed on, so a wrong one is one line away from being right.
-                kind, guessed = dailyops.FALLBACK_CARD, True
+            # No card named: sorted below like any other ask - straight to
+            # General, Kharyl's reply-to "Alexis Lesme's sched From 10am- 6pm"
+            # for Nicole went on General, not Ads.
 
     # The people tagged on Discord in the ask itself - "@Ryte add to trello
     # @Nicole cap Michael at 10" - tagged on Trello and on their checklists.
