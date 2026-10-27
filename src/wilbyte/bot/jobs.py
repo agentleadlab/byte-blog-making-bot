@@ -14549,8 +14549,12 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     agents = order_agents("\n".join(
         [str(one) for one in notes or () if not str(one).startswith("Payra invoice note:")]
         + ([_cards.post_invoice(text)[1]] if _cards.post_invoice(text)[1] else [])))
+    # Lines with states of their own and no names: whose each is, worked out
+    # before the card's made - Colby Whittaker's three lines of 15 Fresh Vets.
+    lines = order_lines(text) if not (agents and kind == "fresh") else []
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             **({"agents": agents} if agents and kind == "fresh" else {}),
+            **({"lines": lines} if lines else {}),
             **({"launch_conflict": [one.isoformat() for one in launch_conflict]} if launch_conflict else {}),
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             **({"overflow": True} if overflow else {}),
@@ -14954,7 +14958,11 @@ def agent_cards(card: dict, *, today=None) -> list[dict]:
             *([f"Webhook URL: {one['webhook']}" + (f" {one['webhook_how']}" if one.get("webhook_how") else "")]
               if one["webhook"] else []),
             f"Paid by {payer} - one payment for {len(agents)} agents"
-            + (f" (${paid.group(1)})" if paid else "") + "."])
+            + (f" (${paid.group(1)})" if paid else "") + ".",
+            # Matched by its states, the invoice naming nobody: said, so it's
+            # looked at before the setup.
+            *([f"The invoice line didn't name the agent - matched to {one['name']} by its states "
+               f"({one['matched_on']}). Check before setting up."] if one.get("matched_on") else [])])
         out.append({"kind": "fresh", "client": one["name"], "fields": fields, "name": f"New Agent - {one['name']}",
                     "desc": order_desc(fields, "fresh"), "launch_iso": launch, "source": source,
                     "agents_of": len(agents)})
@@ -16422,4 +16430,86 @@ def states_recheck(source: str, cards: list[dict]) -> list[str]:
             found.append(f"⚠ **{card.get('name')}** — States: {states or '(none)'} — " + "; ".join(
                 dict.fromkeys(one.replace("States: ", "") for one in wrong)) + f" {card.get('url') or ''}".rstrip())
     return found
+
+
+#: A line of a Payra invoice, as Nova writes it in the post's notes: "Fresh
+#: Vets: 15 @ $40.00, 15% off — states LA, OK, KS".
+_INVOICE_LINE = re.compile(
+    r"^[\s>*•-]*(?P<package>[A-Za-z][A-Za-z0-9 +&/().'-]{1,60}?)\s*:\s*(?P<count>\d[\d,]*)\s*(?:x|@)\s*\$?[\d,.]+"
+    r"[^\n—–]*?[—–-]\s*states?\s*:?\s*(?P<states>[^\n]+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def order_lines(text: str) -> list[dict]:
+    """The invoice's lines with their own states, when it has two or more
+    that differ - Colby Whittaker's three "Fresh Vets: 15 @ $40.00 — states
+    ..." with three different lists. {"package", "leads", "states", "codes"}.
+    [] when there's one, or they all say the same."""
+    lines = []
+    for found in _INVOICE_LINE.finditer(str(text or "")):
+        codes = _state_codes_named(found.group("states"))
+        if not codes:
+            continue
+        lines.append({"package": " ".join(found.group("package").split()),
+                      "leads": found.group("count").replace(",", ""), "states": ", ".join(codes), "codes": codes})
+    if len(lines) < 2 or len({frozenset(one["codes"]) for one in lines}) < 2:
+        return []
+    return lines
+
+
+def _states_alike(one, other) -> float:
+    one, other = set(one), set(other)
+    return len(one & other) / len(one | other) if one and other else 0.0
+
+
+#: How alike a line's states have to be to an agent's card to be theirs.
+LINE_MATCH = 0.85
+
+
+def lines_to_agents(lines: list[dict], earlier: list[dict], payer: str) -> list[dict]:
+    """Each line of an order for several agents, matched to the agent whose
+    earlier card has its states - Colby Whittaker's lines carry no names, but
+    each is one of the agents he pays for. `earlier`: New Agent cards, {"name",
+    "desc"}, newest last. As agents for `agent_cards`, or [] unless every line
+    is one agent's, and a different agent's each."""
+    from .. import ordercards
+
+    payer = " ".join(str(payer or "").split())
+    if not payer:
+        return []
+    theirs = {}
+    for card in earlier:
+        desc = str(card.get("desc") or "")
+        name = re.sub(r"^\s*new\s*agent\s*[-–—:]\s*", "", str(card.get("name") or ""), flags=re.IGNORECASE).strip()
+        if not name or not (ordercards.same_person(name, payer)
+                            or re.search(rf"paid\s+by\s+{re.escape(payer)}\b", desc, re.IGNORECASE)):
+            continue
+        codes = _state_codes_named(card_states(desc))
+        if not codes:
+            continue
+        field = lambda label: (re.search(rf"^[ \t]*{label}[ \t]*:[ \t]*(\S[^\n]*)$", desc, re.IGNORECASE | re.MULTILINE)
+                               or [None, ""])[1].strip()
+        theirs[name.casefold()] = {"name": name, "email": field(r"e-?mail"), "phone": field(r"phone(?:\s*number)?"),
+                                   "codes": codes}
+    used, agents = set(), []
+    for line in lines:
+        scored = sorted(((_states_alike(line["codes"], one["codes"]), key) for key, one in theirs.items()
+                         if key not in used), reverse=True)
+        if not scored or scored[0][0] < LINE_MATCH or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+            return []
+        key = scored[0][1]
+        used.add(key)
+        one = theirs[key]
+        agents.append({"name": one["name"], "email": one["email"], "phone": one["phone"], "states": line["states"],
+                       "order": f"{line['leads']} {line['package']}", "webhook": "",
+                       "matched_on": f"{scored[0][0]:.0%} of the states on their last card"})
+    return agents
+
+
+def payer_agent_cards(config: Config, payer: str, *, days: int = 180) -> list[dict]:
+    """The New Agent cards of the last `days` that are the payer's own or say
+    they paid for them, oldest first."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    cards = [one for one in order_cards_since(config, since) if re.match(_CARD_TITLE["fresh"], one["name"], re.I)]
+    cards.sort(key=lambda one: card_made_at(one["id"]) or since)
+    return cards
 

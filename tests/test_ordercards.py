@@ -5776,3 +5776,51 @@ def test_states_check_finds_the_cards_that_cost_money():
     found = jobs.states_recheck(packets, [{"name": "Aged Leads - Kanan Kapital Llc", "kind": "aged",
                                            "states": "AR, CA, GA"}])
     assert len(found) == 1 and "packets" in found[0]
+
+
+COLBY = ("New Payment | Payra ✅\nNAME: Colby Whittaker\nEMAIL: colby@example.com\nPHONE: +15555550100\n"
+         "AMOUNT: $1583.55\nPRODUCT: Text-Verified Veteran leads\nINVOICE: INV-20663 · card •••• 7753 · 10/27/2026 1:09 PM\n"
+         "Notes:\n> Name: Colby Whittaker\n> Email: colby@example.com\n> Phone Number: +15555550100\n"
+         "> Fresh Vets: 15 @ $40.00, 15% off — states LA, OK, KS, KY, VA, MS, FL, UT, MO, NC, TN, AL, MI, GA, OH, "
+         "SC, IN, TX, CO, MD, WA, DC, OR\n"
+         "> Fresh Vets: 15 @ $40.00, 15% off — states AL, AR, AZ, CO, FL, GA, IA, ID, IN, KS, KY, LA, MD, ME, MI, MN, "
+         "MS, NC, NM, OH, OR, PA, SC, TN, TX, UT, VA, WA, WI, WV\n"
+         "> Fresh Vets: 15 @ $40.00, 15% off — states SD, IN, NJ, NM, OH, TX, PA, SC, TN, VA, MI\n")
+
+
+def _agent_card(name, states, payer="Colby Whittaker", email="x@example.com"):
+    return {"name": f"New Agent - {name}", "desc": f"Name: {name}\nEmail: {email}\nPhone Number:\nStates: {states}\n"
+                                                    f"Additional Notes:\n\nPaid by {payer} - one payment for 5 agents."}
+
+
+def test_lines_with_their_own_states_are_each_an_agents():
+    """Colby Whittaker's three lines of 15 Fresh Vets, each with its own
+    states and no name - "make sure ryte file this properly"."""
+    lines = jobs.order_lines(COLBY)
+    assert [one["leads"] for one in lines] == ["15", "15", "15"] and lines[2]["codes"][0] == "SD"
+    earlier = [
+        _agent_card("Gabriel Lucas", "LA, OK, KS, KY, VA, MS, FL, UT, MO, NC, TN, AL, MI, GA, OH, SC, IN, TX, CO, MD, "
+                                     "WA, DC, OR", email="gabe@example.com"),
+        _agent_card("Sawyer Wetzel", "AL, AR, AZ, CO, FL, GA, IA, ID, IN, KS, KY, LA, MD, ME, MI, MN, MS, NC, NM, OH, "
+                                     "OR, PA, SC, TN, TX, UT, VA, WA, WI, WV"),
+        _agent_card("Justin Bailey", "SD, IN, NJ, NM, OH, TX, PA, SC, TN, VA, MI"),
+        _agent_card("Dillon Willis", "CA, NY"),
+        _agent_card("Somebody Else", "SD, IN, NJ, NM, OH, TX, PA, SC, TN, VA, MI", payer="Nobody Here"),
+    ]
+    agents = jobs.lines_to_agents(lines, earlier, "Colby Whittaker")
+    assert [one["name"] for one in agents] == ["Gabriel Lucas", "Sawyer Wetzel", "Justin Bailey"]
+    assert agents[0]["email"] == "gabe@example.com"
+    cards = jobs.agent_cards({"kind": "fresh", "client": "Colby Whittaker", "source": COLBY, "agents": agents,
+                              "fields": {"name": "Colby Whittaker", "notes": ""}}, today=date(2026, 10, 27))
+    assert [one["fields"]["leads"] for one in cards] == ["15", "15", "15"]
+    assert cards[2]["fields"]["states"].startswith("SD, IN") and "matched to Justin Bailey" in cards[2]["desc"]
+    assert not [one for one in jobs.split_doubts(cards, today=date(2026, 10, 27)) if "states" in one.casefold()
+                or "isn't in" in one]
+    # One line nobody's: none of it guessed - held and asked.
+    assert jobs.lines_to_agents(lines, earlier[:2], "Colby Whittaker") == []
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": COLBY, "lines": lines, "fields": {
+        "name": "Colby Whittaker", "states": "LA, OK", "package": "Fresh Vets", "leads": "45"}},
+        today=date(2026, 10, 27))
+    assert any("3 lines, each with its own states" in one for one in wrong)
+    # One line, or every line the same states: one card as ever.
+    assert jobs.order_lines("> Fresh Vets: 15 @ $40.00 — states TX, FL") == []

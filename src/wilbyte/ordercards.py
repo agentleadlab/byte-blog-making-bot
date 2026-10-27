@@ -827,6 +827,14 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             wrong.append(f"States: the order also says {', '.join(left)} - not on the card"
                          + (f" (“{shown[:160]}”)" if shown else ""))
 
+    # Invoice lines each with their own states, and nobody named for each:
+    # one card would send every line the same states.
+    lines = card.get("lines") or []
+    if len(lines) >= 2 and not card.get("agents"):
+        wrong.append(f"The invoice has {len(lines)} lines, each with its own states, and doesn't say whose each "
+                     "is: " + " · ".join(f"{one.get('leads')} {one.get('package')} — {one.get('states')}"
+                                         for one in lines)
+                     + ". Say in the thread who each line is for, as Name: / States: for each agent")
     # Each line's own states the same way: the order's lines go on cards of
     # their own.
     for part in card.get("parts") or []:

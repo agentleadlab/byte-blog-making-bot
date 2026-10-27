@@ -10845,6 +10845,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                                      f"since, so I left it as it is: {found.get('shortUrl') or found.get('url')}",
                                      quiet=True)
             return
+    if card.get("lines") and not card.get("agents"):
+        # Lines with their own states and no names - Colby Whittaker's three
+        # of 15 Fresh Vets: each one the agent of his whose card has its
+        # states. Not every one matched, it's held and asked.
+        card = await _lines_to_agents(bot, card)
     # Aged leads and new-agent leads bought together: a card for each -
     # Patrick Moreno's four aged lines on one Aged Leads card, each new-agent
     # line on a New Agent card of its own.
@@ -11174,6 +11179,21 @@ async def _order_same_states(bot, message, card: dict) -> None:
             card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
             card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
             return
+
+
+async def _lines_to_agents(bot, card: dict) -> dict:
+    """The card with an agent for each of its invoice lines, when each line's
+    states are one of the payer's agents' - as it was otherwise."""
+    from .. import ordercards
+
+    payer = ordercards.paid_by(str(card.get("source") or "")) or str(card.get("client") or "")
+    try:
+        earlier = await asyncio.to_thread(jobs.payer_agent_cards, bot.config, payer)
+    except Exception:
+        log.warning("Couldn't look at %s's agents' cards", payer, exc_info=True)
+        return card
+    agents = jobs.lines_to_agents(card["lines"], earlier, payer)
+    return {**card, "agents": agents} if agents else card
 
 
 async def _agency_off_earlier_cards(bot, card: dict, kind: str) -> dict:
