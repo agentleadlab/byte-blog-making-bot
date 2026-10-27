@@ -305,6 +305,28 @@ def _count_word(said: str) -> int:
     return int(said) if said.isdigit() else _NUMBER_WORDS.get(said, 0)
 
 
+def states_off_the_order(states: str, source: str) -> tuple[str, list[str]]:
+    """The card's states less any the order never says, when what's left is
+    exactly the order's own list - Robert Allaraj's card read SC in with the
+    nine his order listed, and was held for it. (states, dropped). As it was
+    when the order lists no states of its own, or what's left isn't it."""
+    states = str(states or "")
+    if not states.strip() or _ALL_BUT.search(states) or re.search(r"\d|;", states):
+        return states, []
+    on_card = _codes(states)
+    unsaid = [code for code in on_card if not _said_state(code, source)]
+    if not unsaid or len(unsaid) == len(on_card):
+        return states, []
+    team, invoice = _invoice_split(source)
+    listed, _where = _states_listed(team)
+    if not listed:
+        listed, _where = _states_listed(invoice)
+    kept = [code for code in on_card if code not in unsaid]
+    if not listed or set(kept) != set(listed):
+        return states, []
+    return ", ".join(kept), unsaid
+
+
 def left_out_states(text: str) -> list[str]:
     """Every state the order says to leave out - see `left_out_groups`."""
     return list(dict.fromkeys(code for codes, _said in left_out_groups(text) for code in codes))
@@ -793,6 +815,8 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
 
     # States.
     states = str(fields.get("states") or "").strip()
+    if card.get("states_dropped"):
+        missing.append(f"{', '.join(card['states_dropped'])} left off - read in, but not in the order")
     if not states:
         missing.append("no states in the order yet")
     elif (SAME_STATES.search(states) or _SAME_ANSWER.match(states)) and SAME_STATES.search(source):

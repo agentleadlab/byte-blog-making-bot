@@ -14515,6 +14515,8 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     # Shahan Uddin's card as "States: NY, AK".
     said_all = "\n".join([source, *(str(one) for one in notes or ())])
     fields["states"] = ordercards.states_left_out_fixed(fields.get("states") or "", said_all)
+    # A state read in that the order never says, the rest its own list: off.
+    fields["states"], dropped = ordercards.states_off_the_order(fields["states"], source)
     for one in parts:
         one["states"] = ordercards.states_left_out_fixed(one.get("states") or "", said_all)
         if not one.get("name"):
@@ -14555,6 +14557,7 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     return {"kind": kind, "client": client_name, "fields": fields, "launch_iso": launch_iso, "source": source,
             **({"agents": agents} if agents and kind == "fresh" else {}),
             **({"lines": lines} if lines else {}),
+            **({"states_dropped": dropped} if dropped else {}),
             **({"launch_conflict": [one.isoformat() for one in launch_conflict]} if launch_conflict else {}),
             **({"agency_unclear": unclear} if unclear and not fields.get("agency") else {}),
             **({"overflow": True} if overflow else {}),

@@ -5824,3 +5824,19 @@ def test_lines_with_their_own_states_are_each_an_agents():
     assert any("3 lines, each with its own states" in one for one in wrong)
     # One line, or every line the same states: one card as ever.
     assert jobs.order_lines("> Fresh Vets: 15 @ $40.00 — states TX, FL") == []
+
+
+def test_a_state_read_in_that_the_order_never_says_is_left_off():
+    """Robert Allaraj's card read SC in with the nine states his order
+    listed, and was held for it."""
+    source = ("NAME: Robert Allaraj\nPRODUCT: Text-Verified Mortgage Protection Leads\n"
+              "States: NJ, MO, ME, OH, PA, TX, VA, WV, GA\n25 Otp Mtg leads\nLive Thursday Oct 29")
+    assert ordercards.states_off_the_order("NJ, MO, ME, OH, PA, SC, TX, VA, WV, GA", source) == (
+        "NJ, MO, ME, OH, PA, TX, VA, WV, GA", ["SC"])
+    # Not when what's left isn't the order's own list - that's for a person.
+    assert ordercards.states_off_the_order("NJ, MO, SC", source) == ("NJ, MO, SC", [])
+    assert ordercards.states_off_the_order("NJ, SC", "NJ please") == ("NJ, SC", [])
+    _wrong, missing = ordercards.doubts({"kind": "fresh", "source": source, "states_dropped": ["SC"], "fields": {
+        "name": "Robert Allaraj", "states": "NJ, MO, ME, OH, PA, TX, VA, WV, GA",
+        "package": "Text-Verified Mortgage Protection Leads", "leads": "25"}}, today=date(2026, 10, 27))
+    assert any("SC left off" in one for one in missing)
