@@ -10848,6 +10848,9 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                                      f"since, so I left it as it is: {found.get('shortUrl') or found.get('url')}",
                                      quiet=True)
             return
+    if card.get("kind") == "aged" and len(card.get("parts") or []) >= 2:
+        # Ages in the notes, counts only on the invoice's lines.
+        card = await _aged_counts_off_the_invoice(bot, message, card)
     if card.get("lines") and not card.get("agents"):
         # Lines with their own states and no names - Colby Whittaker's three
         # of 15 Fresh Vets: each one the agent of his whose card has its
@@ -11182,6 +11185,31 @@ async def _order_same_states(bot, message, card: dict) -> None:
             card["desc"] = jobs.order_desc(fields, card.get("kind") or "fresh")
             card["missing"] = [one for one in card.get("missing") or [] if "state" not in str(one).casefold()]
             return
+
+
+async def _aged_counts_off_the_invoice(bot, message, card: dict) -> dict:
+    """An aged order's lines with their counts off the invoice, matched to
+    their ages by price a lead - as it was when they don't pair plainly."""
+    from .. import ordercards
+
+    number, _notes = ordercards.post_invoice(_all_of_it(message))
+    if not number:
+        return card
+    try:
+        lines, total = await asyncio.to_thread(jobs.invoice_lead_lines, bot.config, number)
+    except Exception:
+        log.warning("Couldn't read %s's lines for counts", number, exc_info=True)
+        return card
+    parts = jobs.counts_by_price(card["parts"], lines, total)
+    if not parts:
+        return card
+    fields = dict(card.get("fields") or {})
+    said = "Counts from the invoice's lines, matched to each age by price a lead (the older, the cheaper): " + \
+        ", ".join(f"{one['leads']} {one['package']} at {one['priced']}" for one in parts)
+    fields["notes"] = "\n".join(one for one in (str(fields.get("notes") or "").strip(), said) if one)
+    return {**card, "parts": parts, "fields": fields,
+            "source": f"{card.get('source') or ''}\nPayra invoice {number} lines: "
+                      + "; ".join(one["text"] for one in lines)}
 
 
 async def _lines_to_agents(bot, card: dict) -> dict:

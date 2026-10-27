@@ -16562,3 +16562,83 @@ def payer_agent_cards(config: Config, payer: str, *, days: int = 180) -> list[di
     cards.sort(key=lambda one: card_made_at(one["id"]) or since)
     return cards
 
+
+def invoice_lead_lines(config: Config, number: str) -> tuple[list[dict], float | None]:
+    """An invoice's lines for leads, {"qty", "each", "text"} each, and the
+    invoice's own total - ([], None) when it isn't found."""
+    from .. import payraapi
+
+    digits = re.sub(r"[^0-9]", "", str(number or "")).lstrip("0")
+    if not digits:
+        return [], None
+    invoice = next((one for one in payra_kept(config, "invoices").values()
+                    if re.sub(r"[^0-9]", "", str(one.get("number") or "")).lstrip("0") == digits), None)
+    if not invoice:
+        return [], None
+    found = []
+    for one in invoice.get("lines") or []:
+        if not isinstance(one, dict) or not re.search(r"\blead", str(payraapi._first(
+                one, "name", "description", "item", "product", "title") or ""), re.I):
+            continue
+        try:
+            qty = float(str(payraapi._first(one, "quantity", "qty", "count")))
+            each = float(str(payraapi._first(one, "price", "rate", "unit_price", "unit_amount", "amount")))
+        except (TypeError, ValueError):
+            return [], None
+        found.append({"qty": qty, "each": each, "text": payraapi.line_text(one)})
+    total = None
+    for key in ("total", "amount_due", "amount", "subtotal"):
+        try:
+            total = float(str(payraapi._first(invoice, key)))
+            break
+        except (TypeError, ValueError):
+            continue
+    return found, total
+
+
+def _age_of(package: str) -> int | None:
+    found = _AGE_BUCKET.search(str(package or ""))
+    return int(re.match(r"\d+", found.group(0)).group(0)) if found else None
+
+
+#: How far apart two lines' price per lead have to be to tell their ages
+#: apart by it.
+PRICE_GAP = 1.2
+
+
+def counts_by_price(parts: list[dict], lines: list[dict], total: float | None) -> list[dict]:
+    """Each aged line's count off the invoice, when the invoice's lines are
+    all the same product and the notes give only the ages - Edwin Alvarado's
+    400, 55 and 45 of "Text-Verified Aged Mortgage Protection Leads" for
+    30-90, 90-180 and 180+, in an order of their own. The older, the cheaper:
+    the dearest line a lead is the youngest age. The parts with their counts,
+    or [] unless every line pairs plainly."""
+    aged = [one for one in parts if one.get("kind") == "aged"]
+    if len(aged) < 2 or len(aged) != len(parts) or len(lines) != len(aged) or total is None:
+        return []
+    if any(re.search(r"\d", str(one.get("leads") or "")) and str(one.get("leads")).strip("0 ") for one in aged):
+        return []
+    ages = [_age_of(one.get("package")) for one in aged]
+    if None in ages or len(set(ages)) != len(ages):
+        return []
+    # A line's price is its total when they add up to the invoice's, its
+    # price a lead when those times the counts do - card fee or not.
+    near = lambda one, other: other and abs(one - other) / other <= 0.05  # noqa: E731
+    if near(sum(one["each"] for one in lines), total):
+        per_lead = [one["each"] / one["qty"] for one in lines]
+    elif near(sum(one["each"] * one["qty"] for one in lines), total):
+        per_lead = [one["each"] for one in lines]
+    else:
+        return []
+    if any(one["qty"] < 1 or one["qty"] != int(one["qty"]) for one in lines):
+        return []
+    dearest = sorted(range(len(lines)), key=lambda at: per_lead[at], reverse=True)
+    if any(per_lead[dearest[at]] < per_lead[dearest[at + 1]] * PRICE_GAP for at in range(len(dearest) - 1)):
+        return []
+    youngest = sorted(range(len(aged)), key=lambda at: ages[at])
+    out = [dict(one) for one in parts]
+    for part_at, line_at in zip(youngest, dearest):
+        out[part_at]["leads"] = str(int(lines[line_at]["qty"]))
+        out[part_at]["priced"] = f"${per_lead[line_at]:,.2f}/lead"
+    return out
+

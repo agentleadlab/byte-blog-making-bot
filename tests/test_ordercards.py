@@ -5928,3 +5928,27 @@ def test_a_spark_one_time_order_reads_as_its_card(monkeypatch):
     assert card["launch_iso"] == "2026-10-27"
     wrong, _missing = ordercards.doubts(card, today=date(2026, 10, 27))
     assert wrong == [], wrong
+
+
+def test_aged_counts_off_the_invoice_lines_by_price():
+    """Edwin Alvarado: the notes gave 30-90, 90-180 and 180+, the invoice 400,
+    55 and 45 of one product - read as "0 leads" and held. The older, the
+    cheaper: $9.31 a lead is the 30-90, $1.04 the 180+."""
+    parts = [{"kind": "aged", "package": f"Aged Mortgage Protection {age}", "leads": "", "states": "TX, PA",
+              "launch_iso": ""} for age in ("30-90", "90-180", "180+")]
+    lines = [{"qty": 400.0, "each": 414.00, "text": "Aged MP × 400 @ $414.00"},
+             {"qty": 55.0, "each": 398.48, "text": "Aged MP × 55 @ $398.48"},
+             {"qty": 45.0, "each": 419.17, "text": "Aged MP × 45 @ $419.17"}]
+    got = jobs.counts_by_price(parts, lines, 1231.65)
+    assert [one["leads"] for one in got] == ["45", "55", "400"]
+    # Prices a lead too close to tell apart, or a total that fits neither
+    # reading: left to a person.
+    close = [dict(one, each=one["qty"] * 5.0) for one in lines]
+    assert jobs.counts_by_price(parts, close, sum(one["each"] for one in close)) == []
+    assert jobs.counts_by_price(parts, lines, 99.0) == []
+    assert jobs.counts_by_price(parts[:2], lines, 1231.65) == []
+    source = "Aged Mortgage Protection 30-90\nPayra invoice INV-20690 lines: " + "; ".join(one["text"] for one in lines)
+    cards = jobs.split_order({"kind": "aged", "client": "Edwin Alvarado", "source": source, "parts": got,
+                              "fields": {"name": "Edwin Alvarado", "notes": ""}}, today=date(2026, 10, 27))
+    assert cards[0]["fields"]["leads"] == "500 (45 + 55 + 400)"
+    assert not [one for one in jobs.split_doubts(cards, today=date(2026, 10, 27)) if "leads isn't" in one]
