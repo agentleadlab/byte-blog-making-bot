@@ -5952,3 +5952,19 @@ def test_aged_counts_off_the_invoice_lines_by_price():
                               "fields": {"name": "Edwin Alvarado", "notes": ""}}, today=date(2026, 10, 27))
     assert cards[0]["fields"]["leads"] == "500 (45 + 55 + 400)"
     assert not [one for one in jobs.split_doubts(cards, today=date(2026, 10, 27)) if "leads isn't" in one]
+
+
+def test_states_written_out_in_full_are_a_list_of_states():
+    """Marc Williams' "Colorado, Connecticut, Idaho, ..." was held as "isn't
+    a list of states"."""
+    names = ("Colorado, Connecticut, Idaho, Indiana, New Hampshire, North Dakota, Washington, West Virginia, "
+             "Georgia, Illinois")
+    codes = jobs.states_as_codes(names)
+    assert codes == "CO, CT, ID, IN, NH, ND, WA, WV, GA, IL"
+    source = "ascend standard 350 a week\n" + names.replace(", ", "\n") + "\nascend, live fri, oct 30"
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": source, "fields": {
+        "name": "Marc Williams", "states": codes, "package": "Ascend Standard", "leads": "No cap (ad spend)"}},
+        today=date(2026, 10, 28))
+    assert not any("States" in one for one in wrong), wrong
+    assert jobs.states_as_codes("80 Louisiana, 20 Texas") == "80 Louisiana, 20 Texas"
+    assert jobs.states_as_codes("All states except New York") == "All states except New York"

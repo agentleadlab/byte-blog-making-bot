@@ -14560,6 +14560,9 @@ def read_order(config: Config, *, text: str, images: list[str], today, notes: li
     # States read as the ones the order leaves out: "no ny ak no ha" went on
     # Shahan Uddin's card as "States: NY, AK".
     said_all = "\n".join([source, *(str(one) for one in notes or ())])
+    fields["states"] = states_as_codes(fields.get("states") or "")
+    for one in parts:
+        one["states"] = states_as_codes(one.get("states") or "")
     fields["states"] = ordercards.states_left_out_fixed(fields.get("states") or "", said_all)
     # A state read in that the order never says, the rest its own list: off.
     fields["states"], dropped = ordercards.states_off_the_order(fields["states"], source)
@@ -14865,6 +14868,25 @@ _LABELLED = re.compile(r"^\s*(?P<label>name|e-?mail|number|phone(?:\s*number)?|s
                        r"lead\s*type|package|webhook(?:\s*url)?)\s*(?:[:\-–]\s*|\s+(?=\S))(?P<value>.*)$",
                        re.IGNORECASE)
 _PHONE_SAID = re.compile(r"\+?1?[\s\-.(]*\d{3}[\s\-.)]*\d{3}[\s\-.]*\d{4}")
+
+
+def states_as_codes(states: str) -> str:
+    """States written out in full, as the codes the card uses: Marc
+    Williams' "Colorado, Connecticut, Idaho, ..." was held as "isn't a list
+    of states". Only when every item is one state; anything else as it was."""
+    from .. import ordercards
+
+    said = str(states or "")
+    if not said.strip() or re.search(r"\d", said) or ordercards._ALL_BUT.search(said):
+        return said
+    bits = [one for one in re.split(r"\s*(?:,|;|\n|/|&|\band\b)\s*", said, flags=re.IGNORECASE) if one.strip()]
+    codes = []
+    for bit in bits:
+        found = _state_codes_named(bit)
+        if len(found) != 1:
+            return said
+        codes.append(found[0])
+    return ", ".join(dict.fromkeys(codes))
 
 
 def _state_codes_named(said: str) -> list[str]:
