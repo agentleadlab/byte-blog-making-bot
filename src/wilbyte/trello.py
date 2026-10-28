@@ -186,6 +186,17 @@ class TrelloClient:
             params={"fields": "name,idList,url,shortUrl,desc,closed,dateLastActivity"},
         )
 
+    def search_cards(self, board_id: str, query: str, *, limit: int = 50) -> list[dict]:
+        """Cards on the board Trello's own search finds for `query`, archived
+        ones too - "andrew hauser sheet" kept failing on an old card the
+        whole-board read didn't bring back."""
+        got = self._request(
+            "GET", "/search",
+            params={"query": query, "idBoards": board_id, "modelTypes": "cards", "partial": "true",
+                    "cards_limit": limit, "card_fields": "name,idList,url,shortUrl,desc,closed,dateLastActivity"},
+        )
+        return list((got or {}).get("cards") or [])
+
     def cards_in(self, board_id: str, lists: list[dict]) -> list[dict]:
         """The cards in these lists, as walking them with `list_cards` would
         give them - list by list, top to bottom - in one request instead of

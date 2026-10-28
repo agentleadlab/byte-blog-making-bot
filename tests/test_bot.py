@@ -8237,3 +8237,23 @@ def test_somebody_only_named_in_the_task_doesnt_choose_the_card(monkeypatch):
                  "Kharyl), and process her 2 lead replacements")
         assert posted == ["ops"], (kind, posted)
     assert jobs._ADS_WORDS.search("process her 2 lead replacements")
+
+
+def test_a_sheet_is_found_by_trellos_search_and_by_a_close_spelling(config, monkeypatch):
+    """"andrew hauser sheet" - "this look up keeps on failing": an old card
+    the whole-board read didn't bring back, or a name spelled a letter off."""
+    from wilbyte.bot import client
+
+    class Searched(SheetBoard):
+        def search_cards(self, board_id, query, limit=50):
+            return [agent_card("Andrew Hauser", "", "9")]
+
+    board = Searched([agent_card("Faith Ortega", "", "1")], {"9": [f"Sheet link: {SHEET_URL}"]})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    heard = Listening()
+    asyncio.run(client._send_sheet(ChannelResponder(heard), config, "andrew hauser sheet"))
+    assert SHEET_URL in heard.said[0]
+
+    said, _ = _sheet_asked(monkeypatch, config, "andrew hauser sheet",
+                           [agent_card("Andrew Houser", "", "2")], {"2": [f"Sheet link: {SHEET_URL}"]})
+    assert SHEET_URL in "\n".join(said) and "closest: Andrew Houser" in "\n".join(said)

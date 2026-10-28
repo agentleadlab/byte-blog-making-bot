@@ -6275,6 +6275,13 @@ def cards_for_name(config: Config, name: str) -> tuple[list[dict], bool]:
                      for one in client.board_lists(config.secrets.trello_board_id)}
         except Exception:
             lists = {}
+        if not rules.named_that(name, every):
+            # Archived cards the whole-board read leaves out.
+            try:
+                every = every + [one for one in client.search_cards(config.secrets.trello_board_id, name)
+                                 if str(one.get("id")) not in {str(card.get("id")) for card in every}]
+            except Exception:
+                pass
     finally:
         client.close()
     found, close = rules.named_that(name, every), False
@@ -6303,6 +6310,38 @@ def cards_for_name(config: Config, name: str) -> tuple[list[dict], bool]:
     return out, close
 
 
+def _cards_searched(client, board_id: str, name: str, every: list[dict]) -> tuple[list[dict], bool]:
+    """(client cards for a name, whether only a close spelling) - Trello's
+    search first, then every card's name spelled a letter or two off."""
+    from difflib import SequenceMatcher
+
+    from .. import agents as rules
+
+    try:
+        searched = client.search_cards(board_id, name)
+    except Exception:
+        searched = []
+    found = [card for card in rules.named_that(name, searched)]
+    if found:
+        return found[:6], False
+    wanted = [word for word in re.findall(r"[a-z]+", name.casefold()) if len(word) >= 3]
+    if not wanted:
+        return [], False
+
+    def near(word, theirs):
+        return any(SequenceMatcher(None, word, one).ratio() >= 0.8 for one in theirs)
+
+    seen, close = set(), []
+    for card in [*every, *searched]:
+        title = str(card.get("name") or "")
+        if str(card.get("id")) in seen or not rules.is_client_card(title):
+            continue
+        seen.add(str(card.get("id")))
+        if all(near(word, re.findall(r"[a-z]+", rules.agent_name(title).casefold())) for word in wanted):
+            close.append(card)
+    return close[:6], bool(close)
+
+
 def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
     """The setup sheet for the agent somebody named. (found, problems). Reads only.
 
@@ -6329,10 +6368,18 @@ def agent_sheet(config: Config, asked: str) -> tuple[list[dict], list[str]]:
                 cards = [card for card in every if words and rules.is_client_card(str(card.get("name") or ""))
                          and all(re.search(rf"(?<!\w){re.escape(word)}(?!\w)", str(card.get("desc") or "").casefold())
                                  for word in words)][:6]
+            close = []
+            if not cards:
+                # Trello's own search - archived cards the whole-board read
+                # leaves out - then a name spelled a letter or two off.
+                cards, close = _cards_searched(client, config.secrets.trello_board_id, name, every)
             if not cards:
                 problems.append(f"I can't find a New Agent card for “{name}” anywhere on the board - not in a "
-                                f"card's title or what's written on one.")
+                                f"card's title, what's written on one, Trello's search, or a close spelling.")
                 continue
+            if close:
+                problems.append(f"No card says “{name}” exactly - these are the closest: "
+                                + ", ".join(rules.agent_name(str(one.get("name") or "")) for one in cards[:3]) + ".")
             theirs = []
             for card in cards:
                 links = rules.sheet_links(rules.in_order_written(client.card_comments(str(card.get("id") or ""))))
