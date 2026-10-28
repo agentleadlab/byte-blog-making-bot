@@ -5968,3 +5968,17 @@ def test_states_written_out_in_full_are_a_list_of_states():
     assert not any("States" in one for one in wrong), wrong
     assert jobs.states_as_codes("80 Louisiana, 20 Texas") == "80 Louisiana, 20 Texas"
     assert jobs.states_as_codes("All states except New York") == "All states except New York"
+
+
+def test_paid_by_with_the_leads_for_somebody_else_is_said_not_held():
+    """Tony Moderno's invoice note: "Paid by: Tony Moderno (the leads are for
+    Jared Flanigan)" - held as "somebody paying for them, or notes from
+    another order?"."""
+    source = ("NAME: Tony Moderno\nEMAIL: tony@example.com\nNotes:\n> Name: Jared Flanigan\n"
+              "> Paid by: Tony Moderno (the leads are for Jared Flanigan)")
+    held, said = ordercards.payer_doubts(source, "Jared Flanigan")
+    assert held == [] and said == ["paid by Tony Moderno for Jared Flanigan, as the order says"]
+    # A line that doesn't name them says nothing about them.
+    held, _ = ordercards.payer_doubts("NAME: Tony Moderno\nPaid by: card ending 1001\nName: Shelby Guest",
+                                      "Shelby Guest")
+    assert held

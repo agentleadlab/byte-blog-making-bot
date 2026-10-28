@@ -653,7 +653,10 @@ def post_charge(said: str) -> tuple[int | None, int | None]:
 #: "for his agent Matthew Stewart", "on behalf of", "leads ... go to Matthew".
 _PAYING_FOR = re.compile(
     r"\bfor\s+(?:his|her|their|my|our)\s+(?:agent|recruit|downline|team\s*mate|teammate|producer)s?\b"
-    r"|\bon\s+behalf\s+of\b|\bpaying\s+for\b|\bpaid\s+for\s+by\b|\bleads?\b[^\n.;]{0,40}\bgo(?:es)?\s+to\b",
+    r"|\bon\s+behalf\s+of\b|\bpaying\s+for\b|\bpaid\s+for\s+by\b|\bleads?\b[^\n.;]{0,40}\bgo(?:es)?\s+to\b"
+    # Tony Moderno's invoice: "Paid by: Tony Moderno (the leads are for Jared
+    # Flanigan)" - held as "somebody paying for them?".
+    r"|\bpaid\s+by\b|\bleads?\s+(?:are|is)\s+for\b|\bbought\s+for\b",
     re.IGNORECASE)
 
 
