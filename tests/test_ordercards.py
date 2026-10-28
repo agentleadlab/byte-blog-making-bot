@@ -5999,3 +5999,16 @@ def test_a_split_new_agent_card_says_where_its_notes_came_from():
     notes = fresh["fields"]["notes"]
     assert "the rest of it is on the Aged Leads card." in notes
     assert "From the Payra invoice:\nPaid by: Tony Moderno" in notes and "From the thread:" not in notes
+
+
+def test_no_notes_on_the_invoice_isnt_a_note_and_an_empty_card_is_held():
+    """Edgar Arciniega: Nova's "_(no notes on the invoice)_" was taken for
+    the note, his invoice was never read, and a New Agent card went out with
+    nothing on it - his was 50 aged vets 30-90 in California and Arizona."""
+    post = ("**New Payment | Payra** ✅\n**NAME:** Edgar Arciniega\n**EMAIL:** —\n**PRODUCT:** —\n"
+            "**INVOICE:** INV-20692 · card •••• 7502 · 10/27/2026 3:48 PM\n**Notes:**\n"
+            "> _(no notes on the invoice)_\n**Internal Notes:**\n> _(none)_")
+    assert ordercards.post_invoice(post) == ("INV-20692", "")
+    wrong, _ = ordercards.doubts({"kind": "fresh", "source": post, "fields": {
+        "name": "Edgar Arciniega", "states": "", "package": "", "leads": ""}}, today=date(2026, 10, 28))
+    assert any("Nothing to make a card from" in one for one in wrong)

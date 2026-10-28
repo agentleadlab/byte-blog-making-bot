@@ -590,7 +590,11 @@ _PAYER = re.compile(r"NAME:\**[ \t]*([^\n*]+)")
 #: 7872 · ...", then the invoice's own "Notes:" and "Internal Notes:", quoted.
 _POST_INVOICE = re.compile(r"INVOICE:\**\s*(INV-?\d+|#?\d{3,})", re.IGNORECASE)
 _NOTES_HEAD = re.compile(r"^\s*\**\s*(internal\s+)?notes\s*:\s*\**\s*(.*)$", re.IGNORECASE)
-_NOTHING = re.compile(r"^[\s*_(\[]*(?:none|n/?a|-+|—)?[\s*_)\]]*$", re.IGNORECASE)
+#: A post's notes saying there are none - Nova's "_(no notes on the
+#: invoice)_" in italics was taken for Edgar Arciniega's note, so his
+#: invoice's own "50 aged vets 30-90, California and Arizona" was never read.
+_NOTHING = re.compile(r"^[\s*_(\[]*(?:none|n/?a|-+|—|no\s+(?:internal\s+)?notes?(?:\s+on\s+the\s+invoice)?)?"
+                      r"[\s*_)\].]*$", re.IGNORECASE)
 
 
 def post_invoice(said: str) -> tuple[str, str]:
@@ -889,6 +893,14 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
             wrong.append(f"States: the order also says {', '.join(left)} - not on the card"
                          + (f" (“{shown[:160]}”)" if shown else ""))
 
+    # Nothing to make a card from: Edgar Arciniega's post had no product, no
+    # notes and no email, and went out as a New Agent card with every field
+    # blank - his was 50 aged vets, in a note the post didn't carry.
+    if all(key in fields for key in ("package", "leads", "states")) \
+            and not str(fields.get("package") or "").strip() and not re.search(r"\d", str(fields.get("leads") or "")) \
+            and not str(fields.get("states") or "").strip() and not card.get("parts"):
+        wrong.append("Nothing to make a card from: no lead type, no count and no states in the post, the thread "
+                     "or the invoice's note - check the invoice in Payra and put the order in the thread")
     # Invoice lines each with their own states, and nobody named for each:
     # one card would send every line the same states.
     lines = card.get("lines") or []
