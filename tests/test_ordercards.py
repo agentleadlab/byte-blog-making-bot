@@ -5982,3 +5982,20 @@ def test_paid_by_with_the_leads_for_somebody_else_is_said_not_held():
     held, _ = ordercards.payer_doubts("NAME: Tony Moderno\nPaid by: card ending 1001\nName: Shelby Guest",
                                       "Shelby Guest")
     assert held
+
+
+def test_a_split_new_agent_card_says_where_its_notes_came_from():
+    """Jared Flanigan's New Agent card had the invoice's "Paid by: Tony
+    Moderno ..." under "From the thread:", and "its own New Agent cards"
+    with none."""
+    card = {"kind": "fresh", "client": "Jared Flanigan", "source": "Aged Vets 30-90: 100\nFresh Vets: 10",
+            "fields": {"name": "Jared Flanigan", "notes": "From the Payra invoice: Aged Vets 30-90: 100 @ $7.00\n"
+                                                           "Paid by: Tony Moderno (the leads are for Jared Flanigan)"},
+            "parts": [{"kind": "aged", "package": "Aged Vets 30-90", "leads": "100", "states": "AL, AZ",
+                       "launch_iso": ""},
+                      {"kind": "fresh", "package": "Fresh Vets (OTP VETS)", "leads": "10", "states": "AL, AZ",
+                       "launch_iso": ""}]}
+    _aged, fresh = jobs.split_order(card, today=date(2026, 10, 28))
+    notes = fresh["fields"]["notes"]
+    assert "the rest of it is on the Aged Leads card." in notes
+    assert "From the Payra invoice:\nPaid by: Tony Moderno" in notes and "From the thread:" not in notes

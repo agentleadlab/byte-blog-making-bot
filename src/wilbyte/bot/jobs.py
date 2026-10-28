@@ -14822,10 +14822,25 @@ def split_order(card: dict, *, today=None) -> list[dict]:
         # different setup".
         setup = [bit for bit in _once_each(str(base.get("notes") or "").splitlines())
                  if bit.strip() and not bit.startswith("Paid via Zelle") and for_new_agent(bit)]
+        # Which of them the invoice's note said, not the thread: its lines run
+        # on under "From the Payra invoice:" until a blank line - Jared
+        # Flanigan's "Paid by: Tony Moderno ..." went on as "From the thread:".
+        invoiced, under = set(), False
+        for bit in str(base.get("notes") or "").splitlines():
+            if bit.startswith("From the Payra invoice:"):
+                under = True
+            elif not bit.strip():
+                under = False
+            if under:
+                invoiced.add(bit)
+        if setup and all(bit in invoiced for bit in setup) and not setup[0].startswith("From the Payra invoice:"):
+            setup = ["From the Payra invoice:", *setup]
+        others = [other for other in fresh if other is not one]
+        rest = " and ".join(filter(None, ["the Aged Leads card" if aged else "",
+                                          "its own New Agent card" + ("s" if len(others) > 1 else "") if others else ""]))
         fields["notes"] = "\n".join(
             [*zelle, *([] if codes else ["No states yet - they'll be posted in the thread."]),
-             f"Part of a bigger order of {client}'s - the rest of it is on the Aged Leads card and its own "
-             f"New Agent cards."]
+             f"Part of a bigger order of {client}'s - the rest of it is on {rest}."]
             # The whole order on the New Agent card - "on fresh add both" -
             # the aged lines under a heading the filing doesn't read.
             + (["", agents_mod.AGED_REFERENCE, *(f"• {line(other)}" for other in aged), ""] if aged else [])
