@@ -2845,6 +2845,11 @@ async def _card_find(responder: Responder, config: Config, name: str) -> None:
         made = f"made {one['made'].astimezone(zone):%a %b %-d}" if one.get("made") else ""
         where = "archived" if one["closed"] else (one["list"] or "")
         lines.append(f"• **{one['name']}** — " + " · ".join(bit for bit in (made, where) if bit) + f" <{one['url']}>")
+        # Where it's filed: "where did ryte file this".
+        for place in (one.get("on") or [])[:8]:
+            lines.append(f"  → {'✅' if place['done'] else '⬜'} {place['card']} · {place['list']}")
+        if not one.get("on") and not one["closed"] and one is found[0]:
+            lines.append("  → not on any checklist on the board")
     if len(found) > 10:
         lines.append(f"…and {len(found) - 10} more.")
     await responder.send("\n".join(lines))

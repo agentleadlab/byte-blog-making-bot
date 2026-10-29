@@ -8257,3 +8257,35 @@ def test_a_sheet_is_found_by_trellos_search_and_by_a_close_spelling(config, monk
     said, _ = _sheet_asked(monkeypatch, config, "andrew hauser sheet",
                            [agent_card("Andrew Houser", "", "2")], {"2": [f"Sheet link: {SHEET_URL}"]})
     assert SHEET_URL in "\n".join(said) and "closest: Andrew Houser" in "\n".join(said)
+
+
+def test_a_card_found_says_which_checklists_its_filed_on(monkeypatch):
+    """"where did ryte file this" - Therese looked for James Henning Jr on
+    yesterday's Ops list; his card was in Done, filed on a setup card."""
+    from types import SimpleNamespace
+
+    cards = [{"id": "6ad0f00000000000000000aa", "name": "New Agent - Todd James Henning Jr", "idList": "D",
+              "shortUrl": "https://trello.com/c/ooXcIot6"},
+             {"id": "6ad0f00000000000000000bb", "name": "Agent Setup Going Live Friday 10/30", "idList": "Q"}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def board_lists(self, board_id):
+            return [{"id": "D", "name": "Done"}, {"id": "Q", "name": "In Que"}]
+
+        def board_checklists(self, board_id):
+            return [{"idCard": "6ad0f00000000000000000bb", "name": "Therese",
+                     "checkItems": [{"name": "https://trello.com/c/ooXcIot6", "state": "incomplete"}]},
+                    {"idCard": "6ad0f00000000000000000bb", "name": "Nicole",
+                     "checkItems": [{"name": "Todd James Henning Jr - caps", "state": "complete"}]}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    found, _close = jobs.cards_for_name(config, "James Henning Jr")
+    assert found[0]["on"] == [{"card": "Agent Setup Going Live Friday 10/30", "list": "Therese", "done": False},
+                              {"card": "Agent Setup Going Live Friday 10/30", "list": "Nicole", "done": True}]

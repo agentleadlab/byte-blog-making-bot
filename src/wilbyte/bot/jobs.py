@@ -6282,6 +6282,10 @@ def cards_for_name(config: Config, name: str) -> tuple[list[dict], bool]:
                                  if str(one.get("id")) not in {str(card.get("id")) for card in every}]
             except Exception:
                 pass
+        try:
+            checklists = client.board_checklists(config.secrets.trello_board_id)
+        except Exception:
+            checklists = []
     finally:
         client.close()
     found, close = rules.named_that(name, every), False
@@ -6305,9 +6309,35 @@ def cards_for_name(config: Config, name: str) -> tuple[list[dict], bool]:
         made = rules.made_at(str(card.get("id") or ""))
         out.append({"name": str(card.get("name") or ""), "url": str(card.get("shortUrl") or card.get("url") or ""),
                     "list": lists.get(str(card.get("idList") or ""), ""), "closed": bool(card.get("closed")),
-                    "made": made})
+                    "made": made, "on": filed_on(card, checklists, every)})
     out.sort(key=lambda one: one["made"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return out, close
+
+
+def filed_on(card: dict, checklists: list[dict], cards: list[dict]) -> list[dict]:
+    """The checklists an agent's card is filed on - "where did ryte file
+    this": Therese looked for James Henning Jr, Morgan Rosenow and Alexander
+    Manchester on yesterday's Ops list, and their cards were already in Done.
+    An item linking the card, or naming the agent in full. [{"card", "list",
+    "done"}]."""
+    from .. import agents as rules
+
+    link = re.search(r"trello\.com/c/([A-Za-z0-9]+)", str(card.get("shortUrl") or card.get("url") or ""))
+    short = link.group(1) if link else ""
+    agent = " ".join(rules.agent_name(str(card.get("name") or "")).split()).casefold()
+    titles = {str(one.get("id")): str(one.get("name") or "") for one in cards or []}
+    found = []
+    for checklist in checklists or []:
+        on = str(checklist.get("idCard") or "")
+        if on == str(card.get("id")) or rules.is_client_card(titles.get(on, "")):
+            continue
+        for item in checklist.get("checkItems") or []:
+            said = str(item.get("name") or "")
+            if (short and short in said) or (len(agent.split()) >= 2 and agent in " ".join(said.split()).casefold()):
+                found.append({"card": titles.get(on, "a card"), "list": str(checklist.get("name") or ""),
+                              "done": item.get("state") == "complete"})
+                break
+    return found
 
 
 def _cards_searched(client, board_id: str, name: str, every: list[dict]) -> tuple[list[dict], bool]:

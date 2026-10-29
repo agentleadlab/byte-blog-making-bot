@@ -186,6 +186,14 @@ class TrelloClient:
             params={"fields": "name,idList,url,shortUrl,desc,closed,dateLastActivity"},
         )
 
+    def board_checklists(self, board_id: str) -> list[dict]:
+        """Every checklist on the board's cards, items and all, in one
+        request - "where did ryte file this" without a request per card."""
+        return self._request(
+            "GET", f"/boards/{board_id}/checklists",
+            params={"fields": "name,idCard", "checkItems": "all", "checkItem_fields": "name,state"},
+        ) or []
+
     def search_cards(self, board_id: str, query: str, *, limit: int = 50) -> list[dict]:
         """Cards on the board Trello's own search finds for `query`, archived
         ones too - "andrew hauser sheet" kept failing on an old card the
