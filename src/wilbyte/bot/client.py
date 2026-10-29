@@ -12246,8 +12246,24 @@ async def _order_refresh(bot, key: str, *, settle: float | None = None) -> str:
     # the thread made of it - a misread mustn't carry a card off.
     paid_for = " ".join(((_PRODUCT.search(_all_of_it(message)) or [None, ""])[1]).split())
     settled_by_post = bool(paid_for) and not re.match(r"^[—\-–(]", paid_for)
-    if settled_by_post:
+    # Unless the team's own note says it in so many words, age and all:
+    # Pierre Hannalla's "400 aged spanish iul 180+ days" against a product of
+    # "Spanish Text Verified IUL Leads" - the card was rewritten as Aged
+    # Leads and left parked in Franklin (Admin).
+    said_plainly = jobs.notes_say_aged(str((card.get("fields") or {}).get("notes") or ""))
+    if settled_by_post and not (now_kind == "aged" and said_plainly):
         now_kind = order.get("kind")
+    if now_kind == "aged" and now_kind != order.get("kind"):
+        # Aged goes out the moment it's in Aged Leads Order Done: checked first.
+        held, _missing = ordercards.doubts(card, today=_today(bot.config))
+        if held or _aged_gaps(card):
+            responder = _order_responder(bot)
+            if responder is not None:
+                await responder.send(f"⚠ **{card.get('name') or order.get('name')}** — the thread says aged leads, "
+                                     f"but it isn't moved to Aged Leads Order Done: "
+                                     + "; ".join([*held, *(f"no {one}" for one in _aged_gaps(card))])
+                                     + f"\n{order.get('url', '')}")
+            now_kind = order.get("kind")
     if now_kind in ("fresh", "aged") and now_kind != order.get("kind") and order.get("bank_hold") is not True:
         try:
             where = await asyncio.to_thread(jobs.order_card_move, bot.config, order["card_id"], now_kind)

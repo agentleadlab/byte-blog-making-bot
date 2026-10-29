@@ -6029,3 +6029,24 @@ def test_packet_counts_add_up_and_a_guessed_state_is_held():
     assert not [one for one in wrong if "leads isn't in the order" in one], wrong
     assert any("read with a guess" in one and "taken as Wyoming" in one for one in wrong)
     assert not jobs._packet_counts(source, [100, 100, 100, 100, 100])
+
+
+def test_a_team_note_saying_aged_and_its_age_moves_the_card_over_the_product(order, monkeypatch):
+    """Pierre Hannalla: Payra's PRODUCT "Spanish Text Verified IUL Leads", the
+    thread "400 aged spanish iul 180+ days / TX and NJ" - rewritten as Aged
+    Leads and left parked in Franklin (Admin)."""
+    order.kind = "fresh"
+    message = _message("New Payment | Payra\nNAME: Pierre Hannalla\nAMOUNT: $400.00\n"
+                       "PRODUCT: Spanish Text Verified IUL Leads\n"
+                       "[10/29 03:00PM] Faith: 400 aged spanish iul 180+ days\nTX and NJ")
+    asyncio.run(client._order_gavelled(_bot(message), GAVEL))
+    moved = []
+    monkeypatch.setattr(jobs, "order_card_move", lambda config, card_id, kind: moved.append((card_id, kind)) or
+                        "Aged Leads Order Done")
+    monkeypatch.setattr(jobs, "order_card_update", lambda config, card_id, **kw: ("updated", []))
+    order.kind = "aged"
+    order.fields = {"notes": "400 aged spanish iul 180+ days\nTX and NJ", "package": "Aged Spanish IUL 180+",
+                    "leads": "400", "states": "TX, NJ"}
+    asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
+    assert moved == [("card1", "aged")], order.responder.sent
+    assert jobs.notes_say_aged("400 aged spanish iul 180+ days") and not jobs.notes_say_aged("Spanish IUL 25 TX")

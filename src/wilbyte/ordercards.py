@@ -840,6 +840,19 @@ def launch_doubts(launch_iso: str, source: str, *, kind: str, today) -> list[str
     return []
 
 
+def said_aged(text: str) -> bool:
+    """Whether the team said aged in so many words, the age with it - "400
+    aged spanish iul 180+ days" - on a line of their own, not the payment's
+    or the invoice's."""
+    for line in str(text or "").splitlines():
+        bare = re.sub(r"^\[\d\d/\d\d \d\d:\d\d[AP]M\][^:]*:\s*", "", line).strip(" >*")
+        if re.match(r"(?:product|payra invoice|from the payra invoice|lines?|description)\b", bare, re.IGNORECASE):
+            continue
+        if re.search(r"\baged\b", bare, re.IGNORECASE) and re.search(r"\b\d{2,3}\s*(?:\+|[-–]\s*\d{2,3})", bare):
+            return True
+    return False
+
+
 def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
     """(what doesn't add up - the card isn't made without a person saying so,
     what's only missing - said when it's made). Every value has to be in the
@@ -943,7 +956,8 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         if aged_paid and kind != "aged":
             wrong.append(f"Lead type: the payment is for “{product}” - aged - but this reads as a new agent's order")
         family, _subtypes = setupcheck.product_of(product)
-        if not aged_paid and kind == "aged" and family:
+        if not aged_paid and kind == "aged" and family and not said_aged(
+                "\n".join([source, str(fields.get("notes") or "")])):
             wrong.append(f"Lead type: the payment is for “{product}” - not aged - but this reads as an aged order")
         # A split order - "50 Aged VET 180+ + 50 Aged Mortgage Protection" -
         # is right when one of its parts is what the payment line names.

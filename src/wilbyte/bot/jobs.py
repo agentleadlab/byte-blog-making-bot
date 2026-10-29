@@ -14713,6 +14713,14 @@ _AGED_LINE = re.compile(r"\baged\b|\b\d{2,3}\s*\+|\b\d{2,3}\s*[-–]\s*\d{2,3}\s
                         re.IGNORECASE)
 
 
+def notes_say_aged(notes: str) -> bool:
+    """Whether the team's own notes say aged in so many words - the word and
+    an age: "400 aged spanish iul 180+ days". Not the invoice's lines."""
+    from .. import ordercards
+
+    return ordercards.said_aged(notes)
+
+
 def line_kind(package: str) -> str:
     """"aged", "fresh", or "" when an order line's own words don't say."""
     package = str(package or "")
