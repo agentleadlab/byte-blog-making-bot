@@ -16759,6 +16759,24 @@ def _age_of(package: str) -> int | None:
     return int(re.match(r"\d+", found.group(0)).group(0)) if found else None
 
 
+def parts_from_invoice_lines(fields: dict, lines: list[dict]) -> list[dict]:
+    """An aged order's lines straight off its invoice, when the notes give no
+    counts and each invoice line is a product of its own - Jaylen Morgan's
+    45 "Text-Verified Aged Veteran Leads" and 50 "Text-Verified Aged Final
+    Expense Leads", the note only "Aged Vets and Aged FEX". The order's
+    states on each. [] unless every line is aged, counted and different."""
+    parts = []
+    for line in lines:
+        name = " ".join(str(line.get("text") or "").split(" × ")[0].split())
+        qty = line.get("qty")
+        if not name or line_kind(name) != "aged" or not qty or qty != int(qty) or qty < 2:
+            return []
+        parts.append({"kind": "aged", "package": name, "leads": str(int(qty)),
+                      "states": str(fields.get("states") or ""), "launch_iso": ""})
+    names = {one["package"].casefold() for one in parts}
+    return parts if len(parts) >= 2 and len(names) == len(parts) else []
+
+
 #: How far apart two lines' price per lead have to be to tell their ages
 #: apart by it.
 PRICE_GAP = 1.2

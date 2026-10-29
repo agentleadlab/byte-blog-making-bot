@@ -10910,7 +10910,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                                      f"since, so I left it as it is: {found.get('shortUrl') or found.get('url')}",
                                      quiet=True)
             return
-    if card.get("kind") == "aged" and len(card.get("parts") or []) >= 2:
+    if card.get("kind") == "aged" and (len(card.get("parts") or []) >= 2
+                                       or not re.search(r"[1-9]", str((card.get("fields") or {}).get("leads") or ""))):
         # Ages in the notes, counts only on the invoice's lines.
         card = await _aged_counts_off_the_invoice(bot, message, card)
     if card.get("lines") and not card.get("agents"):
@@ -11262,12 +11263,20 @@ async def _aged_counts_off_the_invoice(bot, message, card: dict) -> dict:
     except Exception:
         log.warning("Couldn't read %s's lines for counts", number, exc_info=True)
         return card
-    parts = jobs.counts_by_price(card["parts"], lines, total)
+    parts = jobs.counts_by_price(card.get("parts") or [], lines, total)
+    said = ""
+    if parts:
+        said = "Counts from the invoice's lines, matched to each age by price a lead (the older, the cheaper): " + \
+            ", ".join(f"{one['leads']} {one['package']} at {one['priced']}" for one in parts)
+    else:
+        # A line each of different aged products: Jaylen Morgan's 45 Aged
+        # Veteran and 50 Aged Final Expense.
+        parts = jobs.parts_from_invoice_lines(card.get("fields") or {}, lines)
+        if parts:
+            said = "Counts from the invoice's lines: " + ", ".join(f"{one['leads']} {one['package']}" for one in parts)
     if not parts:
         return card
     fields = dict(card.get("fields") or {})
-    said = "Counts from the invoice's lines, matched to each age by price a lead (the older, the cheaper): " + \
-        ", ".join(f"{one['leads']} {one['package']} at {one['priced']}" for one in parts)
     fields["notes"] = "\n".join(one for one in (str(fields.get("notes") or "").strip(), said) if one)
     return {**card, "parts": parts, "fields": fields,
             "source": f"{card.get('source') or ''}\nPayra invoice {number} lines: "

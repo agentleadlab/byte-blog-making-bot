@@ -6050,3 +6050,24 @@ def test_a_team_note_saying_aged_and_its_age_moves_the_card_over_the_product(ord
     asyncio.run(client._order_refresh(_bot(message), "900", settle=0))
     assert moved == [("card1", "aged")], order.responder.sent
     assert jobs.notes_say_aged("400 aged spanish iul 180+ days") and not jobs.notes_say_aged("Spanish IUL 25 TX")
+
+
+def test_an_aged_order_with_its_counts_only_on_the_invoice_lines():
+    """Jaylen Morgan: 45 "Text-Verified Aged Veteran Leads" and 50 "Text-
+    Verified Aged Final Expense Leads" on INV-20844, the note only "Aged Vets
+    and Aged FEX" - held for "how many leads"."""
+    lines = [{"qty": 45.0, "each": 230.25, "text": "Text-Verified Aged Veteran Leads × 45 @ $230.25"},
+             {"qty": 50.0, "each": 153.50, "text": "Text-Verified Aged Final Expense Leads × 50 @ $153.50"}]
+    fields = {"name": "Jaylen Morgan", "states": "TX, GA, NC, VA, IL", "notes": ""}
+    parts = jobs.parts_from_invoice_lines(fields, lines)
+    assert [(one["package"], one["leads"]) for one in parts] == [
+        ("Text-Verified Aged Veteran Leads", "45"), ("Text-Verified Aged Final Expense Leads", "50")]
+    source = "Lead Type: Aged Vets and Aged FEX\nState: TX GA NC VA IL\nPayra invoice INV-20844 lines: " + "; ".join(o["text"] for o in lines)
+    cards = jobs.split_order({"kind": "aged", "client": "Jaylen Morgan", "source": source, "parts": parts,
+                              "fields": fields}, today=date(2026, 10, 29))
+    assert len(cards) == 1 and cards[0]["fields"]["leads"] == "95 (45 + 50)"
+    assert jobs.split_doubts(cards, today=date(2026, 10, 29)) == []
+    # The same product twice, or a fresh line, is for a person.
+    assert jobs.parts_from_invoice_lines(fields, [lines[0], lines[0]]) == []
+    assert jobs.parts_from_invoice_lines(fields, [lines[0], {"qty": 25.0, "each": 1000.0,
+                                                             "text": "Text-Verified Veteran Leads × 25"}]) == []
