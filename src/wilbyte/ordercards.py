@@ -916,6 +916,14 @@ def doubts(card: dict, *, today) -> tuple[list[str], list[str]]:
         if said and not _ALL_BUT.search(said):
             wrong += [f"{part.get('package') or 'A line'}: {one}"
                       for one in _ordered_but_left_out(_codes(said), source)]
+    # A screenshot read with a guess in it: "(the text reads 'my', taken as
+    # Wyoming)" on Mohammad Kanan's packets - a state guessed is a state
+    # somebody didn't order.
+    notes = str(fields.get("notes") or "")
+    guessed = re.search(r"\([^()]*\b(?:taken\s+as|assumed|unclear|illegible)\b[^()]*\)", notes, re.IGNORECASE)
+    if guessed:
+        wrong.append(f"A screenshot was read with a guess: “{guessed.group(0).strip('()')}” - check it before "
+                     "it goes out")
     # Packets with states of their own, read as one list: Mohammad Kanan's
     # 600 Aged Vets in six packets - one of fifteen states, two of six, two
     # of "all states except ny ak ha" - went out as one States list of every

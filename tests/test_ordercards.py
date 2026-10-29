@@ -6012,3 +6012,20 @@ def test_no_notes_on_the_invoice_isnt_a_note_and_an_empty_card_is_held():
     wrong, _ = ordercards.doubts({"kind": "fresh", "source": post, "fields": {
         "name": "Edgar Arciniega", "states": "", "package": "", "leads": ""}}, today=date(2026, 10, 28))
     assert any("Nothing to make a card from" in one for one in wrong)
+
+
+def test_packet_counts_add_up_and_a_guessed_state_is_held():
+    """Mohammad Kanan's "600 Aged Vets ... 6 separate google sheets": 100 a
+    packet, each line held as "isn't in the order" - and one state read off
+    the screenshot as a guess, "(the text reads 'my', taken as Wyoming)"."""
+    source = "NAME: Kanan Kapital Llc\n600 Aged Vets\n30-90\n6 separate google sheets\nsee SS for state breakdown"
+    parts = [{"kind": "aged", "package": "Aged Vets 30-90", "leads": str(n), "states": st, "launch_iso": ""}
+             for n, st in ((100, "OR"), (100, "IL, IA"), (100, "IN, GA"), (100, "VA, SC"), (200, "CO, CA"))]
+    notes = "📷 2 packages Colorado, California (the text reads 'my', taken as Wyoming)"
+    cards = jobs.split_order({"kind": "aged", "client": "Kanan Kapital Llc", "source": source + "\n" + notes,
+                              "parts": parts, "fields": {"name": "Kanan Kapital Llc", "notes": notes}},
+                             today=date(2026, 10, 29))
+    wrong = jobs.split_doubts(cards, today=date(2026, 10, 29))
+    assert not [one for one in wrong if "leads isn't in the order" in one], wrong
+    assert any("read with a guess" in one and "taken as Wyoming" in one for one in wrong)
+    assert not jobs._packet_counts(source, [100, 100, 100, 100, 100])

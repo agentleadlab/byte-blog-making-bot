@@ -15135,6 +15135,28 @@ def agent_cards(card: dict, *, today=None) -> list[dict]:
     return out
 
 
+_PACKET_TOTAL = re.compile(r"(?<![\d$.,])(\d[\d,]*)\s+aged\b", re.IGNORECASE)
+_PACKET_COUNT = re.compile(r"(?<![\d$.,])(\d{1,2})\s+(?:separate\s+)?(?:google\s+sheets?|packets?|packages?|batch(?:es)?)\b",
+                           re.IGNORECASE)
+
+
+def _packet_counts(source: str, counts) -> bool:
+    """Whether the lines' counts are the order's packets: Mohammad Kanan's
+    "600 Aged Vets ... 6 separate google sheets", a packet 100, read as 100,
+    100, 100, 100 and 200 - each held as "isn't in the order"."""
+    counts = [one for one in counts if one is not None]
+    totals = {int(one.replace(",", "")) for one in _PACKET_TOTAL.findall(source or "")}
+    packets = {int(one) for one in _PACKET_COUNT.findall(source or "")}
+    for total in totals:
+        for many in packets:
+            if many < 2 or total % many or sum(counts) != total:
+                continue
+            each = total // many
+            if all(one % each == 0 for one in counts):
+                return True
+    return False
+
+
 def split_doubts(cards: list[dict], *, today=None) -> list[str]:
     """What doesn't add up in a split order: each line's count and states
     have to be in the order as written, and each card gets what a single
@@ -15175,8 +15197,10 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
             said = [int(one) for one in re.findall(r"(?<![\d-])(\d{1,5})(?![\d+-])", bit.rsplit(":", 1)[-1])]
             if len(said) >= 2 and all(ordercards.count_said(one, source) for one in said):
                 by_state.add(sum(said))
+        packed = _packet_counts(source, counts[1:] if len(counts) > 1 else counts)
         for count in counts[1:] if len(counts) > 1 else counts:
-            if count is not None and not ordercards.count_said(count, source, total=True) and count not in by_state:
+            if count is not None and not ordercards.count_said(count, source, total=True) and count not in by_state \
+                    and not packed:
                 wrong.append(f"{name}: {count:,} leads isn't in the order")
             elif count is not None and ordercards.only_a_cap(count, source):
                 wrong.append(f"{name}: {count:,} is the daily cap the order gives, not how many they bought")
@@ -15207,6 +15231,15 @@ def split_doubts(cards: list[dict], *, today=None) -> list[str]:
                 wrong.append(f"{name}: no lead type — an aged card goes out as soon as it's made")
         elif states and not listed:
             wrong.append(f"{name}: “{states}” isn't a list of states")
+        # A screenshot read with a guess in it: "(the text reads 'my', taken
+        # as Wyoming)".
+        guessed = re.search(r"\([^()]*\b(?:taken\s+as|assumed|unclear|illegible)\b[^()]*\)",
+                            str(fields.get("notes") or ""), re.IGNORECASE)
+        if guessed:
+            said = (f"A screenshot was read with a guess: “{guessed.group(0).strip('()')}” - check it before it "
+                    "goes out")
+            if said not in wrong:
+                wrong.append(said)
         wrong += [f"{name}: {one}" for one in ordercards.agency_doubts(
             str(fields.get("package") or ""), str(fields.get("leads") or ""), source)]
         wrong += [f"{name}: {one}" for one in ordercards.launch_doubts(
