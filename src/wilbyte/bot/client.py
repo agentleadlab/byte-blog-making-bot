@@ -3436,6 +3436,12 @@ async def _comment_on_card(
     from .. import dailyops
 
     text, kind, day = dailyops.comment_target(said, today=_today(config))
+    # After hours, a task with no day said goes on tomorrow's cards - today's
+    # are in Done by then and nobody is there to see it.
+    tonight = _today(config)
+    later = dailyops.after_hours_day(said, today=tonight, hour=_board_hour(config)) if day == tonight else None
+    if later is not None:
+        day = later
 
     # Nothing to say, but a message being answered. That is the one being
     # put on the board - the reply RYTE receives carries none of its words.
@@ -3507,6 +3513,17 @@ async def _comment_on_card(
             partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures,
                     asked_by=_asker(message), guessed=guessed)
         )
+        if later is not None and not url and any(str(one).startswith("No ") and "card dated" in str(one)
+                                                 for one in problems):
+            # Tomorrow's cards not made yet: tonight's, as before.
+            later, day = None, tonight
+            title, url, problems = await asyncio.to_thread(
+                partial(jobs.comment_on_daily, config, kind=kind, day=day, text=text, tag=tag, pictures=pictures,
+                        asked_by=_asker(message), guessed=guessed)
+            )
+        elif later is not None and url:
+            problems.append(f"🌙 After {dailyops.AFTER_HOURS % 12} PM, so on tomorrow's card - today's are put "
+                            f"to bed. Say `today` to put it on today's.")
     except PIPELINE_ERRORS as exc:
         await responder.send(embed=embeds.error(f"Couldn't reach the board\n{exc}"))
         return
@@ -15137,6 +15154,14 @@ async def _publish_now(responder: Responder, config: Config, text: str) -> None:
     await responder.send(f"🚀 **{entry.title}** is live.")
     # Its day is free now, so whatever was queued behind it can come forward.
     await _rearrange(responder, config, offer=True)
+
+
+def _board_hour(config: Config) -> int:
+    """The hour on the board's clock."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    return _dt.now(ZoneInfo(config.schedule.timezone)).hour
 
 
 def _today(config: Config):

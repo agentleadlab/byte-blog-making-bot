@@ -123,3 +123,12 @@ def _payra_read_afresh():
     jobs._PAYRA_RECENT.clear()
     client._LEAD_REQUESTS[:] = [0.0, []]
     client._LEAD_TROUBLE[0] = ""
+
+
+@pytest.fixture(autouse=True)
+def _midday_on_the_board(monkeypatch):
+    """Midday on the board's clock, so a test run after 8 PM doesn't put its
+    "add to trello" on tomorrow's card."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_board_hour", lambda config: 12)

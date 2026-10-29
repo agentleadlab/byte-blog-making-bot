@@ -280,6 +280,21 @@ def _weekday_named(said: str, *, today: date) -> date | None:
     return None
 
 
+#: From this hour on the board's clock, a task for "today" is tomorrow's:
+#: "if its after 8 and cards get moved on done, add this type on next day
+#: aswell right? because we cant check the after 8 since we're out".
+AFTER_HOURS = 20
+
+
+def after_hours_day(text: str, *, today: date, hour: int) -> date | None:
+    """The next day, when it's after hours and the words name no day - else
+    None, and the day is the one they said."""
+    if hour < AFTER_HOURS or day_named(text, today=today) is not None or re.search(
+            r"\btoday(?:['’]s)?\b", str(text or ""), re.IGNORECASE):
+        return None
+    return today + timedelta(days=1)
+
+
 def day_named(text: str, *, today: date) -> date | None:
     """The day somebody asked about, or None when they meant today.
 

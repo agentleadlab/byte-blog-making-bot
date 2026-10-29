@@ -4887,3 +4887,17 @@ def test_an_update_that_starts_with_who_its_about():
     for job in ("Tyler Diaz needs a test lead", "Send Tyler Diaz the test lead",
                 "Kevin Westbrook signed, set him up please", "Thierry Schuller wants leads Mon-Fri"):
         assert not tagged.an_update(job), job
+
+
+def test_after_hours_a_task_goes_on_tomorrows_card():
+    """"if its after 8 and cards get moved on done, add this type on next day
+    aswell right? because we cant check the after 8 since we're out"."""
+    from datetime import date as _date
+
+    from wilbyte import dailyops
+
+    today = _date(2026, 10, 28)
+    assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=20) == _date(2026, 10, 29)
+    assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=19) is None
+    assert dailyops.after_hours_day("add to trello today tag nicole", today=today, hour=21) is None
+    assert dailyops.after_hours_day("add to trello on friday ads", today=today, hour=21) is None
