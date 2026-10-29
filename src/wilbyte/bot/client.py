@@ -2852,6 +2852,15 @@ async def _team_off(responder: Responder, config: Config, said: str) -> None:
         lines, problems = await asyncio.to_thread(jobs.setups_into_today, config, today, through)
     except PIPELINE_ERRORS as exc:
         lines, problems = [], [f"Couldn't move the setup cards: {exc}"]
+    # And on today's Ads and Ops checklists - the 11:30 link put the
+    # Saturday-Monday card on Friday's, which nobody opens.
+    try:
+        linked, link_problems = await asyncio.to_thread(partial(jobs.link_setup_on_day, config, for_day=today))
+    except PIPELINE_ERRORS as exc:
+        linked, link_problems = [], [f"Couldn't put the setup cards on today's checklists: {exc}"]
+    if linked:
+        lines.append("📌 Linked on today's checklists: " + ", ".join(linked))
+    problems += link_problems
     said_days = ", ".join(f"{one:%a %b %-d}" for one in sorted(kept))
     head = (f"🏖 Team out **{said_days}**. Today sets up everyone going live through **{through:%A %b %-d}**"
             if through > dailyops.next_day(today) else f"🏖 Team out **{said_days}** - noted.")

@@ -4947,3 +4947,33 @@ def test_a_day_out_moves_its_setups_onto_the_day_before(monkeypatch):
     assert "already in Today" in lines[0] and "moved from AUTOMATION DEPARTMENT into Today" in lines[1]
     dailyops.set_days_off([], today=thursday, clear=True)
     assert dailyops.days_off() == set()
+
+
+def test_the_day_before_a_day_out_links_both_setup_cards(monkeypatch, config):
+    """"will it also add the agent setup card to checklist?" - Friday out:
+    the Saturday-Monday card is Thursday's work, and goes on Thursday's Ads
+    and Ops with the Friday one, not on Friday's that nobody opens."""
+    from wilbyte import agents
+    from wilbyte.bot import jobs
+
+    thursday, friday = date(2026, 10, 29), date(2026, 10, 30)
+    weekend = "Agent Setup Going Live Saturday-Monday 10/31-11/02"
+    assert agents.setup_worked_on(weekend, thursday) == friday
+    dailyops.set_days_off([friday], today=thursday)
+    assert agents.setup_worked_on(weekend, thursday) == thursday
+    assert agents.setup_worked_on("Agent Setup Going Live Friday 10/30", thursday) == thursday
+
+    weekend_link = "https://trello.com/c/Wk31abcd/2-agent-setup-going-live-saturday-monday"
+    friday_link = "https://trello.com/c/Fr30abcd/1-agent-setup-going-live-friday-10-30"
+    board = LinkingChecklists({
+        "Today": [
+            {"id": "s1", "name": "Agent Setup Going Live Friday 10/30", "url": friday_link},
+            {"id": "ads", "name": "📊 Ads 10/29/26"},
+            {"id": "ops", "name": "💻 Ops 10/29/26"},
+        ],
+        "In Que": [{"id": "s2", "name": weekend, "url": weekend_link}],
+    }, held={"ads": person_lists("Jenn", "Kath", "Nicole"), "ops": person_lists("Therese")})
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: board)
+    added, problems = jobs.link_setup_on_day(config, for_day=thursday)
+    assert problems == [] and len(added) == 8
+    assert {name for _cl, name in board.items} == {friday_link, weekend_link}

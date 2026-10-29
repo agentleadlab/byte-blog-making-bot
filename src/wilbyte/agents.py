@@ -2473,7 +2473,19 @@ def setup_worked_on(title: str, near: date) -> date | None:
     Wednesday its work is finished and it walks on like anything else.
     """
     starts = setup_starts(title, near)
-    return starts - timedelta(days=1) if starts is not None else None
+    if starts is None:
+        return None
+    worked = starts - timedelta(days=1)
+    # The team out that day: the last day before it they're in - "were out
+    # tomorrow friday ... has to setup friday going live until monday going
+    # live". The weekend before a day out is no better.
+    from . import dailyops
+
+    off = dailyops.days_off()
+    if worked in off:
+        while worked in off or worked.weekday() >= 5:
+            worked -= timedelta(days=1)
+    return worked
 
 
 # A checklist line RYTE wrote: the agent's card, then what the leads are.

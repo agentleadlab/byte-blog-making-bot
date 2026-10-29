@@ -4019,59 +4019,62 @@ def link_setup_on_day(config: Config, *, for_day=None) -> tuple[list[str], list[
         lists = client.board_lists(config.secrets.trello_board_id)
         every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
 
-        setup = next(
-            (
-                card for card in every
-                if rules.is_setup_card(str(card.get("name", "")))
-                and rules.setup_worked_on(str(card.get("name", "")), day) == day
-            ),
-            None,
-        )
-        if setup is None:
-            return [], []
-
-        link = str(setup.get("url") or setup.get("shortUrl") or "")
-        short = trello.linked_card_id(link)
-        if not short:
-            return [], []
-
+        # Every one worked that day: the day before the team's out works its
+        # own and the day out's - Friday 10/30 and Saturday-Monday together.
+        setups = [
+            card for card in every
+            if rules.is_setup_card(str(card.get("name", "")))
+            and rules.setup_worked_on(str(card.get("name", "")), day) == day
+        ]
         dated = dailyops.cards_covering(every, day)
-        for kind, people in (("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE)):
-            card = dated.get(kind)
-            if card is None:
-                problems.append(
-                    f"No {dailyops.CARD_KINDS.get(kind, kind)} card dated {day:%m/%d/%y}"
-                )
-                continue
-            card_id = str(card.get("id") or "")
-            held = client.card_checklists(card_id)
-            by_name = {
-                " ".join(str(c.get("name") or "").split()).casefold(): c for c in held
-            }
-            for person in people:
-                found = by_name.get(" ".join(person.split()).casefold())
-                if found is None:
-                    # Not created here. The checklists are named by whoever
-                    # made the card, and "Kath" against a list that calls her
-                    # "Kathleen" would make a second one nobody reads.
-                    problems.append(f"{card.get('name')} has no {person!r} checklist")
-                    continue
-                if any(
-                    trello.linked_card_id(str(item.get("name") or "")) == short
-                    for item in found.get("checkItems") or []
-                ):
-                    continue
-                try:
-                    client.add_check_item(str(found.get("id") or ""), link)
-                except Exception as exc:
-                    problems.append(
-                        f"{card.get('name')} · {person} — {_short(exc, 120)}"
-                    )
-                    continue
-                added.append(f"{card.get('name')} · {person}")
+        for setup in setups:
+            link = str(setup.get("url") or setup.get("shortUrl") or "")
+            short = trello.linked_card_id(link)
+            if short:
+                _link_setup_onto(client, dated, day, link, short, added, problems)
     finally:
         client.close()
-    return added, problems
+    return added, list(dict.fromkeys(problems))
+
+
+def _link_setup_onto(client, dated: dict, day, link: str, short: str, added: list, problems: list) -> None:
+    """One setup card onto the day's Ads and Ops checklists."""
+    from .. import agents as rules
+    from .. import dailyops, trello
+
+    for kind, people in (("ads", rules.ADS_PEOPLE), ("ops", rules.OPS_PEOPLE)):
+        card = dated.get(kind)
+        if card is None:
+            problems.append(
+                f"No {dailyops.CARD_KINDS.get(kind, kind)} card dated {day:%m/%d/%y}"
+            )
+            continue
+        card_id = str(card.get("id") or "")
+        held = client.card_checklists(card_id)
+        by_name = {
+            " ".join(str(c.get("name") or "").split()).casefold(): c for c in held
+        }
+        for person in people:
+            found = by_name.get(" ".join(person.split()).casefold())
+            if found is None:
+                # Not created here. The checklists are named by whoever
+                # made the card, and "Kath" against a list that calls her
+                # "Kathleen" would make a second one nobody reads.
+                problems.append(f"{card.get('name')} has no {person!r} checklist")
+                continue
+            if any(
+                trello.linked_card_id(str(item.get("name") or "")) == short
+                for item in found.get("checkItems") or []
+            ):
+                continue
+            try:
+                client.add_check_item(str(found.get("id") or ""), link)
+            except Exception as exc:
+                problems.append(
+                    f"{card.get('name')} · {person} — {_short(exc, 120)}"
+                )
+                continue
+            added.append(f"{card.get('name')} · {person}")
 
 
 def _paid_for(desc: str) -> str:
