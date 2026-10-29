@@ -1049,6 +1049,62 @@ def day_before(day: date) -> date:
 FRIDAY = 4
 
 
+#: The days the team is out - "were out tomorrow friday and we'll back
+#: monday so Therese or the team has to setup friday going live until monday
+#: going live". Kept in state/team-off.json as ISO dates.
+OFF_FILE = "team-off.json"
+
+
+def _off_path():
+    from .state import _state_dir
+
+    return _state_dir() / OFF_FILE
+
+
+def days_off() -> set[date]:
+    import json
+
+    try:
+        said = json.loads(_off_path().read_text())
+    except (OSError, ValueError):
+        return set()
+    found = set()
+    for one in said if isinstance(said, list) else []:
+        try:
+            found.add(date.fromisoformat(str(one)))
+        except ValueError:
+            continue
+    return found
+
+
+def set_days_off(days, *, today: date, clear: bool = False) -> set[date]:
+    """The team's days out, with `days` added (or all of them cleared) and
+    any that have passed dropped. What's kept."""
+    import json
+
+    kept = set() if clear else {one for one in days_off() if one >= today}
+    kept |= {one for one in days or () if one >= today}
+    path = _off_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sorted(one.isoformat() for one in kept)))
+    return kept
+
+
+def days_off_said(text: str, *, today: date) -> list[date]:
+    """The days a "team off ..." names - "friday", "tomorrow", "10/30 and
+    11/02", "friday and monday"."""
+    found = []
+    for bit in re.split(r"\s*(?:,|&|/(?!\d)|\band\b|\bthrough\b|\bto\b)\s*", str(text or ""), flags=re.IGNORECASE):
+        day = day_named(bit, today=today)
+        if day is not None and day not in found:
+            found.append(day)
+    return found
+
+
+def _usual_through(day: date) -> date:
+    return day + timedelta(days=3 if day.weekday() == FRIDAY else 1)
+
+
 def chased_through(day: date) -> date:
     """The last launch day worth chasing about on `day`.
 
@@ -1058,8 +1114,17 @@ def chased_through(day: date) -> date:
     all three are set up before anybody goes home, and all three want ticking
     before anybody goes home. Asking on the Monday morning is asking after the
     leads have already started flowing.
+
+    And through the team's days out: the day before them is the last day
+    anybody sets up whatever those days would have.
     """
-    return day + timedelta(days=3 if day.weekday() == FRIDAY else 1)
+    through, off, at = _usual_through(day), days_off(), day
+    # Each day out after this one, and a weekend straight after one: Friday
+    # out is the Saturday-Monday card's setups as well.
+    while next_day(at) in off or (next_day(at).weekday() >= 5 and (at in off or (at != day and at.weekday() >= 5))):
+        at = next_day(at)
+        through = max(through, _usual_through(at))
+    return through
 
 
 def days_chased(day: date) -> str:

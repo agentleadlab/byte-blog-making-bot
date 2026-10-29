@@ -16756,3 +16756,41 @@ def counts_by_price(parts: list[dict], lines: list[dict], total: float | None) -
         out[part_at]["priced"] = f"${per_lead[line_at]:,.2f}/lead"
     return out
 
+
+def setups_into_today(config: Config, today, through) -> tuple[list[str], list[str]]:
+    """Every setup card for a launch from tomorrow through `through`, into
+    Today - the team is out on the days that would have worked them. (a line
+    each, problems)."""
+    from .. import agents, dailyops, trello
+
+    client = open_trello(config)
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        home = trello.find_list(lists, agents.TODAY)
+        if home is None:
+            return [], [f"The board has no list called {agents.TODAY!r}"]
+        names = {str(one.get("id")): str(one.get("name") or "") for one in lists}
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        lines, problems, seen = [], [], set()
+        day = dailyops.next_day(today)
+        while day <= through:
+            card = agents.find_setup_card(every, day)
+            if card is None:
+                problems.append(f"⚠ No setup card covers {day:%a %b %-d} yet - one comes at 6 AM two days ahead.")
+            elif str(card.get("id")) not in seen:
+                seen.add(str(card.get("id")))
+                where = names.get(str(card.get("idList") or ""), "")
+                url = str(card.get("shortUrl") or card.get("url") or "")
+                if where in (agents.TODAY, dailyops.QUALITY_CHECK, agents.DONE):
+                    lines.append(f"→ **{card.get('name')}** is already in {where} <{url}>")
+                else:
+                    try:
+                        client.move_card(str(card.get("id")), str(home.get("id")))
+                        lines.append(f"→ **{card.get('name')}** moved from {where or '?'} into Today <{url}>")
+                    except Exception as exc:
+                        problems.append(f"⚠ Couldn't move {card.get('name')!r} — {_short(exc, 120)}")
+            day = dailyops.next_day(day)
+        return lines, problems
+    finally:
+        client.close()
+

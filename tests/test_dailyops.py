@@ -4901,3 +4901,49 @@ def test_after_hours_a_task_goes_on_tomorrows_card():
     assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=19) is None
     assert dailyops.after_hours_day("add to trello today tag nicole", today=today, hour=21) is None
     assert dailyops.after_hours_day("add to trello on friday ads", today=today, hour=21) is None
+
+
+def test_a_day_out_moves_its_setups_onto_the_day_before(monkeypatch):
+    """"were out tomorrow friday and we'll back monday so Therese or the team
+    has to setup friday going live until monday going live"."""
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    from wilbyte import dailyops
+    from wilbyte.bot import jobs, mentions
+
+    thursday = _date(2026, 10, 29)
+    assert mentions.parse("<@1> team off friday").action == "teamoff"
+    assert mentions.parse("<@1> we're out tomorrow").action == "teamoff"
+    assert dailyops.days_off_said("team off friday", today=thursday) == [_date(2026, 10, 30)]
+    assert dailyops.days_off_said("team off 10/30 and 11/02", today=thursday) == [_date(2026, 10, 30),
+                                                                                   _date(2026, 11, 2)]
+    assert dailyops.chased_through(thursday) == _date(2026, 10, 30)
+    dailyops.set_days_off([_date(2026, 10, 30)], today=thursday)
+    assert dailyops.chased_through(thursday) == _date(2026, 11, 2)
+    assert dailyops.chased_through(_date(2026, 10, 28)) == thursday
+
+    moved = []
+    cards = {"Q": [{"id": "fri", "name": "Agent Setup Going Live Friday 10/30", "idList": "T"}],
+             "A": [{"id": "wknd", "name": "Agent Setup Going Live Saturday-Monday 10/31-11/02", "idList": "A"}]}
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "T", "name": "Today"}, {"id": "A", "name": "AUTOMATION DEPARTMENT"}]
+
+        def list_cards(self, list_id):
+            return cards.get("Q" if list_id == "T" else "A", [])
+
+        def move_card(self, card_id, list_id, position="top"):
+            moved.append((card_id, list_id))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    lines, problems = jobs.setups_into_today(config, thursday, _date(2026, 11, 2))
+    assert moved == [("wknd", "T")] and not problems
+    assert "already in Today" in lines[0] and "moved from AUTOMATION DEPARTMENT into Today" in lines[1]
+    dailyops.set_days_off([], today=thursday, clear=True)
+    assert dailyops.days_off() == set()

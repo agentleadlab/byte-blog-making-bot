@@ -1743,6 +1743,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
                 return
 
+            if request.action == "teamoff":
+                await _team_off(responder, config, request.brief or "")
+                return
+
             if request.action == "backupnow":
                 await _backup_now(bot, responder)
                 return
@@ -2825,6 +2829,33 @@ async def _send_contract(responder: Responder, config: Config, said: str) -> Non
     if problem:
         lines.append(f"⚠ {problem}")
     await responder.send("\n".join(lines) or "Nothing came back, which shouldn't happen.")
+
+
+async def _team_off(responder: Responder, config: Config, said: str) -> None:
+    """"team off friday" - "were out tomorrow friday and we'll back monday so
+    Therese or the team has to setup friday going live until monday going
+    live". The days kept; the setup cards they'd have worked into Today now."""
+    from .. import dailyops
+
+    today = _today(config)
+    if re.search(r"\b(?:clear|cancel|none|back)\b", said, re.IGNORECASE) and not dailyops.days_off_said(said, today=today):
+        await asyncio.to_thread(partial(dailyops.set_days_off, [], today=today, clear=True))
+        await responder.send("✅ No days out kept - the setup cards come in on their usual days.")
+        return
+    named = dailyops.days_off_said(said, today=today)
+    kept = await asyncio.to_thread(partial(dailyops.set_days_off, named, today=today))
+    if not kept:
+        await responder.send("No days out kept. Say which: `@Ryte team off friday`, `team off 10/30 and 11/02`.")
+        return
+    through = dailyops.chased_through(today)
+    try:
+        lines, problems = await asyncio.to_thread(jobs.setups_into_today, config, today, through)
+    except PIPELINE_ERRORS as exc:
+        lines, problems = [], [f"Couldn't move the setup cards: {exc}"]
+    said_days = ", ".join(f"{one:%a %b %-d}" for one in sorted(kept))
+    head = (f"🏖 Team out **{said_days}**. Today sets up everyone going live through **{through:%A %b %-d}**"
+            if through > dailyops.next_day(today) else f"🏖 Team out **{said_days}** - noted.")
+    await responder.send("\n".join([head, *lines, *problems]))
 
 
 async def _card_find(responder: Responder, config: Config, name: str) -> None:

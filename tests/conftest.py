@@ -132,3 +132,11 @@ def _midday_on_the_board(monkeypatch):
     from wilbyte.bot import client
 
     monkeypatch.setattr(client, "_board_hour", lambda config: 12)
+
+
+@pytest.fixture(autouse=True)
+def _team_in_every_day(tmp_path, monkeypatch):
+    """No days out unless a test says so, and none written anywhere real."""
+    from wilbyte import dailyops
+
+    monkeypatch.setattr(dailyops, "_off_path", lambda: tmp_path / "team-off.json")

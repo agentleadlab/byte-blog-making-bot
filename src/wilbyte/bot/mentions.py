@@ -1048,6 +1048,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # A person's name - a word or four, not "it" or "the board".
     if who and len(who.split()) <= 4 and not re.match(r"(?:the|it|this|that|my|our|everyone|everybody)\b", who, re.IGNORECASE):
         return MentionRequest(action="hubcheck", brief=who)
+    # "were out tomorrow friday and we'll back monday" - the team's days out.
+    if re.match(r"\s*(?:(?:the\s+)?team\s+(?:is\s+)?(?:off|out)|(?:we(?:'re|\s+are)\s+)?(?:off|out)\s+"
+                r"(?:on\s+)?(?:tomorrow|today|mon|tue|wed|thu|fri|sat|sun|\d{1,2}/\d{1,2})|days?\s+off)\b",
+                text, re.IGNORECASE):
+        return MentionRequest(action="teamoff", brief=text)
     if re.match(r"\s*(?:back\s*up|backup)(?:\s+(?:now|yourself|your\s+memory))?\s*[.?!]*\s*$", text, re.IGNORECASE):
         return MentionRequest(action="backupnow", brief=text)
     if re.match(r"\s*restore\s+(?:your\s+|the\s+|my\s+)?(?:state|memory)\s*[.?!]*\s*$", text, re.IGNORECASE):
@@ -1547,6 +1552,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > New ones are checked by themselves and only the short ones said
 > @RYTE **update** — take a newly pushed version now instead of at the next
 > check (every 2 minutes). Never with a run open
+> @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.
 > @RYTE **backup now** — my memory into iCloud Drive › Ryte Backups this minute. It
 > happens by itself every night from 3am too; the last 14 nights are kept
 > @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the
