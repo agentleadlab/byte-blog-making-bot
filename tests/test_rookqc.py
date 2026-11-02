@@ -231,3 +231,20 @@ def test_the_qc_commands_check_today_unless_told():
     assert client._qc_days("setup qc", monday) == [monday]
     assert client._qc_days("aged qc 3 days", monday) == [date(2026, 10, 31), date(2026, 11, 1), monday]
     assert client._qc_days("setup qc yesterday", monday) == [date(2026, 11, 1)]
+
+
+def test_live_on_the_hub_puts_what_went_before_aside():
+    """Matthew Stewart, live with 3 delivered: Nova's earlier "I can't find a
+    PAID payment" still under Handed to the team, with an Ask button.
+    Cheyenne Williams, live on the states she paid for: "Rook's setup has no
+    states"."""
+    nova = "Handed to the team: I can't find a PAID payment for Jonathan Carter in #new-payment."
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub(status="live", delivered=3), sheet_rows=3)
+    assert result.todo == [] and result.problems == []
+    assert any("Handed to the team earlier" in one for one in result.notes)
+    bare = ROOK.replace("States: TX, FL, GA", "States: same as before")
+    result = rookqc.check(PAYRA, [("Rook", bare), ("Nova", NOVA)], hub=_hub(status="live", delivered=15), sheet_rows=15)
+    assert result.problems == [], result.problems
+    # Not going yet: the hand-offs are still the team's work.
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(status="paused"))
+    assert result.todo

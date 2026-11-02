@@ -247,6 +247,20 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         for one in [one for one in result.problems if "gives no lead count" in one]:
             result.problems.remove(one)
             result.notes.append(one + f" - the hub has {ordered} ordered")
+    # Nor Rook's states left out when the hub's are the payment's: Cheyenne
+    # Williams, live on AL and OR as paid for, flagged "Rook's setup has no
+    # states".
+    if hub is not None and getattr(hub, "states", ()) and not any(one.startswith("The hub states")
+                                                                  or one.startswith("The hub shows no states")
+                                                                  for one in result.problems):
+        for one in [one for one in result.problems if one.startswith("Rook's setup has no states")]:
+            result.problems.remove(one)
+            result.notes.append(one + " - the hub has the right ones")
+    # Live or delivering: what was handed over before the setup is done
+    # with - Matthew Stewart's "I can't find a PAID payment" under a tick.
+    if going and result.todo:
+        result.notes += [f"Handed to the team earlier: {one}" for one in dict.fromkeys(result.todo)]
+        result.todo = []
     if sheet_problem:
         result.problems.append(f"The sheet: {sheet_problem}")
     elif sheet_rows is not None:
