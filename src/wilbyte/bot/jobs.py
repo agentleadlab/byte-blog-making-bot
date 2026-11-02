@@ -16870,12 +16870,13 @@ def aged_sheet_read(config: Config, link: str) -> tuple[int | None, dict | None,
             tabs = client.tabs(sheet_id)
             if not tabs:
                 return None, None, "no tabs I can read"
-            title = str((tabs[0] or {}).get("title") or "Sheet1")
-            rows = client.rows(sheet_id, f"'{title}'!A1:Z2000")
+            titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:6]]
+            every = client.rows_of(sheet_id, [f"'{title}'!A1:Z2000" for title in titles])
     except Exception as exc:
         return None, None, f"couldn't open it ({_short(exc, 100)})"
-    leads, states = agedqc.sheet_states(rows)
-    if not leads and rows:
-        return None, None, "no State column to read it by"
-    return leads, states, ""
+    # The tab holding the leads: the one with the most rows that have a state.
+    best = max((agedqc.sheet_states(rows) for rows in every), key=lambda got: got[0], default=(0, {}))
+    if not best[0]:
+        return None, None, "no column of states on any tab to count the leads by"
+    return best[0], best[1], ""
 

@@ -66,3 +66,14 @@ def test_asking_for_it():
 
     assert mentions.parse("<@1> aged qc").action == "agedqc"
     assert mentions.parse("<@1> aged qc 3 days").action == "agedqc"
+
+
+def test_the_state_column_is_found_by_what_it_holds():
+    """Kory Parent's sheet: owned by agentleadlab, and "The sheet itself
+    wasn't checked" - a link banner above the leads, and no heading called
+    State to find the column by."""
+    rows = [["https://agentleadlab.com/replace"], ["First", "Last", "Phone", "Location", "Priority"],
+            ["Ann", "Lee", "555", "Arizona", "high"], ["Bo", "Ray", "556", "LA", "high"],
+            ["https://agentleadlab.com/replace"], ["Cy", "Fox", "557", "Texas", "low"]]
+    assert agedqc.sheet_states(rows) == (3, {"AZ": 1, "LA": 1, "TX": 1})
+    assert agedqc.sheet_states([["Name"], ["Ann"]]) == (0, {})

@@ -179,26 +179,34 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
 
 
 def sheet_states(rows: list) -> tuple[int, dict]:
-    """(leads on the sheet, how many in each state) - the first row with a
-    "State" heading is the heading row."""
+    """(leads on the sheet, how many in each state). The state column is the
+    one whose cells are states - whatever its heading says, with banners and
+    link rows above it: Kory Parent's sheet went "wasn't checked" looking for
+    a heading called State. A lead is a row with a state in that column."""
     rows = [list(one) for one in rows or []]
-    for at, row in enumerate(rows):
-        heads = [str(cell or "").strip().casefold() for cell in row]
-        column = next((i for i, head in enumerate(heads) if head in ("state", "states", "st")
-                       or head.startswith("state")), None)
-        if column is None:
-            continue
-        counts, leads = {}, 0
-        for body in rows[at + 1:]:
-            if not any(str(cell or "").strip() for cell in body):
-                continue
+    hits: dict = {}
+    for row in rows:
+        for at, cell in enumerate(row):
+            if _cell_state(cell):
+                hits[at] = hits.get(at, 0) + 1
+    if not hits:
+        return 0, {}
+    column = max(hits, key=lambda at: hits[at])
+    counts, leads = {}, 0
+    for row in rows:
+        code = _cell_state(row[column] if column < len(row) else "")
+        if code:
             leads += 1
-            said = str(body[column] if column < len(body) else "").strip()
-            code = _state_code(said) or (said.upper() if said.upper() in US_STATES else "")
-            if code:
-                counts[code] = counts.get(code, 0) + 1
-        return leads, counts
-    return 0, {}
+            counts[code] = counts.get(code, 0) + 1
+    return leads, counts
+
+
+def _cell_state(cell) -> str:
+    """The state a cell holds - "AZ", "Arizona", "arizona " - or ""."""
+    said = " ".join(str(cell or "").split())
+    if not said or len(said) > 20:
+        return ""
+    return said.upper() if said.upper() in US_STATES and said.isupper() else _state_code(said)
 
 
 def said(result: Checked) -> str:
