@@ -649,7 +649,7 @@ def test_aged_orders_are_off_for_now_and_left_alone_said_so(order, monkeypatch):
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
     assert order.made == [] and "900" not in ordercards.load()
     [(said, _view)] = _said(order)
-    assert "aged leads — those aren't made into cards for now" in said
+    assert "aged leads — Nova pulls those now" in said
 
     order.kind = "fresh"
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
@@ -665,9 +665,11 @@ def test_order_check_with_aged_off(order, monkeypatch):
     assert "⏸ Aged Leads orders: off for now" in said and "❌" not in said
 
 
-def test_aged_orders_are_on():
-    """"i want ryte to do the same thing for the aged leads now"."""
-    assert client.AGED_ORDERS_ON is True
+def test_aged_orders_are_nova_s_now():
+    """"Ryte doesnt need to create aged leads card anymore, everything is
+    automated on that part going forward, but i want ryte qc-ing it
+    instead"."""
+    assert client.AGED_ORDERS_ON is False and client.AGED_FROM_INVOICE is False
 
 
 def test_taking_the_gavel_off_and_putting_it_back_makes_a_fresh_card(order):
@@ -1373,6 +1375,9 @@ def test_invoice_note_shows_every_note_field_as_payra_has_it(order, monkeypatch)
 
 
 def test_an_aged_payment_missed_while_down_gets_its_card_on_start(order, monkeypatch):
+    # The way it worked while RYTE made aged cards.
+    monkeypatch.setattr(client, "AGED_FROM_INVOICE", True)
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", True)
     now = datetime(2026, 10, 14, 16, 30, tzinfo=timezone.utc)
     paid = _aged_post(960)
     paid.created_at, paid.reactions = datetime(2026, 10, 14, 16, 10, tzinfo=timezone.utc), []
@@ -2116,6 +2121,9 @@ def test_the_audit_says_what_has_a_card_and_what_was_missed(monkeypatch):
     """"did ryte created all of the cards that he can create already? did he
     not miss anything?"."""
     from datetime import datetime, timezone
+
+    # The way it read while RYTE made aged cards.
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", True)
 
     at = datetime(2026, 10, 14, 19, 0, tzinfo=timezone.utc)
 
@@ -6083,3 +6091,40 @@ def test_a_plain_order_audit_reaches_back_over_the_teams_days_out():
     assert client._audit_days("order audit", monday) == [friday, date(2026, 10, 31), date(2026, 11, 1), monday]
     assert friday in dailyops.days_off(), "kept past the day itself"
     assert client._audit_days("order audit 2 days", monday) == [date(2026, 11, 1), monday]
+
+
+def test_with_aged_cards_off_a_mixed_order_makes_only_its_new_agent_card(order, monkeypatch):
+    """Aged and new-agent leads bought together: the New Agent card, the aged
+    lines listed on it - Nova pulls the aged ones."""
+    monkeypatch.setattr(client, "AGED_ORDERS_ON", False)
+    order.kind = "fresh"
+    order.fields = {"name": "Jared Flanigan", "states": "AL, AZ", "package": "Fresh Vets", "leads": "10", "notes": ""}
+    monkeypatch.setattr(jobs, "split_order", lambda card, today=None: [
+        {"kind": "aged", "name": "Aged Leads - Jared Flanigan", "client": "Jared Flanigan", "fields": {}, "desc": "a"},
+        {"kind": "fresh", "name": "New Agent - Jared Flanigan", "client": "Jared Flanigan", "fields": {}, "desc": "f"}])
+    made = []
+
+    async def making(bot, payload, key, responder, message, card, subs, link, thread_id):
+        made.extend(one["kind"] for one in subs)
+
+    monkeypatch.setattr(client, "_order_make_split", making)
+    asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
+    assert made == ["fresh"]
+
+
+def test_the_audit_reads_an_aged_payment_by_novas_pull():
+    from datetime import datetime, timedelta, timezone
+
+    from wilbyte import agedqc
+
+    post = SimpleNamespace(id=950, created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+                           jump_url="https://discord.com/channels/1/700/950", embeds=[], message_snapshots=[],
+                           content="New Payment | Payra\nNAME: Kory Parent\nAMOUNT: $207.00\n"
+                                   "PRODUCT: Text-Verified Aged IUL Leads", reactions=[],
+                           author=SimpleNamespace(bot=True))
+    assert client._audit_line(post, {}, [])[0] == "missing"
+    agedqc.remember("950", agedqc.Checked(client="Kory Parent"))
+    assert client._audit_line(post, {}, [])[0] == "ok"
+    agedqc.remember("950", agedqc.Checked(client="Kory Parent", problems=["paid for 25, Nova pulled 20"]))
+    stands, line = client._audit_line(post, {}, [])
+    assert stands == "check" and "Nova pulled 20" in line

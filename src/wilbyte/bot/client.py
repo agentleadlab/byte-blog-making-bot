@@ -543,6 +543,11 @@ class WilByteBot(discord.Client):
         if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _aged_payment(message)):
             _also_running(self.loop.create_task(_aged_from_invoice(self, message)))
+        # Nova saying an aged order's leads are pulled: checked against the
+        # payment - "i want ryte qc-ing it instead".
+        if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
+                and _aged_pull_done(message)):
+            _also_running(self.loop.create_task(_aged_qc(self, message)))
         # A new Spark pool member: its New Agent card, nobody's gavel needed.
         if (SPARK_AUTO and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_member(message)):
@@ -1741,6 +1746,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 from .. import usage
 
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
+                return
+
+            if request.action == "agedqc":
+                await _aged_qc_days(bot, responder, request.brief or "")
                 return
 
             if request.action == "teamoff":
@@ -9628,7 +9637,10 @@ ORDER_ASK_SECONDS = 24 * 60 * 60
 FRESH_ASKS_FIRST = False
 #: "actually focus on new agent setup for now, not aged leads" - an aged
 #: order gavelled is left alone, said so. True turns them back on.
-AGED_ORDERS_ON = True
+#: Off from Nov 2: "Ryte doesnt need to create aged leads card anymore,
+#: everything is automated on that part going forward, but i want ryte
+#: qc-ing it instead" - Nova pulls them, and RYTE checks each pull.
+AGED_ORDERS_ON = False
 #: Orders being read or waiting on their button right now - a second gavel
 #: meanwhile isn't a second card. Not kept over a restart, where the button
 #: is gone anyway: gavelling it again asks again.
@@ -10463,7 +10475,7 @@ def _gavel_counts(bot, payload) -> bool:
 #: internal note ... and ryte will just immediately create the card?" - an
 #: aged payment posted in #new-payment whose Payra invoice has a note gets
 #: its card at once, no thread or gavel.
-AGED_FROM_INVOICE = True
+AGED_FROM_INVOICE = False
 #: How long after an aged payment's post its card is made - time for the
 #: team to start the thread with the states. Notes after that update it.
 AGED_INVOICE_WAIT_SECONDS = 120
@@ -10863,8 +10875,8 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     if kind == "aged" and not AGED_ORDERS_ON:
         await _order_forget(key)
         if responder is not None:
-            await responder.send(f"🔨 {card['client'] or 'That order'} is aged leads — those aren't made into cards "
-                                 f"for now, so I've left it.\n<{link}>", quiet=True)
+            await responder.send(f"🔨 {card['client'] or 'That order'} is aged leads — Nova pulls those now and I "
+                                 f"check its pull when it says it's done, so there's no card.\n<{link}>", quiet=True)
         return
 
     if kind == "fresh" and FRESH_ASKS_FIRST:
@@ -10924,6 +10936,16 @@ async def _order_make(bot, payload, key: str, responder) -> None:
     # Patrick Moreno's four aged lines on one Aged Leads card, each new-agent
     # line on a New Agent card of its own.
     subs = jobs.split_order(card, today=_today(bot.config)) or jobs.agent_cards(card, today=_today(bot.config))
+    if subs and not AGED_ORDERS_ON:
+        # Aged and new-agent leads bought together: the New Agent cards only,
+        # the aged lines still listed on them - Nova pulls the aged ones.
+        subs = [one for one in subs if one.get("kind") != "aged"]
+        if not subs:
+            await _order_forget(key)
+            if responder is not None:
+                await responder.send(f"🔨 {card.get('client') or 'That order'} is aged leads only — Nova pulls those "
+                                     f"now and I check its pull, so there's no card.\n<{link}>", quiet=True)
+            return
     if subs:
         if getattr(payload, "aged_only", False) and any(one["kind"] == "fresh" for one in subs):
             # Made on its own from an invoice: new-agent cards wait for a gavel.
@@ -11282,6 +11304,101 @@ async def _aged_counts_off_the_invoice(bot, message, card: dict) -> dict:
     return {**card, "parts": parts, "fields": fields,
             "source": f"{card.get('source') or ''}\nPayra invoice {number} lines: "
                       + "; ".join(one["text"] for one in lines)}
+
+
+def _aged_pull_done(message) -> bool:
+    """Nova's "<name>'s aged order is done" in a payment's thread."""
+    from .. import agedqc
+
+    parent = getattr(getattr(message, "channel", None), "parent", None)
+    return (parent is not None and "newpayment" in _plain_letters(getattr(parent, "name", ""))
+            and bool(agedqc.DONE.search(_all_of_it(message))))
+
+
+async def _aged_check_one(bot, thread, done_message) -> "object":
+    """One aged pull checked: the payment post the thread hangs off, Nova's
+    message, and the sheet when it opens. The result, kept."""
+    from .. import agedqc
+
+    post = await thread.parent.fetch_message(thread.id)
+    post_text, done_text = _all_of_it(post), _all_of_it(done_message)
+    first = agedqc.check(post_text, done_text)
+    rows, states, trouble = None, None, ""
+    if first.sheets:
+        try:
+            rows, states, trouble = await asyncio.to_thread(jobs.aged_sheet_read, bot.config, first.sheets[0])
+        except Exception as exc:
+            trouble = _readable(exc)
+    result = agedqc.check(post_text, done_text, sheet_rows=rows, sheet_states=states,
+                          sheet_problem=trouble if trouble and rows is None else "")
+    await asyncio.to_thread(agedqc.remember, str(post.id), result)
+    return post, result
+
+
+async def _aged_qc(bot, message) -> None:
+    """"i want ryte qc-ing it instead" - Nova's pull, said in Ryte The Goat:
+    Franklin tagged when it doesn't match."""
+    from .. import agedqc
+
+    try:
+        post, result = await _aged_check_one(bot, message.channel, message)
+    except Exception as exc:
+        log.warning("Couldn't QC the aged pull", exc_info=True)
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send(f"⚠ Couldn't check an aged pull: {_readable(exc)} <{message.jump_url}>")
+        return
+    responder = _order_responder(bot)
+    if responder is not None:
+        await responder.send((_card_ping(bot) if result.problems else "") + agedqc.said(result)
+                             + f"\n-# <{post.jump_url}>", quiet=not result.problems)
+
+
+async def _aged_qc_days(bot, responder: Responder, said: str) -> None:
+    """"@Ryte aged qc" - every aged payment of the day (or "aged qc 3 days"),
+    each pull checked again, and the ones Nova hasn't pulled."""
+    from .. import agedqc
+
+    days = _audit_days(said, _today(bot.config))
+    await responder.send(f"🔎 Checking the aged pulls for {', '.join(f'{one:%a %b %-d}' for one in days)}…", quiet=True)
+    good, bad, none = [], [], []
+    for day in days:
+        for post in await _payments_on(bot, day):
+            text = _all_of_it(post)
+            product = " ".join(((_PRODUCT.search(text) or [None, ""])[1]).split())
+            if not re.search(r"\baged\b", product, re.IGNORECASE):
+                continue
+            name = (_PAID_NAME.search(text) or [None, ""])[1].strip(" *") or "?"
+            thread = await _order_thread(bot, str(post.id), {})
+            done = None
+            if thread is not None:
+                try:
+                    async for one in thread.history(limit=60, oldest_first=True):
+                        if getattr(one.author, "bot", False) and agedqc.DONE.search(_all_of_it(one)):
+                            done = one
+                except Exception:
+                    done = None
+            if done is None:
+                none.append(f"⏳ **{name}** — Nova hasn't said it's pulled <{post.jump_url}>")
+                continue
+            try:
+                _post, result = await _aged_check_one(bot, thread, done)
+            except Exception as exc:
+                bad.append(f"⚠ **{name}** — couldn't check: {_readable(exc)} <{post.jump_url}>")
+                continue
+            if result.problems:
+                bad.append(f"⚠ **{name}** — " + "; ".join(result.problems) + f" <{post.jump_url}>")
+            else:
+                good.append(f"✅ **{name}** — " + "; ".join(result.ok[:2]))
+    lines = [f"🔎 **Aged QC** — {len(good)} match, {len(bad)} don't, {len(none)} not pulled yet", *bad, *none, *good]
+    chunk = ""
+    for line in lines:
+        if chunk and len(chunk) + len(line) + 1 > 1900:
+            await responder.send(chunk)
+            chunk = ""
+        chunk = f"{chunk}\n{line}" if chunk else line[:1900]
+    if chunk:
+        await responder.send(chunk)
 
 
 async def _lines_to_agents(bot, card: dict) -> dict:
@@ -12593,6 +12710,19 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
     gavelled = any(ordercards.is_gavel(one.emoji) for one in getattr(post, "reactions", None) or [])
     if gavelled:
         return "missing", f"❌ **{name}** ({bits}) — gavelled, **no card**: <{post.jump_url}>"
+    if aged and not AGED_ORDERS_ON:
+        # Nova pulls aged orders now; what counts is its pull and the QC.
+        from .. import agedqc
+
+        checked = agedqc.recalled().get(str(post.id))
+        if checked and not checked.get("problems"):
+            return "ok", f"✅ **{name}** ({bits}) — pulled by Nova, QC matches"
+        if checked:
+            return "check", (f"⚠ **{name}** ({bits}) — pulled by Nova, QC: " + "; ".join(checked["problems"])
+                             + f" <{post.jump_url}>")
+        if datetime.now(timezone.utc) - post.created_at < AGED_PULL_GRACE:
+            return "waiting", f"⏳ **{name}** ({bits}) — aged, Nova's pull on its way: <{post.jump_url}>"
+        return "missing", f"❌ **{name}** ({bits}) — aged, **no pull checked** — `aged qc` looks again: <{post.jump_url}>"
     if aged and "payra" in said.casefold():
         if post.created_at < AGED_AUTO_FROM:
             return "check", (f"🕘 **{name}** ({bits}) — before I made aged cards on my own, and no card on the "
@@ -12609,6 +12739,10 @@ def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, 
     if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said, re.IGNORECASE):
         return "subs", f"🔁 **{name}** ({bits}): <{post.jump_url}>"
     return "waiting", f"⏳ **{name}** ({bits}) — not gavelled yet, no card: <{post.jump_url}>"
+
+
+#: How long an aged payment waits for Nova's pull before the audit calls it missing.
+AGED_PULL_GRACE = timedelta(minutes=30)
 
 
 #: Two charges this close, to the same person, for about the same.

@@ -16856,3 +16856,26 @@ def setups_into_today(config: Config, today, through) -> tuple[list[str], list[s
     finally:
         client.close()
 
+
+def aged_sheet_read(config: Config, link: str) -> tuple[int | None, dict | None, str]:
+    """(leads on an aged order's sheet, how many in each state, a problem or
+    "") - the first tab, read to two thousand rows."""
+    from .. import agedqc, gsheets
+
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return None, None, "no sheet id in the link"
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            tabs = client.tabs(sheet_id)
+            if not tabs:
+                return None, None, "no tabs I can read"
+            title = str((tabs[0] or {}).get("title") or "Sheet1")
+            rows = client.rows(sheet_id, f"'{title}'!A1:Z2000")
+    except Exception as exc:
+        return None, None, f"couldn't open it ({_short(exc, 100)})"
+    leads, states = agedqc.sheet_states(rows)
+    if not leads and rows:
+        return None, None, "no State column to read it by"
+    return leads, states, ""
+
