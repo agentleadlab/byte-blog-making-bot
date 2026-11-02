@@ -370,3 +370,29 @@ def test_a_renewal_added_twice_on_the_hub():
     assert not any("still to deliver" in one for one in left.problems)
     assert any("left over from before" in one for one in left.notes)
     assert not any("still to deliver" in one for one in rookqc.check(PAYRA, talk, hub=_hub()).problems)
+
+
+def test_two_open_hub_rows_for_one_payment():
+    """Aaron Crane: "Aaron Crane" and "Aaron_Crane_2", 30 each, both
+    unsigned, for one payment of 30 - said ✅. And Nova's warning, handed to
+    the team: "the hub would add a second 30 leads ... (he'd be owed 60)"."""
+    nova = (NOVA + "\nHanded to the team: I have no way to move a payment from one order to another. If I run the "
+            "renewal again with INV-21170, the hub would add a second 30 leads to his order (he'd be owed 60) "
+            "instead of re-linking the payment.")
+    one = _hub(name="Jonathan Carter", status="unsigned", ordered=40, delivered=0)
+    two = _hub(name="Jonathan_Carter_2", status="unsigned", ordered=40, delivered=0)
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=one, hub_rows=[one, two])
+    said = " ".join(result.problems)
+    assert "2 open hub rows" in said and "80 to deliver for the 40 paid for" in said, result.problems
+    assert "Nova warns: I have no way to move a payment" in said
+    assert "✅" not in rookqc.said(result)
+    # An older order still delivering beside the new one isn't that.
+    older = _hub(name="Jonathan Carter", status="live", ordered=50, delivered=45)
+    fine = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=two, hub_rows=[older, two])
+    assert not any("open hub rows" in one or "added twice" in one for one in fine.problems), fine.problems
+
+
+def test_something_still_for_the_team_isnt_a_plain_tick():
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(), sheet_rows=1)
+    assert result.problems == [] and result.todo
+    assert "still something for the team" in rookqc.said(result)

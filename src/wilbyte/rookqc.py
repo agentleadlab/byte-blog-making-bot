@@ -284,6 +284,11 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
                 # The payment's right here - it's what this QC is of.
                 result.notes.append("Nova said it couldn't find the payment - it's this one in #new-payment")
                 continue
+            if _RISK.search(line):
+                # Nova warning what would go wrong - Aaron Crane's "the hub
+                # would add a second 30 leads ... (he'd be owed 60)".
+                result.problems.append(f"Nova warns: {line}")
+                continue
             result.todo.append(line)
     # On the hub and going, or delivered to: set up, whatever was said on
     # the way - Ibrahim Shalash's "I couldn't set up Ibrahim yet", live with 7
@@ -320,7 +325,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     else:
         _hub(result, hub, wanted)
     _delivered(result, fulfilled, paid)
-    _added_twice(result, hub, wanted, talk)
+    if not _set_up_twice(result, hub_rows, wanted, talk):
+        _added_twice(result, hub, wanted, talk)
     # Rook's setup for more than this payment - Ryan Gsell's 30 paid in two
     # payments of 15, "BOTH payments are in #new-payment".
     said_all = "\n".join(said for _who, said in talk)
@@ -351,6 +357,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if going and result.todo:
         result.notes += [f"Handed to the team earlier: {one}" for one in dict.fromkeys(result.todo)]
         result.todo = []
+    if going and not any("Set up twice?" in one or "added twice" in one for one in result.problems):
+        # The hub's going and holds no more than was paid for: what Nova
+        # warned of didn't happen.
+        for one in [one for one in result.problems if one.startswith("Nova warns: ")]:
+            result.problems.remove(one)
+            result.notes.append(one.replace("Nova warns: ", "Nova warned earlier: ", 1) + " - the hub doesn't show it")
     if sheet_problem:
         result.problems.append(f"The sheet: {sheet_problem}")
     elif sheet_rows is not None:
@@ -406,6 +418,9 @@ def _delivered(result: Checked, fulfilled, paid: Order, *, overflow: bool = Fals
         result.ok.append(f"Delivered {delivered} of {of}" + (", as paid for" if paid.count == of else ""))
 
 
+#: A handed-over line that warns of leads owed twice over.
+_RISK = re.compile(r"\b(?:second|twice|double[ds]?|duplicat\w*)\b[^.\n]{0,80}\b(?:leads?|order|renewal|owed)\b|"
+                   r"\bowed\s+\d+|\boverpa(?:id|y)\b", re.IGNORECASE)
 _NO_PAYMENT = re.compile(r"\bcan(?:'|’)?t\s+find\s+(?:a\s+|any\s+|the\s+)?(?:paid\s+)?payment|"
                          r"\bno\s+payment\b[^.]{0,60}\bfound\b|\bwhether\s+(?:he|she|they)(?:'s|\s+has)?\s+paid\b",
                          re.IGNORECASE)
@@ -560,6 +575,34 @@ def _hub(result: Checked, hub, paid: Order) -> None:
         result.problems.append("The hub has no sheet for them")
 
 
+def _several_payments(talk) -> bool:
+    said_all = "\n".join(said for _who, said in talk)
+    return bool(len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
+        r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE))
+
+
+def _set_up_twice(result: Checked, rows, paid: Order, talk) -> bool:
+    """Two open hub rows of this lead type, neither delivered to, holding
+    more than was paid for - Aaron Crane and Aaron_Crane_2, 30 each, both
+    unsigned, for one payment of 30: he'd be owed 60. True when said."""
+    if not rows or paid.count is None or _several_payments(talk):
+        return False
+    fresh = [one for one in rows if one is not None and not _wrong_kind(one, paid)
+             and str(getattr(one, "status", "") or "").casefold() not in FINISHED
+             and getattr(one, "ordered", None) and not (getattr(one, "delivered", None) or 0)]
+    if len(fresh) < 2:
+        return False
+    owed = sum(one.ordered for one in fresh)
+    extra = owed - paid.count
+    if extra < max(5, paid.count // 2):
+        return False
+    rows_said = " and ".join(f"{getattr(one, 'name', '?')} ({getattr(one, 'status', '') or '?'}, "
+                             f"{one.ordered} to deliver)" for one in fresh)
+    result.problems.append(f"{len(fresh)} open hub rows for this lead type, none delivered to yet - {rows_said}: "
+                           f"{owed} to deliver for the {paid.count} paid for. Set up twice?")
+    return True
+
+
 def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
     """More still to deliver on the hub than this payment bought: a renewal
     added twice - Luna's 50 for Marcus Uhrich on top of the 55 from
@@ -569,9 +612,7 @@ def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
     ordered, delivered = getattr(hub, "ordered", None), getattr(hub, "delivered", None) or 0
     if ordered is None or str(getattr(hub, "status", "") or "").casefold() in FINISHED:
         return
-    said_all = "\n".join(said for _who, said in talk)
-    if len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
-            r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE):
+    if _several_payments(talk):
         return  # one setup for several payments - Ryan Gsell's
     extra = ordered - delivered - paid.count
     if extra <= 0:
@@ -590,7 +631,8 @@ def said(result: Checked, *, link: str = "", amount: str = "") -> str:
     if result.problems:
         lines = [head + " — ⚠ needs a look:", *(f"• {one}" for one in result.problems)]
     else:
-        lines = [head + " — ✅ Rook, Nova and the hub match the payment"]
+        lines = [head + " — ✅ Rook, Nova and the hub match the payment"
+                 + (", but there's still something for the team:" if result.todo else "")]
     if result.todo:
         lines.append("**Handed to the team:**")
         lines += [f"• {one}" for one in dict.fromkeys(result.todo)]
