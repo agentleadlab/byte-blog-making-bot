@@ -196,7 +196,7 @@ def about(text: str, order: Order) -> bool:
 
 
 def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str = "", sheet_rows: int | None = None,
-          sheet_problem: str = "", hub_rows: list | None = None) -> Checked:
+          sheet_problem: str = "", hub_rows: list | None = None, paid_at=None) -> Checked:
     """The payment held up against Rook's setup, Nova's replies, the hub and
     the sheet. `talk`: [(who, what they said)] in #rook-nova, oldest first.
     `hub`: the hub's record for them, or None."""
@@ -219,8 +219,16 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.notes.append("Overflow order - delivered by the team, not set up on the hub")
         _delivered(result, fulfilled, paid, overflow=True)
         if not fulfilled:
-            result.problems.append("Overflow order, and nothing says it's delivered yet (no \"This order has been "
-                                   "fulfilled\")")
+            # Delivering takes the team days - Riley Noah's and Karli
+            # Kelley's pinged Franklin as wrong the day they paid. Only an
+            # order that's waited past that is.
+            waited = _days_since(paid_at)
+            if waited is not None and waited >= OVERFLOW_DAYS:
+                result.problems.append(f"Overflow order paid {waited} days ago, and nothing says it's delivered yet "
+                                       "(no \"This order has been fulfilled\")")
+            else:
+                result.todo.append("The team still delivers it from overflow - no \"This order has been fulfilled\" "
+                                   "yet")
         return result
     if not talk:
         result.problems.append("Rook and Nova haven't said anything about this payment in #rook-nova")
@@ -312,6 +320,19 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         else:
             result.ok.append(f"The sheet opens - {sheet_rows} lead row(s) on it")
     return result
+
+
+#: Days the team has to deliver an overflow order before it's said as late.
+OVERFLOW_DAYS = 3
+
+
+def _days_since(at) -> int | None:
+    from datetime import datetime as _dt, timezone as _tz
+    if at is None:
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=_tz.utc)
+    return (_dt.now(_tz.utc) - at).days
 
 
 #: An order that's overflow - the team's, delivered from overflow.

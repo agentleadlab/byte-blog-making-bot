@@ -11600,7 +11600,8 @@ async def _sqc_check(bot, key: str):
         except Exception as exc:
             sheet_problem = _readable(exc)
     result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
-                          sheet_problem=sheet_problem, hub_rows=hub_rows or None)
+                          sheet_problem=sheet_problem, hub_rows=hub_rows or None,
+                          paid_at=getattr(post, "created_at", None))
     result.aged_pull = aged_pull
     return post, result
 

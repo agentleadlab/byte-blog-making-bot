@@ -1,6 +1,7 @@
 """Rook and Nova's setups checked against each payment - "i want ryte qc-ing
 all of rook channel for me ... the sheet, and the actual hub"."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from wilbyte import rookqc
@@ -274,7 +275,10 @@ def test_an_overflow_order_is_checked_by_what_was_delivered():
     assert any("Delivered 15 of 15, as paid for" in one for one in result.ok)
     short = rookqc.check(post, [("Luna", "This order has been fulfilled — Delivered 6 of 6")])
     assert any("Delivered 6 of 6 - the payment was for 15" in one for one in short.problems)
-    assert any("nothing says it's delivered" in one for one in rookqc.check(post, []).problems)
+    fresh = rookqc.check(post, [], paid_at=datetime.now(timezone.utc) - timedelta(hours=2))
+    assert fresh.problems == [] and any("still delivers it" in one for one in fresh.todo), fresh.problems
+    late = rookqc.check(post, [], paid_at=datetime.now(timezone.utc) - timedelta(days=4))
+    assert any("paid 4 days ago, and nothing says it's delivered" in one for one in late.problems)
 
 
 def test_rooks_setup_for_two_payments():
