@@ -77,3 +77,10 @@ def test_the_state_column_is_found_by_what_it_holds():
             ["https://agentleadlab.com/replace"], ["Cy", "Fox", "557", "Texas", "low"]]
     assert agedqc.sheet_states(rows) == (3, {"AZ": 1, "LA": 1, "TX": 1})
     assert agedqc.sheet_states([["Name"], ["Ann"]]) == (0, {})
+
+
+def test_the_share_said_other_ways():
+    for said in ("sheet sent to kory@example.com", "sheet shared to **kory@example.com**",
+                 "access for kory@example.com"):
+        result = agedqc.check(POST, DONE.replace("sheet shared with kory@example.com", said))
+        assert not any("who the sheet was shared with" in one for one in result.problems), said

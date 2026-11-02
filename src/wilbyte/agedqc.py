@@ -36,7 +36,9 @@ _ORDERED = re.compile(
 _PULLED = re.compile(
     r"(?P<mark>✅|⚠️?|❌)?\s*(?P<package>[A-Za-z][A-Za-z0-9 +&/().'-]{1,60}?)\s*:\s*\**(?P<count>\d[\d,]*)\**\s+pulled"
     r"(?:\s+of\s+\**(?P<of>\d[\d,]*)\**)?\s*(?:\((?P<states>[^)]*)\))?", re.IGNORECASE)
-_SHARED = re.compile(r"\bshared\s+with\s+(?:their\s+email\s*:?\s*)?([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", re.IGNORECASE)
+_SHARED = re.compile(r"\b(?:shared|sent|given|invited)\s+(?:with|to)\s+(?:their\s+email\s*:?\s*)?(?:\**)?"
+                     r"([\w.+-]+@[\w-]+(?:\.[\w-]+)+)|\baccess\s+(?:for|to)\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)",
+                     re.IGNORECASE)
 _SHEET = re.compile(r"https://docs\.google\.com/spreadsheets/d/[\w-]+[^\s)>\]]*")
 _POST_EMAIL = re.compile(r"^\W*EMAIL:\**\s*([\w.+-]+@[\w-]+(?:\.[\w-]+)+)", re.IGNORECASE | re.MULTILINE)
 _POST_INVOICE = re.compile(r"\bINV-?\d+\b", re.IGNORECASE)
@@ -152,12 +154,13 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
         result.problems.append(f"Nova pulled {one.count} {one.package}, which isn't on the payment")
     email = _POST_EMAIL.search(str(post or ""))
     shared = _SHARED.search(str(done or ""))
+    shared_to = (shared.group(1) or shared.group(2)) if shared else ""
     if email and shared:
-        if shared.group(1).casefold() != email.group(1).casefold():
-            result.problems.append(f"The sheet was shared with {shared.group(1)}, but the payment's email is "
+        if shared_to.casefold() != email.group(1).casefold():
+            result.problems.append(f"The sheet was shared with {shared_to}, but the payment's email is "
                                    f"{email.group(1)}")
         else:
-            result.ok.append(f"Shared with {shared.group(1)}, the payment's email")
+            result.ok.append(f"Shared with {shared_to}, the payment's email")
     elif email and not shared:
         result.problems.append("Nova didn't say who the sheet was shared with")
     if not result.sheets:
