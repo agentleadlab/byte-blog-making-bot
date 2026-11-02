@@ -1082,7 +1082,9 @@ def set_days_off(days, *, today: date, clear: bool = False) -> set[date]:
     any that have passed dropped. What's kept."""
     import json
 
-    kept = set() if clear else {one for one in days_off() if one >= today}
+    # The past two weeks' kept too: Monday's order audit reaches back over
+    # Friday's day out.
+    kept = set() if clear else {one for one in days_off() if one >= today - timedelta(days=14)}
     kept |= {one for one in days or () if one >= today}
     path = _off_path()
     path.parent.mkdir(parents=True, exist_ok=True)

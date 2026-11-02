@@ -6071,3 +6071,15 @@ def test_an_aged_order_with_its_counts_only_on_the_invoice_lines():
     assert jobs.parts_from_invoice_lines(fields, [lines[0], lines[0]]) == []
     assert jobs.parts_from_invoice_lines(fields, [lines[0], {"qty": 25.0, "each": 1000.0,
                                                              "text": "Text-Verified Veteran Leads × 25"}]) == []
+
+
+def test_a_plain_order_audit_reaches_back_over_the_teams_days_out():
+    """"we were out for three days right because team is off friday, can ryte
+    order audit cover all 3 days ungravelled payments?" - Friday to Monday."""
+    from wilbyte import dailyops
+
+    friday, monday = date(2026, 10, 30), date(2026, 11, 2)
+    dailyops.set_days_off([friday], today=date(2026, 10, 29))
+    assert client._audit_days("order audit", monday) == [friday, date(2026, 10, 31), date(2026, 11, 1), monday]
+    assert friday in dailyops.days_off(), "kept past the day itself"
+    assert client._audit_days("order audit 2 days", monday) == [date(2026, 11, 1), monday]

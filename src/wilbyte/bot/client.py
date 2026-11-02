@@ -2843,7 +2843,8 @@ async def _team_off(responder: Responder, config: Config, said: str) -> None:
         await responder.send("✅ No days out kept - the setup cards come in on their usual days.")
         return
     named = dailyops.days_off_said(said, today=today)
-    kept = await asyncio.to_thread(partial(dailyops.set_days_off, named, today=today))
+    kept = {one for one in await asyncio.to_thread(partial(dailyops.set_days_off, named, today=today))
+            if one >= today}
     if not kept:
         await responder.send("No days out kept. Say which: `@Ryte team off friday`, `team off 10/30 and 11/02`.")
         return
@@ -12515,10 +12516,21 @@ def _audit_days(said: str, today: date) -> list[date]:
     if "yesterday" in said:
         return [today - timedelta(days=1)]
     many = re.search(r"(\d+)\s*days?", said)
-    # A plain one on Monday takes in the weekend - "when i order audit
-    # monday, can it include the weekends".
-    n = min(max(int(many.group(1)), 1), 7) if many else (3 if today.weekday() == 0 else 1)
-    return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
+    if many:
+        n = min(max(int(many.group(1)), 1), 14)
+        return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
+    # A plain one takes in every day nobody was there to audit: the weekend -
+    # "when i order audit monday, can it include the weekends" - and the
+    # team's days out, "we were out for three days right because team is off
+    # friday": Friday to Monday.
+    from .. import dailyops
+
+    off = dailyops.days_off()
+    days, back = [today], today - timedelta(days=1)
+    while (back.weekday() >= 5 or back in off) and len(days) < 14:
+        days.insert(0, back)
+        back -= timedelta(days=1)
+    return days
 
 
 def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, str]:

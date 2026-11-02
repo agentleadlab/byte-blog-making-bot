@@ -2595,7 +2595,17 @@ def test_a_mac_that_drifted_says_how_far(config, monkeypatch):
     said, how = _at("Asia/Manila", monkeypatch, config)
 
     assert how == "warning"
-    assert "12 hours ahead" in said
+    # 12 in summer, 13 once New York is back on standard time.
+    assert f"{_ny_behind(8)} hours ahead" in said
+
+
+def _ny_behind(east: float) -> str:
+    """How far a zone `east` hours east of UTC is ahead of New York today."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    gap = east - datetime.now(ZoneInfo("America/New_York")).utcoffset().total_seconds() / 3600
+    return f"{gap:g}"
 
 
 def test_a_mac_behind_the_board_is_named_as_behind(config, monkeypatch):
@@ -2617,7 +2627,7 @@ def test_a_half_hour_offset_is_not_rounded_away(config, monkeypatch):
     said, _ = _at("Asia/Kolkata", monkeypatch, config)
 
     assert "UTC+05:30" in said
-    assert "9.5 hours ahead" in said
+    assert f"{_ny_behind(5.5)} hours ahead" in said
 
 
 # ------------------------------------------------- teaching him a lead-type word
