@@ -11620,7 +11620,8 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         return
     if due:
         rookqc.remember(key, due_done=True)
-    if not force and held.get("digest") == result.digest():
+    if held.get("digest") == result.digest() and (not force or _sqc_said_lately(held)):
+        # Never the same QC twice running - Max Wilson's was said twice.
         return
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
                     cant=result.cant)
@@ -11633,6 +11634,14 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     await responder.send((_card_ping(bot) if result.problems else "")
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
                          view=view, quiet=not result.problems)
+
+
+def _sqc_said_lately(held: dict) -> bool:
+    try:
+        at = datetime.fromisoformat(str(held.get("at") or ""))
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - at < timedelta(minutes=10)
 
 
 def _nova_answered(result) -> bool:
@@ -11688,7 +11697,7 @@ async def _sqc_days(bot, responder: Responder, said: str) -> None:
     from .. import rookqc
 
     days = _qc_days(said, _today(bot.config))
-    posts = [post for day in days for post in await _payments_on(bot, day)]
+    posts = list({post.id: post for day in days for post in await _payments_on(bot, day)}.values())
     await responder.send(f"🔎 Checking {len(posts)} payment(s) against Rook, Nova, the hub and the sheet…", quiet=True)
     for post in posts:
         if str(post.id) not in rookqc.recalled():

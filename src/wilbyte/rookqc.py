@@ -224,7 +224,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         _compare(result, "Rook's setup", rook, paid)
     for said in nova:
         for line in _HANDED.findall(said):
-            result.todo.append(" ".join(line.split()))
+            line = " ".join(line.split())
+            if _NO_PAYMENT.search(line):
+                # The payment's right here - it's what this QC is of.
+                result.notes.append("Nova said it couldn't find the payment - it's this one in #new-payment")
+                continue
+            result.todo.append(line)
     # On the hub and going, or delivered to: set up, whatever was said on
     # the way - Ibrahim Shalash's "I couldn't set up Ibrahim yet", live with 7
     # delivered.
@@ -334,6 +339,11 @@ def _delivered(result: Checked, fulfilled, paid: Order, *, overflow: bool = Fals
         result.ok.append(f"Delivered {delivered} of {of}" + (", as paid for" if paid.count == of else ""))
 
 
+_NO_PAYMENT = re.compile(r"\bcan(?:'|’)?t\s+find\s+(?:a\s+|any\s+|the\s+)?(?:paid\s+)?payment|"
+                         r"\bno\s+payment\b[^.]{0,60}\bfound\b|\bwhether\s+(?:he|she|they)(?:'s|\s+has)?\s+paid\b",
+                         re.IGNORECASE)
+
+
 def _filled(paid: Order, rook: Order | None) -> Order:
     """The payment with Rook's setup filling what it leaves out."""
     if rook is None:
@@ -362,7 +372,8 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
         else:
             result.ok.append(f"{whose}: email matches")
     elif paid.email and not theirs.email:
-        result.problems.append(f"{whose} has no email (the payment's is {paid.email})")
+        # Left out isn't wrong - Max Wilson's.
+        result.notes.append(f"{whose} gives no email (the payment's is {paid.email})")
     if paid.phone and theirs.phone and _digits(paid.phone) != _digits(theirs.phone):
         result.problems.append(f"{whose} has the phone {theirs.phone}, the payment {paid.phone}")
     if paid.count is not None and theirs.count is not None:
@@ -371,7 +382,7 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
         else:
             result.ok.append(f"{whose}: {theirs.count} leads, as paid for")
     elif paid.count is not None:
-        result.problems.append(f"{whose} gives no lead count (paid for {paid.count})")
+        result.notes.append(f"{whose} gives no lead count (paid for {paid.count})")
     paid_kind, their_kind = family(paid.lead_type), family(theirs.lead_type)
     if paid_kind and their_kind and (paid_kind - {"aged"}) != (their_kind - {"aged"}):
         result.problems.append(f"{whose} has the lead type “{theirs.lead_type}”, the payment “{paid.lead_type}”")
@@ -404,7 +415,11 @@ def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) 
         else:
             result.ok.append(f"{whose}: all {len(states)} states match")
     elif paid.states and not states:
-        result.problems.append(f"{whose} has no states (the payment: {', '.join(paid.states)})")
+        if whose == "The hub":
+            result.problems.append(f"{whose} has no states (the payment: {', '.join(paid.states)})")
+        else:
+            # Rook left them out - the hub's held to the payment's all the same.
+            result.notes.append(f"{whose} gives no states - the hub's are checked against the payment's")
 
 
 def pick_row(rows: list, wanted: Order):

@@ -238,7 +238,7 @@ def test_live_on_the_hub_puts_what_went_before_aside():
     PAID payment" still under Handed to the team, with an Ask button.
     Cheyenne Williams, live on the states she paid for: "Rook's setup has no
     states"."""
-    nova = "Handed to the team: I can't find a PAID payment for Jonathan Carter in #new-payment."
+    nova = "Handed to the team: the hold after signing is the team's, so only a person can release it."
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub(status="live", delivered=3), sheet_rows=3)
     assert result.todo == [] and result.problems == []
     assert any("Handed to the team earlier" in one for one in result.notes)
@@ -287,3 +287,17 @@ def test_rooks_setup_for_two_payments():
     result = rookqc.check(post, talk, hub=_hub(ordered=34))
     assert not any("30 leads, the payment 15" in one for one in result.problems), result.problems
     assert any("covers more than this payment" in one for one in result.notes)
+
+
+def test_left_out_isnt_wrong_and_the_payment_nova_couldnt_find_is_this_one():
+    """Max Wilson: "Rook's setup has no email", "Rook's setup has no states"
+    and Nova's "I can't find a PAID payment for Max Wilson" under Handed to
+    the team - while the hub has VT he didn't order."""
+    bare = ROOK.replace("Email: jcarter@example.com\n", "").replace("States: TX, FL, GA\n", "")
+    nova = ("Handed to the team: I can't find a PAID payment for Jonathan Carter in #new-payment or #onboarding.\n"
+            "Handed to the team: The hub holds him for the team's go-ahead after signing.")
+    result = rookqc.check(PAYRA, [("Rook", bare), ("Nova", nova)], hub=_hub(status="unsigned",
+                                                                             states=("TX", "FL", "GA", "VT")))
+    assert result.problems == ["The hub states don't match the payment - has VT not ordered"], result.problems
+    assert result.todo == ["The hub holds him for the team's go-ahead after signing."]
+    assert any("couldn't find the payment" in one for one in result.notes)
