@@ -16880,3 +16880,24 @@ def aged_sheet_read(config: Config, link: str) -> tuple[int | None, dict | None,
         return None, None, "no column of states on any tab to count the leads by"
     return best[0], best[1], ""
 
+
+def lead_sheet_rows(config: Config, link: str) -> tuple[int | None, str]:
+    """(the leads on a sheet, a problem or "") - every tab read, the one
+    holding the most leads counted: Carson Rentz's sheet read "0 row(s)" off
+    its first tab with 100 delivered."""
+    from .. import delivery, gsheets
+
+    sheet_id = gsheets.sheet_id_in(link)
+    if not sheet_id:
+        return None, f"no sheet id in {link}"
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as client:
+            tabs = client.tabs(sheet_id)
+            if not tabs:
+                return None, "no tabs I can read"
+            titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:8]]
+            every = client.rows_of(sheet_id, [f"'{title}'!A1:Z3000" for title in titles])
+    except Exception as exc:
+        return None, f"couldn't open it ({_short(exc, 100)})"
+    return max((delivery.count_rows(rows, tab=title).rows for title, rows in zip(titles, every)), default=0), ""
+

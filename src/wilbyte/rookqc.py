@@ -221,7 +221,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if sheet_problem:
         result.problems.append(f"The sheet: {sheet_problem}")
     elif sheet_rows is not None:
-        result.ok.append(f"The sheet opens - {sheet_rows} row(s) on it")
+        delivered = getattr(hub, "delivered", None) if hub is not None else None
+        if delivered and sheet_rows < delivered:
+            # Carson Rentz: 100 delivered on the hub, "0 row(s)" on the sheet.
+            result.problems.append(f"The hub says {delivered} delivered, but the sheet has {sheet_rows} lead row(s)")
+        else:
+            result.ok.append(f"The sheet opens - {sheet_rows} lead row(s) on it")
     return result
 
 

@@ -11539,8 +11539,7 @@ async def _sqc_check(bot, key: str):
     rows, sheet_problem = None, ""
     if agent is not None and agent.sheet_url:
         try:
-            counted, sheet_problem = await asyncio.to_thread(jobs._count_sheet, bot.config, agent.sheet_url)
-            rows = counted.rows if counted is not None else None
+            rows, sheet_problem = await asyncio.to_thread(jobs.lead_sheet_rows, bot.config, agent.sheet_url)
         except Exception as exc:
             sheet_problem = _readable(exc)
     result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
@@ -11617,7 +11616,11 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
                        if getattr(one, "bot", False)
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
         tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
-    asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
+    # The button is the go-ahead to speak in the Growth server: without it
+    # the "only when spoken to" guard sent Jake Scott's question to Ryte The
+    # Goat's #announcements instead, where Rook and Nova never saw it.
+    with mirror.answering():
+        asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
     rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")))
     await interaction.followup.send(f"❓ Asked in #rook-nova: <{asked.jump_url}> - I'll check their answers.",
                                     ephemeral=True)

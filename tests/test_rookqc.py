@@ -184,3 +184,11 @@ def test_an_aged_order_nova_pulled_is_left_to_the_aged_qc(monkeypatch):
     monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
     asyncio.run(client._sqc_run(SimpleNamespace(), "901", due=True))
     assert sent == [] and rookqc.recalled()["901"]["aged"] is True
+
+
+def test_a_sheet_short_of_what_the_hub_delivered():
+    """Carson Rentz: 100 delivered on the hub and "0 row(s)" on the sheet,
+    said with a ✅."""
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=100), sheet_rows=0)
+    assert any("100 delivered, but the sheet has 0" in one for one in result.problems)
+    assert not rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=100), sheet_rows=101).problems
