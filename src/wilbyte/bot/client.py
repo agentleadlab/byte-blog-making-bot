@@ -11490,6 +11490,29 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
             if setup is not None:
                 held = dict(held, names=[one for one in dict.fromkeys([*(held.get("names") or []), setup.name]) if one],
                             emails=[one for one in dict.fromkeys([*(held.get("emails") or []), setup.email]) if one])
+    # And their threads off #rook-nova - Rook and Nova answer in those too.
+    threads = list(getattr(channel, "threads", None) or [])
+    try:
+        async for one in channel.archived_threads(limit=50):
+            threads.append(one)
+    except Exception:
+        pass
+    seen = set()
+    for thread in threads:
+        made = getattr(thread, "created_at", None)
+        if thread.id in seen or (made is not None and not (posted - timedelta(minutes=5) <= made <= until)):
+            continue
+        seen.add(thread.id)
+        try:
+            inside = [one async for one in thread.history(limit=100, oldest_first=True)]
+        except Exception:
+            continue
+        name = str(getattr(thread, "name", "") or "")
+        if not (_sqc_mentions(name, key, held) or any(_sqc_mentions(_all_of_it(one), key, held) for one in inside)):
+            continue
+        for one in inside:
+            talk.append((str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
+                         _all_of_it(one)))
     return talk
 
 
@@ -11514,20 +11537,26 @@ async def _sqc_check(bot, key: str):
     # The team's notes in the payment's thread - a Zelle post says nothing else.
     thread = await _order_thread(bot, key, {})
     aged_pull = False
+    in_thread = []
     if thread is not None:
         notes = []
         try:
             async for one in thread.history(limit=60, oldest_first=True):
+                said = _all_of_it(one)
+                who = str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "")
                 if not getattr(one.author, "bot", False):
-                    notes.append(_all_of_it(one))
-                elif agedqc.DONE.search(_all_of_it(one)):
+                    notes.append(said)
+                elif agedqc.DONE.search(said):
                     # Nova pulled it as aged leads - the aged QC's, not Rook's.
                     aged_pull = True
+                elif re.match(r"(?:rook|nova)\b", who, re.IGNORECASE):
+                    # Rook or Nova answering in the payment's own thread.
+                    in_thread.append((who, said))
         except Exception:
             pass
         if notes:
             text += ("\n" if "Notes:" in text else "\nNotes:\n") + "\n".join(notes)
-    talk = await _sqc_talk(bot, key, held, post.created_at)
+    talk = await _sqc_talk(bot, key, held, post.created_at) + in_thread
     names = list(dict.fromkeys([*(held.get("names") or []),
                                 *(found.name for _who, said in talk for found in [rookqc.rook_setup(said)]
                                   if found is not None and found.name)]))
