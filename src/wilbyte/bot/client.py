@@ -11631,7 +11631,9 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if responder is None:
         return
     amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1]
-    view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant,
+    # No "Ask Rook & Nova" on an overflow order: the team delivers it.
+    view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
+                               and not result.overflow,
                                card=bool(result.cant))
     await responder.send((_card_ping(bot) if result.problems else "")
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
@@ -11669,6 +11671,11 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
             guild_id=getattr(getattr(post, "guild", None), "id", None), member=None))
         await interaction.followup.send(f"🃏 Making the New Agent card for **{result.client}** the usual way.",
                                         ephemeral=True)
+        return
+    if result.overflow:
+        # A button already under an overflow QC from before it was hidden.
+        await interaction.followup.send(f"🚚 {result.client}'s is an overflow order - the team delivers it, "
+                                        "nothing to ask Rook and Nova.", ephemeral=True)
         return
     if not (result.problems or result.todo):
         await interaction.followup.send(f"✅ {result.client} checks out now - nothing to ask.", ephemeral=True)

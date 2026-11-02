@@ -277,6 +277,7 @@ def test_an_overflow_order_is_checked_by_what_was_delivered():
     assert any("Delivered 6 of 6 - the payment was for 15" in one for one in short.problems)
     fresh = rookqc.check(post, [], paid_at=datetime.now(timezone.utc) - timedelta(hours=2))
     assert fresh.problems == [] and any("still delivers it" in one for one in fresh.todo), fresh.problems
+    assert fresh.overflow and not rookqc.check(PAYRA, []).overflow
     late = rookqc.check(post, [], paid_at=datetime.now(timezone.utc) - timedelta(days=4))
     assert any("paid 4 days ago, and nothing says it's delivered" in one for one in late.problems)
 

@@ -75,6 +75,8 @@ class Checked:
 
     #: Nova pulled it as an aged order in the payment's thread.
     aged_pull: bool = False
+    #: An overflow order - the team delivers it; nothing to ask Rook and Nova.
+    overflow: bool = False
 
     def talk_about_setup(self) -> bool:
         """Whether Rook and Nova talked about setting it up at all."""
@@ -216,6 +218,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         # not Rook and Nova's, not on the hub. Karli Kelley's was held to her
         # older trucker row, Max Murphy's flagged "Not on the hub".
         result.picked_up = True
+        result.overflow = True
         result.notes.append("Overflow order - delivered by the team, not set up on the hub")
         _delivered(result, fulfilled, paid, overflow=True)
         if not fulfilled:
