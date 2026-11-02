@@ -4977,3 +4977,49 @@ def test_the_day_before_a_day_out_links_both_setup_cards(monkeypatch, config):
     added, problems = jobs.link_setup_on_day(config, for_day=thursday)
     assert problems == [] and len(added) == 8
     assert {name for _cl, name in board.items} == {friday_link, weekend_link}
+
+
+def test_updates_the_automation_put_on_a_checklist_are_ticked(monkeypatch, tmp_path):
+    """"Jayse Yoder webhook connected", "Swapped Edward Conway's number" and
+    "FYI: Roadmap shut down" on the checklists - the board's automation makes
+    every tagged comment an item."""
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    from wilbyte import tagged
+    from wilbyte.bot import jobs
+
+    assert tagged.an_update("FYI: Roadmap shut down, moving everyone back to AEP, same prices")
+    assert not tagged.an_update("Build order-ended Discord/SMS click automation with Faith")
+    link = " https://trello.com/c/cdLe6x9t#comment-6ae3"
+    items = [{"id": "a", "name": "Jayse Yoder webhook connected" + link, "state": "incomplete"},
+             {"id": "b", "name": "Swapped Edward Conway's number" + link, "state": "incomplete"},
+             {"id": "c", "name": "Pause Hadassah Bahamondes' lead drip now, resume tomorrow 10:00 AM" + link,
+              "state": "incomplete"},
+             {"id": "d", "name": "Swapped the cards", "state": "incomplete"}]
+    ticked = []
+
+    class Board:
+        def board_lists(self, board_id):
+            return [{"id": "L"}]
+
+        def list_cards(self, list_id):
+            return [{"id": "gen", "name": "💎 General 11/02/26"}]
+
+        def card_checklists(self, card_id):
+            return [{"name": "KC", "checkItems": items}]
+
+        def set_check_item(self, card_id, item_id, done=None):
+            ticked.append(item_id)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda cfg: Board())
+    monkeypatch.setattr(jobs, "UPDATE_TICKS_PATH", tmp_path / "ticks.json")
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    said = jobs.tick_update_items(config, day=_date(2026, 11, 2))
+    assert ticked == ["a", "b"] and len(said) == 2
+    ticked.clear()
+    jobs.tick_update_items(config, day=_date(2026, 11, 2))
+    assert ticked == [], "each once - one a person unticks stays unticked"

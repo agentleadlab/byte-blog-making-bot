@@ -38,6 +38,7 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     from wilbyte.bot import jobs as _jobs
     monkeypatch.setattr(_jobs, "TAG_CHECKS_PATH", tmp_path / "tag-checks.json")
     monkeypatch.setattr(_jobs, "AGED_OK_PATH", tmp_path / "aged-lines-ok.json")
+    monkeypatch.setattr(_jobs, "UPDATE_TICKS_PATH", tmp_path / "update-ticks.json")
     from wilbyte import agedqc
     monkeypatch.setattr(agedqc, "PATH", tmp_path / "aged-qc.json")
     from wilbyte import rookqc

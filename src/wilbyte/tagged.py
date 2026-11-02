@@ -325,6 +325,10 @@ def an_update(text: str) -> bool:
     first = (said.split() or [""])[0].casefold().strip(".,:;!?")
     if first in _ALREADY_DID:
         return True
+    # "FYI: Roadmap shut down, moving everyone back to AEP" - told, not asked.
+    if re.match(r"(?:fyi|f\.y\.i\.?|heads\s*up|for\s+your\s+info(?:rmation)?)\b", said, re.IGNORECASE) \
+            and not _STILL_ASKING.search(said):
+        return True
     if _past_tense(first) and not _STILL_ASKING.search(said):
         return True
     # Who it's about first, then that it's done: "Hutch Yang removed
@@ -338,10 +342,13 @@ def an_update(text: str) -> bool:
             "please", "pls", "can", "could", "send", "tell", "make", "set", "add",
             "is", "are", "was", "were", "did", "does", "do", "has", "have", "why", "how", "when"):
         lead += 1
-    if (1 <= lead < len(words) and len(words) <= _REPORT_WORDS and not _STILL_ASKING.search(said)
+    # A whole name - two words at least: "Build order-ended ... automation"
+    # read as somebody called Build who "order-ended", and a job was lost.
+    if (2 <= lead < len(words) and len(words) <= _REPORT_WORDS and not _STILL_ASKING.search(said)
             and not said.rstrip().endswith("?")):
         verb = words[lead].casefold().strip(".,:;!?")
-        if _past_tense(verb) or (len(verb) > 5 and verb[-1] not in "sd" and _past_tense(verb[:-1] + "d")):
+        if re.fullmatch(r"[a-z]+", verb) and (
+                _past_tense(verb) or (len(verb) > 5 and verb[-1] not in "sd" and _past_tense(verb[:-1] + "d"))):
             return True
     return bool(
         said

@@ -10068,6 +10068,10 @@ async def _agency_fill(bot) -> list[str]:
 _LEAD_TROUBLE_SAID: list = [""]
 
 
+#: Updates the board's automation put on a checklist, ticked as done.
+UPDATE_TICKS_ON = True
+
+
 async def tag_items_loop(bot: "WilByteBot") -> None:
     """Comments RYTE tagged people in, looked at again: whoever the board's
     automation didn't give a checklist item gets one."""
@@ -10077,7 +10081,18 @@ async def tag_items_loop(bot: "WilByteBot") -> None:
             log.info("Took back up %s tag check(s) from before the restart", back)
     except Exception:
         log.warning("Couldn't take the tag checks back up", exc_info=True)
+    swept = 0.0
     while not bot.is_closed():
+        # Every five minutes: the automation's items that are only updates,
+        # ticked - "Jayse Yoder webhook connected" isn't a job.
+        if UPDATE_TICKS_ON and time.time() - swept > 300:
+            swept = time.time()
+            try:
+                ticked = await asyncio.to_thread(jobs.tick_update_items, bot.config)
+                if ticked:
+                    log.info("Ticked %d update item(s): %s", len(ticked), "; ".join(ticked))
+            except Exception:
+                log.warning("Couldn't tick the update items", exc_info=True)
         for check in jobs.tag_checks_due():
             try:
                 added = await asyncio.to_thread(jobs.tag_items_fill, bot.config, check)

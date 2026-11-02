@@ -16901,3 +16901,63 @@ def lead_sheet_rows(config: Config, link: str) -> tuple[int | None, str]:
         return None, f"couldn't open it ({_short(exc, 100)})"
     return max((delivery.count_rows(rows, tab=title).rows for title, rows in zip(titles, every)), default=0), ""
 
+
+#: Update items RYTE has ticked, by item id - never ticked twice, so one a
+#: person unticks stays unticked.
+UPDATE_TICKS_PATH = None
+
+
+def _update_ticks_path():
+    from ..state import _state_dir
+
+    return UPDATE_TICKS_PATH or (_state_dir() / "update-ticks.json")
+
+
+def tick_update_items(config: Config, *, day=None) -> list[str]:
+    """The board's automation makes every comment that tags somebody a
+    checklist item - "Jayse Yoder webhook connected", "Swapped Edward
+    Conway's number", "FYI: Roadmap shut down" too. An update is work already
+    done: its item ticked, on today's General, Ops and Ads cards. Only the
+    items carrying a comment link - the automation's - and each once. A line
+    each, said."""
+    import json
+
+    from .. import dailyops, tagged
+
+    path = _update_ticks_path()
+    try:
+        done = set(json.loads(path.read_text()))
+    except (OSError, ValueError):
+        done = set()
+    day = day or board_day(config)
+    client = open_trello(config)
+    ticked = []
+    try:
+        lists = client.board_lists(config.secrets.trello_board_id)
+        every = [c for bl in lists for c in client.list_cards(str(bl.get("id") or ""))]
+        covering = dailyops.cards_covering(every, day)
+        for kind in ("general", "ops", "ads"):
+            card = covering.get(kind)
+            if card is None:
+                continue
+            for checklist in client.card_checklists(str(card.get("id") or "")):
+                for item in checklist.get("checkItems") or []:
+                    item_id, name = str(item.get("id") or ""), str(item.get("name") or "")
+                    if item.get("state") == "complete" or item_id in done or "#comment-" not in name:
+                        continue
+                    said = re.sub(r"https?://\S+", " ", name).strip()
+                    if not said or not (tagged.an_update(said) and tagged.only_a_report(said)):
+                        continue
+                    try:
+                        client.set_check_item(str(card.get("id") or ""), item_id, done=True)
+                    except Exception:
+                        continue
+                    done.add(item_id)
+                    ticked.append(f"{card.get('name')} · {checklist.get('name')} — {' '.join(said.split())[:80]}")
+    finally:
+        client.close()
+    if ticked:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(sorted(done)))
+    return ticked
+
