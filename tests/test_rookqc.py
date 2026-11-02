@@ -316,3 +316,28 @@ def test_rooks_order_details_in_the_invoice_forms_words():
     assert setup.count == 31 and "CA" in setup.states
     said = " ".join(rookqc.check(post, [("Rook", rook), ("Nova", "Discount code ORDER = $32.00/lead off")]).problems)
     assert "31 leads, the payment 28" in said and "lead type" in said and "not ordered" in said
+
+
+def test_a_row_of_another_lead_type_isnt_this_order():
+    """Preston Bridges: his new 31 Fresh Vets, not set up yet, held up against
+    his old "Text Verified Mortgage Protection Standard" row, ended."""
+    old = _hub(name="Preston_Bridges", lead_type="Text Verified Mortgage Protection Standard", status="ended",
+               states=("UT", "AZ"), ordered=54, delivered=54)
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", "I haven't set anything up for him yet.")], hub=old)
+    assert any("Nothing on the hub for this order yet" in one and "Mortgage Protection" in one
+               for one in result.problems), result.problems
+    assert not any("lead type" in one or "not ordered" in one for one in result.problems)
+
+
+def test_an_open_row_over_one_thats_over():
+    """Isaiah Wehner: four hub rows, a done one checked."""
+    done = _hub(name="Isaiah_Wehner", status="done", states=("TX",), ordered=30)
+    open_row = _hub(name="Isaiah_Wehner_3", status="scheduled")
+    assert rookqc.resolve_hub([done, open_row], rookqc.payment(PAYRA))[0] is open_row
+
+
+def test_an_open_row_of_another_lead_type_is_still_held_to_the_order():
+    """No row of this lead type, but an open one: maybe set up wrong - said."""
+    row = _hub(lead_type="Text Verified Mortgage Protection Standard", status="scheduled")
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=row)
+    assert any("lead type" in one for one in result.problems), result.problems

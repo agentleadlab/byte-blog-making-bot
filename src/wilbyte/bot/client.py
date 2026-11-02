@@ -11587,9 +11587,10 @@ async def _sqc_check(bot, key: str):
                 break
     except Exception as exc:
         hub_problem = f"couldn't read the hub: {_readable(exc)}"
-    if len(rows) > 1:
-        # The row this payment fits, and its sheet.
-        agent = rookqc.pick_row(rows, rookqc._filled(rookqc.payment(text), next(
+    if rows:
+        # The row this payment is - its lead type, an open one first - and
+        # its sheet: Preston Bridges' ended Mortgage Protection row wasn't.
+        agent, _note, _elsewhere = rookqc.resolve_hub(rows, rookqc._filled(rookqc.payment(text), next(
             (found for _who, said in talk for found in [rookqc.rook_setup(said)] if found is not None), None)))
     hub_rows = rows
     rows, sheet_problem = None, ""
@@ -11599,7 +11600,7 @@ async def _sqc_check(bot, key: str):
         except Exception as exc:
             sheet_problem = _readable(exc)
     result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
-                          sheet_problem=sheet_problem, hub_rows=hub_rows if len(hub_rows) > 1 else None)
+                          sheet_problem=sheet_problem, hub_rows=hub_rows or None)
     result.aged_pull = aged_pull
     return post, result
 

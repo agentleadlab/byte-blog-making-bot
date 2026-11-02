@@ -209,6 +209,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     nova = [said for who, said in talk if who.casefold().startswith("nova")]
     result.picked_up = bool(talk)
     fulfilled = _fulfilled(talk)
+    # The hub row this order is - of its lead type, an open one first.
+    hub, hub_note, hub_elsewhere = resolve_hub(hub_rows or ([hub] if hub is not None else []), _filled(paid, rook))
     if OVERFLOW.search(str(post or "")):
         # "Overflow Trucker - $25/lead": the team delivers it from overflow -
         # not Rook and Nova's, not on the hub. Karli Kelley's was held to her
@@ -256,18 +258,16 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # What the hub is held to: the payment, and Rook's setup for whatever
     # the payment doesn't say - a Zelle post carries no states or count.
     wanted = _filled(paid, rook)
-    if hub_rows and len(hub_rows) > 1:
-        # Several rows for them - Jay Rodriguez's Jay_Rodriguez and
-        # Jay_Rodriguez_2: the one this payment fits, not the newest.
-        hub = pick_row(hub_rows, wanted)
-        result.notes.append(f"{len(hub_rows)} hub rows for them - checked {getattr(hub, 'name', '?')}, the one that "
-                            "fits this payment best")
-    elif hub_rows:
-        hub = hub_rows[0]
+    if hub_note:
+        result.notes.append(hub_note)
     if any(getattr(wanted, key) != getattr(paid, key) for key in ("email", "lead_type", "count", "states", "left_out")):
         result.notes.append("The payment doesn't say everything (a Zelle post, or no invoice notes) - the hub is "
                             "checked against Rook's setup where it doesn't")
-    if hub is None:
+    if hub is None and hub_elsewhere:
+        # Preston Bridges' old Mortgage Protection row, ended, held up
+        # against his new Vets - nothing for this order was set up yet.
+        result.problems.append(f"Nothing on the hub for this order yet - they're only there for {hub_elsewhere}")
+    elif hub is None:
         result.problems.append(f"Not on the hub{f' ({hub_problem})' if hub_problem else ''}")
     else:
         _hub(result, hub, wanted)
@@ -427,21 +427,51 @@ def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) 
             result.notes.append(f"{whose} gives no states - the hub's are checked against the payment's")
 
 
+#: Hub statuses of an order that's over - an older order, not this one.
+FINISHED = ("ended", "done", "fulfilled", "complete", "completed", "cancelled", "canceled")
+
+
+def _wrong_kind(row, wanted: Order) -> bool:
+    kind, theirs = family(getattr(row, "lead_type", "")), family(wanted.lead_type)
+    return bool(kind and theirs and (kind - {"aged"}) != (theirs - {"aged"}))
+
+
 def pick_row(rows: list, wanted: Order):
-    """The hub row an order fits best: its states, its lead type, its count -
-    the newest when they fit alike."""
+    """The hub row an order fits best: its lead type, an open one over one
+    that's over, its states, its count - the newest when they fit alike."""
     from datetime import datetime as _dt, timezone as _tz
 
     def misfit(row) -> tuple:
         states = set(getattr(row, "states", ()) or ())
         off = len(states ^ set(wanted.states)) if wanted.states and states else 0
-        kind = family(getattr(row, "lead_type", ""))
-        wrong_kind = 1 if kind and family(wanted.lead_type) and (kind - {"aged"}) != (family(wanted.lead_type) - {"aged"}) else 0
+        over = 1 if str(getattr(row, "status", "") or "").casefold() in FINISHED else 0
         short = 1 if wanted.count and getattr(row, "ordered", None) is not None and row.ordered < wanted.count else 0
         newest = getattr(row, "updated_at", None) or _dt.min.replace(tzinfo=_tz.utc)
-        return (wrong_kind, off, short, -newest.timestamp() if newest.year > 1 else 0)
+        return (1 if _wrong_kind(row, wanted) else 0, over, off, short,
+                -newest.timestamp() if newest.year > 1 else 0)
 
     return min(rows, key=misfit)
+
+
+def resolve_hub(rows: list, wanted: Order) -> tuple:
+    """(the hub row this order is or None, a note, what they're on the hub
+    for instead when none of their rows is this lead type)."""
+    rows = [one for one in rows or [] if one is not None]
+    if not rows:
+        return None, "", ""
+    fits = [one for one in rows if not _wrong_kind(one, wanted)]
+    if not fits:
+        # An open row of another lead type may be this order set up wrong -
+        # held up against it, its lead type is said. Only rows that are over
+        # are older orders: nothing for this one is on the hub yet.
+        fits = [one for one in rows if str(getattr(one, "status", "") or "").casefold() not in FINISHED]
+    if not fits:
+        return None, "", ", ".join(dict.fromkeys(
+            f"{getattr(one, 'lead_type', '') or '?'} ({getattr(one, 'status', '') or '?'})" for one in rows))
+    row = pick_row(fits, wanted)
+    note = (f"{len(rows)} hub rows for them - checked {getattr(row, 'name', '?')}, the one that fits this payment best"
+            if len(rows) > 1 else "")
+    return row, note, ""
 
 
 def _hub(result: Checked, hub, paid: Order) -> None:
