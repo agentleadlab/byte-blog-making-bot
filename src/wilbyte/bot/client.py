@@ -565,6 +565,11 @@ class WilByteBot(discord.Client):
         if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
                 and _aged_pull_done(message)):
             _also_running(self.loop.create_task(_aged_qc(self, message)))
+        # And one Rook asked for in #rook-nova - Rachna Khim's swap to 150
+        # Aged Vets 180+ - held to Rook's ask: no payment post of its own.
+        if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
+                and _aged_rook_pull(self, message)):
+            _also_running(self.loop.create_task(_aged_rook_qc(self, message)))
         # A new Spark pool member: its New Agent card, nobody's gavel needed.
         if (SPARK_AUTO and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_member(message)):
@@ -11765,6 +11770,75 @@ async def _aged_qc(bot, message) -> None:
     if responder is not None:
         await responder.send((_card_ping(bot) if result.problems else "") + agedqc.said(result)
                              + f"\n-# <{post.jump_url}>", quiet=not result.problems)
+
+
+def _aged_rook_pull(bot, message) -> bool:
+    """Nova's "Aged Vets 180+: 150 pulled (...)" in a #rook-nova thread."""
+    from .. import agedqc
+
+    channel = getattr(message, "channel", None)
+    return (getattr(channel, "parent", None) is not None and _in_rook_nova(message)
+            and getattr(message.author, "id", None) != getattr(getattr(bot, "user", None), "id", 0)
+            and bool(agedqc.pulled(_all_of_it(message))))
+
+
+#: #rook-nova threads whose aged pull is being waited on - one QC each.
+_AGED_ROOK_WAITING: set = set()
+AGED_ROOK_WAIT = 45
+
+
+async def _aged_rook_qc(bot, message) -> None:
+    """An aged pull Rook asked for in #rook-nova, checked against the ask -
+    after Nova's done talking (the sheet link can come a message later)."""
+    from .. import agedqc
+
+    thread = message.channel
+    if thread.id in _AGED_ROOK_WAITING:
+        return
+    _AGED_ROOK_WAITING.add(thread.id)
+    try:
+        await asyncio.sleep(AGED_ROOK_WAIT)
+        try:
+            ask = await thread.parent.fetch_message(thread.id)
+        except Exception:
+            ask = None
+            async for one in thread.history(limit=1, oldest_first=True):
+                ask = one
+        asked = agedqc.rook_asked(_all_of_it(ask)) if ask is not None else None
+        if asked is None:
+            return  # a stock check, or not an aged pull Rook asked for
+        said = []
+        async for one in thread.history(limit=60, oldest_first=True):
+            who = str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "")).casefold()
+            if (getattr(one.author, "bot", False) and not who.startswith("rook")
+                    and getattr(one.author, "id", None) != getattr(getattr(bot, "user", None), "id", 0)):
+                said.append(_all_of_it(one))
+        done = "\n".join(said)
+        first = agedqc.check("", done, asked=asked)
+        rows, states, trouble = None, None, ""
+        if first.sheets:
+            try:
+                rows, states, trouble = await asyncio.to_thread(jobs.aged_sheet_read, bot.config, first.sheets[0])
+            except Exception as exc:
+                trouble = _readable(exc)
+        result = agedqc.check("", done, asked=asked, sheet_rows=rows, sheet_states=states,
+                              sheet_problem=trouble if trouble and rows is None else "")
+        key = f"rn:{thread.id}"
+        held = agedqc.recalled().get(key) or {}
+        if held.get("problems") == result.problems and held.get("sheets") == result.sheets:
+            return  # said already
+        await asyncio.to_thread(agedqc.remember, key, result)
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send((_card_ping(bot) if result.problems else "") + agedqc.said(result)
+                                 + f"\n-# Asked for in #rook-nova <{thread.jump_url}>", quiet=not result.problems)
+    except Exception as exc:
+        log.warning("Couldn't QC the aged pull in #rook-nova", exc_info=True)
+        responder = _order_responder(bot)
+        if responder is not None:
+            await responder.send(f"⚠ Couldn't check an aged pull in #rook-nova: {_readable(exc)} <{message.jump_url}>")
+    finally:
+        _AGED_ROOK_WAITING.discard(thread.id)
 
 
 async def _aged_qc_days(bot, responder: Responder, said: str) -> None:

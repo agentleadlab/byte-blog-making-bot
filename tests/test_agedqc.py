@@ -98,3 +98,85 @@ def test_an_order_written_as_the_invoices_form():
     result = agedqc.check(post, done)
     assert result.problems == [], result.problems
     assert sorted(agedqc.ordered(post)[0].states) == ["FL", "TX"]
+
+
+RACHNA_ASK = ("@Nova aged lead order for Rachna Khim (rachna@example.com) — Tre approved a SWAP of her paid Nov 1 "
+              "order ($155.25): she was sent 150 Aged Mortgage Protection 180+ by mistake and wanted vets. Pull "
+              "**150 Aged Veteran 180+**, states TX CA AZ FL IN, camp none, and share the sheet with her email.\n"
+              "repeat ok")
+RACHNA_DONE = ("> 💰 Aged Vets 180+: **150** pulled (Arizona 30, California 30, Texas 30, Florida 30, Indiana 30) · "
+               "sheet shared with rachna@example.com\nhttps://docs.google.com/spreadsheets/d/abc/edit")
+
+
+def test_an_aged_pull_rook_asked_for_in_rook_nova():
+    """Rachna Khim's swap: no payment post of its own - held to Rook's ask."""
+    asked = agedqc.rook_asked(RACHNA_ASK)
+    assert asked.client == "Rachna Khim" and asked.email == "rachna@example.com"
+    assert [(one.package, one.count, one.states) for one in asked.lines] == [
+        ("Aged Veteran 180+", 150, ["TX", "CA", "AZ", "FL", "IN"])]
+    result = agedqc.check("", RACHNA_DONE, asked=asked, sheet_rows=150)
+    assert result.problems == [], result.problems
+    assert "matches Rook's ask" in agedqc.said(result)
+    wrong = agedqc.check("", RACHNA_DONE.replace("**150** pulled", "**120** pulled")
+                         .replace("Indiana 30", "Ohio 0").replace("rachna@", "rk@"), asked=asked)
+    said = " ".join(wrong.problems)
+    assert "Rook asked for 150, Nova pulled 120" in said and "OH" in said and "Rook's email" in said
+
+
+def test_a_stock_check_isnt_a_pull():
+    ask = ("@Nova aged stock check for Aiden Larsen (Wolfpack): 50 Aged IUL 90-180, states AZ IL LA MI SC AK TX — "
+           "how many are available to him? (check only, do not pull)")
+    assert agedqc.rook_asked(ask) is None
+
+
+def test_rook_asking_for_two_aged_lines():
+    asked = agedqc.rook_asked("@Nova replacement for Jo Doe (j@example.com): pull 20 Aged FEX 90-180 in states GA "
+                              "FL and 10 Aged Vets 30-90 in states TX")
+    assert [(one.package, one.count, one.states) for one in asked.lines] == [
+        ("Aged FEX 90-180", 20, ["GA", "FL"]), ("Aged Vets 30-90", 10, ["TX"])]
+
+
+def test_the_rook_nova_aged_qc_waits_for_nova_and_says_it_once(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    nova = SimpleNamespace(bot=True, id=7, display_name="Nova", name="Nova")
+    rook = SimpleNamespace(bot=True, id=8, display_name="Rook", name="Rook")
+    ask = SimpleNamespace(content=RACHNA_ASK, embeds=[], message_snapshots=[], author=rook)
+    done = SimpleNamespace(content=RACHNA_DONE, embeds=[], message_snapshots=[], author=nova,
+                           jump_url="https://discord.com/channels/1/2/3/4")
+
+    class Thread:
+        id = 55
+        jump_url = "https://discord.com/channels/1/55"
+        parent = SimpleNamespace(name="⏳｜rook-nova")
+
+        async def _fetch(self, _id):
+            return ask
+
+        def history(self, **kw):
+            async def gen():
+                for one in (ask, done):
+                    yield one
+            return gen()
+
+    thread = Thread()
+    thread.parent.fetch_message = thread._fetch
+    done.channel = thread
+    bot = SimpleNamespace(user=SimpleNamespace(id=1), config=None)
+    assert client._aged_rook_pull(bot, done)
+    monkeypatch.setattr(client, "AGED_ROOK_WAIT", 0)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    monkeypatch.setattr(client.jobs, "aged_sheet_read", lambda config, url: (150, {"TX": 150}, ""))
+    asyncio.run(client._aged_rook_qc(bot, done))
+    asyncio.run(client._aged_rook_qc(bot, done))
+    assert len(sent) == 1 and "Rachna Khim" in sent[0] and "matches Rook's ask" in sent[0], sent

@@ -65,6 +65,8 @@ class Checked:
     sheets: list[str] = field(default_factory=list)
     #: Said, not a problem: the sheet couldn't be opened to count.
     notes: list[str] = field(default_factory=list)
+    #: What the pull is held to: "the payment", or "Rook's ask" in #rook-nova.
+    against: str = "the payment"
 
 
 def _count(said) -> int:
@@ -140,17 +142,22 @@ def pulled(done: str) -> list[Line]:
 
 
 def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows: int | None = None,
-          sheet_problem: str = "") -> Checked:
-    """Nova's pull held up against the payment. `sheet_states` / `sheet_rows`:
-    what the sheet holds, when it could be read."""
+          sheet_problem: str = "", asked: "Asked | None" = None) -> Checked:
+    """Nova's pull held up against the payment - or, `asked`, against what
+    Rook asked for in #rook-nova. `sheet_states` / `sheet_rows`: what the
+    sheet holds, when it could be read."""
     result = Checked(invoice=(_POST_INVOICE.search(str(done or "")) or _POST_INVOICE.search(str(post or ""))
                               or [""])[0].upper())
     who = re.search(r"^\W*NAME:\**\s*(.+)$", str(post or ""), re.IGNORECASE | re.MULTILINE)
     result.client = " ".join(who.group(1).split()).strip(" *") if who else ""
     result.sheets = list(dict.fromkeys(_SHEET.findall(str(done or ""))))
     bought, got = ordered(post), pulled(done)
+    paid_for, theirs = "paid for", "the payment's"
+    if asked is not None:
+        result.against, result.client, bought = "Rook's ask", asked.client, list(asked.lines)
+        paid_for, theirs = "Rook asked for", "Rook's"
     if not bought:
-        result.problems.append("I couldn't read the payment's order lines to check against")
+        result.problems.append(f"I couldn't read {theirs} order lines to check against")
     if not got:
         result.problems.append("I couldn't read what Nova says it pulled")
     left = list(got)
@@ -159,13 +166,14 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
         if match is None and len(bought) == 1 and len(left) == 1:
             match = left[0]
         if match is None:
-            result.problems.append(f"{line.count} {line.package} was paid for and Nova pulled none of it")
+            result.problems.append(f"{line.count} {line.package} was {paid_for.replace('Rook asked for', 'asked for')} "
+                                   "and Nova pulled none of it")
             continue
         left.remove(match)
         if match.count != line.count:
-            result.problems.append(f"{line.package}: paid for {line.count}, Nova pulled {match.count}")
+            result.problems.append(f"{line.package}: {paid_for} {line.count}, Nova pulled {match.count}")
         else:
-            result.ok.append(f"{line.package}: {match.count} pulled, as paid for")
+            result.ok.append(f"{line.package}: {match.count} pulled, as {paid_for.replace('Rook asked for', 'asked')}")
         if line.states:
             outside = [code for code in match.by_state if code not in line.states]
             if outside:
@@ -177,16 +185,17 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
             result.problems.append(f"{line.package}: the states add up to {sum(match.by_state.values())}, "
                                    f"not the {match.count} said")
     for one in left:
-        result.problems.append(f"Nova pulled {one.count} {one.package}, which isn't on the payment")
-    email = _POST_EMAIL.search(str(post or ""))
+        result.problems.append(f"Nova pulled {one.count} {one.package}, which isn't on {result.against}")
+    email = _POST_EMAIL.search(str(post or "")) if asked is None else (
+        re.search(r"(.+)", asked.email) if asked.email else None)
     shared = _SHARED.search(str(done or ""))
     shared_to = (shared.group(1) or shared.group(2)) if shared else ""
     if email and shared:
         if shared_to.casefold() != email.group(1).casefold():
-            result.problems.append(f"The sheet was shared with {shared_to}, but the payment's email is "
+            result.problems.append(f"The sheet was shared with {shared_to}, but {theirs} email is "
                                    f"{email.group(1)}")
         else:
-            result.ok.append(f"Shared with {shared_to}, the payment's email")
+            result.ok.append(f"Shared with {shared_to}, {theirs} email")
     elif email and not shared:
         result.problems.append("Nova didn't say who the sheet was shared with")
     if not result.sheets:
@@ -205,6 +214,51 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
         if stray:
             result.problems.append(f"The sheet has leads in {', '.join(stray)}, which they didn't order")
     return result
+
+
+@dataclass
+class Asked:
+    """An aged pull Rook asked Nova for in #rook-nova - a swap, a
+    replacement: no payment post of its own."""
+    client: str
+    email: str
+    lines: list
+
+
+#: Rook asking only how many there are - "(check only, do not pull)".
+_STOCK_CHECK = re.compile(r"\bcheck\s+only\b|\b(?:do\s+not|don['’]?t)\s+pull\b|\bstock\s+check\b", re.IGNORECASE)
+_ASK_LINE = re.compile(
+    r"\**(?P<count>\d[\d,]*)\**\s+\**(?P<package>aged\b(?:(?!\s+(?:in\s+)?states?\b|\s+for\s+[A-Z])[^,*\n—–]){2,60})"
+    r"\**\s*(?:,?\s*(?:in\s+)?states?\s*:?\s*(?P<states>(?-i:[A-Z]{2}(?:\s*(?:,|/|&|\band\b)?\s*[A-Z]{2}\b)*)))?",
+    re.IGNORECASE)
+_ASK_STATES = re.compile(r"\bstates?\s*:?\s*(?P<states>[A-Z]{2}(?:\s*(?:,|/|&|\band\b)?\s*[A-Z]{2}\b)*)")
+_ASK_WHO = re.compile(r"\b(?:order|pull|swap|replacement|leads?)\s+for\s+\**(?P<name>[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})",
+                      )
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def rook_asked(text: str) -> Asked | None:
+    """Rook's "@Nova aged lead order for Rachna Khim (her@example.com) ...
+    Pull **150 Aged Veteran 180+**, states TX CA AZ FL IN" - None for a
+    stock check or anything that isn't an aged pull."""
+    said = str(text or "")
+    if _STOCK_CHECK.search(said) or not re.search(r"\bpull", said, re.IGNORECASE):
+        return None
+    pull = re.search(r"\bpull\b", said, re.IGNORECASE)
+    lines = []
+    for one in _ASK_LINE.finditer(said, pull.start() if pull else 0):
+        states = _codes(one.group("states") or "")
+        lines.append(Line(package=" ".join(one.group("package").split()), count=_count(one.group("count")), states=states))
+    if not lines:
+        return None
+    every = _ASK_STATES.search(said, pull.start() if pull else 0)
+    for line in lines:
+        if not line.states and every:
+            line.states = _codes(every.group("states"))
+    who = _ASK_WHO.search(said) or re.search(
+        r"\bfor\s+\**(?P<name>[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})\**\s*\(", said)
+    email = _EMAIL.search(said)
+    return Asked(client=who.group("name").strip() if who else "", email=email.group(0) if email else "", lines=lines)
 
 
 def sheet_states(rows: list) -> tuple[int, dict]:
@@ -245,7 +299,7 @@ def said(result: Checked) -> str:
         lines = [head + " — ⚠ doesn't match:", *(f"• {one}" for one in result.problems)]
         lines += [f"-# ✓ {one}" for one in result.ok]
     else:
-        lines = [head + " — ✅ matches the payment", *(f"• {one}" for one in result.ok)]
+        lines = [head + f" — ✅ matches {result.against}", *(f"• {one}" for one in result.ok)]
     lines += [f"-# {one}" for one in result.notes]
     lines += [f"<{one}>" for one in result.sheets[:2]]
     return "\n".join(lines)
