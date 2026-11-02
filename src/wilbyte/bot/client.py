@@ -11564,8 +11564,9 @@ async def _sqc_check(bot, key: str):
                 elif agedqc.DONE.search(said):
                     # Nova pulled it as aged leads - the aged QC's, not Rook's.
                     aged_pull = True
-                elif re.match(r"(?:rook|nova)\b", who, re.IGNORECASE):
-                    # Rook or Nova answering in the payment's own thread.
+                elif re.match(r"(?:rook|nova|luna)\b", who, re.IGNORECASE):
+                    # Rook or Nova answering in the payment's own thread, and
+                    # Luna's "This order has been fulfilled - Delivered 15 of 15".
                     in_thread.append((who, said))
         except Exception:
             pass

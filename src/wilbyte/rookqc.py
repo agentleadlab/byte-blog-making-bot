@@ -203,6 +203,18 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.client = rook.name
     nova = [said for who, said in talk if who.casefold().startswith("nova")]
     result.picked_up = bool(talk)
+    fulfilled = _fulfilled(talk)
+    if OVERFLOW.search(str(post or "")):
+        # "Overflow Trucker - $25/lead": the team delivers it from overflow -
+        # not Rook and Nova's, not on the hub. Karli Kelley's was held to her
+        # older trucker row, Max Murphy's flagged "Not on the hub".
+        result.picked_up = True
+        result.notes.append("Overflow order - delivered by the team, not set up on the hub")
+        _delivered(result, fulfilled, paid, overflow=True)
+        if not fulfilled:
+            result.problems.append("Overflow order, and nothing says it's delivered yet (no \"This order has been "
+                                   "fulfilled\")")
+        return result
     if not talk:
         result.problems.append("Rook and Nova haven't said anything about this payment in #rook-nova")
         return result
@@ -249,6 +261,17 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.problems.append(f"Not on the hub{f' ({hub_problem})' if hub_problem else ''}")
     else:
         _hub(result, hub, wanted)
+    _delivered(result, fulfilled, paid)
+    # Rook's setup for more than this payment - Ryan Gsell's 30 paid in two
+    # payments of 15, "BOTH payments are in #new-payment".
+    said_all = "\n".join(said for _who, said in talk)
+    several = len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
+        r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE)
+    if several and rook is not None and rook.count and paid.count and rook.count > paid.count:
+        for one in [one for one in result.problems if one.startswith("Rook's setup has") and " leads, the payment " in one]:
+            result.problems.remove(one)
+            result.notes.append(f"Rook's setup covers more than this payment - {rook.count} leads across their "
+                                f"payments, {paid.count} on this one")
     # Rook's message missing the count is nothing when the hub has it right.
     ordered = getattr(hub, "ordered", None) if hub is not None else None
     if paid.count is not None and ordered is not None and ordered >= paid.count:
@@ -279,6 +302,36 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         else:
             result.ok.append(f"The sheet opens - {sheet_rows} lead row(s) on it")
     return result
+
+
+#: An order that's overflow - the team's, delivered from overflow.
+OVERFLOW = re.compile(r"\bove?r[\s-]*l?f+l*o*w(?:s|ed|ing)?\b", re.IGNORECASE)
+_FULFILLED = re.compile(r"\b(?:order\s+has\s+been\s+fulfilled|fulfilled)\b[^\n]{0,40}?\bdelivered\s+(\d[\d,]*)\s+of\s+"
+                        r"(\d[\d,]*)", re.IGNORECASE)
+
+
+def _fulfilled(talk) -> tuple[int, int] | None:
+    """(delivered, of) from Luna's "This order has been fulfilled - Delivered
+    15 of 15", the newest said."""
+    found = None
+    for _who, said in talk:
+        for one in _FULFILLED.finditer(str(said or "")):
+            found = (int(one.group(1).replace(",", "")), int(one.group(2).replace(",", "")))
+    return found
+
+
+def _delivered(result: Checked, fulfilled, paid: Order, *, overflow: bool = False) -> None:
+    """Luna's delivered count - held to the payment for an overflow order,
+    whose count is its own; a hub row's "of" can be a renewal's whole."""
+    if not fulfilled:
+        return
+    delivered, of = fulfilled
+    if overflow and paid.count is not None and of != paid.count:
+        result.problems.append(f"Delivered {delivered} of {of} - the payment was for {paid.count}")
+    elif delivered < of:
+        result.notes.append(f"Delivered {delivered} of {of} so far")
+    else:
+        result.ok.append(f"Delivered {delivered} of {of}" + (", as paid for" if paid.count == of else ""))
 
 
 def _filled(paid: Order, rook: Order | None) -> Order:

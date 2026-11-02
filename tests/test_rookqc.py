@@ -260,3 +260,30 @@ def test_several_hub_rows_the_one_this_payment_fits():
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=old, hub_rows=[old, right])
     assert not any("IA" in one for one in result.problems), result.problems
     assert any("2 hub rows" in one and "Jonathan_Carter_2" in one for one in result.notes)
+
+
+def test_an_overflow_order_is_checked_by_what_was_delivered():
+    """Karli Kelley's "Overflow Trucker - $25/lead", 15, delivered by the team:
+    held to her older trucker row on the hub. Max Murphy's: "Not on the hub"."""
+    post = PAYRA.replace("> Fresh FEX: 40 @ $32.00 — states TX, FL, GA",
+                         "> Lead Type: Overflow Trucker - $25/lead\n> States Leads In: FL, PA, CA\n"
+                         "> Number of Requested Leads: 15")
+    luna = "✅ This order has been fulfilled — Delivered 15 of 15"
+    result = rookqc.check(post, [("Luna", luna)], hub=_hub(states=("NC", "MD"), ordered=20))
+    assert result.problems == [], result.problems
+    assert any("Delivered 15 of 15, as paid for" in one for one in result.ok)
+    short = rookqc.check(post, [("Luna", "This order has been fulfilled — Delivered 6 of 6")])
+    assert any("Delivered 6 of 6 - the payment was for 15" in one for one in short.problems)
+    assert any("nothing says it's delivered" in one for one in rookqc.check(post, []).problems)
+
+
+def test_rooks_setup_for_two_payments():
+    """Ryan Gsell: 30 trucker leads paid in two payments of 15 - "Rook's setup
+    has 30 leads, the payment 15"."""
+    post = PAYRA.replace("Fresh FEX: 40 @", "Fresh FEX: 15 @")
+    rook = ROOK.replace("Leads Ordered: 40", "Leads Ordered: 30")
+    talk = [("Rook", "Jonathan Carter: BOTH payments are in #new-payment - INV-21095 and INV-21096"),
+            ("Rook", rook), ("Nova", NOVA)]
+    result = rookqc.check(post, talk, hub=_hub(ordered=34))
+    assert not any("30 leads, the payment 15" in one for one in result.problems), result.problems
+    assert any("covers more than this payment" in one for one in result.notes)
