@@ -228,6 +228,12 @@ class WilByteBot(discord.Client):
             self.add_dynamic_items(views.HeldButton)
         except Exception:
             log.warning("Couldn't set up the held orders' buttons", exc_info=True)
+        # Setup QC's Ask Rook & Nova / Make the card, after a restart too.
+        views.SetupQcButton.on_press = lambda interaction, key, act: _sqc_pressed(self, interaction, key, act)
+        try:
+            self.add_dynamic_items(views.SetupQcButton)
+        except Exception:
+            log.warning("Couldn't set up the setup QC buttons", exc_info=True)
         raw_guild_id = self.config.secrets.discord_guild_id
         guild_id = parse_guild_id(raw_guild_id)
 
@@ -285,6 +291,9 @@ class WilByteBot(discord.Client):
         # loops would race each other for the same posts.
         if self.publisher_task is None or self.publisher_task.done():
             self.publisher_task = self.loop.create_task(publisher_loop(self))
+        # Payments still inside their fifteen minutes when RYTE restarted -
+        # an update restarts it - looked at when they come due all the same.
+        _sqc_rearm(self)
         # The page scripts the GHL pages load from leadlabcrm.com, kept the
         # same as the copies here - so an update reaches every page by itself.
         if getattr(self.config.secrets, "wordpress_app_password", None) and not getattr(self, "site_code_sent", False):
@@ -543,6 +552,14 @@ class WilByteBot(discord.Client):
         if (AGED_FROM_INVOICE and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _aged_payment(message)):
             _also_running(self.loop.create_task(_aged_from_invoice(self, message)))
+        # Every new payment's setup by Rook and Nova, checked - "whenever we
+        # have a new payment ryte will wait for rook and nova ... and ryte
+        # will qc everything". Read only in the Growth server.
+        if SETUP_QC_ON and _in_setup_guild(self, getattr(message, "guild", None)):
+            if getattr(message.author, "bot", False) and _is_payment_post(message):
+                _sqc_watch(self, message)
+            elif _in_rook_nova(message):
+                _sqc_heard(self, message)
         # Nova saying an aged order's leads are pulled: checked against the
         # payment - "i want ryte qc-ing it instead".
         if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
@@ -1746,6 +1763,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 from .. import usage
 
                 await responder.send(usage.report(await asyncio.to_thread(usage.load)))
+                return
+
+            if request.action == "setupqc":
+                await _sqc_days(bot, responder, request.brief or "")
                 return
 
             if request.action == "agedqc":
@@ -11304,6 +11325,311 @@ async def _aged_counts_off_the_invoice(bot, message, card: dict) -> dict:
     return {**card, "parts": parts, "fields": fields,
             "source": f"{card.get('source') or ''}\nPayra invoice {number} lines: "
                       + "; ".join(one["text"] for one in lines)}
+
+
+# ------------------------------------------------- Rook and Nova's setups, QC'd
+
+#: "i want ryte qc-ing all of rook channel for me".
+SETUP_QC_ON = True
+#: How long a payment waits for Rook and Nova before it's said nobody has it.
+SETUP_QC_WAIT = 15 * 60
+#: After a message about a payment, how long to let the conversation settle.
+SETUP_QC_SETTLE = 90
+#: How far back a #rook-nova message is matched to a payment.
+SETUP_QC_DAYS = 2
+_SQC_TASKS: dict = {}
+_HUB_READ: list = [0.0, []]
+
+
+def _is_payment_post(message) -> bool:
+    channel = getattr(message, "channel", None)
+    if "newpayment" not in _plain_letters(getattr(channel, "name", "")):
+        return False
+    said = _all_of_it(message).casefold()
+    return "new payment" in said and "name:" in said
+
+
+def _in_rook_nova(message) -> bool:
+    channel = getattr(message, "channel", None)
+    where = getattr(channel, "parent", None) or channel
+    return "rooknova" in _plain_letters(getattr(where, "name", ""))
+
+
+def _rook_nova_channel(bot):
+    guild = _setup_guild(bot, bot.config)
+    for channel in getattr(guild, "text_channels", None) or []:
+        if "rooknova" in _plain_letters(getattr(channel, "name", "")):
+            return channel
+    return None
+
+
+def _sqc_watch(bot, message) -> None:
+    """A new payment: kept, and looked at once Rook and Nova have had their
+    fifteen minutes."""
+    from .. import rookqc
+
+    said = _all_of_it(message)
+    product = " ".join(((_PRODUCT.search(said) or [None, ""])[1]).split())
+    # Aged orders are Nova's pulls, checked by the aged QC; a weekly charge
+    # is somebody already set up being billed.
+    if re.search(r"\baged\b", product, re.IGNORECASE) or (
+            re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
+                                                                                 re.IGNORECASE)):
+        return
+    paid = rookqc.payment(said)
+    rookqc.remember(str(message.id), channel_id=str(message.channel.id), name=paid.name, email=paid.email,
+                    phone=paid.phone, posted=message.created_at.isoformat(), names=[paid.name] if paid.name else [])
+    _sqc_later(bot, str(message.id), SETUP_QC_WAIT, due=True)
+
+
+def _sqc_later(bot, key: str, wait: float, *, due: bool = False) -> None:
+    """A QC run for one payment after `wait` - a newer one replaces it."""
+    old = _SQC_TASKS.pop(key, None)
+    if old is not None and not old.done() and not due:
+        old.cancel()
+
+    async def later():
+        try:
+            await asyncio.sleep(wait)
+            await _sqc_run(bot, key, due=due)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.warning("Setup QC failed for %s", key, exc_info=True)
+        finally:
+            if _SQC_TASKS.get(key) is task:
+                _SQC_TASKS.pop(key, None)
+
+    try:
+        task = asyncio.get_running_loop().create_task(later())
+    except RuntimeError:
+        return
+    if not due:
+        _SQC_TASKS[key] = task
+    _also_running(task)
+
+
+def _sqc_rearm(bot) -> None:
+    from .. import rookqc
+
+    now = datetime.now(timezone.utc)
+    for key, held in rookqc.recalled().items():
+        try:
+            posted = datetime.fromisoformat(str(held.get("posted") or ""))
+        except ValueError:
+            continue
+        if held.get("due_done") or now - posted > timedelta(days=1) or key in _SQC_TASKS:
+            continue
+        _sqc_later(bot, key, max(5.0, SETUP_QC_WAIT - (now - posted).total_seconds()), due=True)
+
+
+def _sqc_mentions(text: str, key: str, held: dict) -> bool:
+    """Whether a #rook-nova message is about a kept payment: its post's link,
+    an email, a phone, or a name it's known by."""
+    from .. import rookqc
+
+    if key in str(text or ""):
+        return True
+    for name in held.get("names") or []:
+        if rookqc.about(text, rookqc.Order(name=name)):
+            return True
+    for email in held.get("emails") or ([held["email"]] if held.get("email") else []):
+        if email and email.casefold() in str(text or "").casefold():
+            return True
+    phone = held.get("phone") or ""
+    return bool(phone) and rookqc.about(text, rookqc.Order(phone=phone))
+
+
+def _sqc_heard(bot, message) -> None:
+    """A message in #rook-nova: the payments it's about looked at again once
+    the conversation settles."""
+    from .. import rookqc
+
+    said = _all_of_it(message)
+    since = datetime.now(timezone.utc) - timedelta(days=SETUP_QC_DAYS)
+    for key, held in rookqc.recalled().items():
+        try:
+            posted = datetime.fromisoformat(str(held.get("posted") or ""))
+        except ValueError:
+            continue
+        if posted < since or not _sqc_mentions(said, key, held):
+            continue
+        # Rook's setup names who it's for - a business paid for Kurtis Kunz.
+        setup = rookqc.rook_setup(said)
+        if setup is not None:
+            names = list(dict.fromkeys([*(held.get("names") or []), *([setup.name] if setup.name else [])]))
+            emails = list(dict.fromkeys([*(held.get("emails") or []), *([held["email"]] if held.get("email") else []),
+                                         *([setup.email] if setup.email else [])]))
+            rookqc.remember(key, names=names, emails=emails)
+        _sqc_later(bot, key, SETUP_QC_SETTLE)
+
+
+async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
+    """[(who, what they said)] in #rook-nova about one payment, oldest first -
+    and whatever answers one of those."""
+    from .. import rookqc
+
+    channel = _rook_nova_channel(bot)
+    if channel is None:
+        return []
+    talk, theirs = [], set()
+    async for one in channel.history(after=posted - timedelta(minutes=5), limit=400, oldest_first=True):
+        said = _all_of_it(one)
+        reply_to = getattr(getattr(one, "reference", None), "message_id", None)
+        if _sqc_mentions(said, key, held) or (reply_to and reply_to in theirs):
+            theirs.add(one.id)
+            who = str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?")
+            talk.append((who, said))
+            # Rook's setup names who it's for: Nova's answers name them too.
+            setup = rookqc.rook_setup(said)
+            if setup is not None:
+                held = dict(held, names=[one for one in dict.fromkeys([*(held.get("names") or []), setup.name]) if one],
+                            emails=[one for one in dict.fromkeys([*(held.get("emails") or []), setup.email]) if one])
+    return talk
+
+
+async def _sqc_hub(bot):
+    """The hub's agents, read at most every two minutes."""
+    from .. import hub
+
+    if time.time() - _HUB_READ[0] > 120 or not _HUB_READ[1]:
+        _HUB_READ[1] = await asyncio.to_thread(hub.agents, bot.config.secrets, status="all")
+        _HUB_READ[0] = time.time()
+    return _HUB_READ[1]
+
+
+async def _sqc_check(bot, key: str):
+    """(the payment post, the QC) - everything read afresh."""
+    from .. import hub, rookqc
+
+    held = rookqc.recalled().get(key) or {}
+    channel = bot.get_channel(int(held["channel_id"])) or await bot.fetch_channel(int(held["channel_id"]))
+    post = await channel.fetch_message(int(key))
+    text = _all_of_it(post)
+    # The team's notes in the payment's thread - a Zelle post says nothing else.
+    thread = await _order_thread(bot, key, {})
+    if thread is not None:
+        notes = []
+        try:
+            async for one in thread.history(limit=60, oldest_first=True):
+                if not getattr(one.author, "bot", False):
+                    notes.append(_all_of_it(one))
+        except Exception:
+            pass
+        if notes:
+            text += ("\n" if "Notes:" in text else "\nNotes:\n") + "\n".join(notes)
+    talk = await _sqc_talk(bot, key, held, post.created_at)
+    names = list(dict.fromkeys([*(held.get("names") or []),
+                                *(found.name for _who, said in talk for found in [rookqc.rook_setup(said)]
+                                  if found is not None and found.name)]))
+    agent, hub_problem = None, ""
+    try:
+        everybody = await _sqc_hub(bot)
+        for name in names:
+            found = hub.named(everybody, name)
+            if found:
+                agent = max(found, key=lambda one: one.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+                break
+    except Exception as exc:
+        hub_problem = f"couldn't read the hub: {_readable(exc)}"
+    rows, sheet_problem = None, ""
+    if agent is not None and agent.sheet_url:
+        try:
+            counted, sheet_problem = await asyncio.to_thread(jobs._count_sheet, bot.config, agent.sheet_url)
+            rows = counted.rows if counted is not None else None
+        except Exception as exc:
+            sheet_problem = _readable(exc)
+    result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
+                          sheet_problem=sheet_problem)
+    return post, result
+
+
+async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> None:
+    """One payment's setup QC, said in Ryte The Goat when it has changed -
+    before its fifteen minutes only once Nova has answered."""
+    from .. import rookqc
+
+    post, result = await _sqc_check(bot, key)
+    held = rookqc.recalled().get(key) or {}
+    if not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result)):
+        return
+    if due:
+        rookqc.remember(key, due_done=True)
+    if not force and held.get("digest") == result.digest():
+        return
+    rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
+                    cant=result.cant)
+    responder = _order_responder(bot)
+    if responder is None:
+        return
+    amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1]
+    view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant,
+                               card=bool(result.cant))
+    await responder.send((_card_ping(bot) if result.problems else "")
+                         + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
+                         view=view, quiet=not result.problems)
+
+
+def _nova_answered(result) -> bool:
+    return not any(one.startswith("Nova hasn't answered") for one in result.problems)
+
+
+async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
+    """Ask Rook & Nova / Make the card, pressed."""
+    from .. import rookqc
+
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+    except Exception:
+        pass
+    try:
+        post, result = await _sqc_check(bot, key)
+    except Exception as exc:
+        await interaction.followup.send(f"⚠ Couldn't read it again: {_readable(exc)}", ephemeral=True)
+        return
+    if act == "card":
+        await _order_gavelled(bot, SimpleNamespace(
+            message_id=int(key), channel_id=post.channel.id, user_id=getattr(interaction.user, "id", 0),
+            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None))
+        await interaction.followup.send(f"🃏 Making the New Agent card for **{result.client}** the usual way.",
+                                        ephemeral=True)
+        return
+    if not (result.problems or result.todo):
+        await interaction.followup.send(f"✅ {result.client} checks out now - nothing to ask.", ephemeral=True)
+        return
+    channel = _rook_nova_channel(bot)
+    if channel is None:
+        await interaction.followup.send("⚠ I can't find #rook-nova.", ephemeral=True)
+        return
+    tags = []
+    for wanted in ("rook", "nova"):
+        member = next((one for one in getattr(channel.guild, "members", None) or []
+                       if getattr(one, "bot", False)
+                       and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
+        tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
+    asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
+    rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")))
+    await interaction.followup.send(f"❓ Asked in #rook-nova: <{asked.jump_url}> - I'll check their answers.",
+                                    ephemeral=True)
+
+
+async def _sqc_days(bot, responder: Responder, said: str) -> None:
+    """"@Ryte setup qc" - every payment of the day (or "setup qc 3 days"),
+    each setup checked again and said."""
+    from .. import rookqc
+
+    days = _audit_days(said, _today(bot.config))
+    posts = [post for day in days for post in await _payments_on(bot, day)]
+    await responder.send(f"🔎 Checking {len(posts)} payment(s) against Rook, Nova, the hub and the sheet…", quiet=True)
+    for post in posts:
+        if str(post.id) not in rookqc.recalled():
+            _sqc_watch(bot, post)
+        if str(post.id) not in rookqc.recalled():
+            continue  # aged, or a weekly charge
+        try:
+            await _sqc_run(bot, str(post.id), force=True)
+        except Exception as exc:
+            await responder.send(f"⚠ Couldn't check <{post.jump_url}>: {_readable(exc)}")
 
 
 def _aged_pull_done(message) -> bool:

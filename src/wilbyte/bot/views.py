@@ -354,3 +354,39 @@ class HeldButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ryte:held
     async def callback(self, interaction: discord.Interaction) -> None:
         if HeldButton.on_press is not None:
             await HeldButton.on_press(interaction, self.key, self.act)
+
+
+class SetupQcButton(discord.ui.DynamicItem[discord.ui.Button],
+                    template=r"ryte:sqc:(?P<key>\d+):(?P<act>ask|card)"):
+    """A setup QC's Ask Rook & Nova / Make the card - "give me a button before
+    ryte actually engage with the two of them". Answered after a restart too.
+    `on_press(interaction, key, act)` does the work."""
+
+    on_press = None
+
+    def __init__(self, key: str, act: str):
+        label, emoji, style = (("Ask Rook & Nova", "❓", discord.ButtonStyle.primary) if act == "ask" else
+                               ("Make the card", "🃏", discord.ButtonStyle.success))
+        super().__init__(discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=f"ryte:sqc:{key}:{act}"))
+        self.key, self.act = key, act
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["key"], match["act"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if SetupQcButton.on_press is not None:
+            await SetupQcButton.on_press(interaction, self.key, self.act)
+
+
+def setup_qc_view(key: str, *, ask: bool, card: bool) -> discord.ui.View | None:
+    """The buttons under a setup QC: ask when there's something to ask, the
+    card when Rook or Nova can't set it up."""
+    if not (ask or card):
+        return None
+    view = discord.ui.View(timeout=None)
+    if ask:
+        view.add_item(SetupQcButton(key, "ask"))
+    if card:
+        view.add_item(SetupQcButton(key, "card"))
+    return view

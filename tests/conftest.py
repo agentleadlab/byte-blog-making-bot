@@ -40,6 +40,8 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(_jobs, "AGED_OK_PATH", tmp_path / "aged-lines-ok.json")
     from wilbyte import agedqc
     monkeypatch.setattr(agedqc, "PATH", tmp_path / "aged-qc.json")
+    from wilbyte import rookqc
+    monkeypatch.setattr(rookqc, "PATH", tmp_path / "rook-qc.json")
     monkeypatch.setattr(delivery, "SEEN_PATH", tmp_path / "delivery-flagged.json")
     monkeypatch.setattr(paidsetup, "SEEN_PATH", tmp_path / "paid-not-set-up.json")
     monkeypatch.setattr(alive, "ALIVE_PATH", tmp_path / "alive.json")
