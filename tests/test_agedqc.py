@@ -84,3 +84,17 @@ def test_the_share_said_other_ways():
                  "access for kory@example.com"):
         result = agedqc.check(POST, DONE.replace("sheet shared with kory@example.com", said))
         assert not any("who the sheet was shared with" in one for one in result.problems), said
+
+
+def test_an_order_written_as_the_invoices_form():
+    """Mitchell Daich: "I couldn't read the payment's order lines" and his 30
+    pulled flagged as "isn't on the payment"."""
+    post = ("New Payment | Payra ✅\nNAME: Mitchell Daich\nEMAIL: mitch@example.com\n"
+            "PRODUCT: Text-Verified Aged Veteran Leads\nINVOICE: INV-21108 · card •••• 1 · 11/02/2026\nNotes:\n"
+            "> Name: Mitchell Daich\n> Lead Type: Text-Verified Aged Veteran - 30-90 days [AGED - $7/Lead]\n"
+            "> Number of Requested Leads: 30\n> States Leads In: Texas, Florida")
+    done = ("Mitchell Daich's aged order is done (INV-21108)\n✅ Aged Veteran 30-90 days: **30** pulled (Texas 20, "
+            "Florida 10) · sheet shared with mitch@example.com\nhttps://docs.google.com/spreadsheets/d/abc/edit")
+    result = agedqc.check(post, done)
+    assert result.problems == [], result.problems
+    assert sorted(agedqc.ordered(post)[0].states) == ["FL", "TX"]

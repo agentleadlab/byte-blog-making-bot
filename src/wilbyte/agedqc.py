@@ -95,7 +95,33 @@ def ordered(post: str) -> list[Line]:
         if not re.search(r"\baged\b", package, re.IGNORECASE):
             continue
         found.append(Line(package=package, count=_count(one.group("count")), states=_codes(one.group("states") or "")))
-    return found
+    return found or _ordered_by_form(post)
+
+
+def _ordered_by_form(post: str) -> list[Line]:
+    """The order written as the invoice's form instead of a line - Mitchell
+    Daich's "Lead Type: ... / Number of Requested Leads: 30 / States: ...",
+    read as nothing ordered and his 30 pulled as "isn't on the payment"."""
+    from .rookqc import _field, _states_of
+
+    text = str(post or "")
+    notes = text.split("Notes:", 1)[1] if "Notes:" in text else text
+    package = (_field(notes, r"Lead\s*Type(?:\s*Ordered)?", r"Package(?:\s*Selected)?", "Product")
+               or _field(text, "PRODUCT"))
+    product = _field(text, "PRODUCT")
+    if not re.search(r"\baged\b", f"{package} {product}", re.IGNORECASE):
+        return []
+    many = re.search(r"\d[\d,]*", _field(notes, r"Number\s+of\s+(?:Requested\s+)?Leads(?:\s+Requested)?",
+                                         r"Leads?\s+Requested", r"Qty", r"Quantity", r"Leads"))
+    if many is None:
+        many = re.search(r"[×x]\s*(\d[\d,]*)\s*@", notes)
+    if many is None:
+        return []
+    states, _left_out = _states_of(_field(notes, r"States?(?:\s+Leads?\s+In)?", "Estados", "State"))
+    if not re.search(r"\baged\b", package, re.IGNORECASE):
+        package = f"{product} ({package})" if package != product else product
+    return [Line(package=re.sub(r"\s*\[[^\]]*\]", "", package).strip(), count=_count(many.group(many.lastindex or 0)),
+                 states=states)]
 
 
 def pulled(done: str) -> list[Line]:
