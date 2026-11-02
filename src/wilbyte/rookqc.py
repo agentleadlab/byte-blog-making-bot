@@ -156,8 +156,13 @@ def payment(post: str) -> Order:
 def rook_setup(text: str) -> Order | None:
     """Rook's "New fresh setup:" message, as fields. None when it isn't one."""
     said = str(text or "")
-    if not re.search(r"\bsetup\b", said, re.IGNORECASE) or not re.search(r"^\W*name\s*:", said,
-                                                                       re.IGNORECASE | re.MULTILINE):
+    # "New fresh setup:", and "order details from Rook (the client's texts):"
+    # in the invoice form's own words - Kyle Moffitt's 31 FEX in nine states
+    # against 28 Vets in HI and AK paid for went unread.
+    if not re.search(r"^\W*name\s*:", said, re.IGNORECASE | re.MULTILINE):
+        return None
+    if not (re.search(r"\bset\s*up\b|\border\s+details\b|\bnew\s+(?:fresh\s+)?order\b", said, re.IGNORECASE)
+            or re.search(r"^\W*(?:lead\s*type|states?)\b[^:\n]*:", said, re.IGNORECASE | re.MULTILINE)):
         return None
     many = re.search(r"\d[\d,]*", _field(said, r"Number\s+of\s+(?:Requested\s+)?Leads(?:\s+(?:Ordered|Requested))?",
                                          r"Leads?\s+(?:Ordered|Count|Requested)", r"Lead\s+Count", r"Count", r"Qty",
@@ -169,7 +174,7 @@ def rook_setup(text: str) -> Order | None:
                          r"(?:leads?|vets?|veterans?|fex|final\s+expense|iuls?|mtg|mortgage|widows?|truckers?|blue)\b",
                          said,
                          re.IGNORECASE)
-    states, left_out = _states_of(_field(said, r"States?", "Estados"))
+    states, left_out = _states_of(_field(said, r"States?(?:\s+Leads?\s+In)?", "Estados"))
     return Order(name=_field(said, "Name"), email=_field(said, r"E-?mail"), phone=_field(said, r"Phone(?:\s*Number)?"),
                  states=states, left_out=left_out,
                  lead_type=_field(said, r"Lead\s*Type(?:\s*Ordered)?", "Package"),

@@ -301,3 +301,18 @@ def test_left_out_isnt_wrong_and_the_payment_nova_couldnt_find_is_this_one():
     assert result.problems == ["The hub states don't match the payment - has VT not ordered"], result.problems
     assert result.todo == ["The hub holds him for the team's go-ahead after signing."]
     assert any("couldn't find the payment" in one for one in result.notes)
+
+
+def test_rooks_order_details_in_the_invoice_forms_words():
+    """Kyle Moffitt paid for 28 Fresh Vets in HI and AK; Rook posted "order
+    details from Rook (the client's texts)" - 31 Final Expense in nine
+    states - and it went unread, so nothing was flagged."""
+    post = PAYRA.replace("> Fresh FEX: 40 @ $32.00 — states TX, FL, GA", "> Fresh Vets: 28 @ $45.00, 20% off — states HI, AK")
+    rook = ("@Nova order details from Rook (the client's texts):\nName: Jonathan Carter\nEmail: jcarter@example.com\n"
+            "Phone Number: +15555550101\nLead Type: Text-Verified Final Expense [FRESH - $32/Lead]\n"
+            "States Leads In: Hawaii, California, Washington, Alaska, Oregon, Washington, Utah, Texas, Georgia\n"
+            "Number of Requested Leads: 31")
+    setup = rookqc.rook_setup(rook)
+    assert setup.count == 31 and "CA" in setup.states
+    said = " ".join(rookqc.check(post, [("Rook", rook), ("Nova", "Discount code ORDER = $32.00/lead off")]).problems)
+    assert "31 leads, the payment 28" in said and "lead type" in said and "not ordered" in said
