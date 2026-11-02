@@ -28,7 +28,9 @@ from .state import _state_dir
 #: Each payment's QC as last said, by the payment post's id.
 PATH = _state_dir() / "rook-qc.json"
 
-_FIELD = r"^[\s>*•-]*{label}\s*:\**\s*(?P<value>[^\n]*)$"
+#: A labelled line. Never the next line's: Max Wilson's blank "Email:" was
+#: read as "Phone: +1561...", his blank "States:" as the line under it.
+_FIELD = r"^[ \t>*•-]*{label}[ \t]*:\**[ \t]*(?P<value>[^\n]*)$"
 _FAMILIES = (("vet", r"\bvet|veteran"), ("fex", r"\bfex\b|final\s*expense"), ("iul", r"\biul\b"),
              ("mtg", r"\bmtg\b|mortgage"), ("widow", r"widow"), ("trucker", r"truck"),
              ("blue collar", r"blue\s*collar"), ("spanish", r"spanish|espa[nñ]ol"))

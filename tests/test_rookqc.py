@@ -211,3 +211,23 @@ def test_on_the_hub_and_going_wins_over_the_talk():
     # Not set up, and said so: still the card's.
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", "I can't set this up - no hub slot.")], hub=None)
     assert result.cant
+
+
+def test_a_blank_field_isnt_the_next_lines():
+    """Max Wilson: "Rook's setup has the email Phone: +15614022568" - his
+    Email line was blank."""
+    rook = ROOK.replace("Email: jcarter@example.com", "Email:").replace("States: TX, FL, GA", "States:\nNotes: x")
+    setup = rookqc.rook_setup(rook)
+    assert setup.email == "" and setup.phone == "+15555550101" and setup.states == []
+
+
+def test_the_qc_commands_check_today_unless_told():
+    """"i want him to qc just the today"."""
+    from datetime import date
+
+    from wilbyte.bot import client
+
+    monday = date(2026, 11, 2)
+    assert client._qc_days("setup qc", monday) == [monday]
+    assert client._qc_days("aged qc 3 days", monday) == [date(2026, 10, 31), date(2026, 11, 1), monday]
+    assert client._qc_days("setup qc yesterday", monday) == [date(2026, 11, 1)]

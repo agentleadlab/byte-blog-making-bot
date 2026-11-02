@@ -11636,7 +11636,7 @@ async def _sqc_days(bot, responder: Responder, said: str) -> None:
     each setup checked again and said."""
     from .. import rookqc
 
-    days = _audit_days(said, _today(bot.config))
+    days = _qc_days(said, _today(bot.config))
     posts = [post for day in days for post in await _payments_on(bot, day)]
     await responder.send(f"🔎 Checking {len(posts)} payment(s) against Rook, Nova, the hub and the sheet…", quiet=True)
     for post in posts:
@@ -11703,7 +11703,7 @@ async def _aged_qc_days(bot, responder: Responder, said: str) -> None:
     each pull checked again, and the ones Nova hasn't pulled."""
     from .. import agedqc
 
-    days = _audit_days(said, _today(bot.config))
+    days = _qc_days(said, _today(bot.config))
     await responder.send(f"🔎 Checking the aged pulls for {', '.join(f'{one:%a %b %-d}' for one in days)}…", quiet=True)
     good, bad, none = [], [], []
     for day in days:
@@ -12992,6 +12992,17 @@ def _audit_days(said: str, today: date) -> list[date]:
         days.insert(0, back)
         back -= timedelta(days=1)
     return days
+
+
+def _qc_days(said: str, today: date) -> list[date]:
+    """"setup qc" / "aged qc" - today, unless a day or a number of days is
+    said: "i want him to qc just the today"."""
+    said = str(said or "").casefold()
+    if "yesterday" in said:
+        return [today - timedelta(days=1)]
+    many = re.search(r"(\d+)\s*days?", said)
+    n = min(max(int(many.group(1)), 1), 14) if many else 1
+    return [today - timedelta(days=back) for back in range(n - 1, -1, -1)]
 
 
 def _audit_line(post, held: dict, cards: list, zone=timezone.utc) -> tuple[str, str]:
