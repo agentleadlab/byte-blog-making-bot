@@ -157,12 +157,21 @@ def rook_setup(text: str) -> Order | None:
     if not re.search(r"\bsetup\b", said, re.IGNORECASE) or not re.search(r"^\W*name\s*:", said,
                                                                        re.IGNORECASE | re.MULTILINE):
         return None
-    many = re.search(r"\d[\d,]*", _field(said, r"Number\s+of\s+Leads(?:\s+Ordered)?", r"Leads\s+Ordered", r"Leads"))
+    many = re.search(r"\d[\d,]*", _field(said, r"Number\s+of\s+(?:Requested\s+)?Leads(?:\s+(?:Ordered|Requested))?",
+                                         r"Leads?\s+(?:Ordered|Count|Requested)", r"Lead\s+Count", r"Count", r"Qty",
+                                         r"Quantity", r"Leads", r"Order(?:ed)?", r"Amount"))
+    if many is None:
+        # In the lead type or anywhere as "25 Vets", "25 Text-Verified ...":
+        # Timothy Aaron Thomas' read as "no lead count".
+        many = re.search(r"(?<![\d$.,/:-])(\d{1,4})\s+(?:aged\s+|fresh\s+|otp\s+|text[\s-]*verified\s+)*"
+                         r"(?:leads?|vets?|veterans?|fex|final\s+expense|iuls?|mtg|mortgage|widows?|truckers?|blue)\b",
+                         said,
+                         re.IGNORECASE)
     states, left_out = _states_of(_field(said, r"States?", "Estados"))
     return Order(name=_field(said, "Name"), email=_field(said, r"E-?mail"), phone=_field(said, r"Phone(?:\s*Number)?"),
                  states=states, left_out=left_out,
                  lead_type=_field(said, r"Lead\s*Type(?:\s*Ordered)?", "Package"),
-                 count=int(many.group(0).replace(",", "")) if many else None,
+                 count=int(many.group(many.lastindex or 0).replace(",", "")) if many else None,
                  launch=_field(said, r"Launch(?:\s*Date)?"))
 
 
@@ -202,10 +211,22 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     for said in nova:
         for line in _HANDED.findall(said):
             result.todo.append(" ".join(line.split()))
+    # On the hub and going, or delivered to: set up, whatever was said on
+    # the way - Ibrahim Shalash's "I couldn't set up Ibrahim yet", live with 7
+    # delivered.
+    going = hub is not None and (str(getattr(hub, "status", "") or "").casefold() in
+                                 ("live", "active", "done", "fulfilled", "complete", "completed")
+                                 or (getattr(hub, "delivered", None) or 0) > 0)
     for who, said in talk:
-        if CANT.search(said):
-            result.cant = f"{who}: " + " ".join(CANT.search(said).group(0).split())
-            result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
+        found = CANT.search(said)
+        if not found:
+            continue
+        if going or re.match(r"[^.\n]{0,40}\byet\b", said[found.end():], re.IGNORECASE):
+            result.notes.append(f"{who} said earlier it couldn't set it up" + (" yet" if not going else "")
+                                + (f" - the hub has them {hub.status} now" if going else ""))
+            continue
+        result.cant = f"{who}: " + " ".join(found.group(0).split())
+        result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
     if not nova:
         result.problems.append("Nova hasn't answered Rook yet - nothing says it's set up")
     # What the hub is held to: the payment, and Rook's setup for whatever
@@ -218,6 +239,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.problems.append(f"Not on the hub{f' ({hub_problem})' if hub_problem else ''}")
     else:
         _hub(result, hub, wanted)
+    # Rook's message missing the count is nothing when the hub has it right.
+    ordered = getattr(hub, "ordered", None) if hub is not None else None
+    if paid.count is not None and ordered is not None and ordered >= paid.count:
+        for one in [one for one in result.problems if "gives no lead count" in one]:
+            result.problems.remove(one)
+            result.notes.append(one + f" - the hub has {ordered} ordered")
     if sheet_problem:
         result.problems.append(f"The sheet: {sheet_problem}")
     elif sheet_rows is not None:

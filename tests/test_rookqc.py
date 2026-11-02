@@ -192,3 +192,22 @@ def test_a_sheet_short_of_what_the_hub_delivered():
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=100), sheet_rows=0)
     assert any("100 delivered, but the sheet has 0" in one for one in result.problems)
     assert not rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=100), sheet_rows=101).problems
+
+
+def test_on_the_hub_and_going_wins_over_the_talk():
+    """"yet on the hub" - Ibrahim Shalash live with 7 delivered after Nova's
+    "I couldn't set up Ibrahim Shalash yet"; Timothy Aaron Thomas done 25 of 25
+    with Rook's count written another way."""
+    nova = "@Faith I couldn't set up Ibrahim Shalash yet, so he has nothing gone out."
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub(status="live", delivered=7), sheet_rows=7)
+    assert not result.cant and not any("can't set it up" in one for one in result.problems), result.problems
+    rook = ROOK.replace("Number of Leads Ordered: 40\n", "").replace("Lead Type Ordered: Text-Verified Final Expense",
+                                                                      "Lead Type Ordered: 40 Text-Verified Final Expense")
+    assert rookqc.rook_setup(rook).count == 40
+    bare = ROOK.replace("Number of Leads Ordered: 40\n", "")
+    result = rookqc.check(PAYRA, [("Rook", bare), ("Nova", NOVA)], hub=_hub(status="done", ordered=40, delivered=40),
+                          sheet_rows=40)
+    assert result.problems == [] and any("no lead count" in one for one in result.notes)
+    # Not set up, and said so: still the card's.
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", "I can't set this up - no hub slot.")], hub=None)
+    assert result.cant

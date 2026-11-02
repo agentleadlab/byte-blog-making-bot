@@ -11473,7 +11473,12 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
     if channel is None:
         return []
     talk, theirs = [], set()
-    async for one in channel.history(after=posted - timedelta(minutes=5), limit=400, oldest_first=True):
+    # Everything since the payment, up to three days on - the first 400
+    # messages after a Friday payment didn't reach Thomas Poulin's.
+    until = posted + timedelta(days=3)
+    async for one in channel.history(after=posted - timedelta(minutes=5), limit=None, oldest_first=True):
+        if one.created_at > until:
+            break
         said = _all_of_it(one)
         reply_to = getattr(getattr(one, "reference", None), "message_id", None)
         if _sqc_mentions(said, key, held) or (reply_to and reply_to in theirs):
