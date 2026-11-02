@@ -159,3 +159,28 @@ def test_rook_taking_states_off_the_lead_request_instead_of_the_payment():
     result = rookqc.check(post, [("Rook", rook), ("Nova", "Handed to the team: no payment from David Jacob found.")])
     assert any("has MO, MS, NC, NE, NJ, NV, OH, OK, OR, SC, TN, VT, WI not ordered" in one for one in result.problems)
     assert not any("doesn't say everything" in one for one in result.notes)
+
+
+def test_an_aged_order_nova_pulled_is_left_to_the_aged_qc(monkeypatch):
+    """Jake Scott: "Rook and Nova haven't said anything about this payment in
+    #rook-nova" - an aged order, pulled by Nova in the payment's thread."""
+    import asyncio
+
+    from wilbyte.bot import client
+
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    result = rookqc.check(PAYRA, [])
+    result.aged_pull = True
+
+    async def checking(bot, key):
+        return SimpleNamespace(jump_url="u", content=PAYRA, embeds=[], message_snapshots=[]), result
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    asyncio.run(client._sqc_run(SimpleNamespace(), "901", due=True))
+    assert sent == [] and rookqc.recalled()["901"]["aged"] is True

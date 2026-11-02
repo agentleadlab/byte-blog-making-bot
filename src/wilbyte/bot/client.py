@@ -11500,7 +11500,7 @@ async def _sqc_hub(bot):
 
 async def _sqc_check(bot, key: str):
     """(the payment post, the QC) - everything read afresh."""
-    from .. import hub, rookqc
+    from .. import agedqc, hub, rookqc
 
     held = rookqc.recalled().get(key) or {}
     channel = bot.get_channel(int(held["channel_id"])) or await bot.fetch_channel(int(held["channel_id"]))
@@ -11508,12 +11508,16 @@ async def _sqc_check(bot, key: str):
     text = _all_of_it(post)
     # The team's notes in the payment's thread - a Zelle post says nothing else.
     thread = await _order_thread(bot, key, {})
+    aged_pull = False
     if thread is not None:
         notes = []
         try:
             async for one in thread.history(limit=60, oldest_first=True):
                 if not getattr(one.author, "bot", False):
                     notes.append(_all_of_it(one))
+                elif agedqc.DONE.search(_all_of_it(one)):
+                    # Nova pulled it as aged leads - the aged QC's, not Rook's.
+                    aged_pull = True
         except Exception:
             pass
         if notes:
@@ -11541,6 +11545,7 @@ async def _sqc_check(bot, key: str):
             sheet_problem = _readable(exc)
     result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
                           sheet_problem=sheet_problem)
+    result.aged_pull = aged_pull
     return post, result
 
 
@@ -11551,6 +11556,11 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
 
     post, result = await _sqc_check(bot, key)
     held = rookqc.recalled().get(key) or {}
+    if getattr(result, "aged_pull", False) and not result.talk_about_setup():
+        # An aged order Nova pulled in the payment's thread - Jake Scott's
+        # "haven't said anything in #rook-nova" was one. The aged QC has it.
+        rookqc.remember(key, aged=True, due_done=True)
+        return
     if not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result)):
         return
     if due:

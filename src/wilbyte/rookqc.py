@@ -71,6 +71,13 @@ class Checked:
     cant: str = ""
     picked_up: bool = False
 
+    #: Nova pulled it as an aged order in the payment's thread.
+    aged_pull: bool = False
+
+    def talk_about_setup(self) -> bool:
+        """Whether Rook and Nova talked about setting it up at all."""
+        return self.picked_up
+
     def digest(self) -> str:
         return json.dumps([sorted(self.problems), sorted(self.todo), self.cant, self.picked_up])
 
