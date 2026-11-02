@@ -144,3 +144,18 @@ def test_when_the_qc_is_said(monkeypatch):
     state["result"] = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
     asyncio.run(client._sqc_run(bot, "900"))
     assert len(sent) == 2 and "✅" in sent[1][0] and not sent[1][0].startswith("<@1>")
+
+
+def test_rook_taking_states_off_the_lead_request_instead_of_the_payment():
+    """David Jacob paid for 25 Fresh Vets in 12 states; Rook's setup had 25
+    states "from his lead request card", and asked Nova to set up "the 25
+    states above"."""
+    post = PAYRA.replace("Jonathan Carter", "David Jacob").replace(
+        "> Fresh FEX: 40 @ $32.00 — states TX, FL, GA",
+        "> Fresh Vets: 25 @ $45.00 — states AL, AZ, AR, CA, DE, GA, IN, KY, MD, MN, PA, TX")
+    rook = ("@Nova New fresh setup:\nName: David Jacob\nEmail: jcarter@example.com\nPhone: +15555550101\n"
+            "States: CA, TX, PA, AL, AR, AZ, DE, GA, IN, KY, MD, MN, MO, MS, NC, NE, NJ, NV, OH, OK, OR, SC, TN, VT, WI\n"
+            "Lead Type Ordered: Text-Verified Veteran leads (fresh)\nNumber of Leads Ordered: 25\nLaunch Date: today ASAP")
+    result = rookqc.check(post, [("Rook", rook), ("Nova", "Handed to the team: no payment from David Jacob found.")])
+    assert any("has MO, MS, NC, NE, NJ, NV, OH, OK, OR, SC, TN, VT, WI not ordered" in one for one in result.problems)
+    assert not any("doesn't say everything" in one for one in result.notes)

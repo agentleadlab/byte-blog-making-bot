@@ -204,7 +204,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # What the hub is held to: the payment, and Rook's setup for whatever
     # the payment doesn't say - a Zelle post carries no states or count.
     wanted = _filled(paid, rook)
-    if wanted is not paid:
+    if any(getattr(wanted, key) != getattr(paid, key) for key in ("email", "lead_type", "count", "states", "left_out")):
         result.notes.append("The payment doesn't say everything (a Zelle post, or no invoice notes) - the hub is "
                             "checked against Rook's setup where it doesn't")
     if hub is None:
