@@ -346,3 +346,27 @@ def test_an_open_row_of_another_lead_type_is_still_held_to_the_order():
     row = _hub(lead_type="Text Verified Mortgage Protection Standard", status="scheduled")
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=row)
     assert any("lead type" in one for one in result.problems), result.problems
+
+
+def test_a_setup_called_off_isnt_the_one_checked():
+    """Marcus Uhrich: Luna's "New fresh setup" for 50, then Rook's "ignore
+    Luna's setup above ... already renewed with 55 from INV-21186"."""
+    luna = ROOK.replace("Leads Ordered: 40", "Leads Ordered: 50")
+    rook_off = ("@Nova ⚠️ ignore Luna's setup above for Jonathan Carter (50 leads). He was already renewed with 40 "
+                "from INV-21186 in his thread. Do NOT add or renew again.")
+    result = rookqc.check(PAYRA, [("Luna", luna), ("Rook", rook_off), ("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
+    assert not any("50 leads" in one for one in result.problems), result.problems
+    assert any("Luna's setup (50 leads) was called off by Rook" in one for one in result.notes), result.notes
+    alone = rookqc.check(PAYRA, [("Luna", luna), ("Rook", rook_off), ("Nova", NOVA)], hub=_hub())
+    assert not any("50 leads" in one for one in alone.problems), alone.problems
+
+
+def test_a_renewal_added_twice_on_the_hub():
+    """The 50 Rook said not to add, added on top of the 40 paid for."""
+    talk = [("Rook", ROOK), ("Nova", NOVA)]
+    twice = rookqc.check(PAYRA, talk, hub=_hub(ordered=150, delivered=60))
+    assert any("90 still to deliver" in one and "added twice" in one for one in twice.problems), twice.problems
+    left = rookqc.check(PAYRA, talk, hub=_hub(ordered=103, delivered=60))
+    assert not any("still to deliver" in one for one in left.problems)
+    assert any("left over from before" in one for one in left.notes)
+    assert not any("still to deliver" in one for one in rookqc.check(PAYRA, talk, hub=_hub()).problems)

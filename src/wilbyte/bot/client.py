@@ -11504,7 +11504,7 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
         if _sqc_mentions(said, key, held) or (reply_to and reply_to in theirs):
             theirs.add(one.id)
             who = str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?")
-            talk.append((who, said))
+            talk.append((getattr(one, "created_at", None), who, said))
             # Rook's setup names who it's for: Nova's answers name them too.
             setup = rookqc.rook_setup(said)
             if setup is not None:
@@ -11531,9 +11531,13 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
         if not (_sqc_mentions(name, key, held) or any(_sqc_mentions(_all_of_it(one), key, held) for one in inside)):
             continue
         for one in inside:
-            talk.append((str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
+            talk.append((getattr(one, "created_at", None),
+                         str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
                          _all_of_it(one)))
-    return talk
+    # Oldest first, the channel and its threads together: which setup was
+    # called off by what came after it - Marcus Uhrich's - turns on it.
+    talk.sort(key=lambda one: one[0] or posted)
+    return [(who, said) for _at, who, said in talk]
 
 
 async def _sqc_hub(bot):

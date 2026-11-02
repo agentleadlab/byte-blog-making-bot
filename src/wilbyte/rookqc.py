@@ -197,6 +197,42 @@ def about(text: str, order: Order) -> bool:
                                    for word in (words[0], words[-1]))
 
 
+#: Someone calling a setup off: Rook's "ignore Luna's setup above for
+#: Marcus Uhrich ... Do NOT add or renew again".
+CALLED_OFF = re.compile(r"\b(?:ignore|disregard|scratch|cancel)\b(?P<what>[^\n]{0,60}?)\bset[\s-]?up\b",
+                        re.IGNORECASE)
+
+
+def the_setup(talk, paid: Order) -> tuple:
+    """(the setup this payment's QC is held to, notes on any called off).
+    Not one somebody said to ignore - Marcus Uhrich's 50 from Luna, called off
+    by Rook for the 55 already renewed - and of several, the one with the
+    payment's count, else the newest."""
+    setups, notes = [], []
+    for who, said in talk:
+        found = rook_setup(said)
+        if found is not None:
+            setups.append([who, found, False])
+            continue
+        off = CALLED_OFF.search(said)
+        if off is None or not setups:
+            continue
+        whose = re.search(r"\b(\w+)['’]s\b", off.group("what"))
+        hit = [one for one in setups if not one[2] and (whose is None or one[0].casefold().startswith(
+            whose.group(1).casefold()))] or [one for one in setups if not one[2]]
+        if hit:
+            target = hit[-1] if whose is None else None
+            for one in ([target] if target else hit):
+                one[2] = True
+                notes.append(f"{one[0]}'s setup ({one[1].count or '?'} leads) was called off by {who} - "
+                             f"“{_quote(said, CALLED_OFF)}”")
+    standing = [one[1] for one in setups if not one[2]]
+    if not standing:
+        return None, notes
+    fits = [one for one in standing if paid.count is not None and one.count == paid.count]
+    return (fits or standing)[-1], notes
+
+
 def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str = "", sheet_rows: int | None = None,
           sheet_problem: str = "", hub_rows: list | None = None, paid_at=None) -> Checked:
     """The payment held up against Rook's setup, Nova's replies, the hub and
@@ -204,7 +240,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     `hub`: the hub's record for them, or None."""
     paid = payment(post)
     result = Checked(client=paid.name)
-    rook = next((found for who, said in talk for found in [rook_setup(said)] if found is not None), None)
+    rook, called_off = the_setup(talk, paid)
+    result.notes += called_off
     if rook is not None and rook.name:
         # A business paying - "Kunz Marketing, Llc" for Kurtis Kunz.
         result.client = rook.name
@@ -283,6 +320,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     else:
         _hub(result, hub, wanted)
     _delivered(result, fulfilled, paid)
+    _added_twice(result, hub, wanted, talk)
     # Rook's setup for more than this payment - Ryan Gsell's 30 paid in two
     # payments of 15, "BOTH payments are in #new-payment".
     said_all = "\n".join(said for _who, said in talk)
@@ -520,6 +558,30 @@ def _hub(result: Checked, hub, paid: Order) -> None:
         result.problems.append("The hub shows no states for them")
     if not getattr(hub, "sheet_url", ""):
         result.problems.append("The hub has no sheet for them")
+
+
+def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
+    """More still to deliver on the hub than this payment bought: a renewal
+    added twice - Luna's 50 for Marcus Uhrich on top of the 55 from
+    INV-21186 - or leads left over from before."""
+    if hub is None or paid.count is None:
+        return
+    ordered, delivered = getattr(hub, "ordered", None), getattr(hub, "delivered", None) or 0
+    if ordered is None or str(getattr(hub, "status", "") or "").casefold() in FINISHED:
+        return
+    said_all = "\n".join(said for _who, said in talk)
+    if len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
+            r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE):
+        return  # one setup for several payments - Ryan Gsell's
+    extra = ordered - delivered - paid.count
+    if extra <= 0:
+        return
+    line = (f"The hub has {ordered - delivered} still to deliver ({ordered} ordered, {delivered} delivered) - "
+            f"{extra} more than the {paid.count} paid for")
+    if extra >= max(5, paid.count // 2):
+        result.problems.append(line + ": added twice, or left over from before?")
+    else:
+        result.notes.append(line + " - left over from before, most likely")
 
 
 def said(result: Checked, *, link: str = "", amount: str = "") -> str:
