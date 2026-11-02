@@ -248,3 +248,15 @@ def test_live_on_the_hub_puts_what_went_before_aside():
     # Not going yet: the hand-offs are still the team's work.
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(status="paused"))
     assert result.todo
+
+
+def test_several_hub_rows_the_one_this_payment_fits():
+    """Jay Rodriguez: Jay_Rodriguez and Jay_Rodriguez_2 on the hub - the
+    newest was checked, and read "has IA not ordered"."""
+    from datetime import datetime, timezone
+
+    old = _hub(name="Jonathan_Carter", states=("TX", "FL", "IA"), updated_at=datetime(2026, 11, 2, tzinfo=timezone.utc))
+    right = _hub(name="Jonathan_Carter_2", states=("TX", "FL", "GA"), updated_at=datetime(2026, 10, 1, tzinfo=timezone.utc))
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=old, hub_rows=[old, right])
+    assert not any("IA" in one for one in result.problems), result.problems
+    assert any("2 hub rows" in one and "Jonathan_Carter_2" in one for one in result.notes)

@@ -191,7 +191,7 @@ def about(text: str, order: Order) -> bool:
 
 
 def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str = "", sheet_rows: int | None = None,
-          sheet_problem: str = "") -> Checked:
+          sheet_problem: str = "", hub_rows: list | None = None) -> Checked:
     """The payment held up against Rook's setup, Nova's replies, the hub and
     the sheet. `talk`: [(who, what they said)] in #rook-nova, oldest first.
     `hub`: the hub's record for them, or None."""
@@ -234,6 +234,14 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # What the hub is held to: the payment, and Rook's setup for whatever
     # the payment doesn't say - a Zelle post carries no states or count.
     wanted = _filled(paid, rook)
+    if hub_rows and len(hub_rows) > 1:
+        # Several rows for them - Jay Rodriguez's Jay_Rodriguez and
+        # Jay_Rodriguez_2: the one this payment fits, not the newest.
+        hub = pick_row(hub_rows, wanted)
+        result.notes.append(f"{len(hub_rows)} hub rows for them - checked {getattr(hub, 'name', '?')}, the one that "
+                            "fits this payment best")
+    elif hub_rows:
+        hub = hub_rows[0]
     if any(getattr(wanted, key) != getattr(paid, key) for key in ("email", "lead_type", "count", "states", "left_out")):
         result.notes.append("The payment doesn't say everything (a Zelle post, or no invoice notes) - the hub is "
                             "checked against Rook's setup where it doesn't")
@@ -344,6 +352,23 @@ def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) 
             result.ok.append(f"{whose}: all {len(states)} states match")
     elif paid.states and not states:
         result.problems.append(f"{whose} has no states (the payment: {', '.join(paid.states)})")
+
+
+def pick_row(rows: list, wanted: Order):
+    """The hub row an order fits best: its states, its lead type, its count -
+    the newest when they fit alike."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    def misfit(row) -> tuple:
+        states = set(getattr(row, "states", ()) or ())
+        off = len(states ^ set(wanted.states)) if wanted.states and states else 0
+        kind = family(getattr(row, "lead_type", ""))
+        wrong_kind = 1 if kind and family(wanted.lead_type) and (kind - {"aged"}) != (family(wanted.lead_type) - {"aged"}) else 0
+        short = 1 if wanted.count and getattr(row, "ordered", None) is not None and row.ordered < wanted.count else 0
+        newest = getattr(row, "updated_at", None) or _dt.min.replace(tzinfo=_tz.utc)
+        return (wrong_kind, off, short, -newest.timestamp() if newest.year > 1 else 0)
+
+    return min(rows, key=misfit)
 
 
 def _hub(result: Checked, hub, paid: Order) -> None:
