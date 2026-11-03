@@ -12413,7 +12413,9 @@ async def _rn_thread_for(bot, channel, client: str, posted: datetime | None):
     for thread in await _rn_threads(channel):
         name = str(getattr(thread, "name", "") or "").split("·")[0].strip()
         made = getattr(thread, "created_at", None)
-        if name and rookqc.same_person(name, client) and (
+        # First and last name: Noah Anthony Vera's question went into Riley
+        # Noah's thread, and Preston Tackett's into Preston Bridges'.
+        if name and rookqc.same_person_strict(name, client) and (
                 posted is None or made is None or made >= posted - timedelta(minutes=5)):
             found.append(thread)
     return max(found, key=lambda one: getattr(one, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),

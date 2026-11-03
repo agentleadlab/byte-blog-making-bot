@@ -421,11 +421,15 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     for said in nova:
         for line in _HANDED.findall(said):
             line = " ".join(line.split())
+            if _about_someone_else(line, result.client or paid.name):
+                # "Ryan Gsell was paused by the team" on David Jacob's card,
+                # from a Nova message about the two of them.
+                continue
             if _NO_PAYMENT.search(line):
                 # The payment's right here - it's what this QC is of.
                 result.notes.append("Nova said it couldn't find the payment - it's this one in #new-payment")
                 continue
-            if _RISK.search(line):
+            if _RISK.search(line) and not _about_someone_else(line, result.client or paid.name):
                 # Nova warning what would go wrong - Aaron Crane's "the hub
                 # would add a second 30 leads ... (he'd be owed 60)".
                 result.problems.append(f"Nova warns: {line}")
@@ -644,6 +648,24 @@ def _payer_named(text: str, payer: str) -> bool:
                                    for one in (words[0], words[-1]))
 
 
+#: Words a sentence starts with that aren't somebody's name.
+_NOT_NAMES = {"the", "his", "her", "their", "this", "that", "these", "those", "only", "rook", "nova", "luna",
+              "payment", "hub", "price", "lead", "leads", "order", "orders", "contract", "setup", "setting",
+              "during", "channel", "status", "he", "she", "they", "i", "it", "a", "an", "no", "nothing", "there",
+              "more", "one", "both", "team", "start", "discount", "card", "sheet", "zelle", "payra", "after",
+              "before", "if", "when", "once", "still", "already", "please", "pending", "veteran", "trucker",
+              "fresh", "aged", "text", "everything", "someone", "somebody", "nobody", "lead", "can't", "cannot"}
+
+
+def _about_someone_else(line: str, client: str) -> bool:
+    """A handed-over line that starts with another person's name - "Ryan's
+    pause ...", "Ryan Gsell was paused ..." on David Jacob's card."""
+    found = re.match(r"\W*([A-Z][a-z]+)(?:['’]s\b|\s+[A-Z][a-z]+\b)", str(line or ""))
+    if not found or found.group(1).casefold() in _NOT_NAMES:
+        return False
+    return found.group(1).casefold() not in _name_words(client)
+
+
 def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     if paid.name and theirs.name and not same_person(paid.name, theirs.name):
         if _payer_named(result.setup_text + "\n" + result.talk_text, paid.name) or _BUSINESS.search(paid.name):
@@ -660,8 +682,10 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     elif paid.email and not theirs.email:
         # Left out isn't wrong - Max Wilson's.
         result.notes.append(f"{whose} gives no email (the payment's is {paid.email})")
-    if paid.phone and theirs.phone and _digits(paid.phone) != _digits(theirs.phone):
-        result.problems.append(f"{whose} has the phone {theirs.phone}, the payment {paid.phone}")
+    if paid.phone and theirs.phone and _digits(paid.phone)[-10:] != _digits(theirs.phone)[-10:]:
+        # Not a hub problem - the hub keeps no phone - and not one to take to
+        # Therese and Nicole (Corbin Reed's): said, not flagged.
+        result.notes.append(f"{whose} has the phone {theirs.phone}, the payment {paid.phone}")
     if paid.count is not None and theirs.count is not None:
         if paid.count != theirs.count:
             result.problems.append(f"{whose} has {theirs.count} leads, the payment {paid.count}")

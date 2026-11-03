@@ -641,3 +641,25 @@ def test_a_problem_is_asked_about_only_once_its_found_again(monkeypatch):
     held["seen"] = {key: (now - timedelta(minutes=30)).isoformat()}
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
     assert asked == [result.problems]
+
+
+def test_a_question_goes_in_the_clients_own_thread_only():
+    """Noah Anthony Vera's went into Riley Noah's thread."""
+    from wilbyte.bot import client
+
+    paid = datetime.now(timezone.utc) - timedelta(hours=1)
+    riley = _Thread("Riley Noah", paid + timedelta(minutes=1))
+    noah = _Thread("Noah Anthony Vera · setup", paid + timedelta(minutes=2))
+
+    async def threads(channel, store=None):
+        return [riley, noah]
+
+    import wilbyte.bot.client as c
+    orig = c._rn_threads
+    c._rn_threads = threads
+    try:
+        assert asyncio.run(client._rn_thread_for(SimpleNamespace(), None, "Noah Anthony Vera", paid)) is noah
+        assert asyncio.run(client._rn_thread_for(SimpleNamespace(), None, "Noah Vera", paid)) is noah
+        assert asyncio.run(client._rn_thread_for(SimpleNamespace(), None, "Riley Smith", paid)) is None
+    finally:
+        c._rn_threads = orig

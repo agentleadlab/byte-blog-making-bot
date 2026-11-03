@@ -1037,3 +1037,22 @@ def test_the_question_shows_what_each_side_says():
     assert "The payment (INV-21110): 40 Fresh FEX · states TX, FL, GA (3)" in asked, asked
     assert "Rook's setup: 40 Text-Verified Final Expense (fresh) · states TX, FL, GA, IN (4)" in asked
     assert "The hub: Jonathan Carter (row 2070)" in asked and "states TX, FL, GA, IN (4)" in asked
+
+
+def test_a_line_about_someone_else_in_novas_message_isnt_theirs():
+    """David Jacob's card carried "Ryan's pause is the team's ..." and "Ryan
+    Gsell was paused by the team"."""
+    nova = (NOVA + "\nHanded to the team: Ryan Gsell was paused by the team (order filled) — their start is a "
+            "person's call.\nHanded to the team: Ryan's pause is the team's, so only they can start him, and the "
+            "second 15 leads still need adding.")
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub())
+    assert not any("Ryan" in one for one in result.todo + result.problems), (result.todo, result.problems)
+    assert any("contract is signed" in one for one in result.todo)
+
+
+def test_a_different_phone_is_a_note():
+    """Corbin Reed: taken to Therese and Nicole for Rook's setup's phone."""
+    rook = ROOK.replace("Phone: +15555550101", "Phone: +15555550199")
+    result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
+    assert not any("phone" in one for one in result.problems)
+    assert any("has the phone +15555550199" in one for one in result.notes)
