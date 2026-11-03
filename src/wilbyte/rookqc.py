@@ -255,7 +255,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     result.picked_up = bool(talk)
     fulfilled = _fulfilled(talk)
     # The hub row this order is - of its lead type, an open one first.
-    hub, hub_note, hub_elsewhere = resolve_hub(hub_rows or ([hub] if hub is not None else []), _filled(paid, rook))
+    hub, hub_note, hub_elsewhere = resolve_hub(hub_rows or ([hub] if hub is not None else []), _filled(paid, rook),
+                                               paid_at=paid_at)
     if OVERFLOW.search(str(post or "")):
         # "Overflow Trucker - $25/lead": the team delivers it from overflow -
         # not Rook and Nova's, not on the hub. Karli Kelley's was held to her
@@ -314,6 +315,11 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
     if not nova:
         result.problems.append("Nova hasn't answered Rook yet - nothing says it's set up")
+    asked = open_question(talk)
+    if asked:
+        # James Wyman's "Can you confirm his exact start time for Wednesday
+        # ...? Post it here and I'll set it." - nobody had.
+        result.todo.append(f"Nova asked and nobody's answered: “{asked}”")
     # What the hub is held to: the payment, and Rook's setup for whatever
     # the payment doesn't say - a Zelle post carries no states or count.
     wanted = _filled(paid, rook)
@@ -536,6 +542,17 @@ def pick_row(rows: list, wanted: Order):
     return min(rows, key=misfit)
 
 
+def _before(at, paid_at) -> bool:
+    """`at` is before the payment - both known."""
+    if at is None or paid_at is None:
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    if paid_at.tzinfo is None:
+        paid_at = paid_at.replace(tzinfo=timezone.utc)
+    return at < paid_at
+
+
 def _over(row) -> bool:
     return str(getattr(row, "status", "") or "").casefold() in FINISHED
 
@@ -548,7 +565,18 @@ def _described(row) -> str:
     return f"{getattr(row, 'lead_type', '') or '?'} ({', '.join(bits)})"
 
 
-def resolve_hub(rows: list, wanted: Order) -> tuple:
+def open_question(talk) -> str:
+    """Nova's question in its last word with nothing said after it - "" when
+    there's none, or somebody answered."""
+    last = next((at for at in range(len(talk) - 1, -1, -1) if talk[at][0].casefold().startswith("nova")), None)
+    if last is None or any(not who.casefold().startswith("nova") for who, _said in talk[last + 1:]):
+        return ""
+    asks = [" ".join(one.split()) for one in re.findall(r"[^.!?\n]*\?", talk[last][1])]
+    asks = [one for one in asks if len(one) > 15]
+    return " ".join(asks)[:300]
+
+
+def resolve_hub(rows: list, wanted: Order, *, paid_at=None) -> tuple:
     """(the hub row this order is or None, a note, what they're on the hub
     for instead when none of their rows is this lead type)."""
     rows = [one for one in rows or [] if one is not None]
@@ -560,6 +588,9 @@ def resolve_hub(rows: list, wanted: Order) -> tuple:
     # as "the hub has 10 ordered - less than the 40 paid for".
     fits = [one for one in fits if not (_over(one) and wanted.count and getattr(one, "ordered", None) is not None
                                         and one.ordered < wanted.count)]
+    # Nor one that was over before this was paid - Jacob Sides' done 8 of 8,
+    # read as his new 6 delivered.
+    fits = [one for one in fits if not (_over(one) and _before(getattr(one, "updated_at", None), paid_at))]
     if not fits and any(not _wrong_kind(one, wanted) for one in rows):
         return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows)) + " - an older order"
     if not fits:

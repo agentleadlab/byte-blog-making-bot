@@ -596,3 +596,28 @@ def test_a_done_row_smaller_than_the_payment_is_an_older_order():
     # Done and as big as the payment: this order, delivered.
     full = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(status="done", ordered=40, delivered=40))
     assert not any("Nothing on the hub" in one for one in full.problems), full.problems
+
+
+def test_novas_question_nobody_answered():
+    """James Wyman: Nova asked Rook to confirm his start time for Wednesday,
+    and the card said only the Discord channel that failed."""
+    nova = (NOVA + "\nCan you confirm his exact start time for Wednesday with him, for example 6 AM in his time "
+            "zone? Post it here and I'll set it.")
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub(status="scheduled"))
+    assert any("Nova asked and nobody's answered" in one and "start time for Wednesday" in one
+               for one in result.todo), result.todo
+    answered = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova), ("Rook", "6 AM Central")],
+                            hub=_hub(status="scheduled"))
+    assert not any("Nova asked" in one for one in answered.todo)
+
+
+def test_a_row_done_before_the_payment_is_an_older_order():
+    """Jacob Sides: paid for 6, his hub row done at 8 of 8 before he paid -
+    said ✅ as delivered."""
+    paid = datetime(2026, 11, 2, 22, 30, tzinfo=timezone.utc)
+    old = _hub(status="done", ordered=40, delivered=40, updated_at=paid - timedelta(days=3))
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=old, paid_at=paid)
+    assert any("Nothing on the hub for this order yet" in one for one in result.problems), result.problems
+    after = _hub(status="done", ordered=40, delivered=40, updated_at=paid + timedelta(hours=1))
+    fine = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=after, paid_at=paid)
+    assert not any("Nothing on the hub" in one for one in fine.problems), fine.problems

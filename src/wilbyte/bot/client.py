@@ -11676,7 +11676,8 @@ async def _sqc_check(bot, key: str):
         # The row this payment is - its lead type, an open one first - and
         # its sheet: Preston Bridges' ended Mortgage Protection row wasn't.
         agent, _note, _elsewhere = rookqc.resolve_hub(rows, rookqc._filled(rookqc.payment(text), next(
-            (found for _who, said in talk for found in [rookqc.rook_setup(said)] if found is not None), None)))
+            (found for _who, said in talk for found in [rookqc.rook_setup(said)] if found is not None), None)),
+            paid_at=getattr(post, "created_at", None))
     hub_rows = rows
     rows, sheet_problem = None, ""
     if agent is not None and agent.sheet_url:
