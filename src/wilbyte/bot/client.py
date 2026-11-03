@@ -12453,6 +12453,11 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
     return asked.jump_url
 
 
+#: Off: "why is it sending on rook-nova channel" - what's fixed is said on its
+#: card in #agent-setup, not as replies in #rook-nova.
+SETUP_QC_TELL_FIXED = False
+
+
 async def _sqc_tell_fixed(bot, key: str, result, held: dict) -> None:
     """What Ryte asked Rook and Nova about that's right now, said as a reply
     to the question - "where did this come from": Justin Techer's IN, asked
@@ -12465,7 +12470,7 @@ async def _sqc_tell_fixed(bot, key: str, result, held: dict) -> None:
                and not rookqc.among(one, told)]
     link = str(held.get("asked") or "")
     found = re.search(r"/channels/\d+/(\d+)/(\d+)", link)
-    if not cleared or not found or not SETUP_QC_AUTO_ASK:
+    if not cleared or not found or not SETUP_QC_AUTO_ASK or not SETUP_QC_TELL_FIXED:
         return
     # Only when the whole payment checks out - on the hub for this order, as
     # paid for, nothing else open. Mai Nguyen's "nobody's said anything" went

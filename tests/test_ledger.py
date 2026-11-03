@@ -590,6 +590,11 @@ def test_what_ryte_asked_about_that_is_right_now_is_said(monkeypatch):
 
     bot = SimpleNamespace(get_channel=lambda _id: Channel())
     asked = "The hub states don't match the payment - has IN not ordered"
+    rookqc.remember("899", asked="https://discord.com/channels/1/2/3", asked_problems=[asked])
+    asyncio.run(client._sqc_tell_fixed(bot, "899", rookqc.Checked(client="J", problems=[], hub=_row()),
+                                       rookqc.recalled()["899"]))
+    assert replies == [], "off: nothing said in #rook-nova"
+    monkeypatch.setattr(client, "SETUP_QC_TELL_FIXED", True)
     rookqc.remember("900", asked="https://discord.com/channels/1/2/3", asked_problems=[asked])
     result = rookqc.Checked(client="Justin Techer", problems=[], hub=_row(status="live"))
     # Mai Nguyen, William McClure: what was asked went, something else stayed.
