@@ -12037,6 +12037,7 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
         new = []
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
                     cant=result.cant, flagged=flagged)
+    await _sqc_tell_fixed(bot, key, result, rookqc.recalled().get(key) or held)
     await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)
     escalate = _sqc_escalation(bot, key, result, rookqc.recalled().get(key) or held)
     standing, title, body = paycards.setup_card(result, amount=amount, link=post.jump_url)
@@ -12442,6 +12443,33 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
                     asked_problems=list(dict.fromkeys([*(held.get("asked_problems") or []),
                                                        *(asking.problems or [])])))
     return asked.jump_url
+
+
+async def _sqc_tell_fixed(bot, key: str, result, held: dict) -> None:
+    """What Ryte asked Rook and Nova about that's right now, said as a reply
+    to the question - "where did this come from": Justin Techer's IN, asked
+    about, forwarded to Nicole to fix, then found added in his payment's
+    thread, and nobody told. Once for each."""
+    from .. import rookqc
+
+    asked, told = held.get("asked_problems") or [], held.get("told_fixed") or []
+    cleared = [one for one in asked if not rookqc.among(one, result.problems)
+               and not rookqc.among(one, told)]
+    link = str(held.get("asked") or "")
+    found = re.search(r"/channels/\d+/(\d+)/(\d+)", link)
+    if not cleared or not found or not SETUP_QC_AUTO_ASK:
+        return
+    rookqc.remember(key, told_fixed=list(dict.fromkeys([*told, *cleared])))
+    try:
+        channel = bot.get_channel(int(found.group(1))) or await bot.fetch_channel(int(found.group(1)))
+        question = await channel.fetch_message(int(found.group(2)))
+        text = (f"✅ Update on **{result.client or 'this payment'}** - this is right now, nothing to fix:\n"
+                + "\n".join(f"• ~~{one}~~" for one in cleared)
+                + "\nIf it went to the team, they can close it.")
+        with mirror.answering():
+            await question.reply(text[:1900], mention_author=False)
+    except Exception:
+        log.warning("Couldn't say %s is right now", key, exc_info=True)
 
 
 def _work_hours(bot, now: datetime | None = None) -> bool:

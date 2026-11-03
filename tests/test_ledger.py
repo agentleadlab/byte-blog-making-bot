@@ -571,3 +571,32 @@ def test_a_cant_with_its_trello_card_made_is_with_the_team():
     head, _, tail = said.partition("With the team on Trello")
     assert "Charles Sellers" in head and "William McClure" not in head
     assert "William McClure" in tail and "trello.com/c/s2Lf4Y1R" in tail
+
+
+def test_what_ryte_asked_about_that_is_right_now_is_said(monkeypatch):
+    """Justin Techer: "has IN not ordered", asked, forwarded to Nicole to fix,
+    then found added in his payment's thread - and nobody told."""
+    from wilbyte.bot import client
+
+    replies = []
+
+    class Question:
+        async def reply(self, text, **kw):
+            replies.append(text)
+
+    class Channel:
+        async def fetch_message(self, _id):
+            return Question()
+
+    bot = SimpleNamespace(get_channel=lambda _id: Channel())
+    asked = "The hub states don't match the payment - has IN not ordered"
+    rookqc.remember("900", asked="https://discord.com/channels/1/2/3", asked_problems=[asked])
+    result = rookqc.Checked(client="Justin Techer", problems=[])
+    asyncio.run(client._sqc_tell_fixed(bot, "900", result, rookqc.recalled()["900"]))
+    assert len(replies) == 1 and "Justin Techer" in replies[0] and "has IN not ordered" in replies[0]
+    asyncio.run(client._sqc_tell_fixed(bot, "900", result, rookqc.recalled()["900"]))
+    assert len(replies) == 1, "once"
+    still = rookqc.Checked(client="X", problems=[asked])
+    rookqc.remember("901", asked="https://discord.com/channels/1/2/4", asked_problems=[asked])
+    asyncio.run(client._sqc_tell_fixed(bot, "901", still, rookqc.recalled()["901"]))
+    assert len(replies) == 1, "not while it's still wrong"
