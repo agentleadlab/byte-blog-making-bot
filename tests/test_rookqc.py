@@ -937,3 +937,32 @@ def test_strict_names():
     assert rookqc.same_person_strict("Will Stanger", "William Stanger")
     assert not rookqc.same_person_strict("Duehat Kanan", "Mohammad Kanan")
     assert not rookqc.same_person_strict("Brandon Nguyen", "Mai Nguyen")
+
+
+def test_a_problem_whose_numbers_moved_is_still_the_same_one():
+    """Karli Kelley's overflow re-tagged Franklin as new each day: "paid 3
+    days ago" became "paid 4 days ago"."""
+    result = rookqc.Checked(problems=["Overflow order paid 4 days ago, and nothing says it's delivered yet"])
+    kept = rookqc.flagged_before(result, {"flagged": {
+        "Overflow order paid 3 days ago, and nothing says it's delivered yet": "2026-11-02T15:00:00+00:00"}})
+    assert result.still and not result.fixed
+    assert list(kept.values()) == ["2026-11-02T15:00:00+00:00"]
+
+
+def test_the_name_as_written_and_as_the_same_persons_are_both_looked_for():
+    """Tom Skinner: his ended row found as "Tom Skinner", the live one written
+    "Thomas Skinner" never looked for."""
+    rows = [_hub(name="Tom Skinner", status="ended"), _hub(name="Thomas Skinner", status="live")]
+    assert [one.name for one in rookqc.hub_named(rows, "Tom Skinner")] == ["Tom Skinner", "Thomas Skinner"]
+
+
+def test_another_open_row_that_started_before_the_payment_is_another_order():
+    """William McClure: his live Trucker row held up against his new Vets."""
+    from datetime import date
+
+    paid = datetime(2026, 10, 31, 23, 27, tzinfo=timezone.utc)
+    trucker = _hub(lead_type="Text Verified Trucker IUL", status="live", ordered=20, delivered=7,
+                   start_date=date(2026, 10, 20))
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=trucker, paid_at=paid)
+    assert any("Nothing on the hub for this order yet" in one and "Trucker IUL" in one for one in result.problems)
+    assert not any("lead type" in one for one in result.problems), result.problems

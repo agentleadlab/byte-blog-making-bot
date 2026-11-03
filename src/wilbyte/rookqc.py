@@ -87,6 +87,8 @@ class Checked:
     asked: tuple = ()
     #: Rook's setup message the QC was held to, as it was written.
     setup_text: str = ""
+    #: Everything said about it, run together.
+    talk_text: str = ""
     #: Rook or Nova saying they've taken it to Therese / Nicole themselves.
     with_team: str = ""
     #: The other payment post this one looks to be a second of.
@@ -196,15 +198,17 @@ def hub_named(found: list, who: str) -> list:
     (Will for William)."""
     from .hub import named
 
-    exact = named(found, who)
-    if exact:
-        return exact
+    # Both: the name as written and as the same person's - Tom Skinner's
+    # ended row was found as "Tom Skinner" and his live one, written
+    # "Thomas Skinner", never looked for.
+    out = list(named(found, who))
     words = _name_words(who)
     if len(words) < 2:
-        return []
+        return out
     first, last = words[0], words[-1]
-    out = []
     for one in found:
+        if one in out:
+            continue
         theirs = _name_words(getattr(one, "name", ""))
         if len(theirs) >= 2 and theirs[-1] == last and _same_first(theirs[0], first):
             out.append(one)
@@ -357,6 +361,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     rook, called_off, *said = the_setup(talk, paid)
     result.notes += called_off
     result.setup_text = said[0] if said else ""
+    result.talk_text = "\n".join(said for _who, said in talk)
     result.wanted = _filled(paid, rook)
     if paid.aged:
         result.notes.append(f"Also on the invoice: {paid.aged} - Nova's pull, checked by the aged QC")
@@ -620,7 +625,7 @@ def _payer_named(text: str, payer: str) -> bool:
 
 def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     if paid.name and theirs.name and not same_person(paid.name, theirs.name):
-        if _payer_named(result.setup_text, paid.name) or _BUSINESS.search(paid.name):
+        if _payer_named(result.setup_text + "\n" + result.talk_text, paid.name) or _BUSINESS.search(paid.name):
             # Somebody paying for them, and Rook's setup says so - Preston
             # Tackett's, two parts sent by his friend Ryan M Thompson.
             result.notes.append(f"Paid by {paid.name} for {theirs.name} - Rook's setup says so")
@@ -726,6 +731,18 @@ def _before(at, paid_at) -> bool:
     return at < paid_at
 
 
+def _started_on_before(row, paid_at) -> bool:
+    """Started on a day before the payment's."""
+    start = getattr(row, "start_date", None)
+    if start is None or paid_at is None:
+        return False
+    from zoneinfo import ZoneInfo
+
+    paid_on = (paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)).astimezone(
+        ZoneInfo("America/New_York")).date()
+    return start < paid_on
+
+
 def _started_before(row, paid_at) -> bool:
     """Filled, and started on a day before the payment."""
     start = getattr(row, "start_date", None)
@@ -811,7 +828,10 @@ def resolve_hub(rows: list, wanted: Order, *, paid_at=None) -> tuple:
         # An open row of another lead type may be this order set up wrong -
         # held up against it, its lead type is said. Only rows that are over
         # are older orders: nothing for this one is on the hub yet.
-        fits = [one for one in rows if not _over(one)]
+        # Not one started before this was paid, though - that's another
+        # order: William McClure's live Trucker row, held up against his
+        # new Vets while Nova said the Vets weren't on the hub at all.
+        fits = [one for one in rows if not _over(one) and not _started_on_before(one, paid_at)]
     if not fits:
         return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows))
     row = pick_row(fits, wanted)
@@ -956,11 +976,25 @@ def flagged_before(result: Checked, held: dict) -> dict:
     flagged this already" (Kyle Moffitt's hub states). The flags to keep."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     before = dict(held.get("flagged") or {}) or {one: held.get("at") or now for one in held.get("problems") or []}
-    result.still = {one: before[one] for one in result.problems if one in before}
-    result.fixed = [one for one in before if one not in result.problems]
+    # The same problem with its numbers moved on - "paid 3 days ago" a day
+    # later, "41 still to deliver" after a delivery - is the same problem:
+    # Karli Kelley's overflow re-tagged Franklin as new every day.
+    by_key = {problem_key(one): when for one, when in before.items()}
+    now_keys = {problem_key(one) for one in result.problems}
+    result.still = {one: by_key[problem_key(one)] for one in result.problems if problem_key(one) in by_key}
+    result.fixed = [one for one in before if problem_key(one) not in now_keys]
     if held.get("asked"):
         result.asked = (held["asked"], held.get("asked_at") or "")
-    return {one: before.get(one) or now for one in result.problems}
+    return {one: by_key.get(problem_key(one)) or now for one in result.problems}
+
+
+def problem_key(problem: str) -> str:
+    """A problem as itself, whatever its numbers say today."""
+    return re.sub(r"\d[\d,.:]*", "#", " ".join(str(problem or "").split()))
+
+
+def among(problem: str, problems) -> bool:
+    return problem_key(problem) in {problem_key(one) for one in problems or []}
 
 
 def question(result: Checked, *, link: str = "", invoice: str = "") -> str:

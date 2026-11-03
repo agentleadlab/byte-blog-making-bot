@@ -133,8 +133,10 @@ def open_ones(records: dict, *, now: datetime) -> dict:
 
 def _still_wrong(one: dict) -> list:
     """Its problems, less what somebody OK'd."""
-    okd = set(one.get("ok_problems") or [])
-    return [problem for problem in one.get("open_problems") or [] if problem not in okd]
+    from .rookqc import among
+
+    okd = one.get("ok_problems") or []
+    return [problem for problem in one.get("open_problems") or [] if not among(problem, okd)]
 
 
 def _line(one: dict, now: datetime, why: str = "") -> str:

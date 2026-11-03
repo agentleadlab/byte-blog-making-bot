@@ -11544,6 +11544,19 @@ def _sqc_mentions(text: str, key: str, held: dict) -> bool:
     return bool(phone) and rookqc.about(text, rookqc.Order(phone=phone))
 
 
+def _sqc_mentions_surely(text: str, key: str, held: dict) -> bool:
+    """About this payment for sure: its post's link, their email, their phone."""
+    from .. import rookqc
+
+    if key in str(text or ""):
+        return True
+    for email in held.get("emails") or ([held["email"]] if held.get("email") else []):
+        if email and email.casefold() in str(text or "").casefold():
+            return True
+    phone = held.get("phone") or ""
+    return bool(phone) and rookqc.about(text, rookqc.Order(phone=phone))
+
+
 def _sqc_heard(bot, message) -> None:
     """A message in #rook-nova: the payments it's about looked at again once
     the conversation settles."""
@@ -11616,7 +11629,11 @@ async def _talk_in(channel, store: dict, key: str, held: dict, posted: datetime)
         if inside is None:
             continue
         name = str(getattr(thread, "name", "") or "")
-        theirs_by_name = _sqc_mentions(name, key, held)
+        # Theirs: named for them, or anything in it naming the payment, their
+        # email or phone - Mohammad Kanan's thread, for The Eissa Group's
+        # payment. A name only in passing lends only that message.
+        theirs_by_name = _sqc_mentions(name, key, held) or any(
+            _sqc_mentions_surely(_all_of_it(one), key, held) for one in inside)
         for one in inside:
             # A thread named for them: all of it. Another's thread: only what
             # names them - David Jacob's card carried Nova's warning about
@@ -11913,10 +11930,12 @@ def _ledger_keep(key: str, post, result, held: dict) -> None:
 def _okd(result, held: dict) -> None:
     """What somebody OK'd as it is - Kyle Moffitt's extra states - moved to
     the notes: not flagged, nor asked about, again."""
-    okd = set(held.get("ok_problems") or [])
+    from .. import rookqc
+
+    okd = held.get("ok_problems") or []
     if not okd:
         return
-    for one in [one for one in result.problems if one in okd]:
+    for one in [one for one in result.problems if rookqc.among(one, okd)]:
         result.problems.remove(one)
         result.notes.append(f"👌 OK'd by {held.get('ok_by') or 'the team'}: {one}")
 
@@ -12411,7 +12430,7 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
         # Delivered already - Jason Lewis' done 25 of 25: nothing on the hub
         # to fix. It's on the day's list, not asked about.
         return
-    new = [one for one in result.problems if one not in (held.get("asked_problems") or [])]
+    new = [one for one in result.problems if not rookqc_among(one, held.get("asked_problems"))]
     if not new:
         return
     now = datetime.now(timezone.utc)
@@ -12434,6 +12453,12 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
             result.asked = (rookqc_recalled_link(key), datetime.now(timezone.utc).isoformat(timespec="seconds"))
     except Exception:
         log.warning("Couldn't ask Rook and Nova about %s", key, exc_info=True)
+
+
+def rookqc_among(problem: str, problems) -> bool:
+    from .. import rookqc
+
+    return rookqc.among(problem, problems)
 
 
 def rookqc_finished() -> tuple:
@@ -12477,14 +12502,14 @@ def _sqc_escalation(bot, key: str, result, held: dict) -> str:
         return ""
     now = datetime.now(timezone.utc)
     asked_at, posted = _moment_of(held.get("asked_at")), _moment_of(held.get("posted"))
-    still = [one for one in result.problems if one in (held.get("asked_problems") or [])]
+    still = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))]
     if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER) or getattr(result, "with_team", ""):
         still = []  # not yet - or Rook took it to them already
     team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"] if result.cant else [])
     if not (posted and now - posted >= SETUP_QC_ESCALATE_AFTER):
         team = []
     open_now = still + team
-    if not open_now or set(open_now) <= set(held.get("escalated") or []):
+    if not open_now or all(rookqc.among(one, held.get("escalated")) for one in open_now):
         return ""
     if posted is not None and now - posted > timedelta(days=7):
         return ""  # on the day's list

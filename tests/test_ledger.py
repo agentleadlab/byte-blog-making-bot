@@ -471,3 +471,43 @@ def test_nobody_is_missing_from_a_board_that_wasnt_all_read():
     records = {"1": _kept("Sebastian Salas", ledger.NOT_SET_UP, hours=3)}
     assert ledger.board_vs(records, {"Someone Else": ledger.LIVE}, now=NOW, complete=False) == []
     assert ledger.board_vs(records, {"Someone Else": ledger.LIVE}, now=NOW)
+
+
+def test_a_thread_named_for_the_client_not_the_payer_is_theirs(monkeypatch):
+    """The Eissa Group Llc paid for Mohammad Kanan: his thread names his
+    email, not the business - Rook's setup was left out."""
+    from wilbyte.bot import client
+
+    paid = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    def msg(i, text, who="Rook"):
+        return SimpleNamespace(id=i, created_at=paid + timedelta(minutes=i), content=text, embeds=[],
+                               message_snapshots=[], reference=None,
+                               author=SimpleNamespace(display_name=who, name=who, bot=True))
+
+    class Thread:
+        id, name, created_at = 70, "Mohammad Kanan", paid + timedelta(minutes=1)
+
+        def history(self, **kw):
+            async def gen():
+                yield msg(2, "@Nova New fresh setup:\nName: Mohammad Kanan\nEmail: mk@example.com")
+                yield msg(3, "Set up ✅", "Nova")
+            return gen()
+
+    class Channel:
+        name, threads = "rook-nova", [Thread()]
+
+        def history(self, **kw):
+            async def gen():
+                if False:
+                    yield None
+            return gen()
+
+        def archived_threads(self, **kw):
+            return Channel.history(self)
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Channel())
+    monkeypatch.setattr(client, "_launching_channel", lambda bot: None)
+    held = {"names": ["The Eissa Group Llc"], "email": "mk@example.com"}
+    talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", held, paid))
+    assert [who for who, _said in talk] == ["Rook", "Nova"]
