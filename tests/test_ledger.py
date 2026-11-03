@@ -229,3 +229,27 @@ def test_the_half_hourly_pass_takes_in_missed_payments_and_checks_the_open_ones(
     assert asyncio.run(client._ledger_pass(bot)) == 2
     assert watched == [950]
     assert sorted(ran) == [("900", False), ("902", True)]
+
+
+def test_asking_is_kept_to_recent_payments_and_a_few_an_hour(monkeypatch):
+    """The first pass after an update reads three weeks of payments -
+    #rook-nova isn't to be flooded."""
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(key)
+        return "https://discord.com/x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    monkeypatch.setattr(client, "SETUP_QC_ASKS_AN_HOUR", 3)
+    now = datetime.now(timezone.utc)
+    result = SimpleNamespace(client="X", problems=["Not on the hub"], todo=[], cant="", overflow=False, asked=())
+    old = {"posted": (now - timedelta(days=5)).isoformat()}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, old))
+    assert asked == [], "five days old: on the day's list, not asked"
+    for key in "23456":
+        asyncio.run(client._sqc_auto_ask(SimpleNamespace(), key, SimpleNamespace(), result,
+                                         {"posted": now.isoformat()}))
+    assert asked == ["2", "3", "4"], "three an hour"

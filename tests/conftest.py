@@ -161,4 +161,6 @@ def _rook_nova_read_afresh(tmp_path, monkeypatch):
     from wilbyte import ledger
 
     monkeypatch.setattr(ledger, "SAID_PATH", tmp_path / "ledger-said.json")
+    monkeypatch.setattr(client, "_ASKED_TIMES", [])
+    monkeypatch.setattr(client, "_ESCALATED_TIMES", [])
     monkeypatch.setattr(client, "_CARD_LOCKS", {})

@@ -12145,6 +12145,25 @@ SETUP_QC_ASK_GAP = timedelta(minutes=30)
 #: Who's asked when Rook and Nova haven't sorted it - by the start of their
 #: names as Discord shows them.
 SETUP_QC_TEAM = ("therese", "nicole")
+#: Only payments this recent are asked about, or taken to the team, by
+#: themselves - older ones are on the day's list - and no more than this many
+#: an hour: the first pass after an update reads three weeks of payments, and
+#: #rook-nova isn't to be flooded.
+SETUP_QC_ASK_WITHIN = timedelta(days=3)
+SETUP_QC_ASKS_AN_HOUR = 8
+SETUP_QC_ESCALATIONS_AN_HOUR = 6
+_ASKED_TIMES: list = []
+_ESCALATED_TIMES: list = []
+
+
+def _room(times: list, most: int) -> bool:
+    """Under `most` in the last hour - and counted when so."""
+    now = time.time()
+    times[:] = [one for one in times if now - one < 3600]
+    if len(times) >= most:
+        return False
+    times.append(now)
+    return True
 
 
 async def _rn_thread_for(bot, channel, client: str, posted: datetime | None):
@@ -12210,9 +12229,15 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     new = [one for one in result.problems if one not in (held.get("asked_problems") or [])]
     if not new:
         return
-    last = _moment_of(held.get("asked_at"))
-    if last is not None and datetime.now(timezone.utc) - last < SETUP_QC_ASK_GAP:
+    now = datetime.now(timezone.utc)
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    if posted is not None and now - posted > SETUP_QC_ASK_WITHIN:
         return
+    last = _moment_of(held.get("asked_at"))
+    if last is not None and now - last < SETUP_QC_ASK_GAP:
+        return
+    if not _room(_ASKED_TIMES, SETUP_QC_ASKS_AN_HOUR):
+        return  # asked next pass
     try:
         if await _sqc_ask(bot, key, post, result, problems=new):
             result.asked = (rookqc_recalled_link(key), datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -12263,6 +12288,10 @@ def _sqc_escalation(bot, key: str, result, held: dict) -> str:
         team = []
     open_now = still + team
     if not open_now or set(open_now) <= set(held.get("escalated") or []):
+        return ""
+    if posted is not None and now - posted > timedelta(days=7):
+        return ""  # on the day's list
+    if not _room(_ESCALATED_TIMES, SETUP_QC_ESCALATIONS_AN_HOUR):
         return ""
     rookqc.remember(key, escalated=list(dict.fromkeys([*(held.get("escalated") or []), *open_now])),
                     escalated_at=now.isoformat(timespec="seconds"))
