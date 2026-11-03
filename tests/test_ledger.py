@@ -663,3 +663,17 @@ def test_a_question_goes_in_the_clients_own_thread_only():
         assert asyncio.run(client._rn_thread_for(SimpleNamespace(), None, "Riley Smith", paid)) is None
     finally:
         c._rn_threads = orig
+
+
+def test_a_marketing_package_isnt_a_hub_setup(monkeypatch):
+    """Cole Jackson's $1,449 lead-generation marketing package."""
+    from wilbyte.bot import client
+
+    later = []
+    monkeypatch.setattr(client, "_sqc_later", lambda *a, **k: later.append(a))
+    post = SimpleNamespace(id=950, content=("New Payment | Payra\nNAME: Cole Jackson\nAMOUNT: $1449.00\nPRODUCT: This "
+                                            "is our lead generation marketing package where we at Agent Lead Lab ..."),
+                           embeds=[], message_snapshots=[], channel=SimpleNamespace(id=2),
+                           created_at=datetime.now(timezone.utc))
+    client._sqc_watch(SimpleNamespace(), post)
+    assert later == [] and "950" not in rookqc.recalled()

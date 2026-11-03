@@ -11463,6 +11463,11 @@ def _sqc_watch(bot, message) -> None:
     if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
                                                                             re.IGNORECASE):
         return
+    if re.search(r"\bmarketing\s+package\b|\blead\s+generation\s+marketing\b|\bad[\s-]*spend\b|"
+                 r"\bmanaged\s+ads\b", product, re.IGNORECASE):
+        # Cole Jackson's lead-generation marketing package: ads the team runs,
+        # not leads on the hub - nothing for Rook and Nova to set up.
+        return
     amount = (_AMOUNT.search(said) or [None, ""])[1]
     try:
         if amount and float(amount.replace(",", "")) < SETUP_QC_LEAST:
