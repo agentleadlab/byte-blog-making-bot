@@ -1127,3 +1127,22 @@ def test_scheduled_for_this_order_puts_what_was_handed_over_behind_it():
                                                                          updated_at=paid + timedelta(hours=1)),
                         paid_at=paid)
     assert held.todo, "waiting on a signature or a hold: still the team's"
+
+
+def test_a_payment_that_doesnt_say_what_for_isnt_guessed_a_new_order():
+    """Brandon Nguyen: a $400 Zelle with no product, the day after his Vets
+    order started - read as a new order nobody set up; it paid for that one."""
+    from datetime import date
+
+    zelle = "New Payment | Zelle 💰\nNAME: Jonathan Carter\nAMOUNT: $400.00\nPRODUCT: — (match to their order)"
+    paid = datetime(2026, 11, 2, 13, 58, tzinfo=timezone.utc)
+    row = _hub(status="ended", ordered=30, delivered=31, start_date=date(2026, 10, 27),
+               lead_type="Text Verified Veteran Plus")
+    result = rookqc.check(zelle, [("Rook", "Already with Faith (unmatched Zelle) for Jonathan Carter.")], hub=row,
+                          hub_rows=[row], paid_at=paid)
+    said = " ".join(result.problems)
+    assert "Not sure which order this pays for" in said and "started Oct 27" in said, result.problems
+    assert "Nothing on the hub for this order yet" not in said
+    # An invoice that says what it bought is still held to it.
+    known = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=row, hub_rows=[row], paid_at=paid)
+    assert any("Nothing on the hub for this order yet" in one for one in known.problems)

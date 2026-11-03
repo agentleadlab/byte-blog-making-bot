@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .ordercards import US_STATES, _codes, same_person
 from .state import _state_dir
@@ -514,7 +514,18 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if any(getattr(wanted, key) != getattr(paid, key) for key in ("email", "lead_type", "count", "states", "left_out")):
         result.notes.append("The payment doesn't say everything (a Zelle post, or no invoice notes) - the hub is "
                             "checked against Rook's setup where it doesn't")
-    if hub is None and hub_elsewhere:
+    recent = _paid_for_recent(hub_rows or [], wanted, paid_at) if hub is None and hub_elsewhere else None
+    if recent is not None:
+        # Brandon Nguyen's $400 Zelle, no product on it, the day after his
+        # Vets order started - read as a new order nobody set up, when it
+        # paid for that one, delivered. Which it is isn't guessed.
+        start = getattr(recent, "start_date", None)
+        result.problems.append(
+            f"Not sure which order this pays for - the payment doesn't say, and their "
+            f"{getattr(recent, 'lead_type', '') or 'last'} order started {start:%b} {start.day} "
+            f"({getattr(recent, 'status', '') or '?'}, {getattr(recent, 'delivered', None) or 0} of "
+            f"{getattr(recent, 'ordered', '?')} delivered). Payment for that one, or a new order not set up yet?")
+    elif hub is None and hub_elsewhere:
         # Preston Bridges' old Mortgage Protection row, ended, held up
         # against his new Vets - nothing for this order was set up yet.
         result.problems.append(f"Nothing on the hub for this order yet - they're only there for {hub_elsewhere}")
@@ -815,6 +826,22 @@ def _before(at, paid_at) -> bool:
     if paid_at.tzinfo is None:
         paid_at = paid_at.replace(tzinfo=timezone.utc)
     return at < paid_at
+
+
+def _paid_for_recent(rows: list, wanted: Order, paid_at):
+    """The order a payment that says nothing of what it bought may be paying
+    for: their newest row started in the three weeks before it. None when
+    the payment (or Rook's setup) says what it's for, or there's none."""
+    # "— (match to their order)" says nothing either.
+    if wanted.count is not None or family(wanted.lead_type) or paid_at is None:
+        return None
+    from zoneinfo import ZoneInfo
+
+    paid_on = (paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)).astimezone(
+        ZoneInfo("America/New_York")).date()
+    started = [one for one in rows if getattr(one, "start_date", None) is not None
+               and timedelta(0) <= paid_on - one.start_date <= timedelta(days=21)]
+    return max(started, key=lambda one: one.start_date, default=None)
 
 
 def _started_on_before(row, paid_at) -> bool:
