@@ -58,7 +58,8 @@ def test_the_days_list():
                         payra_missing=["• **Nobody Posted** $500 · INV-21300 · 3:10 PM"])
     assert "❌ Paid, not set up** (1)" in said and "Charles Sellers" in said
     assert "⚠️ Set up wrong** (1)" in said and "Kyle Moffitt" in said and "has WA" in said
-    assert "⏰ Should be live and isn't** (1)" in said and "James Wyman" in said
+    assert "Should be live" not in said, "starting today isn't late at 5 PM"
+    assert "🚀 Starting today** (1)" in said and "James Wyman" in said
     assert "📅 Going live by Wednesday** (2)" in said
     assert "Sarra El Badri" in said and "✅ ready" in said and "contract not signed yet" in said
     assert "🃏" in said and "Antonio Brancato" in said
@@ -677,3 +678,37 @@ def test_a_marketing_package_isnt_a_hub_setup(monkeypatch):
                            created_at=datetime.now(timezone.utc))
     client._sqc_watch(SimpleNamespace(), post)
     assert later == [] and "950" not in rookqc.recalled()
+
+
+
+def test_past_their_start_is_split_by_whose_it_is():
+    records = {"1": _kept("Joseph Foreman", ledger.SET_UP, start="2026-11-02", status="scheduled"),
+               "2": _kept("Jonathan Flores", ledger.SET_UP, start="2026-10-31", status="unsigned")}
+    said = ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4))
+    team, _, client = said.partition("✍️ Should be live - waiting on their signature")
+    assert "Joseph Foreman" in team and "Jonathan Flores" in client
+
+
+def test_payra_by_name_and_amount_when_the_invoice_isnt_named():
+    data = {"payments": {"a": {"invoice_number": "SW16RFK-39", "paid_on": "2026-11-03T17:34:00+00:00",
+                               "status": "paid", "amount": 1449, "customer": "Cole Jackson"}}}
+    assert ledger.payra_missing(data, "NAME: Cole Jackson\nAMOUNT: $1449.00", day=TODAY) == []
+    assert ledger.payra_missing(data, "NAME: Someone Else\nAMOUNT: $1449.00", day=TODAY)
+
+
+def test_aged_cards_waiting_on_a_pull_thats_done_are_brought_up_to_date(monkeypatch):
+    """46 read "paid, not pulled yet" - Roman Edwards' pulled that morning."""
+    from wilbyte import agedqc, paycards
+    from wilbyte.bot import client
+
+    paycards.remember("aged", "900", standing="waiting", title="Roman Edwards (INV-21221)")
+    paycards.remember("aged", "901", standing="waiting", title="Kyle Lass (INV-21078)")
+    agedqc.remember("900", agedqc.Checked(client="Roman Edwards", problems=[]))
+
+    async def no_thread(bot, key, order):
+        return None
+
+    monkeypatch.setattr(client, "_order_thread", no_thread)
+    asyncio.run(client._aged_catch_up(SimpleNamespace()))
+    assert paycards.where("aged", "900")["standing"] == "ok"
+    assert paycards.where("aged", "901")["standing"] == "waiting" and paycards.where("aged", "901").get("looked")

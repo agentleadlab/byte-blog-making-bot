@@ -1086,3 +1086,14 @@ def test_their_own_setup_over_one_that_names_them_as_payer():
     colton = ROOK.replace("Jonathan Carter", "Colton Ramon").replace("jcarter@", "colton@")
     result = rookqc.check(post, [("Rook", colton), ("Rook", keaton), ("Nova", NOVA)], hub=_hub())
     assert result.client == "Colton Ramon"
+
+
+
+def test_of_their_setups_the_one_for_what_this_payment_bought():
+    """William McClure's old $1,140 Trucker payment was held to his Vets setup."""
+    post = PAYRA.replace("Fresh FEX: 40", "Fresh Truckers: 40")
+    vets = ROOK.replace("Text-Verified Final Expense (fresh)", "Text-Verified Veteran leads (fresh)")
+    trucker = ROOK.replace("Text-Verified Final Expense (fresh)", "Text-Verified Trucker IUL leads (fresh)")
+    result = rookqc.check(post, [("Rook", trucker), ("Rook", vets), ("Nova", NOVA)],
+                          hub=_hub(lead_type="Text Verified Trucker IUL"))
+    assert not any("lead type" in one for one in result.problems), result.problems

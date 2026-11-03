@@ -362,6 +362,12 @@ def the_setup(talk, paid: Order) -> tuple:
         if theirs:
             standing = theirs
             break
+    # And of those, one for what this payment bought - William McClure's old
+    # $1,140 Trucker payment was held to his Vets setup.
+    kind = family(paid.lead_type) - {"aged"}
+    same_kind = [one for one in standing if kind and (family(one[1].lead_type) - {"aged"}) == kind]
+    if same_kind:
+        standing = same_kind
     if not standing:
         return None, notes
     fits = [one for one in standing if paid.count is not None and one[1].count == paid.count]
@@ -1032,7 +1038,9 @@ def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
         return
     line = (f"The hub has {ordered - delivered} still to deliver ({ordered} ordered, {delivered} delivered) - "
             f"{extra} more than the {paid.count} paid for")
-    if extra >= max(5, paid.count // 2):
+    if extra >= max(5, paid.count):
+        # As much again as was paid - added twice. Less is what was left of
+        # the order before, running on (Victory Aidah's 16 over 30).
         result.problems.append(line + ": added twice, or left over from before?")
     else:
         result.notes.append(line + " - left over from before, most likely")

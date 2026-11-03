@@ -207,10 +207,21 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
                          lambda one: one.get("stage") in (CANT, NOT_SET_UP) and one.get("trello"))]))
     wrong = by(lambda one: one.get("stage") not in (NOT_SET_UP, CANT, OVERFLOW, OVERFLOW_DONE) and _still_wrong(one))
     sections.append(("⚠️ Set up wrong", [_line(one, now, "; ".join(_still_wrong(one))[:300]) for one in wrong]))
-    late = by(lambda one: one.get("stage") == SET_UP and (_day(one.get("start")) or date.max) < today
-              or (one.get("stage") == SET_UP and _day(one.get("start")) == today and not morning))
-    sections.append(("⏰ Should be live and isn't", [
-        _line(one, now, f"start {one.get('start')}, the hub has them {one.get('status') or '?'}") for one in late]))
+    # Past their start day - not today's, whose hour can still be to come
+    # (34 at 4 PM, most starting that evening). Waiting on their signature is
+    # the client's to do, the rest the team's.
+    late = by(lambda one: one.get("stage") == SET_UP and (_day(one.get("start")) or date.max) < today)
+    unsigned = [one for one in late if str(one.get("status") or "").casefold() == "unsigned"]
+    held = [one for one in late if one not in unsigned]
+    sections.append(("⏰ Should be live and isn't - the team's to start", [
+        _line(one, now, f"start {one.get('start')}, the hub has them {one.get('status') or '?'}") for one in held]))
+    sections.append(("✍️ Should be live - waiting on their signature", [
+        _line(one, now, f"start {one.get('start')}, contract not signed") for one in unsigned]))
+    if not morning:
+        starting = by(lambda one: one.get("stage") in (SET_UP, LIVE) and _day(one.get("start")) == today)
+        sections.append(("🚀 Starting today", [_line(one, now, ("✅ live" if one.get("stage") == LIVE else
+                                                                 f"not live yet - {one.get('status') or '?'}"))
+                                               for one in starting if one.get("stage") != LIVE]))
     if not morning:
         ahead = [one for one in launching if today < (_day(one.get("start")) or date.min) <= through]
         sections.append((f"📅 Going live by {through:%A}", [
@@ -309,8 +320,14 @@ def payra_missing(data: dict, posted_text: str, *, day: date) -> list[str]:
             continue
         # One payment for two invoices - Sarra El Badri's "INV-21189,
         # INV-21190" - is posted when either is.
-        numbers = {f"INV-{digits}" for digits in re.findall(r"\d+", number)}
-        if numbers & seen:
+        numbers = {f"INV-{digits}" for digits in re.findall(r"\d+", number)} if number.startswith("INV") else set()
+        if numbers & seen or (not numbers and number.casefold() in (posted_text or "").casefold()):
+            continue
+        # Posted under its name and amount, the invoice not named - Cole
+        # Jackson's "SW16RFK-39".
+        who, amount = str(one.get("customer") or ""), one.get("amount")
+        if who and who.casefold() in (posted_text or "").casefold() and amount is not None and (
+                f"{float(amount):,.2f}" in (posted_text or "") or f"{float(amount):.2f}" in (posted_text or "")):
             continue
         lines.append(f"• **{one.get('customer') or '?'}** ${one.get('amount')} · {number} · "
                      f"{paid.astimezone(_ny()):%-I:%M %p}")
@@ -371,6 +388,8 @@ def board_vs(records: dict, board: dict, *, now: datetime, complete: bool = True
             continue
         one = max(mine, key=lambda item: str(item.get("posted") or ""))
         stage, status = one.get("stage"), one.get("status") or "?"
+        if stage in (OVERFLOW, OVERFLOW_DONE):
+            continue  # the team's, not on the hub
         if said == LIVE and stage not in (LIVE, DELIVERING, FULFILLED):
             lines.append(_line(one, now, f"Nova's board says live - the hub has them {status}"
                                          if stage != NOT_SET_UP else "Nova's board says live - not on the hub "
@@ -384,7 +403,8 @@ def board_vs(records: dict, board: dict, *, now: datetime, complete: bool = True
         if one.get("stage") != NOT_SET_UP:
             continue
         posted = _moment(one.get("posted"))
-        if posted is None or now - posted < timedelta(hours=1):
+        # Nova's board is the day's: what's missing from it is the last day's.
+        if posted is None or now - posted < timedelta(hours=1) or now - posted > timedelta(hours=24):
             continue
         if not any(same_person(str(one.get("client") or ""), name) for name in listed):
             lines.append(_line(one, now, "paid, not set up, and not on Nova's #launching board"))

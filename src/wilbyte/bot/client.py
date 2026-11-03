@@ -11463,8 +11463,7 @@ def _sqc_watch(bot, message) -> None:
     if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
                                                                             re.IGNORECASE):
         return
-    if re.search(r"\bmarketing\s+package\b|\blead\s+generation\s+marketing\b|\bad[\s-]*spend\b|"
-                 r"\bmanaged\s+ads\b", product, re.IGNORECASE):
+    if _ADS_PACKAGE.search(product):
         # Cole Jackson's lead-generation marketing package: ads the team runs,
         # not leads on the hub - nothing for Rook and Nova to set up.
         return
@@ -11825,6 +11824,11 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
 
     post, result = await _sqc_check(bot, key)
     held = rookqc.recalled().get(key) or {}
+    product = " ".join(((_PRODUCT.search(_all_of_it(post)) or [None, ""])[1]).split())
+    if _ADS_PACKAGE.search(product):
+        # Taken in before the ads package was left out - Cole Jackson's.
+        rookqc.remember(key, aged=True, ads=True, due_done=True)
+        return ""
     if getattr(result, "aged_pull", False) and not result.talk_about_setup():
         # An aged order Nova pulled in the payment's thread - Jake Scott's
         # "haven't said anything in #rook-nova" was one. The aged QC has it.
@@ -11882,6 +11886,10 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                          view=view, quiet=not result.problems)
     return "problem" if result.problems else "todo" if result.todo else "ok"
 
+
+#: The ads / marketing package - ads the team runs, not leads on the hub.
+_ADS_PACKAGE = re.compile(r"\bmarketing\s+package\b|\blead\s+generation\s+marketing\b|\bad[\s-]*spend\b|"
+                          r"\bmanaged\s+ads\b", re.IGNORECASE)
 
 #: A payment under this isn't an order to set up - a $1 card check, a fee.
 SETUP_QC_LEAST = 25.0
@@ -12158,6 +12166,10 @@ async def _ledger_pass(bot) -> int:
             if str(post.id) not in rookqc.recalled():
                 _sqc_watch(bot, post)
     now = datetime.now(timezone.utc)
+    try:
+        await _aged_catch_up(bot)
+    except Exception:
+        log.warning("Couldn't catch up the aged pulls", exc_info=True)
     followed = ledger.open_ones(rookqc.recalled(), now=now)
     # Taken in, but never checked once: a restart lost its timer.
     for key, one in rookqc.recalled().items():
@@ -12190,6 +12202,54 @@ async def _ledger_pass(bot) -> int:
     return len(followed)
 
 
+#: Aged cards still "waiting on Nova's pull" looked for in their payment's
+#: thread this many at a time, each no more than every two hours.
+AGED_CATCH_UP_AT_ONCE = 15
+
+
+async def _aged_catch_up(bot) -> int:
+    """Aged cards still waiting on Nova's pull: the pull looked for in the
+    payment's thread, and checked when it's there - 46 read "paid, not
+    pulled yet" on the 4 PM list, Roman Edwards' and Kyle Connor's among them,
+    pulled and checked that morning. How many were brought up to date."""
+    from .. import agedqc, paycards
+
+    now = datetime.now(timezone.utc)
+    pulls = agedqc.recalled()
+    waiting = []
+    for name, card in paycards.recalled().items():
+        if not name.startswith("aged:") or card.get("standing") != "waiting":
+            continue
+        key = name.split(":", 1)[1]
+        if key in pulls:
+            # Checked already - the card just never heard.
+            paycards.remember("aged", key, standing="problem" if pulls[key].get("problems") else "ok")
+            continue
+        looked = _moment_of(card.get("looked"))
+        if looked is not None and now - looked < timedelta(hours=2):
+            continue
+        waiting.append(key)
+    done = 0
+    for key in waiting[:AGED_CATCH_UP_AT_ONCE]:
+        paycards.remember("aged", key, looked=now.isoformat(timespec="seconds"))
+        thread = await _order_thread(bot, key, {})
+        if thread is None:
+            continue
+        pulled = None
+        try:
+            async for one in thread.history(limit=60, oldest_first=True):
+                if getattr(one.author, "bot", False) and agedqc.DONE.search(_all_of_it(one)):
+                    pulled = one
+        except Exception:
+            continue
+        if pulled is None:
+            continue
+        post, result = await _aged_check_one(bot, thread, pulled)
+        await _aged_card(bot, str(post.id), result, [], link=post.jump_url)
+        done += 1
+    return done
+
+
 async def _ledger_text(bot, which: str) -> str:
     """The list itself - "morning", or an evening one."""
     from .. import dailyops, ledger, paycards, payraapi, rookqc
@@ -12219,7 +12279,7 @@ async def _ledger_text(bot, which: str) -> str:
         at = _moment_of(card.get("at"))
         if at is None or now - at > timedelta(days=ledger.OPEN_DAYS):
             continue
-        if card.get("standing") == "waiting" and now - at > timedelta(hours=4):
+        if card.get("standing") == "waiting" and now - at > timedelta(hours=4) and key.split(":", 1)[1] not in pulls:
             aged.append(f"• **{card.get('title') or '?'}** - paid, not pulled yet" + (
                 f" <{card['link']}>" if card.get("link") else ""))
         elif card.get("standing") == "problem":
