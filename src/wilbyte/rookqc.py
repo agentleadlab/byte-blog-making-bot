@@ -518,10 +518,15 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # Nova saying it's set up, or pulled, while Ryte finds no row for it: not
     # "not on the hub" - "some of thse are live, and some of these are aged
     # and delivered". Ryte can't find what Nova did, and says so.
+    # Only a message about them, by first and last name, that's about nobody
+    # else first - Jay Trandahl's card quoted Nova on Jay Rodriguez.
+    whom = Order(name=result.client or paid.name or "")
     nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and (
-        _SET_UP.search(said) or re.search(r"\bset\s+(?:\w+\s+){0,3}up\b[^.\n]{0,20}✅|✅[^.\n]{0,60}\bset\s+up\b|"
-                                          r"\bpulled\b|\border\s+is\s+(?:done|finished)\b", said, re.IGNORECASE))
-        and not CANT.search(said)), "") if hub is None else ""
+        _SET_UP.search(said) or re.search(r"✅[^.\n]{0,60}\bset\s+up\b|\bpulled\b|\border\s+is\s+(?:done|finished)\b",
+                                          said, re.IGNORECASE))
+        and not CANT.search(said) and (about(said, whom) or _first_named(said, whom.name))
+        and not _names_someone_else_first(said, whom.name)),
+        "") if hub is None and whom.name else ""
     if nova_did:
         looked = ", ".join(dict.fromkeys(f"{getattr(one, 'name', '?')} ({getattr(one, 'status', '') or '?'})"
                                          for one in hub_rows or [])) or "nobody by this name"
@@ -720,6 +725,24 @@ _NOT_NAMES = {"the", "his", "her", "their", "this", "that", "these", "those", "o
               "more", "one", "both", "team", "start", "discount", "card", "sheet", "zelle", "payra", "after",
               "before", "if", "when", "once", "still", "already", "please", "pending", "veteran", "trucker",
               "fresh", "aged", "text", "everything", "someone", "somebody", "nobody", "lead", "can't", "cannot"}
+
+
+def _first_named(said: str, client: str) -> bool:
+    """Their first name in it - Nova writes "I set up Jonathan's order"."""
+    words = _name_words(client)
+    return bool(words) and bool(re.search(rf"\b{re.escape(words[0])}(?:['’]s)?\b", str(said or ""), re.IGNORECASE))
+
+
+def _names_someone_else_first(said: str, client: str) -> bool:
+    """A message whose first name in bold or at its start is somebody else's:
+    "**Jay Rodriguez** — what was said above ..." on Jay Trandahl's card."""
+    first = re.search(r"\*\*([A-Z][\w'’-]+(?:\s+[A-Z][\w'’-]+){1,2})\*\*", str(said or ""))
+    name = first.group(1) if first else ""
+    if not name:
+        lead = re.match(r"\W*(?:@\S+\s+)*([A-Z][a-z'’-]+\s+[A-Z][a-z'’-]+)\b", str(said or ""))
+        name = lead.group(1) if lead else ""
+    return bool(name) and not same_person_strict(name, client) and len(_name_words(name)) >= 2 \
+        and _name_words(name)[0] not in _NOT_NAMES
 
 
 def _about_someone_else(line: str, client: str) -> bool:

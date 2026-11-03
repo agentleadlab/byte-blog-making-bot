@@ -1146,3 +1146,16 @@ def test_a_payment_that_doesnt_say_what_for_isnt_guessed_a_new_order():
     # An invoice that says what it bought is still held to it.
     known = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=row, hub_rows=[row], paid_at=paid)
     assert any("Nothing on the hub for this order yet" in one for one in known.problems)
+
+
+def test_nova_on_someone_else_isnt_nova_saying_theirs_is_done():
+    """Jay Trandahl's card quoted Nova on Jay Rodriguez: "Nova says it's done"."""
+    post = PAYRA.replace("Jonathan Carter", "Jay Trandahl")
+    rook = ROOK.replace("Jonathan Carter", "Jay Trandahl")
+    other = ("**Jay Rodriguez** — what was said above in #rook-nova, kept here so it's one card: Therese asked to set "
+             "Jay's new order up on Jay_Rodriguez. Done ✅ set up. Also mentions Jay Trandahl in passing.")
+    result = rookqc.check(post, [("Rook", rook), ("Nova", other)], hub=None, hub_rows=[])
+    assert not any("Nova says it's done" in one for one in result.problems), result.problems
+    mine = rookqc.check(post, [("Rook", rook), ("Nova", "Got it ✅ I set up Jay Trandahl's order: 40 FEX")],
+                        hub=None, hub_rows=[])
+    assert any("Nova says it's done" in one for one in mine.problems)
