@@ -40,7 +40,7 @@ _HANDED = re.compile(r"^\s*(?:>\s*)?handed\s+to\s+the\s+team\s*:\s*(.+)$", re.IG
 #: "unable to set her up", "needs a manual setup".
 CANT = re.compile(
     r"\b(?:can(?:'|’)?t|cannot|can\s+not|could(?:n(?:'|’)?t| not)|unable\s+to|won(?:'|’)?t\s+be\s+able\s+to)\s+"
-    r"(?:fully\s+)?(?:set\s+(?:this|it|him|her|them|the\s+\w+)?\s*up|do\s+(?:this|the)\s+setup|create\s+(?:this|the)\s+"
+    r"(?:fully\s+)?(?:set\s+(?:this|it|him|her|them|the\s+\w+|(?-i:[A-Z][\w'’-]+(?:\s+[A-Z][\w'’-]+)?))?\s*up|do\s+(?:this|the)\s+setup|create\s+(?:this|the)\s+"
     r"(?:setup|agent))|\bneeds?\s+(?:a\s+)?(?:manual|trello|human)\s+(?:setup|card)\b|\bset\s*up\s+(?:failed|by\s+hand)\b",
     re.IGNORECASE)
 _LIVE_WORDS = re.compile(r"\b(?:paused|on\s+hold|hold|not\s+live|isn'?t\s+live|live)\b", re.IGNORECASE)
@@ -342,8 +342,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # Rook's setup for more than this payment - Ryan Gsell's 30 paid in two
     # payments of 15, "BOTH payments are in #new-payment".
     said_all = "\n".join(said for _who, said in talk)
-    several = len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
-        r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE)
+    several = _several_payments(talk)
+    parts = _PARTS.search(said_all)
+    if parts:
+        # Charles Sellers' INV-21037, $2,160 by Zelle "in two parts: $2,000
+        # (Nov 2) + $160 (today)" - each part a payment post of its own.
+        result.notes.append("Paid in parts - “" + " ".join(_sentence(said_all, parts).split())[:220] + "”")
     if several and rook is not None and rook.count and paid.count and rook.count > paid.count:
         for one in [one for one in result.problems if one.startswith("Rook's setup has") and " leads, the payment " in one]:
             result.problems.remove(one)
@@ -630,10 +634,21 @@ def _hub(result: Checked, hub, paid: Order) -> None:
         result.problems.append("The hub has no sheet for them")
 
 
+#: One order paid in pieces: "by Zelle in two parts", "the split payment".
+_PARTS = re.compile(r"\bin\s+(?:two|three|2|3|several)\s+(?:parts|payments|installments)\b|\bsplit\s+payments?\b|"
+                    r"\btwo\s+separate\s+payments\b", re.IGNORECASE)
+
+
+def _sentence(text: str, found) -> str:
+    start = max(text.rfind(".", 0, found.start()), text.rfind("\n", 0, found.start())) + 1
+    ends = [at for at in (text.find("\n", found.end()),) if at != -1]
+    return text[start:min(ends) if ends else len(text)]
+
+
 def _several_payments(talk) -> bool:
     said_all = "\n".join(said for _who, said in talk)
     return bool(len(set(re.findall(r"\bINV-?\d+\b", said_all, re.IGNORECASE))) >= 2 or re.search(
-        r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE))
+        r"\b(?:both|two|2)\s+payments\b", said_all, re.IGNORECASE) or _PARTS.search(said_all))
 
 
 def _set_up_twice(result: Checked, rows, paid: Order, talk) -> bool:

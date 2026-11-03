@@ -621,3 +621,18 @@ def test_a_row_done_before_the_payment_is_an_older_order():
     after = _hub(status="done", ordered=40, delivered=40, updated_at=paid + timedelta(hours=1))
     fine = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=after, paid_at=paid)
     assert not any("Nothing on the hub" in one for one in fine.problems), fine.problems
+
+
+def test_nova_couldnt_set_them_up_by_name_and_paid_in_parts():
+    """Charles Sellers: "I couldn't set Charles up, so I've handed it to the
+    team" - no 🃏, no Make the card - and INV-21037 paid by Zelle in two parts."""
+    zelle = "New Payment | Zelle 💰\nNAME: Jonathan Carter\nAMOUNT: $160.00\nPRODUCT: — (match to their order)"
+    rook = ROOK.replace("Leads Ordered: 40", "Leads Ordered: 60") + ("\nSpecific Notes: Camp Takeover Financial. Paid INV-21037 ($2,160) by Zelle in two parts: "
+                   "$2,000 (Nov 2) + $160 (today).")
+    nova = ("@Rook I couldn't set Jonathan up, so I've handed it to the team. He's a returning client.\n"
+            "Handed to the team: More than one recent payment matches Jonathan Carter — which invoice?")
+    result = rookqc.check(zelle, [("Rook", rook), ("Nova", nova)],
+                          hub=_hub(status="done", ordered=55, delivered=55))
+    assert result.cant.startswith("Nova"), (result.cant, result.problems)
+    assert any(one.startswith("Paid in parts") and "$2,000 (Nov 2) + $160 (today)" in one for one in result.notes)
+    assert "can't set it up" in rookqc.said(result)
