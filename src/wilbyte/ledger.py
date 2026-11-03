@@ -67,7 +67,9 @@ def stage(result) -> dict:
         return kept
     status = kept["status"].casefold()
     ordered, delivered = kept["ordered"], kept["delivered"] or 0
-    if status in _FINISHED:
+    if ordered and delivered >= ordered:
+        kept["stage"] = FULFILLED
+    elif status in _FINISHED:
         kept["stage"] = FULFILLED if ordered is None or delivered >= ordered else SHORT
     elif status in _LIVE:
         kept["stage"] = DELIVERING if delivered else LIVE
@@ -112,6 +114,12 @@ def open_ones(records: dict, *, now: datetime) -> dict:
             continue
         if not one.get("stage"):
             continue
+        try:
+            if float(str(one.get("amount") or "0").replace(",", "")) and float(
+                    str(one.get("amount")).replace(",", "")) < 25:
+                continue  # a $1 card check, a fee
+        except ValueError:
+            pass
         if one["stage"] in CLOSED and not _still_wrong(one):
             continue
         found[key] = one

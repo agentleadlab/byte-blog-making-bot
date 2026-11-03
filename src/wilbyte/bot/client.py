@@ -11461,6 +11461,14 @@ def _sqc_watch(bot, message) -> None:
     if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
                                                                             re.IGNORECASE):
         return
+    amount = (_AMOUNT.search(said) or [None, ""])[1]
+    try:
+        if amount and float(amount.replace(",", "")) < SETUP_QC_LEAST:
+            # Sonia M Portell's $1.00, Brandon Nguyen's $20: a card check or a
+            # fee, not an order to set up.
+            return
+    except ValueError:
+        pass
     paid = rookqc.payment(said)
     rookqc.remember(str(message.id), channel_id=str(message.channel.id), name=paid.name, email=paid.email,
                     phone=paid.phone, posted=message.created_at.isoformat(), names=[paid.name] if paid.name else [])
@@ -11608,12 +11616,15 @@ async def _talk_in(channel, store: dict, key: str, held: dict, posted: datetime)
         if inside is None:
             continue
         name = str(getattr(thread, "name", "") or "")
-        if not (_sqc_mentions(name, key, held) or any(_sqc_mentions(_all_of_it(one), key, held) for one in inside)):
-            continue
+        theirs_by_name = _sqc_mentions(name, key, held)
         for one in inside:
-            talk.append((getattr(one, "created_at", None),
-                         str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
-                         _all_of_it(one)))
+            # A thread named for them: all of it. Another's thread: only what
+            # names them - David Jacob's card carried Nova's warning about
+            # Ryan Gsell from a thread that named David once.
+            if theirs_by_name or _sqc_mentions(_all_of_it(one), key, held):
+                talk.append((getattr(one, "created_at", None),
+                             str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
+                             _all_of_it(one)))
     return talk
 
 
@@ -11828,6 +11839,9 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     return "problem" if result.problems else "todo" if result.todo else "ok"
 
 
+#: A payment under this isn't an order to set up - a $1 card check, a fee.
+SETUP_QC_LEAST = 25.0
+
 #: Two payment posts this close together, same person and same amount, are
 #: one payment posted twice - or paid twice.
 SETUP_QC_TWIN_WITHIN = timedelta(hours=2)
@@ -11855,8 +11869,11 @@ def _sqc_twin(key: str, post, result, held: dict) -> None:
             continue
         if not rookqc.same_person(str(one.get("client") or one.get("name") or ""), who):
             continue
-        if any(note.startswith("Paid in parts") for note in result.notes):
+        if any(note.startswith(("Paid in parts", "Rook's setup covers more")) for note in result.notes):
             return
+        mine, theirs = _invoice_of(post), str(one.get("invoice") or "")
+        if mine and theirs and mine != theirs:
+            return  # two invoices - Ryan Gsell's INV-21095 and INV-21096
         minutes = int((posted - when).total_seconds() // 60)
         for problem in [problem for problem in result.problems if problem.startswith((
                 "Rook and Nova haven't said", "Not on the hub", "Nothing on the hub", "Nova hasn't answered"))]:
@@ -11867,6 +11884,11 @@ def _sqc_twin(key: str, post, result, held: dict) -> None:
         return
 
 
+def _invoice_of(post) -> str:
+    found = re.search(r"\bINV-?(\d+)\b", _all_of_it(post) if hasattr(post, "content") else "", re.IGNORECASE)
+    return f"INV-{found.group(1)}" if found else ""
+
+
 def _ledger_keep(key: str, post, result, held: dict) -> None:
     """Where the payment stands, kept for the day's lists - and its hub row
     pinned by id once it's found for this order."""
@@ -11875,6 +11897,7 @@ def _ledger_keep(key: str, post, result, held: dict) -> None:
     kept = ledger.stage(result)
     fields = dict(kept, client=result.client or held.get("client") or held.get("name") or "",
                   amount=(_AMOUNT.search(_all_of_it(post)) or [None, ""])[1], link=getattr(post, "jump_url", ""),
+                  invoice=_invoice_of(post),
                   open_problems=list(result.problems), todo=list(result.todo), cant=result.cant,
                   checked=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     if not kept["hub_id"]:

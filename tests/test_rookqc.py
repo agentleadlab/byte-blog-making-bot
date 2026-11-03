@@ -819,7 +819,7 @@ def test_trucker_real_times_is_trucker_iul():
 
 def test_will_is_william_on_the_hub():
     """William Stanger paid; the hub, and Nova's #launching, have Will Stanger."""
-    rows = [_hub(name="Will Stanger"), _hub(name="Will Smith"), _hub(name="Bill Stanger Jr")]
+    rows = [_hub(name="Will Stanger"), _hub(name="Will Smith"), _hub(name="Bill Stanley")]
     assert [one.name for one in rookqc.hub_named(rows, "William Stanger")] == ["Will Stanger"]
     assert [one.name for one in rookqc.hub_named(rows, "Will Stanger")] == ["Will Stanger"]
     assert rookqc.hub_named(rows, "Wilma Stanger") == []
@@ -861,3 +861,42 @@ def test_the_same_amount_twice_minutes_apart(monkeypatch):
     parts = SimpleNamespace(client="Calvin Child", notes=["Paid in parts - “two parts”"], problems=[])
     client._sqc_twin("901", post, parts, rookqc.recalled()["901"])
     assert parts.problems == []
+
+
+def test_all_but_and_the_states_written_out_are_the_same():
+    """Duehat Kanan: Rook's "all but NY" against the 50 others written out.
+    Ciana Araya: the hub's 47 against "all but NY, UT, ND, SD"."""
+    from wilbyte.ordercards import US_STATES
+
+    every = [code for code in US_STATES if code != "NY"]
+    post = PAYRA.replace("— states TX, FL, GA", "— states " + ", ".join(every))
+    rook = ROOK.replace("States: TX, FL, GA", "States: all but NY")
+    result = rookqc.check(post, [("Rook", rook), ("Nova", NOVA)], hub=_hub(states=tuple(c for c in every if c != "DC")))
+    assert not any("states" in one.casefold() for one in result.problems), result.problems
+    assert any("DC left off" in one for one in result.notes)
+    four = rookqc.check(PAYRA.replace("— states TX, FL, GA", "— states all but NY, UT, ND, SD"),
+                        [("Rook", ROOK.replace("States: TX, FL, GA", "States: all but NY, UT, ND, SD")),
+                         ("Nova", NOVA)],
+                        hub=_hub(states=tuple(c for c in US_STATES if c not in ("NY", "UT", "ND", "SD"))))
+    assert not any("states" in one.casefold() for one in four.problems), four.problems
+
+
+def test_a_row_with_every_lead_delivered_is_an_older_order():
+    """Brandon Nguyen, Benny Biniamin: "paused" at 31 of 30 and 26 of 25, held
+    up as their new payments set up."""
+    from datetime import date
+
+    paid = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+    filled = _hub(status="paused", ordered=40, delivered=41, start_date=date(2026, 10, 20))
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=filled, paid_at=paid)
+    assert any("Nothing on the hub for this order yet" in one for one in result.problems), result.problems
+    today = _hub(status="paused", ordered=40, delivered=41, start_date=date(2026, 11, 2))
+    fast = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=today, paid_at=paid)
+    assert not any("Nothing on the hub" in one for one in fast.problems), "started the day it was paid: this one"
+
+
+def test_names_with_apostrophes_initials_and_jr():
+    rows = [_hub(name="D'shane Bannister"), _hub(name="Cavell Stubbs"), _hub(name="William Seitz")]
+    assert [one.name for one in rookqc.hub_named(rows, "D’shane Bannister")] == ["D'shane Bannister"]
+    assert [one.name for one in rookqc.hub_named(rows, "Cavell M Stubbs Jr")] == ["Cavell Stubbs"]
+    assert [one.name for one in rookqc.hub_named(rows, "William J Seitz")] == ["William Seitz"]

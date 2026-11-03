@@ -186,16 +186,24 @@ def hub_named(found: list, who: str) -> list:
     exact = named(found, who)
     if exact:
         return exact
-    words = [one for one in re.findall(r"[a-z]+", str(who or "").casefold()) if len(one) > 1]
+    words = _name_words(who)
     if len(words) < 2:
         return []
     first, last = words[0], words[-1]
     out = []
     for one in found:
-        theirs = [word for word in re.findall(r"[a-z]+", str(getattr(one, "name", "") or "").casefold()) if len(word) > 1]
+        theirs = _name_words(getattr(one, "name", ""))
         if len(theirs) >= 2 and theirs[-1] == last and _same_first(theirs[0], first):
             out.append(one)
     return out
+
+
+def _name_words(name) -> list:
+    """A name's words for matching: "D’shane" as "dshane", no middle
+    initials, no Jr / Sr / II - Cavell M Stubbs Jr, William J Seitz."""
+    said = re.sub(r"['’`]", "", str(name or "").casefold()).replace("_", " ")
+    words = [one for one in re.findall(r"[a-z]+", said) if len(one) > 1]
+    return [one for one in words if one not in ("jr", "sr", "ii", "iii", "iv")]
 
 
 def payment(post: str) -> Order:
@@ -222,8 +230,12 @@ def payment(post: str) -> Order:
     if lines:
         order.lead_type = " + ".join(" ".join(one[0].split()) for one in lines)
         order.count = sum(int(one[1].replace(",", "")) for one in lines)
-        states = [code for one in lines for code in _named(one[2] or "")]
-        order.states = list(dict.fromkeys(states))
+        states, left_out = [], []
+        for one in lines:
+            got, out = _states_of(one[2] or "")
+            states += got
+            left_out += out
+        order.states, order.left_out = list(dict.fromkeys(states)), list(dict.fromkeys(left_out))
     else:
         order.lead_type = _field(notes, r"Lead\s*Type(?:\s*Ordered)?", "Package") or _field(text, "PRODUCT")
         many = re.search(r"\d[\d,]*", _field(notes, r"Number\s+of\s+(?:Requested\s+)?Leads(?:\s+Requested)?",
@@ -606,29 +618,36 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     _compare_states(result, whose, theirs.states, theirs.left_out, paid)
 
 
+def _state_set(states, left_out) -> set:
+    """The states meant, as codes - "all but NY" as every other one."""
+    if states:
+        return set(states)
+    if left_out:
+        return set(US_STATES) - set(left_out)
+    return set()
+
+
 def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) -> None:
-    if paid.left_out or left_out:
-        if sorted(paid.left_out) != sorted(left_out) or states:
-            result.problems.append(f"{whose} has the states "
-                                   + (", ".join(states) if states else f"all but {', '.join(left_out) or '?'}")
-                                   + f"; the payment all but {', '.join(paid.left_out) or '?'}"
-                                   if paid.left_out else
-                                   f"{whose} has all but {', '.join(left_out)}; the payment {', '.join(paid.states)}")
-        else:
-            result.ok.append(f"{whose}: states match")
-        return
-    if paid.states and states:
-        extra = [code for code in states if code not in paid.states]
-        missing = [code for code in paid.states if code not in states]
+    # "All but NY" and the 50 others written out are the same states -
+    # Duehat Kanan's and Ciana Araya's were flagged as not matching.
+    theirs, wanted = _state_set(states, left_out), _state_set(paid.states, paid.left_out)
+    if theirs and wanted:
+        extra = [code for code in (states or sorted(theirs)) if code in theirs - wanted]
+        missing = [code for code in (paid.states or sorted(wanted)) if code in wanted - theirs]
+        if "DC" in extra + missing:
+            # DC, which a list of "all states" has or hasn't: said, not flagged.
+            result.notes.append(f"{whose}: DC " + ("not ordered" if "DC" in extra else "left off"))
+            extra, missing = [one for one in extra if one != "DC"], [one for one in missing if one != "DC"]
         if extra or missing:
             result.problems.append(f"{whose} states don't match the payment"
                                    + (f" - has {', '.join(extra)} not ordered" if extra else "")
                                    + (f" - missing {', '.join(missing)}" if missing else ""))
         else:
-            result.ok.append(f"{whose}: all {len(states)} states match")
-    elif paid.states and not states:
+            result.ok.append(f"{whose}: all {len(theirs)} states match")
+    elif wanted and not theirs:
         if whose == "The hub":
-            result.problems.append(f"{whose} has no states (the payment: {', '.join(paid.states)})")
+            result.problems.append(f"{whose} has no states (the payment: "
+                                   + (", ".join(paid.states) or f"all but {', '.join(paid.left_out)}") + ")")
         else:
             # Rook left them out - the hub's held to the payment's all the same.
             result.notes.append(f"{whose} gives no states - the hub's are checked against the payment's")
@@ -651,7 +670,7 @@ def pick_row(rows: list, wanted: Order):
     def misfit(row) -> tuple:
         states = set(getattr(row, "states", ()) or ())
         off = len(states ^ set(wanted.states)) if wanted.states and states else 0
-        over = 1 if str(getattr(row, "status", "") or "").casefold() in FINISHED else 0
+        over = 1 if _over(row) else 0
         short = 1 if wanted.count and getattr(row, "ordered", None) is not None and row.ordered < wanted.count else 0
         newest = getattr(row, "updated_at", None) or _dt.min.replace(tzinfo=_tz.utc)
         return (1 if _wrong_kind(row, wanted) else 0, over, off, short,
@@ -671,8 +690,27 @@ def _before(at, paid_at) -> bool:
     return at < paid_at
 
 
+def _started_before(row, paid_at) -> bool:
+    """Filled, and started on a day before the payment."""
+    start = getattr(row, "start_date", None)
+    ordered, delivered = getattr(row, "ordered", None), getattr(row, "delivered", None) or 0
+    if start is None or paid_at is None or not ordered or delivered < ordered:
+        return False
+    from zoneinfo import ZoneInfo
+
+    paid_on = (paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)).astimezone(
+        ZoneInfo("America/New_York")).date()
+    return start < paid_on
+
+
 def _over(row) -> bool:
-    return str(getattr(row, "status", "") or "").casefold() in FINISHED
+    """Ended or done - or every lead delivered, whatever the status says:
+    Brandon Nguyen's and Benny Biniamin's "paused" at 31 of 30 and 26 of 25
+    were held up as their new payments set up."""
+    if str(getattr(row, "status", "") or "").casefold() in FINISHED:
+        return True
+    ordered, delivered = getattr(row, "ordered", None), getattr(row, "delivered", None) or 0
+    return bool(ordered) and delivered >= ordered
 
 
 def _described(row) -> str:
@@ -727,15 +765,17 @@ def resolve_hub(rows: list, wanted: Order, *, paid_at=None) -> tuple:
     fits = [one for one in fits if not (_over(one) and wanted.count and getattr(one, "ordered", None) is not None
                                         and one.ordered < wanted.count)]
     # Nor one that was over before this was paid - Jacob Sides' done 8 of 8,
-    # read as his new 6 delivered.
-    fits = [one for one in fits if not (_over(one) and _before(getattr(one, "updated_at", None), paid_at))]
+    # read as his new 6 delivered - nor one with every lead delivered that
+    # started before it: a renewal adds leads, so it wouldn't be filled.
+    fits = [one for one in fits if not (_over(one) and (
+        _before(getattr(one, "updated_at", None), paid_at) or _started_before(one, paid_at)))]
     if not fits and any(not _wrong_kind(one, wanted) for one in rows):
         return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows)) + " - an older order"
     if not fits:
         # An open row of another lead type may be this order set up wrong -
         # held up against it, its lead type is said. Only rows that are over
         # are older orders: nothing for this one is on the hub yet.
-        fits = [one for one in rows if str(getattr(one, "status", "") or "").casefold() not in FINISHED]
+        fits = [one for one in rows if not _over(one)]
     if not fits:
         return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows))
     row = pick_row(fits, wanted)

@@ -383,3 +383,62 @@ def test_a_delivered_order_isnt_asked_about(monkeypatch):
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result,
                                      {"posted": (now - timedelta(hours=1)).isoformat()}))
     assert asked == []
+
+
+def test_a_thread_about_somebody_else_lends_only_what_names_them(monkeypatch):
+    """David Jacob's card carried Nova's warning about Ryan Gsell."""
+    from wilbyte.bot import client
+
+    paid = datetime.now(timezone.utc) - timedelta(hours=1)
+
+    def msg(i, text):
+        return SimpleNamespace(id=i, created_at=paid + timedelta(minutes=i), content=text, embeds=[],
+                               message_snapshots=[], reference=None,
+                               author=SimpleNamespace(display_name="Nova", name="Nova", bot=True))
+
+    class Thread:
+        id, name, created_at = 70, "Ryan Gsell", paid + timedelta(minutes=1)
+
+        def history(self, **kw):
+            async def gen():
+                yield msg(2, "Handed to the team: Ryan's pause is the team's.")
+                yield msg(3, "David Jacob's payment is the one after Ryan's.")
+            return gen()
+
+    class Channel:
+        name, threads = "rook-nova", [Thread()]
+
+        def history(self, **kw):
+            async def gen():
+                if False:
+                    yield None
+            return gen()
+
+        def archived_threads(self, **kw):
+            return Channel.history(self)
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Channel())
+    monkeypatch.setattr(client, "_launching_channel", lambda bot: None)
+    talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", {"names": ["David Jacob"]}, paid))
+    assert talk == [("Nova", "David Jacob's payment is the one after Ryan's.")]
+
+
+def test_tiny_payments_arent_followed():
+    records = {"1": _kept("Sonia M Portell", ledger.NOT_SET_UP, amount="1.00"),
+               "2": _kept("Brandon Nguyen", ledger.NOT_SET_UP, amount="20.00"),
+               "3": _kept("Sonia M Portell", ledger.NOT_SET_UP, amount="1,012.00")}
+    assert list(ledger.open_ones(records, now=NOW)) == ["3"]
+
+
+def test_two_invoices_of_the_same_amount_arent_one_posted_twice():
+    """Ryan Gsell: INV-21095 and INV-21096, $776.25 each."""
+    from wilbyte.bot import client
+
+    now = datetime.now(timezone.utc)
+    rookqc.remember("900", posted=(now - timedelta(minutes=3)).isoformat(), client="Ryan Gsell", amount="776.25",
+                    invoice="INV-21095", link="x")
+    post = SimpleNamespace(content="AMOUNT: $776.25\nINVOICE: INV-21096", embeds=[], message_snapshots=[],
+                           created_at=now)
+    result = SimpleNamespace(client="Ryan Gsell", notes=[], problems=[])
+    client._sqc_twin("901", post, result, {"posted": now.isoformat()})
+    assert result.problems == []
