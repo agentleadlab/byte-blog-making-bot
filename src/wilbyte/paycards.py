@@ -4,8 +4,9 @@
 the only thing that will be there". One message per payment, kept up to
 date in place as Rook, Nova, the hub and the sheet move:
 
-    #setup-cards   new agents, renewals, overflow - the setup QC
-    #aged-cards    aged orders - Nova's pulls, paid for or asked for by Rook
+    #agent-setup   new agents, renewals, overflow - the setup QC ("i want it
+                   here"), and aged orders too until they have their own
+    #aged-setup    aged orders - Nova's pulls - once that channel's made
 
 Nothing else is said in those channels. A card is edited where it is; one
 with a problem it didn't have before is sent again at the bottom with
@@ -23,8 +24,11 @@ from .state import _state_dir
 #: Where each card is: {"setup:<payment post id>": {"channel_id", "message_id", ...}}.
 PATH = _state_dir() / "payment-cards.json"
 
-#: The channels the cards live in, by kind - in Ryte The Goat.
-CHANNELS = {"setup": "setup-cards", "aged": "aged-cards"}
+#: The channels the cards live in, by kind - in Ryte The Goat. Each name is
+#: read as its letters, so "👤│agent-setup" is agent-setup. The first that's
+#: there; none are made.
+CHANNELS = {"setup": ("agent-setup", "setup-cards"),
+            "aged": ("aged-setup", "aged-cards", "aged-leads", "agent-setup", "setup-cards")}
 
 #: A card's colour by where it stands.
 COLOURS = {"problem": 0xE74C3C, "todo": 0xF1C40F, "waiting": 0x95A5A6, "ok": 0x2ECC71, "cant": 0x9B59B6}

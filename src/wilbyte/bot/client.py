@@ -11763,25 +11763,21 @@ _CARD_LOCKS: dict = {}
 
 
 async def _card_channel(bot, kind: str):
-    """#setup-cards / #aged-cards in Ryte The Goat - made next to the board's
-    channel when it isn't there. None: no Ryte The Goat to put it in."""
+    """The cards' channel in Ryte The Goat - #agent-setup ("i want it here").
+    None: it isn't there, and the QC is said where it always was."""
     from .. import paycards
 
-    name = paycards.CHANNELS[kind]
     responder = _order_responder(bot)
     guild = getattr(getattr(responder, "channel", None), "guild", None)
     if guild is None or _in_setup_guild(bot, guild):
         return None
-    for channel in getattr(guild, "text_channels", None) or []:
-        if _plain_letters(getattr(channel, "name", "")) == _plain_letters(name):
-            return channel
-    try:
-        return await guild.create_text_channel(
-            name, category=getattr(responder.channel, "category", None),
-            topic="Ryte's cards - one for each payment, kept up to date. Nothing else is said here.")
-    except Exception:
-        log.warning("Couldn't make #%s in Ryte The Goat", name, exc_info=True)
-        return None
+    channels = {_plain_letters(getattr(one, "name", "")): one for one in getattr(guild, "text_channels", None) or []}
+    for name in paycards.CHANNELS[kind]:
+        found = channels.get(_plain_letters(name))
+        if found is not None:
+            return found
+    log.warning("No #%s in Ryte The Goat for the cards", paycards.CHANNELS[kind][0])
+    return None
 
 
 async def _card_put(bot, channel, kind: str, key: str, standing: str, title: str, body: str, *, link: str = "",

@@ -562,3 +562,23 @@ def test_an_aged_card_waits_on_novas_pull_then_is_checked(monkeypatch):
                               "k@example.com\nhttps://docs.google.com/spreadsheets/d/x/edit")
     asyncio.run(client._aged_card(SimpleNamespace(), "950", done, [], link=message.jump_url))
     assert len(cards.sent) == 1 and "matches the payment" in cards.sent[0].edits[-1]["embed"].description
+
+
+def test_the_cards_go_in_agent_setup(monkeypatch):
+    """"i want it here" - The Goat's "👤│agent-setup"; aged ones too until
+    they have a channel of their own. None is made."""
+    from wilbyte.bot import client
+
+    setup = SimpleNamespace(name="👤│agent-setup", id=1)
+    board = SimpleNamespace(name="trello-manager", id=2, category=None)
+    guild = SimpleNamespace(text_channels=[board, setup], id=9)
+    board.guild = guild
+    monkeypatch.setattr(client, "_order_responder", lambda bot: SimpleNamespace(channel=board))
+    monkeypatch.setattr(client, "_in_setup_guild", lambda bot, one: False)
+    assert asyncio.run(client._card_channel(SimpleNamespace(), "setup")) is setup
+    assert asyncio.run(client._card_channel(SimpleNamespace(), "aged")) is setup
+    aged = SimpleNamespace(name="🗂│aged-setup", id=3)
+    guild.text_channels.append(aged)
+    assert asyncio.run(client._card_channel(SimpleNamespace(), "aged")) is aged
+    guild.text_channels[:] = [board]
+    assert asyncio.run(client._card_channel(SimpleNamespace(), "setup")) is None
