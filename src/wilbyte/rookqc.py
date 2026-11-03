@@ -100,6 +100,8 @@ class Checked:
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
+    #: The payment as it was read.
+    paid: object = None
 
     def talk_about_setup(self) -> bool:
         """Whether Rook posted a setup for it - not only an aged pull talked
@@ -361,12 +363,14 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     the sheet. `talk`: [(who, what they said)] in #rook-nova, oldest first.
     `hub`: the hub's record for them, or None."""
     paid = payment(post)
+    result_paid = paid
     result = Checked(client=paid.name)
     rook, called_off, *said = the_setup(talk, paid)
     result.notes += called_off
     result.setup_text = said[0] if said else ""
     result.talk_text = "\n".join(said for _who, said in talk)
     result.wanted = _filled(paid, rook)
+    result.paid = result_paid
     if paid.aged:
         result.notes.append(f"Also on the invoice: {paid.aged} - Nova's pull, checked by the aged QC")
     if rook is not None and rook.name:
@@ -1083,7 +1087,40 @@ def question(result: Checked, *, link: str = "", invoice: str = "") -> str:
     ask = ("Is this order set up on the hub? If not, please set it up - or say so if you can't." if unset
            else "Can you check these, fix what's wrong on the hub, and confirm?")
     return (f"QC on **{result.client or 'this payment'}**" + (f" - paid {' · '.join(paid)}" if paid else "")
-            + (f" ({link})" if link else "") + "\n" + "\n".join(f"• {one}" for one in asks) + f"\n{ask}")
+            + (f" ({link})" if link else "") + "\n" + "\n".join(f"• {one}" for one in asks)
+            + evidence(result, invoice=invoice) + f"\n{ask}")
+
+
+def _states_said(states, left_out) -> str:
+    if states:
+        return f"{', '.join(states)} ({len(states)})"
+    if left_out:
+        return f"all but {', '.join(left_out)}"
+    return "none given"
+
+
+def evidence(result: Checked, *, invoice: str = "") -> str:
+    """What each side says, word for word, under Ryte's question - so a wrong
+    read is plain at a glance, and a right one needs no looking up: Justin
+    Techer's "has IN not ordered" was right, and nobody could tell."""
+    lines = []
+    paid = getattr(result, "paid", None)
+    if paid is not None:
+        bits = [one for one in (f"{paid.count} {paid.lead_type}".strip() if paid.count else paid.lead_type,
+                                "states " + _states_said(paid.states, paid.left_out)) if one]
+        lines.append(f"-# The payment{f' ({invoice})' if invoice else ''}: " + " · ".join(bits))
+    rook = rook_setup(getattr(result, "setup_text", "")) if getattr(result, "setup_text", "") else None
+    if rook is not None:
+        lines.append(f"-# Rook's setup: {rook.count or '?'} {rook.lead_type or ''} · states "
+                     + _states_said(rook.states, rook.left_out))
+    hub = getattr(result, "hub", None)
+    if hub is not None:
+        states = list(getattr(hub, "states", ()) or ())
+        lines.append(f"-# The hub: {getattr(hub, 'name', '?')} (row {getattr(hub, 'id', '?')}) · "
+                     f"{getattr(hub, 'lead_type', '') or '?'} · {getattr(hub, 'status', '') or '?'} · "
+                     f"{getattr(hub, 'ordered', '?')} ordered / {getattr(hub, 'delivered', None) or 0} delivered · "
+                     f"states {_states_said(states, [])}")
+    return ("\n" + "\n".join(lines)) if lines else ""
 
 
 def recalled() -> dict:

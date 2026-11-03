@@ -11932,7 +11932,10 @@ def _ledger_keep(key: str, post, result, held: dict) -> None:
     from .. import ledger, rookqc
 
     kept = ledger.stage(result)
-    fields = dict(kept, client=result.client or held.get("client") or held.get("name") or "",
+    now_ = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    seen_before = held.get("seen") or {}
+    seen = {rookqc.problem_key(one): seen_before.get(rookqc.problem_key(one)) or now_ for one in result.problems}
+    fields = dict(kept, seen=seen, client=result.client or held.get("client") or held.get("name") or "",
                   amount=(_AMOUNT.search(_all_of_it(post)) or [None, ""])[1], link=getattr(post, "jump_url", ""),
                   invoice=_invoice_of(post), trello=getattr(result, "trello", ""),
                   open_problems=list(result.problems), todo=list(result.todo), cant=result.cant,
@@ -12372,6 +12375,9 @@ SETUP_QC_ASK_UNTOUCHED = timedelta(minutes=45)
 #: Nor while Rook and Nova are still talking about it: this long from the
 #: last thing said, when Nova hasn't answered.
 SETUP_QC_ASK_QUIET = timedelta(minutes=30)
+#: A problem's asked about only once it's been found again this long after
+#: it was first found.
+SETUP_QC_CONFIRM = timedelta(minutes=25)
 #: Who's asked when Rook and Nova haven't sorted it - by the start of their
 #: names as Discord shows them.
 SETUP_QC_TEAM = ("therese", "nicole")
@@ -12428,8 +12434,10 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
                        if getattr(one, "bot", False)
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
         tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
-    asking = result if problems is None else SimpleNamespace(client=result.client, problems=problems, todo=[],
-                                                             wanted=getattr(result, "wanted", None))
+    asking = result if problems is None else SimpleNamespace(
+        client=result.client, problems=problems, todo=[], wanted=getattr(result, "wanted", None),
+        paid=getattr(result, "paid", None), hub=getattr(result, "hub", None),
+        setup_text=getattr(result, "setup_text", ""))
     where = await _rn_thread_for(bot, channel, result.client, getattr(post, "created_at", None)) or channel
     # Only ever a question about one payment, in #rook-nova: the go-ahead to
     # speak in the Growth server ("Ok to communicate with Nova and rook").
@@ -12495,6 +12503,14 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
         # to fix. It's on the day's list, not asked about.
         return
     new = [one for one in result.problems if not rookqc_among(one, held.get("asked_problems"))]
+    # Only what's held up on two checks at least 25 minutes apart - a read
+    # that's wrong once (a thread not read yet, the hub mid-change) isn't
+    # sent out: "rYTE CANT MAKE MISTAKE HERE BRO, HES SUPPOSED TO QC".
+    from .. import rookqc as _rq
+
+    seen = held.get("seen") or {}
+    now_ = datetime.now(timezone.utc)
+    new = [one for one in new if (_moment_of(seen.get(_rq.problem_key(one))) or now_) <= now_ - SETUP_QC_CONFIRM]
     if not new:
         return
     now = datetime.now(timezone.utc)

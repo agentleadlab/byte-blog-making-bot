@@ -1026,3 +1026,14 @@ def test_rook_saying_its_right_as_it_is_oks_what_was_asked(monkeypatch):
     assert held["ok_problems"] == ["The hub states don't match the payment - has WA not ordered"]
     assert held["ok_by"].startswith("Rook – “Expected")
     assert "OK'd by Rook" in sent[-1] and "⚠" not in sent[-1].split("\\n")[0]
+
+
+def test_the_question_shows_what_each_side_says():
+    """Justin Techer's "has IN not ordered" was right, and nobody could tell
+    without opening the invoice and the hub."""
+    rook = ROOK.replace("States: TX, FL, GA", "States: TX, FL, GA, IN")
+    result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub(id=2070, states=("TX", "FL", "GA", "IN")))
+    asked = rookqc.question(result, invoice="INV-21110")
+    assert "The payment (INV-21110): 40 Fresh FEX · states TX, FL, GA (3)" in asked, asked
+    assert "Rook's setup: 40 Text-Verified Final Expense (fresh) · states TX, FL, GA, IN (4)" in asked
+    assert "The hub: Jonathan Carter (row 2070)" in asked and "states TX, FL, GA, IN (4)" in asked

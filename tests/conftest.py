@@ -164,5 +164,9 @@ def _rook_nova_read_afresh(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ledger, "SAID_PATH", tmp_path / "ledger-said.json")
     monkeypatch.setattr(client, "_ASKED_TIMES", [])
+    # Asking held back for a second check is tested on its own.
+    from datetime import timedelta as _td
+
+    monkeypatch.setattr(client, "SETUP_QC_CONFIRM", _td(0))
     monkeypatch.setattr(client, "_ESCALATED_TIMES", [])
     monkeypatch.setattr(client, "_CARD_LOCKS", {})

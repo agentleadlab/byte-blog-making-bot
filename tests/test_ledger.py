@@ -600,3 +600,31 @@ def test_what_ryte_asked_about_that_is_right_now_is_said(monkeypatch):
     rookqc.remember("901", asked="https://discord.com/channels/1/2/4", asked_problems=[asked])
     asyncio.run(client._sqc_tell_fixed(bot, "901", still, rookqc.recalled()["901"]))
     assert len(replies) == 1, "not while it's still wrong"
+
+
+def test_a_problem_is_asked_about_only_once_its_found_again(monkeypatch):
+    """"rYTE CANT MAKE MISTAKE HERE BRO, HES SUPPOSED TO QC": a read that's
+    wrong once isn't sent out."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "SETUP_QC_CONFIRM", timedelta(minutes=25))
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(list(problems or []))
+        return "x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    now = datetime.now(timezone.utc)
+    result = SimpleNamespace(client="J", problems=["The hub states don't match the payment - has IN not ordered"],
+                             todo=[], cant="", overflow=False, asked=(), setup_text="x")
+    held = {"posted": (now - timedelta(hours=2)).isoformat(), "seen": {}}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == [], "found once"
+    key = rookqc.problem_key(result.problems[0])
+    held["seen"] = {key: (now - timedelta(minutes=10)).isoformat()}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == []
+    held["seen"] = {key: (now - timedelta(minutes=30)).isoformat()}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == [result.problems]
