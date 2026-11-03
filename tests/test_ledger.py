@@ -511,3 +511,27 @@ def test_a_thread_named_for_the_client_not_the_payer_is_theirs(monkeypatch):
     held = {"names": ["The Eissa Group Llc"], "email": "mk@example.com"}
     talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", held, paid))
     assert [who for who, _said in talk] == ["Rook", "Nova"]
+
+
+def test_not_asked_while_rook_and_nova_are_at_it(monkeypatch):
+    """Samuel Stapleton-Jones: Rook's setup and Ryte's question in the same
+    minute, the payment an hour old."""
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(key)
+        return "x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    now = datetime.now(timezone.utc)
+    result = SimpleNamespace(client="S", problems=["Nova hasn't answered Rook yet - nothing says it's set up",
+                                                   "Not on the hub"], todo=[], cant="", overflow=False, asked=(),
+                             setup_text="New fresh setup: ...")
+    held = {"posted": (now - timedelta(hours=1)).isoformat(), "heard": (now - timedelta(minutes=1)).isoformat()}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == []
+    held["heard"] = (now - timedelta(minutes=35)).isoformat()
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == ["1"]

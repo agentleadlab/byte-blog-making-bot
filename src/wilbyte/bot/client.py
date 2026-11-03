@@ -11571,6 +11571,8 @@ def _sqc_heard(bot, message) -> None:
             continue
         if posted < since or not _sqc_mentions(said, key, held):
             continue
+        # When they last said something about it: Ryte gives them time.
+        rookqc.remember(key, heard=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         # Rook's setup names who it's for - a business paid for Kurtis Kunz.
         setup = rookqc.rook_setup(said)
         if setup is not None:
@@ -12337,6 +12339,9 @@ SETUP_QC_ASK_GAP = timedelta(minutes=30)
 #: they haven't set up or answered yet. What's wrong with a setup they've
 #: done is asked straight away.
 SETUP_QC_ASK_UNTOUCHED = timedelta(minutes=45)
+#: Nor while Rook and Nova are still talking about it: this long from the
+#: last thing said, when Nova hasn't answered.
+SETUP_QC_ASK_QUIET = timedelta(minutes=30)
 #: Who's asked when Rook and Nova haven't sorted it - by the start of their
 #: names as Discord shows them.
 SETUP_QC_TEAM = ("therese", "nicole")
@@ -12442,6 +12447,12 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     # at fifteen minutes, and Rook's renewal setup came two minutes after.
     working = not getattr(result, "setup_text", "") or not _nova_answered(result)
     if working and posted is not None and now - posted < SETUP_QC_ASK_UNTOUCHED:
+        return
+    # And while they're at it - Rook's setup for Samuel Stapleton-Jones came
+    # in the same minute Ryte asked, the payment an hour old: Nova gets time
+    # from the last thing said, not only from the payment.
+    heard = _moment_of(held.get("heard"))
+    if working and heard is not None and now - heard < SETUP_QC_ASK_QUIET:
         return
     last = _moment_of(held.get("asked_at"))
     if last is not None and now - last < SETUP_QC_ASK_GAP:
