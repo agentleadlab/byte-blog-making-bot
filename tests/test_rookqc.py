@@ -890,9 +890,15 @@ def test_a_row_with_every_lead_delivered_is_an_older_order():
     from datetime import date
 
     paid = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
-    filled = _hub(status="paused", ordered=40, delivered=41, start_date=date(2026, 10, 20))
+    filled = _hub(status="paused", ordered=40, delivered=41, start_date=date(2026, 10, 20),
+                  updated_at=paid - timedelta(days=3))
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=filled, paid_at=paid)
     assert any("Nothing on the hub for this order yet" in one for one in result.problems), result.problems
+    # Jay Trandahl: his 25 renewed onto his Oct 29 row, delivered since - this order, done.
+    renewed = _hub(status="paused", ordered=55, delivered=57, start_date=date(2026, 10, 20),
+                   updated_at=paid + timedelta(days=1))
+    jay = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=renewed, paid_at=paid)
+    assert not any("Nothing on the hub" in one for one in jay.problems), jay.problems
     today = _hub(status="paused", ordered=40, delivered=41, start_date=date(2026, 11, 2))
     fast = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=today, paid_at=paid)
     assert not any("Nothing on the hub" in one for one in fast.problems), "started the day it was paid: this one"
@@ -1137,12 +1143,18 @@ def test_a_payment_that_doesnt_say_what_for_isnt_guessed_a_new_order():
     zelle = "New Payment | Zelle 💰\nNAME: Jonathan Carter\nAMOUNT: $400.00\nPRODUCT: — (match to their order)"
     paid = datetime(2026, 11, 2, 13, 58, tzinfo=timezone.utc)
     row = _hub(status="ended", ordered=30, delivered=31, start_date=date(2026, 10, 27),
-               lead_type="Text Verified Veteran Plus")
+               lead_type="Text Verified Veteran Plus", updated_at=paid - timedelta(hours=5))
     result = rookqc.check(zelle, [("Rook", "Already with Faith (unmatched Zelle) for Jonathan Carter.")], hub=row,
                           hub_rows=[row], paid_at=paid)
     said = " ".join(result.problems)
     assert "Not sure which order this pays for" in said and "started Oct 27" in said, result.problems
     assert "Nothing on the hub for this order yet" not in said
+    # Delivered to since he paid: that order was this payment's - done.
+    after = _hub(status="ended", ordered=30, delivered=31, start_date=date(2026, 10, 27),
+                 lead_type="Text Verified Veteran Plus", updated_at=paid + timedelta(days=1))
+    paid_for = rookqc.check(zelle, [("Rook", "Already with Faith for Jonathan Carter.")], hub=after,
+                            hub_rows=[after], paid_at=paid)
+    assert not any("Not sure" in one or "Nothing on the hub" in one for one in paid_for.problems)
     # An invoice that says what it bought is still held to it.
     known = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=row, hub_rows=[row], paid_at=paid)
     assert any("Nothing on the hub for this order yet" in one for one in known.problems)

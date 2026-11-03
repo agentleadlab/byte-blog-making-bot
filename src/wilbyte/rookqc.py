@@ -1014,8 +1014,10 @@ def resolve_hub(rows: list, wanted: Order, *, paid_at=None) -> tuple:
     # Nor one that was over before this was paid - Jacob Sides' done 8 of 8,
     # read as his new 6 delivered - nor one with every lead delivered that
     # started before it: a renewal adds leads, so it wouldn't be filled.
-    fits = [one for one in fits if not (_over(one) and (
-        _before(getattr(one, "updated_at", None), paid_at) or _started_before(one, paid_at)))]
+    # (Not by its start day: a renewal goes onto the same row and keeps its
+    # start - Jay Trandahl's 25 on his Oct 29 row, now 57 of 55, and Brandon
+    # Nguyen's, were read as older orders. When it last changed tells.)
+    fits = [one for one in fits if not (_over(one) and _before(getattr(one, "updated_at", None), paid_at))]
     if not fits and any(not _wrong_kind(one, wanted) for one in rows):
         return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows)) + " - an older order"
     if not fits:
