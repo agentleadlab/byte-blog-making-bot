@@ -694,3 +694,18 @@ def test_a_cant_flagged_before_the_hammer_is_checked_again_on_starting(monkeypat
     rookqc.remember("902", posted=(now - timedelta(hours=3)).isoformat(), due_done=True)
     client._sqc_rearm(SimpleNamespace())
     assert later == [("900", False)], later
+
+
+def test_a_couldnt_from_before_isnt_hammered_once_its_set_up():
+    """Antonio Brancato: hammered for a card a day on - a "couldn't" from
+    before, while he was on the hub for this order, or Nova set him up after."""
+    nova = "@Rook I couldn't set Jonathan up, so I've handed it to the team."
+    paid = datetime(2026, 11, 2, 21, 14, tzinfo=timezone.utc)
+    there = _hub(status="unsigned", updated_at=paid + timedelta(hours=1))
+    on_hub = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=there, paid_at=paid)
+    assert not on_hub.cant and any("couldn't set it up - the hub has them unsigned" in one for one in on_hub.notes)
+    later = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova), ("Nova", "Done ✅ Jonathan's start is set for "
+                                                                          "tomorrow")], hub=None)
+    assert not later.cant and any("Nova said it's set up after" in one for one in later.notes)
+    still = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=None)
+    assert still.cant

@@ -307,13 +307,22 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     going = hub is not None and (str(getattr(hub, "status", "") or "").casefold() in
                                  ("live", "active", "done", "fulfilled", "complete", "completed")
                                  or (getattr(hub, "delivered", None) or 0) > 0)
-    for who, said in talk:
+    # Set up since - on the hub for this order, put there after it was paid
+    # (or not delivered to yet): Antonio Brancato's "couldn't" from before was
+    # hammered for a card once he was already there.
+    there = hub is not None and not _over(hub) and (
+        not _before(getattr(hub, "updated_at", None), paid_at) if getattr(hub, "updated_at", None) and paid_at
+        else not (getattr(hub, "delivered", None) or 0))
+    for at, (who, said) in enumerate(talk):
         found = CANT.search(said)
         if not found:
             continue
-        if going or re.match(r"[^.\n]{0,40}\byet\b", said[found.end():], re.IGNORECASE):
-            result.notes.append(f"{who} said earlier it couldn't set it up" + (" yet" if not going else "")
-                                + (f" - the hub has them {hub.status} now" if going else ""))
+        done_after = next((later for later_who, later in talk[at + 1:] if later_who.casefold().startswith("nova")
+                           and _SET_UP.search(later) and not CANT.search(later)), None)
+        if going or there or done_after or re.match(r"[^.\n]{0,40}\byet\b", said[found.end():], re.IGNORECASE):
+            why = (f" - the hub has them {hub.status} now" if going or there
+                   else " - Nova said it's set up after" if done_after else " yet")
+            result.notes.append(f"{who} said earlier it couldn't set it up{why}")
             continue
         result.cant = f"{who}: " + " ".join(found.group(0).split())
         result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
@@ -656,6 +665,11 @@ def _hub(result: Checked, hub, paid: Order) -> None:
         result.problems.append("The hub shows no states for them")
     if not getattr(hub, "sheet_url", ""):
         result.problems.append("The hub has no sheet for them")
+
+
+#: Nova saying the setup's done: "Done ✅ Jared's start is set for tomorrow".
+_SET_UP = re.compile(r"\bdone\b\s*[✅✔]|\b(?:is|are|now|all)\s+set\s+up\b|\bset\s+(?:him|her|them)\s+up\b(?!\s+yet)|"
+                     r"\bstart\s+is\s+set\b|\bis\s+set\s+to\s+start\b", re.IGNORECASE)
 
 
 #: One order paid in pieces: "by Zelle in two parts", "the split payment".
