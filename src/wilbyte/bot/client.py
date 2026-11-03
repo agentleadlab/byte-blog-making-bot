@@ -11983,9 +11983,14 @@ def _okd(result, held: dict) -> None:
     okd = held.get("ok_problems") or []
     if not okd:
         return
-    for one in [one for one in result.problems if rookqc.among(one, okd)]:
-        result.problems.remove(one)
-        result.notes.append(f"👌 OK'd by {held.get('ok_by') or 'the team'}: {one}")
+    kept = []
+    for one in result.problems:
+        left, done = rookqc.ok_left(one, okd)
+        if done:
+            result.notes.append(f"👌 OK'd by {held.get('ok_by') or 'the team'}: {done}")
+        if left:
+            kept.append(left)
+    result.problems[:] = kept
 
 
 #: Rook or Nova saying they can't set it up: the payment hammered for its

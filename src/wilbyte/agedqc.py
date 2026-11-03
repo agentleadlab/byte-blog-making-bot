@@ -197,7 +197,9 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
         else:
             result.ok.append(f"Shared with {shared_to}, {theirs} email")
     elif email and not shared:
-        result.problems.append("Nova didn't say who the sheet was shared with")
+        # Not checked, not wrong - a pull that matched in every other way
+        # sat on the 6 PM list as "doesn't match" for this alone.
+        result.notes.append("Couldn't check who the sheet was shared with - Nova didn't say")
     if not result.sheets:
         result.problems.append("No sheet link in Nova's message")
     if sheet_problem:

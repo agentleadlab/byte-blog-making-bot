@@ -1171,3 +1171,33 @@ def test_nova_on_someone_else_isnt_nova_saying_theirs_is_done():
     mine = rookqc.check(post, [("Rook", rook), ("Nova", "Got it ✅ I set up Jay Trandahl's order: 40 FEX")],
                         hub=None, hub_rows=[])
     assert any("Nova says it's done" in one for one in mine.problems)
+
+
+def test_business_payer_first_word_is_nobody():
+    from wilbyte import rookqc
+
+    assert not rookqc._first_named("✅ the order for Kurtis Kunz is set up", "The Eissa Group Llc")
+    assert rookqc._first_named("I set up Jonathan's order", "Jonathan Carter")
+
+
+def test_rooks_aged_setup_is_not_a_setup():
+    from wilbyte import rookqc
+
+    aged = rookqc.Checked(setup_text="New aged setup:\nName: Christopher Gallion\nLead Type: Aged MTG 180+\n"
+                                     "Number of Leads: 100")
+    assert not aged.talk_about_setup()
+    fresh = rookqc.Checked(setup_text="New fresh setup:\nName: Christopher Gallion\nLead Type: Vets\n"
+                                      "Number of Leads: 25")
+    assert fresh.talk_about_setup()
+
+
+def test_okd_states_taken_out_of_a_bigger_problem():
+    from wilbyte import rookqc
+
+    okd = ["The hub's states don't match the payment - has CT not ordered"]
+    left, done = rookqc.ok_left("The hub's states don't match the payment - has CT not ordered - missing GA", okd)
+    assert left == "The hub's states don't match the payment - missing GA"
+    assert done == "The hub's states don't match the payment - has CT not ordered"
+    assert rookqc.ok_left("The hub's states don't match the payment - has CT not ordered", okd) == (
+        None, "The hub's states don't match the payment - has CT not ordered")
+    assert rookqc.ok_left("Not on the hub", okd) == ("Not on the hub", "")

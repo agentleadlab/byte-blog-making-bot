@@ -105,8 +105,15 @@ class Checked:
 
     def talk_about_setup(self) -> bool:
         """Whether Rook posted a setup for it - not only an aged pull talked
-        about (Kane Curtis')."""
-        return bool(self.setup_text)
+        about (Kane Curtis'). Not Rook's "New aged setup" either - Christopher
+        Gallion's Aged MTG 180+, pulled by Nova, came out as a setup Ryte
+        couldn't find on the hub."""
+        if not self.setup_text:
+            return False
+        kind = _field(self.setup_text, r"Lead\s*Type(?:\s*Ordered)?", "Package")
+        first = self.setup_text.strip().split("\n", 1)[0]
+        return not (re.search(r"\baged\b", kind, re.IGNORECASE)
+                    or re.search(r"\baged\s+(?:order|setup|set\s*up|pull)\b", first, re.IGNORECASE))
 
     def digest(self) -> str:
         return json.dumps([sorted(self.problems), sorted(self.todo), self.cant, self.picked_up])
@@ -728,8 +735,12 @@ _NOT_NAMES = {"the", "his", "her", "their", "this", "that", "these", "those", "o
 
 
 def _first_named(said: str, client: str) -> bool:
-    """Their first name in it - Nova writes "I set up Jonathan's order"."""
+    """Their first name in it - Nova writes "I set up Jonathan's order". Not
+    a business's first word: "The Eissa Group Llc"'s card quoted Nova on
+    Kurtis Kunz, for "the"."""
     words = _name_words(client)
+    if _BUSINESS.search(str(client or "")) or (words and (words[0] in _NOT_NAMES or len(words[0]) < 3)):
+        return False
     return bool(words) and bool(re.search(rf"\b{re.escape(words[0])}(?:['’]s)?\b", str(said or ""), re.IGNORECASE))
 
 
@@ -1199,6 +1210,39 @@ def problem_key(problem: str) -> str:
 
 def among(problem: str, problems) -> bool:
     return problem_key(problem) in {problem_key(one) for one in problems or []}
+
+
+_STATES_OFF = re.compile(r"^(?P<whose>.*?states don't match the payment)"
+                         r"(?: - has (?P<extra>[A-Z]{2}(?:, [A-Z]{2})*) not ordered)?"
+                         r"(?: - missing (?P<missing>[A-Z]{2}(?:, [A-Z]{2})*))?$")
+
+
+def ok_left(problem: str, okd) -> tuple:
+    """(what's left of a problem once what was OK'd is taken out, what of it
+    was OK'd). Colton Ramon's CT, OK'd by Rook, came back as "has CT not
+    ordered - missing GA" - one problem, so the OK didn't count, and CT was
+    flagged again. Only the new part is left: "missing GA"."""
+    if among(problem, okd):
+        return None, problem
+    mine = _STATES_OFF.match(" ".join(str(problem or "").split()))
+    if not mine or not (mine["extra"] or mine["missing"]):
+        return problem, ""
+    extra_ok, missing_ok = set(), set()
+    for one in okd or []:
+        theirs = _STATES_OFF.match(" ".join(str(one or "").split()))
+        if theirs and theirs["whose"] == mine["whose"]:
+            extra_ok |= set(re.findall(r"[A-Z]{2}", theirs["extra"] or ""))
+            missing_ok |= set(re.findall(r"[A-Z]{2}", theirs["missing"] or ""))
+    extra = [code for code in re.findall(r"[A-Z]{2}", mine["extra"] or "") if code not in extra_ok]
+    missing = [code for code in re.findall(r"[A-Z]{2}", mine["missing"] or "") if code not in missing_ok]
+    okd_extra = [code for code in re.findall(r"[A-Z]{2}", mine["extra"] or "") if code in extra_ok]
+    okd_missing = [code for code in re.findall(r"[A-Z]{2}", mine["missing"] or "") if code in missing_ok]
+    if not (okd_extra or okd_missing):
+        return problem, ""
+    def put(has, lacks):
+        return (mine["whose"] + (f" - has {', '.join(has)} not ordered" if has else "")
+                + (f" - missing {', '.join(lacks)}" if lacks else ""))
+    return (put(extra, missing) if extra or missing else None), put(okd_extra, okd_missing)
 
 
 def question(result: Checked, *, link: str = "", invoice: str = "") -> str:
