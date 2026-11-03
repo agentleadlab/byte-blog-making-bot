@@ -153,6 +153,13 @@ def family(lead_type: str) -> frozenset:
         # And a trucker order naming no product - "OTP Truckers" (Abdullah
         # Bahrani) - is the trucker product, which is IUL.
         names.add("iul")
+    if names == {"blue collar"}:
+        # The same for blue collar - Jake Shortino's "Text-Verified Blue
+        # Collar Leads" against the hub's Blue Collar IUL.
+        names.add("iul")
+    if "widow" in names:
+        # "Fresh Vet Widows" is the widow product (Alexander Salinas').
+        names.discard("vet")
     if _AGED.search(said):
         names.add("aged")
     return frozenset(names)
@@ -344,12 +351,17 @@ def the_setup(talk, paid: Order) -> tuple:
     standing = [one for one in setups if not one[2]]
     # Theirs over another client's that the talk picked up - the $500 Ryan M
     # Thompson sent for Preston Tackett came out as Preston Bridges'.
-    theirs = [one for one in standing if (paid.name and same_person_strict(one[1].name, paid.name))
-              or (paid.email and one[1].email and one[1].email.casefold() == paid.email.casefold())
-              or (paid.phone and one[1].phone and _digits(one[1].phone)[-10:] == _digits(paid.phone)[-10:])
-              or _payer_named(one[3], paid.name)]
-    if theirs:
-        standing = theirs
+    # In that order: their name, their email or phone, then a setup that
+    # names them as the payer - Colton Ramon's $1,407.60 came out as Keaton
+    # Artherton's, whose setup named Colton as well.
+    for test in (lambda one: paid.name and same_person_strict(one[1].name, paid.name),
+                 lambda one: (paid.email and one[1].email and one[1].email.casefold() == paid.email.casefold())
+                 or (paid.phone and one[1].phone and _digits(one[1].phone)[-10:] == _digits(paid.phone)[-10:]),
+                 lambda one: _payer_named(one[3], paid.name)):
+        theirs = [one for one in standing if test(one)]
+        if theirs:
+            standing = theirs
+            break
     if not standing:
         return None, notes
     fits = [one for one in standing if paid.count is not None and one[1].count == paid.count]

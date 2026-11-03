@@ -1068,3 +1068,21 @@ def test_the_same_states_in_another_order_are_the_same_problem():
     said = "Already with Nicole in Jonathan Carter's #rook-qc thread (states mismatch)."
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA), ("Rook", said)], hub=_hub())
     assert result.with_team
+
+
+def test_blue_collar_and_vet_widows():
+    """Jake Shortino's Blue Collar, Alexander Salinas' "Fresh Vet Widows"."""
+    assert rookqc.family("Text-Verified Blue Collar Leads") == rookqc.family("Text Verified Blue Collar IUL")
+    assert rookqc.family("Fresh Vet Widows") == rookqc.family("Text Verified Widow Plus")
+    assert rookqc.family("Text Verified Veteran Plus") != rookqc.family("Text Verified Widow Plus")
+
+
+def test_their_own_setup_over_one_that_names_them_as_payer():
+    """Colton Ramon's $1,407.60 came out as Keaton Artherton's, whose setup
+    named Colton too."""
+    post = PAYRA.replace("Jonathan Carter", "Colton Ramon").replace("jcarter@", "colton@")
+    keaton = ROOK.replace("Jonathan Carter", "Keaton Artherton").replace("jcarter@", "keaton@").replace(
+        "Leads Ordered: 40", "Leads Ordered: 20") + "\nSpecific Notes: same agency as Colton Ramon."
+    colton = ROOK.replace("Jonathan Carter", "Colton Ramon").replace("jcarter@", "colton@")
+    result = rookqc.check(post, [("Rook", colton), ("Rook", keaton), ("Nova", NOVA)], hub=_hub())
+    assert result.client == "Colton Ramon"

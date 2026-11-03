@@ -6145,7 +6145,9 @@ async def _board_step(bot: "WilByteBot", step: str, today, *, day=None) -> None:
             # "do it when we do unticked reminder" - payments with no gavel
             # and no card, a couple of hours old, with the same chase.
             try:
-                waiting = await _ungavelled_note(bot)
+                # Off now nobody gavels every payment: the payments list in
+                # #agent-setup follows each one instead.
+                waiting = await _ungavelled_note(bot) if UNGAVELLED_NOTE_ON else ""
             except Exception:
                 log.warning("Couldn't list the payments nobody's gavelled", exc_info=True)
                 waiting = ""
@@ -12608,7 +12610,7 @@ def _sqc_escalation(bot, key: str, result, held: dict) -> str:
     still = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))]
     if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER) or getattr(result, "with_team", ""):
         still = []  # not yet - or Rook took it to them already
-    team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"]
+    team = list(dict.fromkeys(result.todo)) + ([f"Rook/Nova can't set it up - {result.cant}"]
                                 if result.cant and not getattr(result, "trello", "") else [])
     if not (posted and now - posted >= SETUP_QC_ESCALATE_AFTER):
         team = []
@@ -14081,6 +14083,10 @@ async def _payments_on(bot, day: date) -> list:
             found.append(one)
     return found
 
+
+#: The "Paid, but nobody's gavelled them yet" list with the unticked
+#: reminder - from when every payment was gavelled for a Trello card.
+UNGAVELLED_NOTE_ON = False
 
 #: A payment this old with no gavel is chased with the unticked reminder.
 UNGAVELLED_AFTER = timedelta(hours=2)
