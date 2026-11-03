@@ -153,7 +153,7 @@ def test_ryte_asks_rook_and_nova_once_in_the_clients_thread(monkeypatch):
     monkeypatch.setattr(client, "_rn_threads", threads)
     post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/900", created_at=paid)
     result = SimpleNamespace(client="Charles Sellers", problems=["Nothing on the hub for this order yet"], todo=[],
-                             cant="", overflow=False, asked=())
+                             cant="", overflow=False, asked=(), setup_text="New fresh setup: ...")
     rookqc.remember("900", posted=paid.isoformat())
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "900", post, result, rookqc.recalled()["900"]))
     assert len(theirs.sent) == 1 and not other.sent and not channel.sent
@@ -245,11 +245,41 @@ def test_asking_is_kept_to_recent_payments_and_a_few_an_hour(monkeypatch):
     monkeypatch.setattr(client, "_sqc_ask", ask)
     monkeypatch.setattr(client, "SETUP_QC_ASKS_AN_HOUR", 3)
     now = datetime.now(timezone.utc)
-    result = SimpleNamespace(client="X", problems=["Not on the hub"], todo=[], cant="", overflow=False, asked=())
+    result = SimpleNamespace(client="X", problems=["Not on the hub"], todo=[], cant="", overflow=False, asked=(),
+                             setup_text="New fresh setup: ...")
     old = {"posted": (now - timedelta(days=5)).isoformat()}
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, old))
     assert asked == [], "five days old: on the day's list, not asked"
     for key in "23456":
         asyncio.run(client._sqc_auto_ask(SimpleNamespace(), key, SimpleNamespace(), result,
-                                         {"posted": now.isoformat()}))
+                                         {"posted": (now - timedelta(hours=1)).isoformat()}))
     assert asked == ["2", "3", "4"], "three an hour"
+
+
+
+def test_rook_and_nova_have_longer_before_being_asked_about_one_they_havent_touched(monkeypatch):
+    """Vivian Pellegrino: asked at fifteen minutes; Rook's renewal setup came
+    two minutes after."""
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(key)
+        return "https://discord.com/x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    now = datetime.now(timezone.utc)
+    untouched = SimpleNamespace(client="V", problems=["Nothing on the hub for this order yet"], todo=[], cant="",
+                                overflow=False, asked=(), setup_text="")
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), untouched,
+                                     {"posted": (now - timedelta(minutes=16)).isoformat()}))
+    assert asked == []
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), untouched,
+                                     {"posted": (now - timedelta(minutes=50)).isoformat()}))
+    assert asked == ["1"], "45 minutes and still nothing: asked"
+    done_wrong = SimpleNamespace(**{**untouched.__dict__, "setup_text": "New fresh setup: ...",
+                                    "problems": ["The hub states don't match the payment - has WA"]})
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "2", SimpleNamespace(), done_wrong,
+                                     {"posted": (now - timedelta(minutes=16)).isoformat()}))
+    assert asked == ["1", "2"], "a setup done wrong is asked about straight away"

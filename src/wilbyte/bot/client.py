@@ -12147,6 +12147,10 @@ SETUP_QC_ESCALATE = True
 SETUP_QC_ESCALATE_AFTER = timedelta(hours=2)
 #: Asked again no sooner than this.
 SETUP_QC_ASK_GAP = timedelta(minutes=30)
+#: How long Rook and Nova have, from the payment, before Ryte asks about one
+#: they haven't set up or answered yet. What's wrong with a setup they've
+#: done is asked straight away.
+SETUP_QC_ASK_UNTOUCHED = timedelta(minutes=45)
 #: Who's asked when Rook and Nova haven't sorted it - by the start of their
 #: names as Discord shows them.
 SETUP_QC_TEAM = ("therese", "nicole")
@@ -12240,6 +12244,12 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     now = datetime.now(timezone.utc)
     posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
     if posted is not None and now - posted > SETUP_QC_ASK_WITHIN:
+        return
+    # Rook and Nova still at it - no setup from Rook, or Nova not answered
+    # yet: they have longer before they're asked. Vivian Pellegrino was asked
+    # at fifteen minutes, and Rook's renewal setup came two minutes after.
+    working = not getattr(result, "setup_text", "") or not _nova_answered(result)
+    if working and posted is not None and now - posted < SETUP_QC_ASK_UNTOUCHED:
         return
     last = _moment_of(held.get("asked_at"))
     if last is not None and now - last < SETUP_QC_ASK_GAP:
