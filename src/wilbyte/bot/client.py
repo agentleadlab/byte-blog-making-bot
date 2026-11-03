@@ -560,6 +560,13 @@ class WilByteBot(discord.Client):
                 _sqc_watch(self, message)
             elif _in_rook_nova(message):
                 _sqc_heard(self, message)
+            elif _in_payment_thread(message) and message.author.id != getattr(self.user, "id", None):
+                # Luna's "This order has been fulfilled", the team's notes,
+                # Nova answering under the payment: its card brought up to date.
+                from .. import rookqc
+
+                if str(message.channel.id) in rookqc.recalled():
+                    _sqc_later(self, str(message.channel.id), SETUP_QC_SETTLE)
         # Nova saying an aged order's leads are pulled: checked against the
         # payment - "i want ryte qc-ing it instead".
         if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
@@ -11375,6 +11382,11 @@ def _in_rook_nova(message) -> bool:
     return "rooknova" in _plain_letters(getattr(where, "name", ""))
 
 
+def _in_payment_thread(message) -> bool:
+    parent = getattr(getattr(message, "channel", None), "parent", None)
+    return parent is not None and "newpayment" in _plain_letters(getattr(parent, "name", ""))
+
+
 def _rook_nova_channel(bot):
     guild = _setup_guild(bot, bot.config)
     for channel in getattr(guild, "text_channels", None) or []:
@@ -11392,13 +11404,21 @@ def _sqc_watch(bot, message) -> None:
     product = " ".join(((_PRODUCT.search(said) or [None, ""])[1]).split())
     # Aged orders are Nova's pulls, checked by the aged QC; a weekly charge
     # is somebody already set up being billed.
-    if re.search(r"\baged\b", product, re.IGNORECASE) or (
-            re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
-                                                                                 re.IGNORECASE)):
+    if re.search(r"\baged\b", product, re.IGNORECASE):
+        # Its card in #aged-cards, waiting on Nova's pull.
+        try:
+            _also_running(asyncio.get_running_loop().create_task(_aged_waiting_card(bot, message)))
+        except RuntimeError:
+            pass
+        return
+    if re.search(r"\bsubscription\b", said, re.IGNORECASE) and not re.search(r"\bfirst\s+week\b", said,
+                                                                            re.IGNORECASE):
         return
     paid = rookqc.payment(said)
     rookqc.remember(str(message.id), channel_id=str(message.channel.id), name=paid.name, email=paid.email,
                     phone=paid.phone, posted=message.created_at.isoformat(), names=[paid.name] if paid.name else [])
+    # Its card up straight away, then flagged after the fifteen minutes.
+    _sqc_later(bot, str(message.id), SETUP_QC_SETTLE)
     _sqc_later(bot, str(message.id), SETUP_QC_WAIT, due=True)
 
 
@@ -11671,9 +11691,11 @@ async def _sqc_check(bot, key: str):
     return post, result
 
 
-async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> None:
-    """One payment's setup QC, said in Ryte The Goat when it has changed -
-    before its fifteen minutes only once Nova has answered."""
+async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> str:
+    """One payment's setup QC: its card in #setup-cards kept up to date -
+    flagged only after its fifteen minutes, or once Nova has answered. Where
+    it stands ("problem", "todo", "ok", "waiting", "cant"), or "" when
+    nothing was said."""
     from .. import rookqc
 
     post, result = await _sqc_check(bot, key)
@@ -11682,21 +11704,25 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         # An aged order Nova pulled in the payment's thread - Jake Scott's
         # "haven't said anything in #rook-nova" was one. The aged QC has it.
         rookqc.remember(key, aged=True, due_done=True)
-        return
-    if not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result)):
-        return
+        return ""
+    waiting = not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result))
+    cards = await _card_channel(bot, "setup")
+    if cards is not None:
+        return await _sqc_card(bot, cards, key, post, result, held, due=due, waiting=waiting)
+    if waiting:
+        return ""
     if due:
         rookqc.remember(key, due_done=True)
     if held.get("digest") == result.digest() and (not force or _sqc_said_lately(held)):
         # Never the same QC twice running - Max Wilson's was said twice.
-        return
+        return ""
     # What was flagged before: still there, or fixed since.
     flagged = rookqc.flagged_before(result, held)
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
                     cant=result.cant, flagged=flagged)
     responder = _order_responder(bot)
     if responder is None:
-        return
+        return ""
     amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1]
     # No "Ask Rook & Nova" on an overflow order: the team delivers it.
     view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
@@ -11705,6 +11731,91 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     await responder.send((_card_ping(bot) if result.problems else "")
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
                          view=view, quiet=not result.problems)
+    return "problem" if result.problems else "todo" if result.todo else "ok"
+
+
+async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bool, waiting: bool) -> str:
+    """The payment's card in #setup-cards, put up or brought up to date."""
+    from .. import paycards, rookqc
+
+    amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1]
+    if waiting:
+        # Up from the moment it's paid, unflagged while Rook and Nova work.
+        standing, title, body = paycards.setup_card(result, amount=amount, link=post.jump_url, waiting=True)
+        await _card_put(bot, channel, "setup", key, standing, title, body, link=post.jump_url)
+        return standing
+    if due:
+        rookqc.remember(key, due_done=True)
+    flagged = rookqc.flagged_before(result, held)
+    new = [one for one in result.problems if one not in result.still]
+    rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
+                    cant=result.cant, flagged=flagged)
+    standing, title, body = paycards.setup_card(result, amount=amount, link=post.jump_url)
+    view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
+                               and not result.overflow, card=bool(result.cant))
+    await _card_put(bot, channel, "setup", key, standing, title, body, link=post.jump_url, view=view,
+                    ping=bool(new) or (bool(result.cant) and not held.get("cant")))
+    return standing
+
+
+#: One card being put up at a time for each payment - never two of one.
+_CARD_LOCKS: dict = {}
+
+
+async def _card_channel(bot, kind: str):
+    """#setup-cards / #aged-cards in Ryte The Goat - made next to the board's
+    channel when it isn't there. None: no Ryte The Goat to put it in."""
+    from .. import paycards
+
+    name = paycards.CHANNELS[kind]
+    responder = _order_responder(bot)
+    guild = getattr(getattr(responder, "channel", None), "guild", None)
+    if guild is None or _in_setup_guild(bot, guild):
+        return None
+    for channel in getattr(guild, "text_channels", None) or []:
+        if _plain_letters(getattr(channel, "name", "")) == _plain_letters(name):
+            return channel
+    try:
+        return await guild.create_text_channel(
+            name, category=getattr(responder.channel, "category", None),
+            topic="Ryte's cards - one for each payment, kept up to date. Nothing else is said here.")
+    except Exception:
+        log.warning("Couldn't make #%s in Ryte The Goat", name, exc_info=True)
+        return None
+
+
+async def _card_put(bot, channel, kind: str, key: str, standing: str, title: str, body: str, *, link: str = "",
+                    view=None, ping: bool = False) -> None:
+    """A card edited where it is - or sent again at the bottom, Franklin
+    tagged, when there's something new to look at."""
+    from .. import paycards
+
+    lock = _CARD_LOCKS.setdefault(f"{kind}:{key}", asyncio.Lock())
+    async with lock:
+        embed = discord.Embed(title=title[:256], description=body[:4000], colour=paycards.COLOURS[standing],
+                              url=link or None)
+        held = paycards.where(kind, key)
+        old = None
+        if held.get("message_id") and str(held.get("channel_id")) == str(channel.id):
+            try:
+                old = await channel.fetch_message(int(held["message_id"]))
+            except Exception:
+                old = None
+        who = _card_ping(bot).strip() if ping else ""
+        if old is not None and not who:
+            kwargs = {"embed": embed}
+            if view is not None or getattr(old, "components", None):
+                kwargs["view"] = view
+            await old.edit(**kwargs)
+            paycards.remember(kind, key, standing=standing)
+            return
+        sent = await channel.send(content=who or None, embed=embed, view=view)
+        paycards.remember(kind, key, channel_id=str(channel.id), message_id=str(sent.id), standing=standing)
+        if old is not None:
+            try:
+                await old.delete()
+            except Exception:
+                pass
 
 
 def _sqc_said_lately(held: dict) -> bool:
@@ -11764,6 +11875,7 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
         asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
     rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")),
                     asked_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    _sqc_later(bot, key, 5)  # its card says it was asked, and when
     await interaction.followup.send(f"❓ Asked in #rook-nova: <{asked.jump_url}> - I'll check their answers.",
                                     ephemeral=True)
 
@@ -11785,15 +11897,28 @@ async def _sqc_days(bot, responder: Responder, said: str) -> None:
             _RN.update(since=None, messages=[], threads=None, inside={})  # read afresh, once
             await _rn_messages(channel, min(post.created_at for post in posts) - timedelta(minutes=5))
             await _rn_threads(channel)
+        standing: dict = {}
         for post in posts:
             if str(post.id) not in rookqc.recalled():
                 _sqc_watch(bot, post)
             if str(post.id) not in rookqc.recalled():
                 continue  # aged, or a weekly charge
             try:
-                await _sqc_run(bot, str(post.id), force=True)
+                where = await _sqc_run(bot, str(post.id), force=True)
             except Exception as exc:
                 await responder.send(f"⚠ Couldn't check <{post.jump_url}>: {_readable(exc)}")
+                continue
+            if where:
+                standing.setdefault(where, []).append(rookqc.recalled().get(str(post.id), {}).get("client") or "?")
+        cards = await _card_channel(bot, "setup")
+        if cards is not None:
+            # The cards are in their channel; here, only the count.
+            bits = [f"⚠️ {len(standing.get('problem', []))} need a look", f"🃏 {len(standing.get('cant', []))} "
+                    "Rook/Nova can't set up", f"🟡 {len(standing.get('todo', []))} with something for the team",
+                    f"⏳ {len(standing.get('waiting', []))} waiting", f"✅ {len(standing.get('ok', []))} match"]
+            names = ", ".join(standing.get("problem", [])[:15])
+            await responder.send(f"🔎 Setup QC done - {' · '.join(bits)}\n"
+                                 + (f"Need a look: {names}\n" if names else "") + f"The cards: {cards.mention}")
     finally:
         _RN["hold"] -= 1
         _RN["at"] = time.time()  # fresh for two minutes more - the Ask button after
@@ -11828,13 +11953,49 @@ async def _aged_check_one(bot, thread, done_message) -> "object":
     return post, result
 
 
+async def _aged_waiting_card(bot, message) -> None:
+    """An aged payment's card, up as soon as it's paid: what was bought,
+    waiting on Nova's pull - so one never pulled doesn't go unseen."""
+    from .. import agedqc, paycards
+
+    try:
+        channel = await _card_channel(bot, "aged")
+        if channel is None or paycards.where("aged", str(message.id)):
+            return
+        text = _all_of_it(message)
+        result = agedqc.check(text, "")
+        lines = [f"Paid for: {one.count} {one.package}" + (f" - {', '.join(one.states)}" if one.states else "")
+                 for one in agedqc.ordered(text)] or ["Paid for: (couldn't read the order lines)"]
+        standing, title, body = paycards.aged_card(result, link=message.jump_url, waiting="\n".join(lines))
+        await _card_put(bot, channel, "aged", str(message.id), standing, title, body, link=message.jump_url)
+    except Exception:
+        log.warning("Couldn't put up the aged card", exc_info=True)
+
+
+async def _aged_card(bot, key: str, result, before: list, *, link: str) -> bool:
+    """The aged pull's card in #aged-cards brought up to date - Franklin
+    tagged when a problem is new. False: no #aged-cards to put it in."""
+    from .. import paycards
+
+    channel = await _card_channel(bot, "aged")
+    if channel is None:
+        return False
+    standing, title, body = paycards.aged_card(result, link=link)
+    await _card_put(bot, channel, "aged", key, standing, title, body, link=link,
+                    ping=any(one not in before for one in result.problems))
+    return True
+
+
 async def _aged_qc(bot, message) -> None:
-    """"i want ryte qc-ing it instead" - Nova's pull, said in Ryte The Goat:
-    Franklin tagged when it doesn't match."""
+    """"i want ryte qc-ing it instead" - Nova's pull, on its card in
+    #aged-cards: Franklin tagged when it doesn't match."""
     from .. import agedqc
 
     try:
+        before = list((agedqc.recalled().get(str(message.channel.id)) or {}).get("problems") or [])
         post, result = await _aged_check_one(bot, message.channel, message)
+        if await _aged_card(bot, str(post.id), result, before, link=post.jump_url):
+            return
     except Exception as exc:
         log.warning("Couldn't QC the aged pull", exc_info=True)
         responder = _order_responder(bot)
@@ -11903,6 +12064,8 @@ async def _aged_rook_qc(bot, message) -> None:
         if held.get("problems") == result.problems and held.get("sheets") == result.sheets:
             return  # said already
         await asyncio.to_thread(agedqc.remember, key, result)
+        if await _aged_card(bot, key, result, list(held.get("problems") or []), link=thread.jump_url):
+            return
         responder = _order_responder(bot)
         if responder is not None:
             await responder.send((_card_ping(bot) if result.problems else "") + agedqc.said(result)

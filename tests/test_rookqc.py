@@ -1,6 +1,7 @@
 """Rook and Nova's setups checked against each payment - "i want ryte qc-ing
 all of rook channel for me ... the sheet, and the actual hub"."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -462,3 +463,102 @@ def test_rook_nova_is_read_once_for_many_payments(monkeypatch):
         talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", held, now - timedelta(hours=1)))
         assert [who for who, _said in talk] == ["Rook", "Rook"], talk
     assert reads == {"history": 1, "archived": 1, "inside": 1}, reads
+
+
+class _CardChannel:
+    """#setup-cards: what's sent, edited and deleted."""
+
+    def __init__(self, name="setup-cards"):
+        self.id, self.name, self.mention, self.sent, self.guild = 600, name, f"#{name}", [], None
+
+    async def send(self, content=None, embed=None, view=None, **kw):
+        test = self
+
+        class Sent:
+            id = 700 + len(test.sent)
+            components = []
+            deleted = False
+            edits = []
+
+            async def edit(self, **kw):
+                self.edits.append(kw)
+
+            async def delete(self):
+                self.deleted = True
+
+        one = Sent()
+        one.content, one.embed, one.view = content, embed, view
+        one.edits = []
+        self.sent.append(one)
+        return one
+
+    async def fetch_message(self, message_id):
+        return next(one for one in self.sent if one.id == message_id)
+
+
+def test_each_payment_has_one_card_kept_up_to_date(monkeypatch):
+    """"we can do discord card sure but i want specific channels only where
+    thats the only thing that will be there"."""
+    from wilbyte.bot import client
+
+    cards = _CardChannel()
+    told = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            told.append(text)
+
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/900", content=PAYRA, embeds=[],
+                           message_snapshots=[])
+    state = {"result": rookqc.check(PAYRA, [("Rook", ROOK)], hub=_hub())}
+
+    async def checking(bot, key):
+        return post, state["result"]
+
+    async def card_channel(bot, kind):
+        return cards
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_card_channel", card_channel)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    bot = SimpleNamespace()
+    # Paid, Rook's setup in, Nova not yet: the card's up, waiting, nobody tagged.
+    assert asyncio.run(client._sqc_run(bot, "900")) == "waiting"
+    assert len(cards.sent) == 1 and cards.sent[0].content is None and "Waiting on Rook" in cards.sent[0].embed.description
+    # Fifteen minutes on, Nova still quiet: a problem - sent again at the bottom, Franklin tagged.
+    assert asyncio.run(client._sqc_run(bot, "900", due=True)) == "problem"
+    assert len(cards.sent) == 2 and cards.sent[1].content == "<@1>" and cards.sent[0].deleted
+    assert "Nova hasn't answered" in cards.sent[1].embed.description
+    # Nova answers: the same card edited, nobody tagged, nothing new in the channel.
+    state["result"] = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(), sheet_rows=1)
+    assert asyncio.run(client._sqc_run(bot, "900")) == "todo"
+    assert len(cards.sent) == 2 and cards.sent[1].edits
+    assert "Fixed since it was flagged: Nova hasn't answered" in cards.sent[1].edits[-1]["embed"].description
+    assert told == [], "nothing said anywhere but the card's channel"
+
+
+def test_an_aged_card_waits_on_novas_pull_then_is_checked(monkeypatch):
+    from wilbyte.bot import client
+
+    cards = _CardChannel("aged-cards")
+
+    async def card_channel(bot, kind):
+        assert kind == "aged"
+        return cards
+
+    monkeypatch.setattr(client, "_card_channel", card_channel)
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    aged = ("New Payment | Payra\nNAME: Kory Parent\nEMAIL: k@example.com\nPRODUCT: Aged IUL\n"
+            "INVOICE: INV-21087\nNotes:\n> Aged IUL 30-90: 25 @ $8.00 — states AZ, LA")
+    message = SimpleNamespace(id=950, content=aged, embeds=[], message_snapshots=[],
+                              jump_url="https://discord.com/channels/1/2/950")
+    asyncio.run(client._aged_waiting_card(SimpleNamespace(), message))
+    assert len(cards.sent) == 1 and "Waiting on Nova's pull" in cards.sent[0].embed.description
+    assert "25 Aged IUL 30-90 - AZ, LA" in cards.sent[0].embed.description
+    from wilbyte import agedqc
+
+    done = agedqc.check(aged, "✅ Aged IUL 30-90: 25 pulled (Arizona 20, Louisiana 5) · sheet shared with "
+                              "k@example.com\nhttps://docs.google.com/spreadsheets/d/x/edit")
+    asyncio.run(client._aged_card(SimpleNamespace(), "950", done, [], link=message.jump_url))
+    assert len(cards.sent) == 1 and "matches the payment" in cards.sent[0].edits[-1]["embed"].description

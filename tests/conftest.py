@@ -148,10 +148,14 @@ def _team_in_every_day(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _rook_nova_read_afresh(monkeypatch):
+def _rook_nova_read_afresh(tmp_path, monkeypatch):
     """No #rook-nova held over from another test."""
     from wilbyte.bot import client
 
     monkeypatch.setattr(client, "_RN", {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {},
                                         "hold": 0})
     monkeypatch.setattr(client, "_SHEETS_READ", {})
+    from wilbyte import paycards
+
+    monkeypatch.setattr(paycards, "PATH", tmp_path / "payment-cards.json")
+    monkeypatch.setattr(client, "_CARD_LOCKS", {})
