@@ -1219,7 +1219,8 @@ def question(result: Checked, *, link: str = "", invoice: str = "") -> str:
             paid.append(", ".join(wanted.states))
     problems = list(result.problems)
     asks = problems + [f"Handed to the team: {one} - who has it?" for one in dict.fromkeys(result.todo)]
-    unset = any(one.startswith(("Nothing on the hub for this order", "Not on the hub", "Rook and Nova haven't said"))
+    unset = any(one.startswith(("Nothing on the hub for this order", "Not on the hub", "Rook and Nova haven't said",
+                                "Not sure which order"))
                 for one in problems)
     ask = ("Is this order set up on the hub? If not, please set it up - or say so if you can't." if unset
            else "Can you check these, fix what's wrong on the hub, and confirm?")

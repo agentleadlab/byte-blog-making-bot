@@ -12545,6 +12545,8 @@ SETUP_QC_ASK_GAP = timedelta(minutes=30)
 #: they haven't set up or answered yet. What's wrong with a setup they've
 #: done is asked straight away.
 SETUP_QC_ASK_UNTOUCHED = timedelta(minutes=45)
+#: A payment asked about once is asked again no sooner than this.
+SETUP_QC_ASK_AGAIN = timedelta(hours=24)
 #: Nor while Rook and Nova are still talking about it: this long from the
 #: last thing said, when Nova hasn't answered.
 SETUP_QC_ASK_QUIET = timedelta(minutes=30)
@@ -12720,7 +12722,13 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     if working and heard is not None and now - heard < SETUP_QC_ASK_QUIET:
         return
     last = _moment_of(held.get("asked_at"))
-    if last is not None and now - last < SETUP_QC_ASK_GAP:
+    # One question a payment a day - William J Seitz, Brandon Nguyen and Benny
+    # Biniamin were asked again when their problem was put in new words
+    # ("WE flagged thise alreadyyyy"). And none once Rook's taken it to the
+    # team.
+    if last is not None and now - last < SETUP_QC_ASK_AGAIN:
+        return
+    if getattr(result, "with_team", ""):
         return
     if not _room(_ASKED_TIMES, SETUP_QC_ASKS_AN_HOUR):
         return  # asked next pass

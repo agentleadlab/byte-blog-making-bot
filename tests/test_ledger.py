@@ -163,7 +163,7 @@ def test_ryte_asks_rook_and_nova_once_in_the_clients_thread(monkeypatch):
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "900", post, result, rookqc.recalled()["900"]))
     assert len(theirs.sent) == 1
     result.problems.append("The hub has no sheet for them")
-    monkeypatch.setattr(client, "SETUP_QC_ASK_GAP", timedelta(0))
+    monkeypatch.setattr(client, "SETUP_QC_ASK_AGAIN", timedelta(0))
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "900", post, result, rookqc.recalled()["900"]))
     assert len(theirs.sent) == 2 and "no sheet" in theirs.sent[1] and "Nothing on the hub" not in theirs.sent[1]
     # Overflow and a can't-set-up aren't Rook and Nova's to answer.
@@ -813,3 +813,28 @@ def test_franklin_is_tagged_once_a_day_for_a_payment(monkeypatch):
     asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, again, rookqc.recalled()["900"],
                                  due=False, waiting=False))
     assert len(cards.sent) == 1 and cards.sent[0].edits, "edited where it is, not sent again tagged"
+
+
+def test_a_payment_asked_about_today_isnt_asked_again(monkeypatch):
+    """"WE flagged thise alreadyyyy" - asked again when the problem was put
+    in new words."""
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(key)
+        return "x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    now = datetime.now(timezone.utc)
+    result = SimpleNamespace(client="B", problems=["Not sure which order this pays for"], todo=[], cant="",
+                             overflow=False, asked=(), setup_text="x")
+    held = {"posted": (now - timedelta(hours=8)).isoformat(), "asked_at": (now - timedelta(hours=3)).isoformat(),
+            "asked_problems": ["Nothing on the hub for this order yet"]}
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
+    assert asked == []
+    handed = SimpleNamespace(**{**result.__dict__, "with_team": "Forwarded to Nicole"})
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "2", SimpleNamespace(), handed,
+                                     {"posted": (now - timedelta(hours=2)).isoformat()}))
+    assert asked == [], "Rook's taken it to the team"
