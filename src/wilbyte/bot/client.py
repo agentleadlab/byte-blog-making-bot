@@ -11634,8 +11634,10 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if held.get("digest") == result.digest() and (not force or _sqc_said_lately(held)):
         # Never the same QC twice running - Max Wilson's was said twice.
         return
+    # What was flagged before: still there, or fixed since.
+    flagged = rookqc.flagged_before(result, held)
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
-                    cant=result.cant)
+                    cant=result.cant, flagged=flagged)
     responder = _order_responder(bot)
     if responder is None:
         return
@@ -11704,7 +11706,8 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
     # Goat's #announcements instead, where Rook and Nova never saw it.
     with mirror.answering():
         asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
-    rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")))
+    rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")),
+                    asked_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     await interaction.followup.send(f"❓ Asked in #rook-nova: <{asked.jump_url}> - I'll check their answers.",
                                     ephemeral=True)
 

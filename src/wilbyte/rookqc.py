@@ -77,6 +77,12 @@ class Checked:
     aged_pull: bool = False
     #: An overflow order - the team delivers it; nothing to ask Rook and Nova.
     overflow: bool = False
+    #: Problems flagged by an earlier QC and still there: {problem: when}.
+    still: dict = field(default_factory=dict)
+    #: Problems an earlier QC flagged that are gone now.
+    fixed: list = field(default_factory=list)
+    #: Rook and Nova asked about it with the button: (link, when).
+    asked: tuple = ()
 
     def talk_about_setup(self) -> bool:
         """Whether Rook and Nova talked about setting it up at all."""
@@ -629,18 +635,48 @@ def said(result: Checked, *, link: str = "", amount: str = "") -> str:
     """The QC as one message for Ryte The Goat."""
     head = f"🔎 **Setup QC — {result.client or 'a payment'}**" + (f" (${amount})" if amount else "")
     if result.problems:
-        lines = [head + " — ⚠ needs a look:", *(f"• {one}" for one in result.problems)]
+        lines = [head + " — ⚠ needs a look:"]
+        for one in result.problems:
+            when = result.still.get(one)
+            lines.append(f"• {one}" + (f" — **still not fixed** (flagged {_when(when)})" if when else ""))
     else:
         lines = [head + " — ✅ Rook, Nova and the hub match the payment"
                  + (", but there's still something for the team:" if result.todo else "")]
     if result.todo:
         lines.append("**Handed to the team:**")
         lines += [f"• {one}" for one in dict.fromkeys(result.todo)]
+    lines += [f"✅ Fixed since it was flagged: {one}" for one in result.fixed]
+    if result.asked:
+        lines.append(f"-# Asked Rook & Nova {_when(result.asked[1]) if result.asked[1] else ''}: <{result.asked[0]}>")
     lines += [f"-# ✓ {one}" for one in result.ok]
     lines += [f"-# {one}" for one in result.notes]
     if link:
         lines.append(f"-# <{link}>")
     return "\n".join(lines)
+
+
+def _when(iso: str) -> str:
+    """"Nov 2, 4:17 PM" in New York - or as it was kept."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        at = datetime.fromisoformat(str(iso)).astimezone(ZoneInfo("America/New_York"))
+    except (ValueError, TypeError, KeyError):
+        return str(iso or "earlier")
+    return f"{at:%b} {at.day}, {at:%-I:%M %p}"
+
+
+def flagged_before(result: Checked, held: dict) -> dict:
+    """What an earlier QC flagged, held up against this one: `result.still`
+    and `result.fixed` filled in - "did ryte check if this was fixed, cuz we
+    flagged this already" (Kyle Moffitt's hub states). The flags to keep."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    before = dict(held.get("flagged") or {}) or {one: held.get("at") or now for one in held.get("problems") or []}
+    result.still = {one: before[one] for one in result.problems if one in before}
+    result.fixed = [one for one in before if one not in result.problems]
+    if held.get("asked"):
+        result.asked = (held["asked"], held.get("asked_at") or "")
+    return {one: before.get(one) or now for one in result.problems}
 
 
 def question(result: Checked, *, link: str = "") -> str:

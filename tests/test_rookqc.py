@@ -396,3 +396,20 @@ def test_something_still_for_the_team_isnt_a_plain_tick():
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(), sheet_rows=1)
     assert result.problems == [] and result.todo
     assert "still something for the team" in rookqc.said(result)
+
+
+def test_a_flag_still_there_and_one_fixed_are_said():
+    """Kyle Moffitt: flagged for hub states he didn't order, QC'd again -
+    "did ryte check if this was fixed, cuz we flagged this already"."""
+    held = {"problems": ["The hub has no sheet for them", "Old problem gone now"], "at": "2026-11-02T21:17:00+00:00",
+            "asked": "https://discord.com/channels/1/2/3", "asked_at": "2026-11-02T21:20:00+00:00"}
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(sheet_url=""))
+    kept = rookqc.flagged_before(result, held)
+    said = rookqc.said(result)
+    assert "The hub has no sheet for them — **still not fixed** (flagged Nov 2, 4:17 PM)" in said, said
+    assert "✅ Fixed since it was flagged: Old problem gone now" in said
+    assert "Asked Rook & Nova Nov 2, 4:20 PM" in said
+    assert kept == {"The hub has no sheet for them": "2026-11-02T21:17:00+00:00"}
+    again = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(sheet_url=""))
+    rookqc.flagged_before(again, {"flagged": kept})
+    assert again.still == kept and again.fixed == []
