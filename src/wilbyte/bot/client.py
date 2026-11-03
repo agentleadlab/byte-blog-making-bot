@@ -11992,7 +11992,7 @@ async def _sqc_auto_hammer(bot, key: str, post, result, held: dict) -> None:
     result.notes.insert(0, "🔨 Hammered for its Trello card automatically - Rook/Nova can't set it up")
     try:
         # Rook's setup carried onto the card: a Zelle post says nothing.
-        notes = rookqc.card_notes(result)
+        notes = rookqc.card_notes(result, paid_at=getattr(post, "created_at", None))
         await _order_gavelled(bot, SimpleNamespace(
             message_id=int(key), channel_id=post.channel.id, user_id=0,
             guild_id=getattr(getattr(post, "guild", None), "id", None), member=None,
@@ -12323,7 +12323,7 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
                                         ephemeral=True)
         return
     if act == "card":
-        notes = rookqc.card_notes(result)
+        notes = rookqc.card_notes(result, paid_at=getattr(post, "created_at", None))
         await _order_gavelled(bot, SimpleNamespace(
             message_id=int(key), channel_id=post.channel.id, user_id=getattr(interaction.user, "id", 0),
             guild_id=getattr(getattr(post, "guild", None), "id", None), member=None,

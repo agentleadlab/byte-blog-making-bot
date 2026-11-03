@@ -974,3 +974,17 @@ def test_a_quote_starts_at_the_words_not_the_tags():
             "I couldn't set up either Veteran order, so I've handed both to the team.")
     quoted = rookqc._quote(said, rookqc.CANT)
     assert quoted.startswith("I couldn't set up either Veteran order"), quoted
+
+
+def test_rooks_launch_day_is_read_from_the_day_they_paid():
+    """William McClure: Rook's "Monday", written the Saturday he paid (Oct 31),
+    came out on his card as Monday Nov 9 - the Monday after the card was made."""
+    paid = datetime(2026, 10, 31, 23, 27, tzinfo=timezone.utc)  # Sat 7:27 PM Eastern
+    assert rookqc._launch_on("Monday", paid).startswith("Monday Nov 2 (Rook's setup said “Monday” on Sat Oct 31")
+    assert rookqc._launch_on("today at 8 AM", paid).startswith("Saturday Oct 31")
+    assert rookqc._launch_on("tomorrow", paid).startswith("Sunday Nov 1")
+    assert rookqc._launch_on("Monday 11/9", paid) == "Monday 11/9"
+    assert rookqc._launch_on("as soon as he signs", paid) == "as soon as he signs"
+    rook = ROOK.replace("Launch Date: as soon as he signs", "Launch Date: Monday")
+    result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
+    assert "Launch Date: Monday Nov 2" in rookqc.card_notes(result, paid_at=paid)

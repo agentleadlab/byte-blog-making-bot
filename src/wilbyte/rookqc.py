@@ -785,7 +785,31 @@ def _described(row) -> str:
     return f"{getattr(row, 'lead_type', '') or '?'} ({', '.join(bits)})"
 
 
-def card_notes(result: Checked) -> str:
+def _launch_on(launch: str, paid_at) -> str:
+    """Rook's launch day as a date, read from the day it was paid - "Monday"
+    written on Fri Oct 31 is Mon Nov 2, not the Monday after the card's made
+    (William McClure's card said Nov 9). As written when there's no day in it."""
+    from .dailyops import day_named
+
+    said = " ".join(str(launch or "").split())
+    if not said or paid_at is None:
+        return said
+    from zoneinfo import ZoneInfo
+
+    paid_on = (paid_at if paid_at.tzinfo else paid_at.replace(tzinfo=timezone.utc)).astimezone(
+        ZoneInfo("America/New_York")).date()
+    if re.search(r"\d{1,2}/\d{1,2}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d", said,
+                 re.IGNORECASE):
+        return said  # a date's written already
+    when = paid_on if re.search(r"\btoday\b|\basap\b|\bright\s+away\b", said, re.IGNORECASE) and not re.search(
+        r"\btomorrow\b|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b", said, re.IGNORECASE) else day_named(
+        said, today=paid_on)
+    if when is None:
+        return said
+    return f"{when:%A %b} {when.day} (Rook's setup said “{said}” on {paid_on:%a %b} {paid_on.day}, when they paid)"
+
+
+def card_notes(result: Checked, *, paid_at=None) -> str:
     """Rook's setup in the invoice form's words, for the card a hammer makes
     - Charles Sellers' $160 Zelle post said nothing, and his card came up
     "Nothing to make a card from" while Rook's setup had it all."""
@@ -799,7 +823,7 @@ def card_notes(result: Checked) -> str:
     states = ", ".join(rook.states) + (f" (all but {', '.join(rook.left_out)})" if rook.left_out else "")
     lines += [f"States Leads In: {states}" if rook.states or rook.left_out else ""]
     lines += [f"Number of Requested Leads: {rook.count}" if rook.count else ""]
-    lines += [f"Launch Date: {rook.launch}" if rook.launch else ""]
+    lines += [f"Launch Date: {_launch_on(rook.launch, paid_at)}" if rook.launch else ""]
     extra = _field(text, r"Specific\s+Notes", r"Notes")
     lines += [f"Specific Notes: {extra}" if extra else ""]
     return "\n".join(one for one in lines if one)
