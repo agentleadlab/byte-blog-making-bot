@@ -1786,6 +1786,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _sqc_days(bot, responder, request.brief or "")
                 return
 
+            if request.action == "todays":
+                # "how can i make sure that people are setup for today's payment"
+                await _todays_say(bot, responder)
+                return
+
             if request.action == "ledger":
                 # "@Ryte who's not set up" - the day's list, now.
                 await _ledger_say(bot, "morning" if re.search(r"\bmorning|today'?s\s+launch", request.brief or "",
@@ -12328,6 +12333,32 @@ async def _launching_board(bot) -> tuple[dict, bool]:
         board = ledger.board_parse(re.sub(r"<#(\d+)>", lambda hit: f" ⬗ {names.get(hit.group(1), '')} ", text))
         return board, missed == 0 and bool(board)
     return {}, False
+
+
+async def _todays_say(bot, responder: Responder) -> None:
+    """Every payment of today, a line each by where it stands on the hub."""
+    from .. import agedqc, ledger, paycards, rookqc
+
+    now, today = datetime.now(timezone.utc), _today(bot.config)
+    aged, pulls = [], agedqc.recalled()
+    zone = ZoneInfo(bot.config.schedule.timezone or "America/New_York")
+    for name, card in paycards.recalled().items():
+        if not name.startswith("aged:"):
+            continue
+        key = name.split(":", 1)[1]
+        try:
+            made = datetime.fromtimestamp(((int(key) >> 22) + 1420070400000) / 1000, timezone.utc)
+        except ValueError:
+            continue
+        if made.astimezone(zone).date() != today:
+            continue
+        pulled = pulls.get(key)
+        state = ("✅ pulled as paid for" if pulled and not pulled.get("problems") else
+                 "⚠️ pulled, doesn't match" if pulled else "⏳ not pulled yet")
+        aged.append(f"• **{card.get('title') or (pulled or {}).get('client') or '?'}** - {state}"
+                    + (f" <{card['link']}>" if card.get("link") else ""))
+    for chunk in _chunks(ledger.todays(rookqc.recalled(), now=now, day=today, aged=aged)):
+        await responder.send(chunk)
 
 
 async def _ledger_say(bot, which: str, responder: Responder | None = None) -> None:

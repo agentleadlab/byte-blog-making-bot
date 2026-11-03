@@ -409,3 +409,54 @@ def board_vs(records: dict, board: dict, *, now: datetime, complete: bool = True
         if not any(same_person(str(one.get("client") or ""), name) for name in listed):
             lines.append(_line(one, now, "paid, not set up, and not on Nova's #launching board"))
     return lines
+
+
+def todays(records: dict, *, now: datetime, day: date, aged: list | None = None) -> str:
+    """Every payment of the day, a line each by where it stands - "how can i
+    make sure that people are setup for today's payment"."""
+    groups: dict = {}
+    for _key, one in sorted(records.items(), key=lambda item: str(item[1].get("posted") or "")):
+        posted = _moment(one.get("posted"))
+        if posted is None or posted.astimezone(_ny()).date() != day or one.get("aged"):
+            continue
+        try:
+            if float(str(one.get("amount") or "0").replace(",", "")) and float(
+                    str(one.get("amount")).replace(",", "")) < 25:
+                continue
+        except ValueError:
+            pass
+        stage, wrong = one.get("stage") or "", _still_wrong(one)
+        status = str(one.get("status") or "").casefold()
+        if not stage:
+            group, why = "⏳ Just paid - Rook & Nova have it", ""
+        elif stage == CANT:
+            group, why = "🃏 Rook/Nova can't set up", one.get("cant") or ""
+        elif stage == NOT_SET_UP:
+            group, why = "❌ Not on the hub yet", (wrong or [""])[0]
+        elif stage in (OVERFLOW, OVERFLOW_DONE):
+            group, why = "🚚 Overflow - the team delivers", "delivered" if stage == OVERFLOW_DONE else "not yet"
+        elif wrong:
+            group, why = "⚠️ Set up, but not as paid for", "; ".join(wrong)[:200]
+        elif stage in (LIVE, DELIVERING, FULFILLED):
+            group, why = "✅ Set up and live", f"{one.get('delivered') or 0} of {one.get('ordered')} delivered"
+        elif status == "unsigned":
+            group, why = "✍️ Set up - waiting on their signature", ""
+        else:
+            group, why = "🗓️ Set up - starts " + (one.get("start") or "when the team says"), status
+        groups.setdefault(group, []).append(_line(one, now, why))
+    order = ["❌ Not on the hub yet", "🃏 Rook/Nova can't set up", "⚠️ Set up, but not as paid for",
+             "⏳ Just paid - Rook & Nova have it", "✍️ Set up - waiting on their signature"]
+    names = order + sorted(one for one in groups if one not in order and not one.startswith("✅")) + [
+        one for one in groups if one.startswith("✅")]
+    total = sum(len(lines) for lines in groups.values())
+    lines = [f"📋 **Today's payments - {day:%a %b} {day.day}** ({total})"]
+    for name in names:
+        if groups.get(name):
+            lines.append(f"\n**{name}** ({len(groups[name])})")
+            lines += groups[name]
+    if aged:
+        lines.append(f"\n**🧺 Aged** ({len(aged)})")
+        lines += aged
+    if total == 0 and not aged:
+        lines.append("No payments yet today.")
+    return "\n".join(lines)

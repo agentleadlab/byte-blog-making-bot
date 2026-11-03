@@ -712,3 +712,26 @@ def test_aged_cards_waiting_on_a_pull_thats_done_are_brought_up_to_date(monkeypa
     asyncio.run(client._aged_catch_up(SimpleNamespace()))
     assert paycards.where("aged", "900")["standing"] == "ok"
     assert paycards.where("aged", "901")["standing"] == "waiting" and paycards.where("aged", "901").get("looked")
+
+
+def test_todays_payments_a_line_each():
+    """"how can i make sure that people are setup for today's payment"."""
+    from wilbyte.bot import mentions
+
+    for said in ("today's payments", "payments today", "todays payments?", "today"):
+        assert mentions.parse(said).action == "todays", said
+    today = NOW - timedelta(hours=2)
+    records = {
+        "1": _kept("Kailey Hull", ledger.NOT_SET_UP, problems=["Not on the hub"], hours=2),
+        "2": _kept("Raymond Vargas", ledger.SET_UP, status="unsigned", hours=2),
+        "3": _kept("Anthony Portillo", ledger.LIVE, status="live", ordered=25, delivered=0, hours=2),
+        "4": _kept("Connor Swartz", ledger.LIVE, problems=["The hub states don't match the payment - has MT"],
+                   hours=2),
+        "5": _kept("Yesterday Person", ledger.NOT_SET_UP, hours=30),
+        "6": {"client": "Just Paid", "posted": today.isoformat(), "amount": "500.00"},
+    }
+    said = ledger.todays(records, now=NOW, day=TODAY, aged=["• **Roman Edwards** - ✅ pulled as paid for"])
+    assert said.index("❌ Not on the hub yet") < said.index("✅ Set up and live")
+    assert "Kailey Hull" in said and "✍️ Set up - waiting on their signature** (1)" in said
+    assert "⚠️ Set up, but not as paid for** (1)" in said and "has MT" in said
+    assert "⏳ Just paid" in said and "Yesterday Person" not in said and "Roman Edwards" in said
