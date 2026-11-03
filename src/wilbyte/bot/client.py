@@ -11999,6 +11999,30 @@ def _aged_pull_done(message) -> bool:
             and bool(agedqc.DONE.search(_all_of_it(message))))
 
 
+async def _aged_sheets_read(bot, sheets: list) -> tuple:
+    """(leads, by state, a problem) over every sheet Nova linked, added up -
+    Kinley Hollingsworth's 15 Aged FEX 90-180 and 10 180+ came on two sheets,
+    and only the first was counted: "The sheet has 15 leads, and Nova says it
+    pulled 25"."""
+    rows, states, troubles = None, None, []
+    for link in list(dict.fromkeys(sheets or []))[:6]:
+        try:
+            got, by_state, trouble = await asyncio.to_thread(jobs.aged_sheet_read, bot.config, link)
+        except Exception as exc:
+            got, by_state, trouble = None, None, _readable(exc)
+        if got is None:
+            troubles.append(trouble or "couldn't read it")
+            continue
+        rows = (rows or 0) + got
+        states = dict(states or {})
+        for code, many in (by_state or {}).items():
+            states[code] = states.get(code, 0) + many
+    if troubles and rows is not None:
+        # One read and one not: the count would be short - not checked.
+        return None, None, "; ".join(troubles)
+    return rows, states, "; ".join(troubles)
+
+
 async def _aged_check_one(bot, thread, done_message) -> "object":
     """One aged pull checked: the payment post the thread hangs off, Nova's
     message, and the sheet when it opens. The result, kept."""
@@ -12007,12 +12031,7 @@ async def _aged_check_one(bot, thread, done_message) -> "object":
     post = await thread.parent.fetch_message(thread.id)
     post_text, done_text = _all_of_it(post), _all_of_it(done_message)
     first = agedqc.check(post_text, done_text)
-    rows, states, trouble = None, None, ""
-    if first.sheets:
-        try:
-            rows, states, trouble = await asyncio.to_thread(jobs.aged_sheet_read, bot.config, first.sheets[0])
-        except Exception as exc:
-            trouble = _readable(exc)
+    rows, states, trouble = await _aged_sheets_read(bot, first.sheets)
     result = agedqc.check(post_text, done_text, sheet_rows=rows, sheet_states=states,
                           sheet_problem=trouble if trouble and rows is None else "")
     await asyncio.to_thread(agedqc.remember, str(post.id), result)
@@ -12117,12 +12136,7 @@ async def _aged_rook_qc(bot, message) -> None:
                 said.append(_all_of_it(one))
         done = "\n".join(said)
         first = agedqc.check("", done, asked=asked)
-        rows, states, trouble = None, None, ""
-        if first.sheets:
-            try:
-                rows, states, trouble = await asyncio.to_thread(jobs.aged_sheet_read, bot.config, first.sheets[0])
-            except Exception as exc:
-                trouble = _readable(exc)
+        rows, states, trouble = await _aged_sheets_read(bot, first.sheets)
         result = agedqc.check("", done, asked=asked, sheet_rows=rows, sheet_states=states,
                               sheet_problem=trouble if trouble and rows is None else "")
         key = f"rn:{thread.id}"

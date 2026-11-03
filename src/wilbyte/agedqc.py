@@ -205,9 +205,9 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
     if sheet_rows is not None:
         want = sum(one.count for one in got)
         if sheet_rows != want:
-            result.problems.append(f"The sheet has {sheet_rows} leads, and Nova says it pulled {want}")
+            result.problems.append(f"{_the_sheets(result)} {sheet_rows} leads, and Nova says it pulled {want}")
         else:
-            result.ok.append(f"The sheet has {sheet_rows} leads")
+            result.ok.append(f"{_the_sheets(result)} {sheet_rows} leads")
     if sheet_states:
         allowed = {code for one in bought for code in one.states}
         stray = sorted(code for code in sheet_states if allowed and code not in allowed)
@@ -259,6 +259,10 @@ def rook_asked(text: str) -> Asked | None:
         r"\bfor\s+\**(?P<name>[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})\**\s*\(", said)
     email = _EMAIL.search(said)
     return Asked(client=who.group("name").strip() if who else "", email=email.group(0) if email else "", lines=lines)
+
+
+def _the_sheets(result: Checked) -> str:
+    return f"The {len(result.sheets)} sheets have" if len(result.sheets) > 1 else "The sheet has"
 
 
 def sheet_states(rows: list) -> tuple[int, dict]:

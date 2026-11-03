@@ -180,3 +180,26 @@ def test_the_rook_nova_aged_qc_waits_for_nova_and_says_it_once(monkeypatch):
     asyncio.run(client._aged_rook_qc(bot, done))
     asyncio.run(client._aged_rook_qc(bot, done))
     assert len(sent) == 1 and "Rachna Khim" in sent[0] and "matches Rook's ask" in sent[0], sent
+
+
+def test_every_sheet_nova_linked_is_counted(monkeypatch):
+    """Kinley Hollingsworth: 15 Aged FEX 90-180 and 10 180+ on two sheets -
+    "The sheet has 15 leads, and Nova says it pulled 25"."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    counts = {"a": (15, {"TX": 15}, ""), "b": (10, {"TX": 4, "FL": 6}, "")}
+    monkeypatch.setattr(client.jobs, "aged_sheet_read", lambda config, link: counts[link[-1]])
+    bot = SimpleNamespace(config=None)
+    assert asyncio.run(client._aged_sheets_read(bot, ["https://x/a", "https://x/b"])) == (25, {"TX": 19, "FL": 6}, "")
+    counts["b"] = (None, None, "couldn't open it")
+    rows, _states, trouble = asyncio.run(client._aged_sheets_read(bot, ["https://x/a", "https://x/b"]))
+    assert rows is None and "couldn't open it" in trouble
+    done = ("✅ Aged FEX 90-180: 15 pulled (Texas 15) · sheet shared with k@example.com\n"
+            "https://docs.google.com/spreadsheets/d/a1/edit\n✅ Aged FEX 180+: 10 pulled (Texas 4, Florida 6)\n"
+            "https://docs.google.com/spreadsheets/d/b2/edit")
+    post = "NAME: Kinley\nEMAIL: k@example.com\nNotes:\n> Aged FEX 90-180: 15 @ $5.00\n> Aged FEX 180+: 10 @ $4.00"
+    result = agedqc.check(post, done, sheet_rows=25)
+    assert "The 2 sheets have 25 leads" in result.ok and not result.problems, result.problems
