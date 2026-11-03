@@ -83,6 +83,8 @@ class Checked:
     fixed: list = field(default_factory=list)
     #: Rook and Nova asked about it with the button: (link, when).
     asked: tuple = ()
+    #: Rook's setup message the QC was held to, as it was written.
+    setup_text: str = ""
 
     def talk_about_setup(self) -> bool:
         """Whether Rook and Nova talked about setting it up at all."""
@@ -218,7 +220,7 @@ def the_setup(talk, paid: Order) -> tuple:
     for who, said in talk:
         found = rook_setup(said)
         if found is not None:
-            setups.append([who, found, False])
+            setups.append([who, found, False, said])
             continue
         off = CALLED_OFF.search(said)
         if off is None or not setups:
@@ -232,11 +234,12 @@ def the_setup(talk, paid: Order) -> tuple:
                 one[2] = True
                 notes.append(f"{one[0]}'s setup ({one[1].count or '?'} leads) was called off by {who} - "
                              f"“{_quote(said, CALLED_OFF)}”")
-    standing = [one[1] for one in setups if not one[2]]
+    standing = [one for one in setups if not one[2]]
     if not standing:
         return None, notes
-    fits = [one for one in standing if paid.count is not None and one.count == paid.count]
-    return (fits or standing)[-1], notes
+    fits = [one for one in standing if paid.count is not None and one[1].count == paid.count]
+    chosen = (fits or standing)[-1]
+    return chosen[1], notes, chosen[3]
 
 
 def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str = "", sheet_rows: int | None = None,
@@ -246,8 +249,9 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     `hub`: the hub's record for them, or None."""
     paid = payment(post)
     result = Checked(client=paid.name)
-    rook, called_off = the_setup(talk, paid)
+    rook, called_off, *said = the_setup(talk, paid)
     result.notes += called_off
+    result.setup_text = said[0] if said else ""
     if rook is not None and rook.name:
         # A business paying - "Kunz Marketing, Llc" for Kurtis Kunz.
         result.client = rook.name
@@ -567,6 +571,26 @@ def _described(row) -> str:
     if getattr(row, "ordered", None) is not None:
         bits.append(f"{getattr(row, 'delivered', None) or 0} of {row.ordered} delivered")
     return f"{getattr(row, 'lead_type', '') or '?'} ({', '.join(bits)})"
+
+
+def card_notes(result: Checked) -> str:
+    """Rook's setup in the invoice form's words, for the card a hammer makes
+    - Charles Sellers' $160 Zelle post said nothing, and his card came up
+    "Nothing to make a card from" while Rook's setup had it all."""
+    text = result.setup_text
+    rook = rook_setup(text) if text else None
+    if rook is None:
+        return ""
+    lines = ["Rook's setup in #rook-nova:", f"Name: {rook.name}" if rook.name else ""]
+    lines += [f"Email: {rook.email}" if rook.email else "", f"Phone Number: {rook.phone}" if rook.phone else ""]
+    lines += [f"Lead Type: {rook.lead_type}" if rook.lead_type else ""]
+    states = ", ".join(rook.states) + (f" (all but {', '.join(rook.left_out)})" if rook.left_out else "")
+    lines += [f"States Leads In: {states}" if rook.states or rook.left_out else ""]
+    lines += [f"Number of Requested Leads: {rook.count}" if rook.count else ""]
+    lines += [f"Launch Date: {rook.launch}" if rook.launch else ""]
+    extra = _field(text, r"Specific\s+Notes", r"Notes")
+    lines += [f"Specific Notes: {extra}" if extra else ""]
+    return "\n".join(one for one in lines if one)
 
 
 def open_question(talk) -> str:

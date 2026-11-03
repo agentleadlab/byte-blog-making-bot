@@ -647,6 +647,11 @@ def test_cant_set_it_up_is_hammered_once(monkeypatch):
 
     async def gavelled(bot, payload):
         hammered.append(payload.message_id)
+        # Rook's setup carried onto the card - Charles Sellers' $160 Zelle
+        # post came up "Nothing to make a card from".
+        notes = "\n".join(payload.setup_notes)
+        assert "Email: jcarter@example.com" in notes and "Number of Requested Leads: 40" in notes, notes
+        assert "States Leads In: TX, FL, GA" in notes and "Lead Type: Text-Verified Final Expense" in notes
 
     nova = "@Rook I couldn't set Jonathan up, so I've handed it to the team."
     result = {"one": None}

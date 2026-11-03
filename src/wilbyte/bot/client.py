@@ -10884,6 +10884,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
             if note or also:
                 payload = _payload_copy(payload, extra_notes=((f"Payra invoice note: {note}",) if note else ())
                                         + also)
+        if getattr(payload, "setup_notes", ()):
+            # Rook's setup, from a hammer the setup QC made - with the
+            # invoice's, not in their place.
+            payload = _payload_copy(payload, extra_notes=tuple(getattr(payload, "extra_notes", ()) or ())
+                                    + tuple(payload.setup_notes))
         card, examples, thread_id = await _order_read(bot, message, extra=getattr(payload, "extra_notes", ()))
     except Exception as exc:
         log.exception("Couldn't read the gavelled order")
@@ -11785,9 +11790,12 @@ async def _sqc_auto_hammer(bot, key: str, post, result, held: dict) -> None:
     rookqc.remember(key, hammered=True)
     result.notes.insert(0, "🔨 Hammered for its Trello card automatically - Rook/Nova can't set it up")
     try:
+        # Rook's setup carried onto the card: a Zelle post says nothing.
+        notes = rookqc.card_notes(result)
         await _order_gavelled(bot, SimpleNamespace(
             message_id=int(key), channel_id=post.channel.id, user_id=0,
-            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None))
+            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None,
+            setup_notes=(notes,) if notes else ()))
     except Exception:
         log.warning("Couldn't hammer %s for its card", key, exc_info=True)
         rookqc.remember(key, hammered=False)
@@ -11900,9 +11908,11 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
         await interaction.followup.send(f"⚠ Couldn't read it again: {_readable(exc)}", ephemeral=True)
         return
     if act == "card":
+        notes = rookqc.card_notes(result)
         await _order_gavelled(bot, SimpleNamespace(
             message_id=int(key), channel_id=post.channel.id, user_id=getattr(interaction.user, "id", 0),
-            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None))
+            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None,
+            setup_notes=(notes,) if notes else ()))
         await interaction.followup.send(f"🃏 Making the New Agent card for **{result.client}** the usual way.",
                                         ephemeral=True)
         return
@@ -12628,7 +12638,7 @@ def _payload_copy(payload, **changed):
     """A gavel's particulars, kept - Discord's own event can't be copied."""
     kept = {name: getattr(payload, name, None) for name in (
         "message_id", "channel_id", "user_id", "guild_id", "member")}
-    for name in ("extra_notes", "aged_only", "separate", "confirmed", "catching_up", "retried"):
+    for name in ("extra_notes", "setup_notes", "aged_only", "separate", "confirmed", "catching_up", "retried"):
         if hasattr(payload, name):
             kept[name] = getattr(payload, name)
     kept.update(changed)
