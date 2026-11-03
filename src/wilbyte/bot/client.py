@@ -12459,6 +12459,8 @@ async def _sqc_tell_fixed(bot, key: str, result, held: dict) -> None:
     found = re.search(r"/channels/\d+/(\d+)/(\d+)", link)
     if not cleared or not found or not SETUP_QC_AUTO_ASK:
         return
+    if not _room(_ASKED_TIMES, SETUP_QC_ASKS_AN_HOUR + 4):
+        return  # said next pass - #rook-nova isn't flooded with these either
     rookqc.remember(key, told_fixed=list(dict.fromkeys([*told, *cleared])))
     try:
         channel = bot.get_channel(int(found.group(1))) or await bot.fetch_channel(int(found.group(1)))
