@@ -789,3 +789,27 @@ def test_why_takes_a_list_of_names():
     assert got.brief.split("\n") == ["Kane Curtis", "Kailey Hull", "Jensin Philpott", "Wes Stoecklin",
                                      "Killtech Financial", "Airr"], got.brief
     assert mentions.parse("why Kane Curtis").brief == "Kane Curtis"
+
+
+def test_franklin_is_tagged_once_a_day_for_a_payment(monkeypatch):
+    """William J Seitz's and Brandon Nguyen's cards sent again, tagged, for
+    the same thing said in new words."""
+    from wilbyte.bot import client
+    from tests.test_rookqc import _CardChannel
+
+    cards = _CardChannel()
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    monkeypatch.setattr(client, "_sqc_auto_ask", lambda *a, **k: asyncio.sleep(0))
+    monkeypatch.setattr(client, "_sqc_escalation", lambda *a, **k: "")
+    post = SimpleNamespace(content="AMOUNT: $400.00", embeds=[], message_snapshots=[], jump_url="https://x/900",
+                           created_at=now - timedelta(hours=30))
+    rookqc.remember("900", posted=(now - timedelta(hours=30)).isoformat())
+    first = rookqc.Checked(client="Brandon Nguyen", problems=["Nothing on the hub for this order yet"])
+    asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, first, rookqc.recalled()["900"],
+                                 due=True, waiting=False))
+    assert cards.sent[-1].content == "<@1>"
+    again = rookqc.Checked(client="Brandon Nguyen", problems=["Not sure which order this pays for"])
+    asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, again, rookqc.recalled()["900"],
+                                 due=False, waiting=False))
+    assert len(cards.sent) == 1 and cards.sent[0].edits, "edited where it is, not sent again tagged"

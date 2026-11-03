@@ -12074,8 +12074,17 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
     view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
                                and not result.overflow, card=bool(result.cant) and not result.trello,
                                ok=bool(result.problems))
+    ping = bool(new) or (bool(result.cant) and not held.get("cant"))
+    # Franklin tagged once a day for a payment, at most - William J Seitz's and
+    # Brandon Nguyen's cards were sent again, tagged, for the same thing said
+    # in new words. After that it's brought up to date where it is.
+    pinged = _moment_of(held.get("pinged_at"))
+    if ping and not escalate and pinged is not None and datetime.now(timezone.utc) - pinged < timedelta(hours=24):
+        ping = False
+    if ping and not escalate:
+        rookqc.remember(key, pinged_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     await _card_put(bot, channel, "setup", key, standing, title, body, link=post.jump_url, view=view,
-                    ping=bool(new) or (bool(result.cant) and not held.get("cant")) or bool(escalate),
+                    ping=ping or bool(escalate),
                     who=(_team_tags(bot, channel.guild) + " " + _card_ping(bot)).strip() if escalate else None)
     return standing
 
