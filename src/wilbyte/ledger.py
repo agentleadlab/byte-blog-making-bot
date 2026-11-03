@@ -196,11 +196,15 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     if morning:
         sections.append(("🚀 Going live today", [_line(one, now, ("❌ " + _ready(one)) if _ready(one) else "✅ ready")
                                                 for one in launching if _day(one.get("start")) == today]))
-    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP)
+    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello"))
     sections.append(("❌ Paid, not set up", [_line(one, now, (_still_wrong(one) or ["not on the hub"])[0])
                                             for one in not_set_up]))
     sections.append(("🃏 Rook/Nova can't set up - press Make the card on its card",
-                     [_line(one, now, one.get("cant") or "") for one in by(lambda one: one.get("stage") == CANT)]))
+                     [_line(one, now, one.get("cant") or "") for one in by(
+                         lambda one: one.get("stage") == CANT and not one.get("trello"))]))
+    sections.append(("🃏 With the team on Trello - not on the hub yet",
+                     [_line(one, now, f"card <{one['trello']}>") for one in by(
+                         lambda one: one.get("stage") in (CANT, NOT_SET_UP) and one.get("trello"))]))
     wrong = by(lambda one: one.get("stage") not in (NOT_SET_UP, CANT, OVERFLOW, OVERFLOW_DONE) and _still_wrong(one))
     sections.append(("⚠️ Set up wrong", [_line(one, now, "; ".join(_still_wrong(one))[:300]) for one in wrong]))
     late = by(lambda one: one.get("stage") == SET_UP and (_day(one.get("start")) or date.max) < today

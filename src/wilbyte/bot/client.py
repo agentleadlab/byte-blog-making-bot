@@ -11825,6 +11825,16 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         return ""
     waiting = not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result))
     _sqc_twin(key, post, result, held)
+    # Its Trello card, once Make the card has made it - William McClure's.
+    try:
+        from .. import ordercards
+
+        made = (await asyncio.to_thread(ordercards.load)).get(key) or {}
+    except Exception:
+        made = {}
+    if made.get("status") == "made" and made.get("url"):
+        result.trello = str(made["url"])
+        result.notes.insert(0, f"🃏 Its Trello card is made: <{result.trello}>")
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)
@@ -11916,7 +11926,7 @@ def _ledger_keep(key: str, post, result, held: dict) -> None:
     kept = ledger.stage(result)
     fields = dict(kept, client=result.client or held.get("client") or held.get("name") or "",
                   amount=(_AMOUNT.search(_all_of_it(post)) or [None, ""])[1], link=getattr(post, "jump_url", ""),
-                  invoice=_invoice_of(post),
+                  invoice=_invoice_of(post), trello=getattr(result, "trello", ""),
                   open_problems=list(result.problems), todo=list(result.todo), cant=result.cant,
                   checked=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     if not kept["hub_id"]:
@@ -12025,7 +12035,8 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
     if escalate:
         body = escalate + "\n\n" + body
     view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
-                               and not result.overflow, card=bool(result.cant), ok=bool(result.problems))
+                               and not result.overflow, card=bool(result.cant) and not result.trello,
+                               ok=bool(result.problems))
     await _card_put(bot, channel, "setup", key, standing, title, body, link=post.jump_url, view=view,
                     ping=bool(new) or (bool(result.cant) and not held.get("cant")) or bool(escalate),
                     who=(_team_tags(bot, channel.guild) + " " + _card_ping(bot)).strip() if escalate else None)
@@ -12526,7 +12537,8 @@ def _sqc_escalation(bot, key: str, result, held: dict) -> str:
     still = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))]
     if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER) or getattr(result, "with_team", ""):
         still = []  # not yet - or Rook took it to them already
-    team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"] if result.cant else [])
+    team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"]
+                                if result.cant and not getattr(result, "trello", "") else [])
     if not (posted and now - posted >= SETUP_QC_ESCALATE_AFTER):
         team = []
     open_now = still + team

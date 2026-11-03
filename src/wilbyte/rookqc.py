@@ -93,6 +93,8 @@ class Checked:
     with_team: str = ""
     #: The other payment post this one looks to be a second of.
     twin: str = ""
+    #: Its Trello card, once made.
+    trello: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None

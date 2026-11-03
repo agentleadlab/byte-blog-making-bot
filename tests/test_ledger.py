@@ -560,3 +560,14 @@ def test_franklin_isnt_tagged_before_rook_and_nova_have_had_their_time(monkeypat
     result = rookqc.Checked(client="Anthony Portillo", problems=["Not on the hub"])
     asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, result, held, due=False, waiting=False))
     assert cards.sent[-1].content == "<@1>", "tagged once it's due"
+
+
+def test_a_cant_with_its_trello_card_made_is_with_the_team():
+    """William McClure: Make the card pressed, his card made on Trello."""
+    records = {"1": _kept("William McClure", ledger.CANT, cant="Nova: couldn't set up",
+                          trello="https://trello.com/c/s2Lf4Y1R"),
+               "2": _kept("Charles Sellers", ledger.CANT, cant="Nova: couldn't set")}
+    said = ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4))
+    head, _, tail = said.partition("With the team on Trello")
+    assert "Charles Sellers" in head and "William McClure" not in head
+    assert "William McClure" in tail and "trello.com/c/s2Lf4Y1R" in tail
