@@ -413,3 +413,52 @@ def test_a_flag_still_there_and_one_fixed_are_said():
     again = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(sheet_url=""))
     rookqc.flagged_before(again, {"flagged": kept})
     assert again.still == kept and again.fixed == []
+
+
+def test_rook_nova_is_read_once_for_many_payments(monkeypatch):
+    """"why so long??" - "setup qc" read #rook-nova whole for each payment."""
+    import asyncio
+    from wilbyte.bot import client
+
+    reads = {"history": 0, "archived": 0, "inside": 0}
+    now = datetime.now(timezone.utc)
+
+    def msg(i, text):
+        return SimpleNamespace(id=i, created_at=now - timedelta(minutes=30 - i), content=text, embeds=[],
+                               message_snapshots=[], reference=None,
+                               author=SimpleNamespace(display_name="Rook", name="Rook", bot=True))
+
+    class Thread:
+        id, name, created_at = 77, "Jonathan Carter", now - timedelta(minutes=20)
+
+        def history(self, **kw):
+            reads["inside"] += 1
+
+            async def gen():
+                yield msg(9, NOVA)
+            return gen()
+
+    class Channel:
+        threads = [Thread()]
+
+        def history(self, **kw):
+            reads["history"] += 1
+
+            async def gen():
+                yield msg(1, ROOK)
+            return gen()
+
+        def archived_threads(self, **kw):
+            reads["archived"] += 1
+
+            async def gen():
+                if False:
+                    yield None
+            return gen()
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Channel())
+    held = {"names": ["Jonathan Carter"]}
+    for _ in range(5):
+        talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", held, now - timedelta(hours=1)))
+        assert [who for who, _said in talk] == ["Rook", "Rook"], talk
+    assert reads == {"history": 1, "archived": 1, "inside": 1}, reads

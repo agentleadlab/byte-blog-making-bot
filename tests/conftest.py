@@ -145,3 +145,13 @@ def _team_in_every_day(tmp_path, monkeypatch):
     from wilbyte import dailyops
 
     monkeypatch.setattr(dailyops, "_off_path", lambda: tmp_path / "team-off.json")
+
+
+@pytest.fixture(autouse=True)
+def _rook_nova_read_afresh(monkeypatch):
+    """No #rook-nova held over from another test."""
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(client, "_RN", {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {},
+                                        "hold": 0})
+    monkeypatch.setattr(client, "_SHEETS_READ", {})

@@ -11496,7 +11496,7 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
     # Everything since the payment, up to three days on - the first 400
     # messages after a Friday payment didn't reach Thomas Poulin's.
     until = posted + timedelta(days=3)
-    async for one in channel.history(after=posted - timedelta(minutes=5), limit=None, oldest_first=True):
+    for one in await _rn_messages(channel, posted - timedelta(minutes=5)):
         if one.created_at > until:
             break
         said = _all_of_it(one)
@@ -11511,21 +11511,15 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
                 held = dict(held, names=[one for one in dict.fromkeys([*(held.get("names") or []), setup.name]) if one],
                             emails=[one for one in dict.fromkeys([*(held.get("emails") or []), setup.email]) if one])
     # And their threads off #rook-nova - Rook and Nova answer in those too.
-    threads = list(getattr(channel, "threads", None) or [])
-    try:
-        async for one in channel.archived_threads(limit=50):
-            threads.append(one)
-    except Exception:
-        pass
+    threads = await _rn_threads(channel)
     seen = set()
     for thread in threads:
         made = getattr(thread, "created_at", None)
         if thread.id in seen or (made is not None and not (posted - timedelta(minutes=5) <= made <= until)):
             continue
         seen.add(thread.id)
-        try:
-            inside = [one async for one in thread.history(limit=100, oldest_first=True)]
-        except Exception:
+        inside = await _rn_inside(thread)
+        if inside is None:
             continue
         name = str(getattr(thread, "name", "") or "")
         if not (_sqc_mentions(name, key, held) or any(_sqc_mentions(_all_of_it(one), key, held) for one in inside)):
@@ -11538,6 +11532,68 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
     # called off by what came after it - Marcus Uhrich's - turns on it.
     talk.sort(key=lambda one: one[0] or posted)
     return [(who, said) for _at, who, said in talk]
+
+
+#: #rook-nova read once and shared - "why so long??": "setup qc" read the
+#: whole channel, every thread and each thread's messages again for each of
+#: 109 payments, and the Ask button waited behind it.
+_RN: dict = {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {}, "hold": 0}
+RN_FRESH = 120
+
+
+def _rn_fresh() -> bool:
+    return bool(_RN["hold"]) or time.time() - _RN["at"] < RN_FRESH
+
+
+async def _rn_messages(channel, since: datetime) -> list:
+    """#rook-nova's messages after `since`, oldest first - read again only
+    when what's held is stale or doesn't reach back that far."""
+    if not (_rn_fresh() and _RN["since"] is not None and _RN["since"] <= since):
+        start = min(since, _RN["since"]) if _rn_fresh() and _RN["since"] is not None else since
+        found = [one async for one in channel.history(after=start, limit=None, oldest_first=True)]
+        if not _rn_fresh():
+            _RN.update(threads=None, inside={})
+        _RN.update(at=time.time(), since=start, messages=found)
+    return [one for one in _RN["messages"] if one.created_at > since]
+
+
+async def _rn_threads(channel) -> list:
+    if _RN["threads"] is None or not _rn_fresh():
+        threads = list(getattr(channel, "threads", None) or [])
+        try:
+            async for one in channel.archived_threads(limit=50):
+                threads.append(one)
+        except Exception:
+            pass
+        if not _rn_fresh():
+            _RN.update(inside={}, at=time.time())
+        _RN["threads"] = threads
+    return _RN["threads"]
+
+
+async def _rn_inside(thread) -> list | None:
+    """A #rook-nova thread's messages, read once while fresh. None: unreadable."""
+    if thread.id not in _RN["inside"]:
+        try:
+            _RN["inside"][thread.id] = [one async for one in thread.history(limit=100, oldest_first=True)]
+        except Exception:
+            return None
+    return _RN["inside"][thread.id]
+
+
+#: Lead sheets read lately, by link: (when, rows, problem).
+_SHEETS_READ: dict = {}
+
+
+async def _sqc_sheet(bot, url: str) -> tuple:
+    """A lead sheet's rows, read at most every two minutes - the Ask button
+    pressed after a QC doesn't read it all over again."""
+    held = _SHEETS_READ.get(url)
+    if held is not None and time.time() - held[0] < RN_FRESH:
+        return held[1], held[2]
+    rows, problem = await asyncio.to_thread(jobs.lead_sheet_rows, bot.config, url)
+    _SHEETS_READ[url] = (time.time(), rows, problem)
+    return rows, problem
 
 
 async def _sqc_hub(bot):
@@ -11605,7 +11661,7 @@ async def _sqc_check(bot, key: str):
     rows, sheet_problem = None, ""
     if agent is not None and agent.sheet_url:
         try:
-            rows, sheet_problem = await asyncio.to_thread(jobs.lead_sheet_rows, bot.config, agent.sheet_url)
+            rows, sheet_problem = await _sqc_sheet(bot, agent.sheet_url)
         except Exception as exc:
             sheet_problem = _readable(exc)
     result = rookqc.check(text, talk, hub=agent, hub_problem=hub_problem, sheet_rows=rows,
@@ -11720,15 +11776,27 @@ async def _sqc_days(bot, responder: Responder, said: str) -> None:
     days = _qc_days(said, _today(bot.config))
     posts = list({post.id: post for day in days for post in await _payments_on(bot, day)}.values())
     await responder.send(f"🔎 Checking {len(posts)} payment(s) against Rook, Nova, the hub and the sheet…", quiet=True)
-    for post in posts:
-        if str(post.id) not in rookqc.recalled():
-            _sqc_watch(bot, post)
-        if str(post.id) not in rookqc.recalled():
-            continue  # aged, or a weekly charge
-        try:
-            await _sqc_run(bot, str(post.id), force=True)
-        except Exception as exc:
-            await responder.send(f"⚠ Couldn't check <{post.jump_url}>: {_readable(exc)}")
+    # #rook-nova read once, back to the earliest payment, and held for the
+    # whole run - not again for each payment.
+    _RN["hold"] += 1
+    try:
+        channel = _rook_nova_channel(bot)
+        if channel is not None and posts:
+            _RN.update(since=None, messages=[], threads=None, inside={})  # read afresh, once
+            await _rn_messages(channel, min(post.created_at for post in posts) - timedelta(minutes=5))
+            await _rn_threads(channel)
+        for post in posts:
+            if str(post.id) not in rookqc.recalled():
+                _sqc_watch(bot, post)
+            if str(post.id) not in rookqc.recalled():
+                continue  # aged, or a weekly charge
+            try:
+                await _sqc_run(bot, str(post.id), force=True)
+            except Exception as exc:
+                await responder.send(f"⚠ Couldn't check <{post.jump_url}>: {_readable(exc)}")
+    finally:
+        _RN["hold"] -= 1
+        _RN["at"] = time.time()  # fresh for two minutes more - the Ask button after
 
 
 def _aged_pull_done(message) -> bool:
