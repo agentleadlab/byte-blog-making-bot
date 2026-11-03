@@ -11707,6 +11707,8 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         rookqc.remember(key, aged=True, due_done=True)
         return ""
     waiting = not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result))
+    if result.cant and not waiting:
+        await _sqc_auto_hammer(bot, key, post, result, held)
     cards = await _card_channel(bot, "setup")
     if cards is not None:
         return await _sqc_card(bot, cards, key, post, result, held, due=due, waiting=waiting)
@@ -11733,6 +11735,54 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
                          view=view, quiet=not result.problems)
     return "problem" if result.problems else "todo" if result.todo else "ok"
+
+
+#: Rook or Nova saying they can't set it up: the payment hammered for its
+#: Trello card straight away - "this should auto hammer then right? so we
+#: can set it up trello way" (Charles Sellers).
+SETUP_QC_AUTO_HAMMER = True
+
+
+async def _sqc_auto_hammer(bot, key: str, post, result, held: dict) -> None:
+    """The payment hammered once, as if somebody had - not when it already
+    has its card, nor a second time for another part of the same order."""
+    from .. import ordercards, rookqc
+
+    if held.get("hammered"):
+        result.notes.insert(0, "🔨 Hammered for its Trello card " + (f"({held['hammered']})"
+                                                                     if held['hammered'] is not True else ""))
+        return
+    if not SETUP_QC_AUTO_HAMMER:
+        return
+    if (await asyncio.to_thread(ordercards.load)).get(key, {}).get("status") not in (None, "waiting", "off") \
+            or key in _ORDER_ACTIVE:
+        rookqc.remember(key, hammered="already had its card")
+        result.notes.insert(0, "🔨 Already hammered - it has its Trello card")
+        return
+    # Another part of the same order hammered already - Charles Sellers'
+    # $2,000 and $160 are one INV-21037.
+    since = datetime.now(timezone.utc) - timedelta(days=3)
+    for other, one in rookqc.recalled().items():
+        if other == key or not one.get("hammered") or not result.client:
+            continue
+        try:
+            when = datetime.fromisoformat(str(one.get("posted") or ""))
+        except ValueError:
+            continue
+        if when >= since and rookqc.same_person(str(one.get("client") or one.get("name") or ""), result.client):
+            rookqc.remember(key, hammered="with its other payment")
+            result.notes.insert(0, "🔨 Its other payment was hammered for the Trello card - not made twice")
+            return
+    rookqc.remember(key, hammered=True)
+    result.notes.insert(0, "🔨 Hammered for its Trello card automatically - Rook/Nova can't set it up")
+    try:
+        await _order_gavelled(bot, SimpleNamespace(
+            message_id=int(key), channel_id=post.channel.id, user_id=0,
+            guild_id=getattr(getattr(post, "guild", None), "id", None), member=None))
+    except Exception:
+        log.warning("Couldn't hammer %s for its card", key, exc_info=True)
+        rookqc.remember(key, hammered=False)
+        result.notes[0] = "⚠ Couldn't hammer it for its Trello card - press Make the card"
 
 
 async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bool, waiting: bool) -> str:

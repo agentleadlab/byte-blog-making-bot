@@ -636,3 +636,40 @@ def test_nova_couldnt_set_them_up_by_name_and_paid_in_parts():
     assert result.cant.startswith("Nova"), (result.cant, result.problems)
     assert any(one.startswith("Paid in parts") and "$2,000 (Nov 2) + $160 (today)" in one for one in result.notes)
     assert "can't set it up" in rookqc.said(result)
+
+
+def test_cant_set_it_up_is_hammered_once(monkeypatch):
+    """"this should auto hammer then right? so we can set it up trello way" -
+    Charles Sellers: hammered once, not again, nor for his other payment."""
+    from wilbyte.bot import client
+
+    hammered = []
+
+    async def gavelled(bot, payload):
+        hammered.append(payload.message_id)
+
+    nova = "@Rook I couldn't set Jonathan up, so I've handed it to the team."
+    result = {"one": None}
+
+    async def checking(bot, key):
+        post = SimpleNamespace(jump_url=f"https://discord.com/channels/1/2/{key}", content=PAYRA, embeds=[],
+                               message_snapshots=[], channel=SimpleNamespace(id=2), guild=None)
+        return post, rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=None)
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            result["one"] = text
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_order_gavelled", gavelled)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "")
+    now = datetime.now(timezone.utc).isoformat()
+    rookqc.remember("900", posted=now, name="Jonathan Carter")
+    rookqc.remember("901", posted=now, name="Jonathan Carter")
+    asyncio.run(client._sqc_run(SimpleNamespace(), "900", due=True))
+    assert hammered == [900] and "Hammered for its Trello card automatically" in result["one"]
+    asyncio.run(client._sqc_run(SimpleNamespace(), "900", force=True))
+    asyncio.run(client._sqc_run(SimpleNamespace(), "901", due=True))
+    assert hammered == [900], "once, and not for the other part of the same order"
+    assert "other payment was hammered" in result["one"]
