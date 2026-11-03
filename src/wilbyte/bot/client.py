@@ -12318,6 +12318,10 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     about yet. Not overflow (the team's), nor a can't-set-up (a card)."""
     if not SETUP_QC_AUTO_ASK or result.overflow or result.cant or not result.problems:
         return
+    if str(getattr(getattr(result, "hub", None), "status", "") or "").casefold() in rookqc_finished():
+        # Delivered already - Jason Lewis' done 25 of 25: nothing on the hub
+        # to fix. It's on the day's list, not asked about.
+        return
     new = [one for one in result.problems if one not in (held.get("asked_problems") or [])]
     if not new:
         return
@@ -12341,6 +12345,12 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
             result.asked = (rookqc_recalled_link(key), datetime.now(timezone.utc).isoformat(timespec="seconds"))
     except Exception:
         log.warning("Couldn't ask Rook and Nova about %s", key, exc_info=True)
+
+
+def rookqc_finished() -> tuple:
+    from .. import rookqc
+
+    return rookqc.FINISHED
 
 
 def rookqc_recalled_link(key: str) -> str:

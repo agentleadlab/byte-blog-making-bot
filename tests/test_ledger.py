@@ -364,3 +364,22 @@ def test_launching_is_read_as_talk_and_never_said_in(monkeypatch):
     result = SimpleNamespace(client="Will Stanger", problems=["Not on the hub"], todo=[], wanted=None)
     assert asyncio.run(client._sqc_ask(SimpleNamespace(), "900", post, result)) == ""
     assert said_in == [], "nothing said in #launching"
+
+
+def test_a_delivered_order_isnt_asked_about(monkeypatch):
+    """Jason Lewis: done 25 of 25, asked to "fix what's wrong on the hub"."""
+    from wilbyte.bot import client
+
+    asked = []
+
+    async def ask(bot, key, post, result, *, by="", problems=None):
+        asked.append(key)
+        return "x"
+
+    monkeypatch.setattr(client, "_sqc_ask", ask)
+    now = datetime.now(timezone.utc)
+    result = SimpleNamespace(client="J", problems=["The hub states don't match the payment - has AR"], todo=[],
+                             cant="", overflow=False, asked=(), setup_text="x", hub=_row(status="done", delivered=30))
+    asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result,
+                                     {"posted": (now - timedelta(hours=1)).isoformat()}))
+    assert asked == []

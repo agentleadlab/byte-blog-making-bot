@@ -783,3 +783,28 @@ def test_an_aged_pull_in_rook_nova_isnt_asked_about_as_a_setup(monkeypatch):
     assert result.aged_pull and not result.talk_about_setup()
     assert asyncio.run(client._sqc_run(bot, "900", due=True)) == ""
     assert rookqc.recalled()["900"].get("aged")
+
+
+def test_rooks_states_differ_but_the_hub_has_the_payments():
+    """justin techer: IN added after Rook's setup - "Rook's setup states don't
+    match the payment - missing IN" with the hub's all right."""
+    rook = ROOK.replace("States: TX, FL, GA", "States: TX, FL")
+    result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
+    assert not any(one.startswith("Rook's setup states") for one in result.problems), result.problems
+    assert any("the hub has the right ones" in one for one in result.notes)
+    wrong_hub = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub(states=("TX", "FL")))
+    assert any(one.startswith("Rook's setup states") for one in wrong_hub.problems)
+
+
+def test_somebody_paying_for_them_that_rooks_setup_names():
+    """Preston Tackett: two of three Zelle parts sent by his friend Ryan M
+    Thompson - "Rook's setup has the name Preston Tackett, the payment Ryan
+    M Thompson"."""
+    zelle = "New Payment | Zelle 💰\nNAME: Ryan M Thompson\nAMOUNT: $500.00\nPRODUCT: — (match to their order)"
+    rook = ROOK + ("\nSpecific Notes: Paid by Zelle in three parts: one from Jonathan Carter and two from Ryan "
+                   "Thompson / Ryan M Thompson (his friend sent them for him).")
+    result = rookqc.check(zelle, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
+    assert not any("has the name" in one for one in result.problems), result.problems
+    assert any("Paid by Ryan M Thompson for Jonathan Carter" in one for one in result.notes)
+    stranger = rookqc.check(zelle, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
+    assert any("has the name" in one for one in stranger.problems)

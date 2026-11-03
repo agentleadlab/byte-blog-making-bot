@@ -394,7 +394,11 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if hub is not None and getattr(hub, "states", ()) and not any(one.startswith("The hub states")
                                                                   or one.startswith("The hub shows no states")
                                                                   for one in result.problems):
-        for one in [one for one in result.problems if one.startswith("Rook's setup has no states")]:
+        # Nor Rook's states being different, once the hub has the payment's
+        # - justin techer's IN, added in his payment's thread after Rook's
+        # setup: the hub's what the leads go by.
+        for one in [one for one in result.problems if one.startswith(("Rook's setup has no states",
+                                                                       "Rook's setup states"))]:
             result.problems.remove(one)
             result.notes.append(one + " - the hub has the right ones")
     # Live or delivering: what was handed over before the setup is done
@@ -490,9 +494,22 @@ def _quote(said: str, pattern) -> str:
     return " ".join(said[start:start + 160].split())
 
 
+def _payer_named(text: str, payer: str) -> bool:
+    """The payer's name - first and last - written in Rook's setup."""
+    words = [one for one in re.findall(r"[A-Za-z][A-Za-z'’-]+", str(payer or "")) if len(one) > 1]
+    said = str(text or "").casefold()
+    return len(words) >= 2 and all(re.search(rf"\b{re.escape(one.casefold())}\b", said)
+                                   for one in (words[0], words[-1]))
+
+
 def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     if paid.name and theirs.name and not same_person(paid.name, theirs.name):
-        result.problems.append(f"{whose} has the name {theirs.name}, the payment {paid.name}")
+        if _payer_named(result.setup_text, paid.name):
+            # Somebody paying for them, and Rook's setup says so - Preston
+            # Tackett's, two parts sent by his friend Ryan M Thompson.
+            result.notes.append(f"Paid by {paid.name} for {theirs.name} - Rook's setup says so")
+        else:
+            result.problems.append(f"{whose} has the name {theirs.name}, the payment {paid.name}")
     if paid.email and theirs.email:
         if paid.email.casefold() != theirs.email.casefold():
             result.problems.append(f"{whose} has the email {theirs.email}, the payment {paid.email}")
