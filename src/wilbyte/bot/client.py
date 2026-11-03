@@ -11889,7 +11889,7 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
 
 #: The ads / marketing package - ads the team runs, not leads on the hub.
 _ADS_PACKAGE = re.compile(r"\bmarketing\s+package\b|\blead\s+generation\s+marketing\b|\bad[\s-]*spend\b|"
-                          r"\bmanaged\s+ads\b", re.IGNORECASE)
+                          r"\bmanaged\s+ads\b|\bads?\s+(?:budget|management)\b|\bweekly\s+ads?\b", re.IGNORECASE)
 
 #: A payment under this isn't an order to set up - a $1 card check, a fee.
 SETUP_QC_LEAST = 25.0

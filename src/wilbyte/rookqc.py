@@ -362,6 +362,11 @@ def the_setup(talk, paid: Order) -> tuple:
         if theirs:
             standing = theirs
             break
+    else:
+        # None of them theirs: another client's setup isn't held up against
+        # this payment - only when it's a business paying, or no name to go by.
+        if paid.name and not _BUSINESS.search(paid.name):
+            return None, notes
     # And of those, one for what this payment bought - William McClure's old
     # $1,140 Trucker payment was held to his Vets setup.
     kind = family(paid.lead_type) - {"aged"}
@@ -555,9 +560,19 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
             result.notes.append(one + " - the hub has the right ones")
     # Live or delivering: what was handed over before the setup is done
     # with - Matthew Stewart's "I can't find a PAID payment" under a tick.
+    # Scheduled to start, or going, on a row for this order: what was handed
+    # over on the way there is done with - Alyssa Booska's "a person picks
+    # which row" and Ian Gibson's contract, both scheduled as paid for, and
+    # both taken to Therese and Nicole.
+    started = touched and str(getattr(hub, "status", "") or "").casefold() in ("scheduled", "live", "active")
     if going and result.todo:
         result.notes += [f"Handed to the team earlier: {one}" for one in dict.fromkeys(result.todo)]
         result.todo = []
+    elif started and result.todo:
+        # Nova's own question still open stays - only what was handed over.
+        done = [one for one in result.todo if not one.startswith("Nova asked and nobody's answered")]
+        result.notes += [f"Handed to the team earlier: {one}" for one in dict.fromkeys(done)]
+        result.todo = [one for one in result.todo if one not in done]
     if going and not any("Set up twice?" in one or "added twice" in one for one in result.problems):
         # The hub's going and holds no more than was paid for: what Nova
         # warned of didn't happen.
@@ -659,11 +674,19 @@ _BUSINESS = re.compile(r"\b(?:llc|l\.l\.c|inc|corp|corporation|co|company|group|
 
 
 def _payer_named(text: str, payer: str) -> bool:
-    """The payer's name - first and last - written in Rook's setup."""
+    """Rook's setup saying this payer paid for them - "two from Ryan M
+    Thompson (his friend sent them for him)", "paid by ...". Not the name
+    only: Keaton Artherton's setup named Colton Ramon, who paid for his own
+    40, and Colton's payment came out as Keaton's 20."""
     words = [one for one in re.findall(r"[A-Za-z][A-Za-z'’-]+", str(payer or "")) if len(one) > 1]
-    said = str(text or "").casefold()
-    return len(words) >= 2 and all(re.search(rf"\b{re.escape(one.casefold())}\b", said)
-                                   for one in (words[0], words[-1]))
+    if len(words) < 2:
+        return False
+    said = " ".join(str(text or "").split())
+    first, last = re.escape(words[0]), re.escape(words[-1])
+    name = rf"{first}(?:\s+\S+){{0,2}}\s+{last}"
+    paying = r"(?:paid|pays|paying|sent|sends|zelle[d]?|covered|covers|on\s+behalf|for\s+(?:him|her|them))"
+    return bool(re.search(rf"\b(?:paid\s+by|from|sent\s+by|via)\s+{name}\b|\b{name}\b[^.\n]{{0,40}}\b{paying}\b"
+                          rf"|\b{paying}\b[^.\n]{{0,25}}\b{name}\b", said, re.IGNORECASE))
 
 
 #: Words a sentence starts with that aren't somebody's name.

@@ -806,8 +806,11 @@ def test_somebody_paying_for_them_that_rooks_setup_names():
     result = rookqc.check(zelle, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
     assert not any("has the name" in one for one in result.problems), result.problems
     assert any("Paid by Ryan M Thompson for Jonathan Carter" in one for one in result.notes)
+    # Another client's setup, not saying they paid for him: not held up
+    # against this payment at all - no guessing.
     stranger = rookqc.check(zelle, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
-    assert any("has the name" in one for one in stranger.problems)
+    assert not any("has the name" in one for one in stranger.problems)
+    assert any('No "New setup" message from Rook' in one for one in stranger.notes)
 
 
 def test_trucker_real_times_is_trucker_iul():
@@ -1097,3 +1100,30 @@ def test_of_their_setups_the_one_for_what_this_payment_bought():
     result = rookqc.check(post, [("Rook", trucker), ("Rook", vets), ("Nova", NOVA)],
                           hub=_hub(lead_type="Text Verified Trucker IUL"))
     assert not any("lead type" in one for one in result.problems), result.problems
+
+
+def test_a_setup_that_only_names_the_payer_isnt_theirs():
+    """Colton Ramon's $1,407.60 for his own 40 came out as Keaton Artherton's 20
+    - Keaton's setup named Colton, which isn't Colton paying for him."""
+    post = PAYRA.replace("Jonathan Carter", "Colton Ramon").replace("jcarter@", "colton@")
+    keaton = ROOK.replace("Jonathan Carter", "Keaton Artherton").replace("jcarter@", "keaton@").replace(
+        "Leads Ordered: 40", "Leads Ordered: 20").replace("+15555550101", "+15555550177") + (
+        "\nSpecific Notes: Everlife agent, same agency as Colton Ramon.")
+    result = rookqc.check(post, [("Rook", keaton), ("Nova", NOVA)], hub=_hub(name="Colton Ramon"))
+    assert result.client == "Colton Ramon" and not any("Keaton" in one for one in result.problems), result.problems
+    paying = keaton.replace("same agency as Colton Ramon", "paid by Colton Ramon for him")
+    assert rookqc.check(post, [("Rook", paying), ("Nova", NOVA)], hub=_hub()).client == "Keaton Artherton"
+
+
+def test_scheduled_for_this_order_puts_what_was_handed_over_behind_it():
+    """Alyssa Booska and Ian Gibson: scheduled as paid for, and tagged to the
+    team for what Nova handed over before."""
+    paid = datetime(2026, 11, 3, 17, 50, tzinfo=timezone.utc)
+    nova = NOVA + "\nHanded to the team: They have more than one row on that lead type - a person picks which one."
+    row = _hub(status="scheduled", updated_at=paid + timedelta(hours=1))
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=row, paid_at=paid)
+    assert result.todo == [] and any("Handed to the team earlier" in one for one in result.notes)
+    held = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=_hub(status="unsigned",
+                                                                         updated_at=paid + timedelta(hours=1)),
+                        paid_at=paid)
+    assert held.todo, "waiting on a signature or a hold: still the team's"
