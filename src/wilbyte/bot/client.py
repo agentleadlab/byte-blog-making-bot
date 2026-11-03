@@ -11682,6 +11682,11 @@ async def _sqc_check(bot, key: str):
         if notes:
             text += ("\n" if "Notes:" in text else "\nNotes:\n") + "\n".join(notes)
     talk = await _sqc_talk(bot, key, held, post.created_at) + in_thread
+    # Pulled as aged in #rook-nova - Kane Curtis' $175 Zelle, "Aged FEX 30-90:
+    # 50 pulled" in his thread, was asked about as a setup. The aged QC's.
+    if any((who.casefold().startswith("nova") and agedqc.pulled(said))
+           or (who.casefold().startswith("rook") and agedqc.rook_asked(said)) for who, said in talk):
+        aged_pull = True
     names = list(dict.fromkeys([*(held.get("names") or []),
                                 *(found.name for _who, said in talk for found in [rookqc.rook_setup(said)]
                                   if found is not None and found.name)]))

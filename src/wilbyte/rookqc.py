@@ -92,8 +92,9 @@ class Checked:
     wanted: object = None
 
     def talk_about_setup(self) -> bool:
-        """Whether Rook and Nova talked about setting it up at all."""
-        return self.picked_up
+        """Whether Rook posted a setup for it - not only an aged pull talked
+        about (Kane Curtis')."""
+        return bool(self.setup_text)
 
     def digest(self) -> str:
         return json.dumps([sorted(self.problems), sorted(self.todo), self.cant, self.picked_up])

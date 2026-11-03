@@ -745,3 +745,41 @@ def test_leads_split_over_tabs_are_counted_once_each():
     two = [head, ["E F", "5555550103", "FL"]]
     summary = [head, ["A B", "5555550101", "TX"], ["C D", "5555550102", "TX"], ["E F", "5555550103", "FL"]]
     assert len(delivery.lead_keys(one) | delivery.lead_keys(two) | delivery.lead_keys(summary)) == 3
+
+
+def test_an_aged_pull_in_rook_nova_isnt_asked_about_as_a_setup(monkeypatch):
+    """Kane Curtis: a $175 Zelle, pulled as "Aged FEX 30-90: 50 pulled" in his
+    #rook-nova thread - and asked about as a setup."""
+    from wilbyte.bot import client
+
+    zelle = "New Payment | Zelle 💰\nNAME: Jonathan Carter\nAMOUNT: $175.00\nPRODUCT: — (match to their order)"
+    talk = [("Rook", "@Nova aged lead order for Jonathan Carter (jc@example.com) - Pull **50 Aged FEX 30-90**, "
+                     "states KS OH, and share the sheet with his email."),
+            ("Nova", "> 💰 Aged FEX 30-90: **50** pulled (Kansas 6, Ohio 44)")]
+    post = SimpleNamespace(id=900, jump_url="https://discord.com/channels/1/2/900", content=zelle, embeds=[],
+                           message_snapshots=[], created_at=datetime.now(timezone.utc))
+    channel = SimpleNamespace(fetch_message=None)
+
+    async def fetch(_id):
+        return post
+
+    channel.fetch_message = fetch
+
+    async def talking(bot, key, held, posted):
+        return list(talk)
+
+    async def no_thread(bot, key, held):
+        return None
+
+    async def hub(bot):
+        return []
+
+    rookqc.remember("900", channel_id="2", posted=post.created_at.isoformat(), name="Jonathan Carter")
+    monkeypatch.setattr(client, "_sqc_talk", talking)
+    monkeypatch.setattr(client, "_order_thread", no_thread)
+    monkeypatch.setattr(client, "_sqc_hub", hub)
+    bot = SimpleNamespace(get_channel=lambda _id: channel)
+    _post, result = asyncio.run(client._sqc_check(bot, "900"))
+    assert result.aged_pull and not result.talk_about_setup()
+    assert asyncio.run(client._sqc_run(bot, "900", due=True)) == ""
+    assert rookqc.recalled()["900"].get("aged")
