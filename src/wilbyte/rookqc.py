@@ -135,6 +135,10 @@ def _named(said: str) -> list:
 def family(lead_type: str) -> frozenset:
     said = str(lead_type or "").casefold()
     names = {name for name, pattern in _FAMILIES if re.search(pattern, said)}
+    # "Trucker Real Times" is Trucker IUL by another name - "yes same
+    # product" (Riley Noah's payment against Rook's setup and the hub).
+    if "trucker" in names and re.search(r"\breal[\s-]*times?\b", said):
+        names.add("iul")
     if _AGED.search(said):
         names.add("aged")
     return frozenset(names)

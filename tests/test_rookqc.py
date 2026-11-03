@@ -808,3 +808,10 @@ def test_somebody_paying_for_them_that_rooks_setup_names():
     assert any("Paid by Ryan M Thompson for Jonathan Carter" in one for one in result.notes)
     stranger = rookqc.check(zelle, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
     assert any("has the name" in one for one in stranger.problems)
+
+
+def test_trucker_real_times_is_trucker_iul():
+    """Riley Noah: "yes same product"."""
+    assert rookqc.family("Text Verified Trucker Real Times") == rookqc.family("Text-Verified Trucker IUL leads (fresh)")
+    assert rookqc.family("Text Verified Trucker Real Time") == rookqc.family("Text Verified Trucker IUL")
+    assert rookqc.family("Text Verified Trucker FEX") != rookqc.family("Text Verified Trucker IUL")
