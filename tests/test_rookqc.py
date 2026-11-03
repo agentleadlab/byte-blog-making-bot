@@ -966,3 +966,11 @@ def test_another_open_row_that_started_before_the_payment_is_another_order():
     result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=trucker, paid_at=paid)
     assert any("Nothing on the hub for this order yet" in one and "Trucker IUL" in one for one in result.problems)
     assert not any("lead type" in one for one in result.problems), result.problems
+
+
+def test_a_quote_starts_at_the_words_not_the_tags():
+    """William McClure's: "60184287276> @🌺 Faith 🌺 @Nicole I couldn't ..."."""
+    said = ("<@1360184287276> @🌺 Faith 🌺 @Nicole Lots of words before this so the quote has to cut somewhere. "
+            "I couldn't set up either Veteran order, so I've handed both to the team.")
+    quoted = rookqc._quote(said, rookqc.CANT)
+    assert quoted.startswith("I couldn't set up either Veteran order"), quoted

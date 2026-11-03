@@ -448,6 +448,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
             continue
         result.cant = f"{who}: " + " ".join(found.group(0).split())
         result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
+        # Said earlier and since - the newest is what stands.
+        result.notes = [one for one in result.notes if "said earlier it couldn't set it up" not in one]
     if not nova and not quiet and not touched:
         result.problems.append("Nova hasn't answered Rook yet - nothing says it's set up")
     elif not nova and not quiet:
@@ -605,8 +607,15 @@ def _filled(paid: Order, rook: Order | None) -> Order:
 
 
 def _quote(said: str, pattern) -> str:
+    """The words around what was found - not the tags in front of them:
+    William McClure's came out "60184287276> @🌺 Faith 🌺 @Nicole I couldn't"."""
+    said = re.sub(r"<[@#][!&]?\d+>", "", str(said or ""))
     found = pattern.search(said)
     start = max(0, found.start() - 60) if found else 0
+    if start:
+        # From the start of a sentence or word, not the middle of one.
+        cut = max(said.rfind(". ", 0, found.start()) + 2, said.rfind("\n", 0, found.start()) + 1)
+        start = cut if found.start() - cut <= 120 and cut > 0 else said.find(" ", start) + 1
     return " ".join(said[start:start + 160].split())
 
 
@@ -975,7 +984,8 @@ def flagged_before(result: Checked, held: dict) -> dict:
     and `result.fixed` filled in - "did ryte check if this was fixed, cuz we
     flagged this already" (Kyle Moffitt's hub states). The flags to keep."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    before = dict(held.get("flagged") or {}) or {one: held.get("at") or now for one in held.get("problems") or []}
+    before = (dict(held.get("flagged") or {}) if "flagged" in held
+              else {one: held.get("at") or now for one in held.get("problems") or []})
     # The same problem with its numbers moved on - "paid 3 days ago" a day
     # later, "41 still to deliver" after a delivery - is the same problem:
     # Karli Kelley's overflow re-tagged Franklin as new every day.

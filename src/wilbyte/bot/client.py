@@ -12007,6 +12007,16 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
         rookqc.remember(key, due_done=True)
     flagged = rookqc.flagged_before(result, held)
     new = [one for one in result.problems if one not in result.still]
+    # Franklin's tagged for a new problem only once Rook and Nova have had
+    # their time - Anthony Portillo's and Kailey Hull's "Not on the hub"
+    # tagged him minutes before Nova set Anthony up. Until then it's on the
+    # card, and not kept as flagged, so it's new - and tagged - when it's due.
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    settled = (_nova_answered(result) and bool(result.setup_text)) or posted is None or (
+        datetime.now(timezone.utc) - posted >= SETUP_QC_ASK_UNTOUCHED)
+    if not settled:
+        flagged = {one: when for one, when in flagged.items() if one in result.still}
+        new = []
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
                     cant=result.cant, flagged=flagged)
     await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)

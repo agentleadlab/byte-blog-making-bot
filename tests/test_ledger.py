@@ -535,3 +535,28 @@ def test_not_asked_while_rook_and_nova_are_at_it(monkeypatch):
     held["heard"] = (now - timedelta(minutes=35)).isoformat()
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "1", SimpleNamespace(), result, held))
     assert asked == ["1"]
+
+
+def test_franklin_isnt_tagged_before_rook_and_nova_have_had_their_time(monkeypatch):
+    """Anthony Portillo's "Not on the hub" tagged Franklin minutes before Nova
+    set him up."""
+    from wilbyte.bot import client
+    from tests.test_rookqc import _CardChannel
+
+    cards = _CardChannel()
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    monkeypatch.setattr(client, "_sqc_auto_ask", lambda *a, **k: asyncio.sleep(0))
+    monkeypatch.setattr(client, "_sqc_escalation", lambda *a, **k: "")
+    post = SimpleNamespace(content="AMOUNT: $1164.37", embeds=[], message_snapshots=[], jump_url="https://x/900",
+                           created_at=now - timedelta(minutes=16))
+    result = rookqc.Checked(client="Anthony Portillo", problems=["Not on the hub"])
+    held = {"posted": (now - timedelta(minutes=16)).isoformat()}
+    rookqc.remember("900", **held)
+    asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, result, held, due=True, waiting=False))
+    assert cards.sent[-1].content is None, "not tagged at 16 minutes"
+    held = dict(rookqc.recalled()["900"], posted=(now - timedelta(minutes=50)).isoformat())
+    rookqc.remember("900", **held)
+    result = rookqc.Checked(client="Anthony Portillo", problems=["Not on the hub"])
+    asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, result, held, due=False, waiting=False))
+    assert cards.sent[-1].content == "<@1>", "tagged once it's due"
