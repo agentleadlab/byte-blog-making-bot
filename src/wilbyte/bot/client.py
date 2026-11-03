@@ -12198,12 +12198,15 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
                        if getattr(one, "bot", False)
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
         tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
-    asking = result if problems is None else SimpleNamespace(client=result.client, problems=problems, todo=[])
+    asking = result if problems is None else SimpleNamespace(client=result.client, problems=problems, todo=[],
+                                                             wanted=getattr(result, "wanted", None))
     where = await _rn_thread_for(bot, channel, result.client, getattr(post, "created_at", None)) or channel
     # Only ever a question about one payment, in #rook-nova: the go-ahead to
     # speak in the Growth server ("Ok to communicate with Nova and rook").
     with mirror.answering():
-        asked = await where.send(" ".join(tags) + " " + rookqc.question(asking, link=post.jump_url)[:1800])
+        invoice = (re.search(r"\bINV-?\d+\b", _all_of_it(post) if hasattr(post, "content") else "") or [""])[0]
+        asked = await where.send(" ".join(tags) + " " + rookqc.question(asking, link=post.jump_url,
+                                                                        invoice=invoice)[:1800])
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     held = rookqc.recalled().get(key) or {}
     rookqc.remember(key, asked=asked.jump_url, asked_by=by or "Ryte", asked_at=now,

@@ -715,3 +715,14 @@ def test_a_couldnt_from_before_isnt_hammered_once_its_set_up():
     assert not later.cant and any("Nova said it's set up after" in one for one in later.notes)
     still = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", nova)], hub=None)
     assert still.cant
+
+
+def test_the_question_says_what_was_paid_for_and_what_to_do():
+    """Marco Ayala's was asked as Ryte's own QC line - nothing of what he'd
+    paid for, nor what Rook and Nova should do."""
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(status="done", ordered=30, delivered=31))
+    asked = rookqc.question(result, link="https://discord.com/x", invoice="INV-21110")
+    assert "paid $1,280.00 · INV-21110 · 40 Fresh FEX · TX, FL, GA" in asked, asked
+    assert asked.endswith("Is this order set up on the hub? If not, please set it up - or say so if you can't.")
+    fine = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(sheet_url=""))
+    assert rookqc.question(fine).endswith("fix what's wrong on the hub, and confirm?")

@@ -787,11 +787,30 @@ def flagged_before(result: Checked, held: dict) -> dict:
     return {one: before.get(one) or now for one in result.problems}
 
 
-def question(result: Checked, *, link: str = "") -> str:
-    """What Ryte asks Rook and Nova when the button's pressed."""
-    asks = list(result.problems) + [f"Handed to the team: {one} - who has it?" for one in dict.fromkeys(result.todo)]
-    return (f"QC on **{result.client or 'this payment'}**" + (f" ({link})" if link else "") + " - can you check "
-            "these and confirm?\n" + "\n".join(f"• {one}" for one in asks))
+def question(result: Checked, *, link: str = "", invoice: str = "") -> str:
+    """What Ryte asks Rook and Nova: the payment as it was paid for, what
+    doesn't add up, and what to do - Marco Ayala's was asked as Ryte's own
+    QC line, with nothing of what he'd paid for."""
+    wanted = getattr(result, "wanted", None)
+    paid = []
+    if wanted is not None:
+        if getattr(wanted, "amount", ""):
+            paid.append(str(wanted.amount))
+        if invoice:
+            paid.append(invoice)
+        what = " ".join(str(one) for one in (getattr(wanted, "count", None), getattr(wanted, "lead_type", "")) if one)
+        if what:
+            paid.append(what)
+        if getattr(wanted, "states", None):
+            paid.append(", ".join(wanted.states))
+    problems = list(result.problems)
+    asks = problems + [f"Handed to the team: {one} - who has it?" for one in dict.fromkeys(result.todo)]
+    unset = any(one.startswith(("Nothing on the hub for this order", "Not on the hub", "Rook and Nova haven't said"))
+                for one in problems)
+    ask = ("Is this order set up on the hub? If not, please set it up - or say so if you can't." if unset
+           else "Can you check these, fix what's wrong on the hub, and confirm?")
+    return (f"QC on **{result.client or 'this payment'}**" + (f" - paid {' · '.join(paid)}" if paid else "")
+            + (f" ({link})" if link else "") + "\n" + "\n".join(f"• {one}" for one in asks) + f"\n{ask}")
 
 
 def recalled() -> dict:
