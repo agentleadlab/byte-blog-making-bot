@@ -442,3 +442,32 @@ def test_two_invoices_of_the_same_amount_arent_one_posted_twice():
     result = SimpleNamespace(client="Ryan Gsell", notes=[], problems=[])
     client._sqc_twin("901", post, result, {"posted": now.isoformat()})
     assert result.problems == []
+
+
+def test_the_list_without_doubles_overflow_once_and_paused_apart():
+    records = {
+        "1": _kept("Calvin Child", ledger.SET_UP, start="2026-10-30", status="scheduled", hub_id="77"),
+        "2": _kept("Calvin Child", ledger.SET_UP, start="2026-10-30", status="scheduled", hub_id="77"),
+        "3": _kept("Karli Kelley", ledger.OVERFLOW, problems=["Overflow order paid 3 days ago, and nothing says"]),
+        "4": _kept("Camden Misquez", ledger.PAUSED, start="2026-10-07", status="paused", ordered=239,
+                   delivered=147),
+    }
+    said = ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4))
+    assert said.count("Calvin Child") == 1 and "(2 payments)" in said
+    assert "⚠️ Set up wrong" not in said and said.count("Karli Kelley") == 1
+    assert "⏸️ Paused with leads still owed** (1)" in said and "147 of 239 delivered" in said
+    assert "Camden" not in said.split("⏸️")[0], "not under should be live"
+    assert ledger.stage(_result(_row(status="paused", delivered=12)))["stage"] == ledger.PAUSED
+    assert ledger.stage(_result(_row(status="paused", delivered=31, ordered=30)))["stage"] == ledger.FULFILLED
+
+
+def test_a_payment_for_two_invoices_is_posted_when_either_is():
+    data = {"payments": {"a": {"invoice_number": "INV-21189, INV-21190", "paid_on": "2026-11-03T05:09:00+00:00",
+                               "status": "paid", "amount": 1119.66, "customer": "Sarra El Badri"}}}
+    assert ledger.payra_missing(data, "INVOICE: INV-21190 · card", day=TODAY) == []
+
+
+def test_nobody_is_missing_from_a_board_that_wasnt_all_read():
+    records = {"1": _kept("Sebastian Salas", ledger.NOT_SET_UP, hours=3)}
+    assert ledger.board_vs(records, {"Someone Else": ledger.LIVE}, now=NOW, complete=False) == []
+    assert ledger.board_vs(records, {"Someone Else": ledger.LIVE}, now=NOW)

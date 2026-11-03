@@ -900,3 +900,40 @@ def test_names_with_apostrophes_initials_and_jr():
     assert [one.name for one in rookqc.hub_named(rows, "D’shane Bannister")] == ["D'shane Bannister"]
     assert [one.name for one in rookqc.hub_named(rows, "Cavell M Stubbs Jr")] == ["Cavell Stubbs"]
     assert [one.name for one in rookqc.hub_named(rows, "William J Seitz")] == ["William Seitz"]
+
+
+def test_nobody_said_anything_but_the_hub_has_it_since_the_payment():
+    """Thomas Poulin: "Rook and Nova haven't said anything" listed as set up
+    wrong, while the hub had him for this order."""
+    paid = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
+    row = _hub(status="live", delivered=3, updated_at=paid + timedelta(hours=2))
+    result = rookqc.check(PAYRA, [], hub=row, paid_at=paid)
+    assert not any("haven't said anything" in one for one in result.problems), result.problems
+    assert any("checked on the hub alone" in one for one in result.notes)
+    stale = rookqc.check(PAYRA, [], hub=_hub(updated_at=paid - timedelta(days=2)), paid_at=paid)
+    assert any("haven't said anything" in one for one in stale.problems)
+    answered_not = rookqc.check(PAYRA, [("Rook", ROOK)], hub=row, paid_at=paid)
+    assert not any("Nova hasn't answered" in one for one in answered_not.problems)
+
+
+def test_otp_truckers_is_trucker_iul_and_a_business_payer_is_a_note():
+    assert rookqc.family("OTP Truckers") == rookqc.family("Text Verified Trucker IUL")
+    zelle = PAYRA.replace("NAME: Jonathan Carter", "NAME: The Eissa Group Llc")
+    result = rookqc.check(zelle, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
+    assert not any("has the name" in one for one in result.problems), result.problems
+
+
+def test_their_setup_over_another_clients_the_talk_picked_up():
+    """The $500 Ryan M Thompson sent for Preston Tackett came out as Preston
+    Bridges'."""
+    zelle = "New Payment | Zelle 💰\nNAME: Ryan M Thompson\nAMOUNT: $500.00\nPRODUCT: — (match to their order)"
+    tackett = ROOK.replace("Jonathan Carter", "Preston Tackett") + "\nSpecific Notes: two parts from Ryan M Thompson."
+    bridges = ROOK.replace("Jonathan Carter", "Preston Bridges").replace("jcarter@", "pb@")
+    result = rookqc.check(zelle, [("Rook", tackett), ("Rook", bridges), ("Nova", NOVA)], hub=_hub())
+    assert result.client == "Preston Tackett"
+
+
+def test_strict_names():
+    assert rookqc.same_person_strict("Will Stanger", "William Stanger")
+    assert not rookqc.same_person_strict("Duehat Kanan", "Mohammad Kanan")
+    assert not rookqc.same_person_strict("Brandon Nguyen", "Mai Nguyen")

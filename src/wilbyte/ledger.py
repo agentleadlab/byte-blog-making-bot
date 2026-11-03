@@ -35,8 +35,9 @@ MORNING = (9, 0)
 EVENINGS = ((17, 0), (18, 0), (19, 0))
 
 #: Where a payment stands, in the order they're worked through.
-NOT_SET_UP, CANT, SET_UP, LIVE, DELIVERING, FULFILLED, SHORT, OVERFLOW, OVERFLOW_DONE = (
-    "not_set_up", "cant", "set_up", "live", "delivering", "fulfilled", "short", "overflow", "overflow_done")
+NOT_SET_UP, CANT, SET_UP, LIVE, DELIVERING, FULFILLED, SHORT, OVERFLOW, OVERFLOW_DONE, PAUSED = (
+    "not_set_up", "cant", "set_up", "live", "delivering", "fulfilled", "short", "overflow", "overflow_done",
+    "paused")
 #: Off the list once it's here with nothing wrong.
 CLOSED = (FULFILLED, OVERFLOW_DONE)
 
@@ -73,6 +74,10 @@ def stage(result) -> dict:
         kept["stage"] = FULFILLED if ordered is None or delivered >= ordered else SHORT
     elif status in _LIVE:
         kept["stage"] = DELIVERING if delivered else LIVE
+    elif delivered:
+        # Paused partway - Camden Misquez's, started Oct 7 - not one that
+        # never started: "should be live and isn't" was 29 long with them.
+        kept["stage"] = PAUSED
     else:
         kept["stage"] = SET_UP
     return kept
@@ -135,6 +140,8 @@ def _still_wrong(one: dict) -> list:
 def _line(one: dict, now: datetime, why: str = "") -> str:
     who = one.get("client") or one.get("name") or "?"
     amount = f" ${one['amount']}" if one.get("amount") else ""
+    if one.get("_more"):
+        amount += f" ({one['_more']} payments)"
     paid = _ago(_moment(one.get("posted")), now)
     bits = f"**{who}**{amount}" + (f" · paid {paid}" if paid else "")
     if why:
@@ -157,7 +164,8 @@ def _ready(one: dict) -> str:
 
 
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
-          payra_missing: list | None = None, aged: list | None = None, board: dict | None = None) -> str:
+          payra_missing: list | None = None, aged: list | None = None, board: dict | None = None,
+          board_complete: bool = True) -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -165,8 +173,21 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     sections: list[tuple[str, list[str]]] = []
 
     def by(test):
-        return [one for _key, one in sorted(followed.items(), key=lambda item: str(item[1].get("posted") or ""))
-                if test(one)]
+        """The payments that pass, one line each for the same order - two
+        posts of one payment, or two payments onto one hub row, once."""
+        out, seen = [], {}
+        for _key, one in sorted(followed.items(), key=lambda item: str(item[1].get("posted") or "")):
+            if not test(one):
+                continue
+            same = (f"hub:{one['hub_id']}" if one.get("hub_id") else
+                    f"{str(one.get('client') or '').casefold()}:{one.get('amount')}")
+            if same in seen:
+                seen[same]["_more"] = seen[same].get("_more", 1) + 1
+                continue
+            one = dict(one)
+            seen[same] = one
+            out.append(one)
+        return out
 
     launching = by(lambda one: (_day(one.get("start")) or date.max) <= (today if morning else through)
                    and (_day(one.get("start")) or date.min) >= today and one.get("stage") in (SET_UP, LIVE))
@@ -178,7 +199,7 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
                                             for one in not_set_up]))
     sections.append(("🃏 Rook/Nova can't set up - press Make the card on its card",
                      [_line(one, now, one.get("cant") or "") for one in by(lambda one: one.get("stage") == CANT)]))
-    wrong = by(lambda one: one.get("stage") not in (NOT_SET_UP, CANT) and _still_wrong(one))
+    wrong = by(lambda one: one.get("stage") not in (NOT_SET_UP, CANT, OVERFLOW, OVERFLOW_DONE) and _still_wrong(one))
     sections.append(("⚠️ Set up wrong", [_line(one, now, "; ".join(_still_wrong(one))[:300]) for one in wrong]))
     late = by(lambda one: one.get("stage") == SET_UP and (_day(one.get("start")) or date.max) < today
               or (one.get("stage") == SET_UP and _day(one.get("start")) == today and not morning))
@@ -189,6 +210,9 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         sections.append((f"📅 Going live by {through:%A}", [
             _line(one, now, (f"{_day(one.get('start')):%a} - " if _day(one.get("start")) else "")
                   + (("❌ " + _ready(one)) if _ready(one) else "✅ ready")) for one in ahead]))
+    sections.append(("⏸️ Paused with leads still owed", [
+        _line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered, the hub has them paused")
+        for one in by(lambda one: one.get("stage") == PAUSED)]))
     short = by(lambda one: one.get("stage") == SHORT)
     sections.append(("📉 Ended short", [_line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered")
                                         for one in short]))
@@ -198,7 +222,8 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     sections.append(("🚚 Overflow not delivered yet", [_line(one, now) for one in by(
         lambda one: one.get("stage") == OVERFLOW)]))
     if board:
-        sections.append(("🔀 Nova's #launching board vs the hub", board_vs(records, board, now=now)))
+        sections.append(("🔀 Nova's #launching board vs the hub",
+                         board_vs(records, board, now=now, complete=board_complete)))
     if payra_missing:
         sections.append(("💸 Paid in Payra, never posted in #new-payment", list(payra_missing)))
     if aged:
@@ -276,9 +301,10 @@ def payra_missing(data: dict, posted_text: str, *, day: date) -> list[str]:
         paid = _moment(one.get("paid_on"))
         if not number or paid is None or paid.astimezone(_ny()).date() != day or not _went_through(one):
             continue
-        if not number.startswith("INV-"):
-            number = "INV-" + number.removeprefix("INV")
-        if number in seen:
+        # One payment for two invoices - Sarra El Badri's "INV-21189,
+        # INV-21190" - is posted when either is.
+        numbers = {f"INV-{digits}" for digits in re.findall(r"\d+", number)}
+        if numbers & seen:
             continue
         lines.append(f"• **{one.get('customer') or '?'}** ${one.get('amount')} · {number} · "
                      f"{paid.astimezone(_ny()):%-I:%M %p}")
@@ -320,10 +346,12 @@ def board_parse(text: str) -> dict:
     return found
 
 
-def board_vs(records: dict, board: dict, *, now: datetime) -> list[str]:
+def board_vs(records: dict, board: dict, *, now: datetime, complete: bool = True) -> list[str]:
     """Where Nova's board and the hub (by Ryte's list) disagree - Kyle
-    Cassidy "Live" on the board, the hub still waiting on his signature."""
-    from .rookqc import same_person
+    Cassidy "Live" on the board, the hub still waiting on his signature.
+    `complete`: every name on the board was read - only then is somebody
+    said to be missing from it."""
+    from .rookqc import same_person_strict as same_person
 
     lines = []
     if not board:
@@ -341,12 +369,12 @@ def board_vs(records: dict, board: dict, *, now: datetime) -> list[str]:
             lines.append(_line(one, now, f"Nova's board says live - the hub has them {status}"
                                          if stage != NOT_SET_UP else "Nova's board says live - not on the hub "
                                                                      "for this order"))
-        elif said == NOT_SET_UP and stage in (SET_UP, LIVE, DELIVERING):
+        elif said == NOT_SET_UP and stage in (SET_UP, LIVE, DELIVERING, PAUSED):
             lines.append(_line(one, now, f"Nova's board says not set up - the hub has them {status}"))
         elif said == SET_UP and stage == NOT_SET_UP:
             lines.append(_line(one, now, "Nova's board has them on the hub - not for this order"))
     listed = list(board)
-    for one in recent.values():
+    for one in recent.values() if complete else ():
         if one.get("stage") != NOT_SET_UP:
             continue
         posted = _moment(one.get("posted"))

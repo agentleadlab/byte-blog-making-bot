@@ -141,7 +141,9 @@ def family(lead_type: str) -> frozenset:
     names = {name for name, pattern in _FAMILIES if re.search(pattern, said)}
     # "Trucker Real Times" is Trucker IUL by another name - "yes same
     # product" (Riley Noah's payment against Rook's setup and the hub).
-    if "trucker" in names and re.search(r"\breal[\s-]*times?\b", said):
+    if "trucker" in names and (re.search(r"\breal[\s-]*times?\b", said) or names == {"trucker"}):
+        # And a trucker order naming no product - "OTP Truckers" (Abdullah
+        # Bahrani) - is the trucker product, which is IUL.
         names.add("iul")
     if _AGED.search(said):
         names.add("aged")
@@ -169,6 +171,17 @@ _NICKNAMES = [set(one.split()) for one in (
     "henry hank harry", "jerome jerry", "joanne jo", "jordan jordy", "leslie les", "louis lou", "manuel manny",
     "mitchell mitch", "phillip philip phil", "russell russ", "stanley stan", "terrence terry", "walter walt",
 )]
+
+
+def same_person_strict(one: str, other: str) -> bool:
+    """The same first (or its nickname) and last name - not just a shared
+    word: Duehat Kanan isn't Mohammad Kanan, Brandon Nguyen isn't Mai."""
+    first, second = _name_words(one), _name_words(other)
+    if not first or not second:
+        return False
+    if len(first) == 1 or len(second) == 1:
+        return first[0] == second[0] or first[-1] == second[-1]
+    return first[-1] == second[-1] and _same_first(first[0], second[0])
 
 
 def _same_first(one: str, other: str) -> bool:
@@ -319,6 +332,14 @@ def the_setup(talk, paid: Order) -> tuple:
                 notes.append(f"{one[0]}'s setup ({one[1].count or '?'} leads) was called off by {who} - "
                              f"“{_quote(said, CALLED_OFF)}”")
     standing = [one for one in setups if not one[2]]
+    # Theirs over another client's that the talk picked up - the $500 Ryan M
+    # Thompson sent for Preston Tackett came out as Preston Bridges'.
+    theirs = [one for one in standing if (paid.name and same_person_strict(one[1].name, paid.name))
+              or (paid.email and one[1].email and one[1].email.casefold() == paid.email.casefold())
+              or (paid.phone and one[1].phone and _digits(one[1].phone)[-10:] == _digits(paid.phone)[-10:])
+              or _payer_named(one[3], paid.name)]
+    if theirs:
+        standing = theirs
     if not standing:
         return None, notes
     fits = [one for one in standing if paid.count is not None and one[1].count == paid.count]
@@ -369,9 +390,17 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
                 result.todo.append("The team still delivers it from overflow - no \"This order has been fulfilled\" "
                                    "yet")
         return result
-    if not talk:
+    quiet = not talk
+    # On the hub for this order: an open row changed since the payment came in.
+    touched = (hub is not None and not _over(hub) and getattr(hub, "updated_at", None) is not None
+               and paid_at is not None and not _before(hub.updated_at, paid_at))
+    if quiet and not touched:
         result.problems.append("Rook and Nova haven't said anything about this payment in #rook-nova")
         return result
+    if quiet:
+        # Thomas Poulin's: nobody said a word, but the hub has it for this
+        # order - checked on the hub alone.
+        result.notes.append("Rook and Nova didn't say anything about it in #rook-nova - checked on the hub alone")
     if rook is None:
         result.notes.append("No \"New setup\" message from Rook to check field by field")
     else:
@@ -414,8 +443,10 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
             continue
         result.cant = f"{who}: " + " ".join(found.group(0).split())
         result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
-    if not nova:
+    if not nova and not quiet and not touched:
         result.problems.append("Nova hasn't answered Rook yet - nothing says it's set up")
+    elif not nova and not quiet:
+        result.notes.append("Nova hasn't answered Rook, but the hub has it")
     # Rook taking it to the team itself - "forwarded to Therese + Nicole in
     # Carson Rentz's #rook-qc thread": Ryte doesn't tag them again for it.
     handed = next((said for who, said in talk if who.casefold().startswith(("rook", "nova"))
@@ -574,6 +605,11 @@ def _quote(said: str, pattern) -> str:
     return " ".join(said[start:start + 160].split())
 
 
+#: A payer that's a business - "The Eissa Group Llc" for Mohammad Kanan.
+_BUSINESS = re.compile(r"\b(?:llc|l\.l\.c|inc|corp|corporation|co|company|group|agency|marketing|financial|"
+                       r"insurance|holdings|enterprises?|ltd|lp|pllc|partners|solutions|services)\b\.?", re.IGNORECASE)
+
+
 def _payer_named(text: str, payer: str) -> bool:
     """The payer's name - first and last - written in Rook's setup."""
     words = [one for one in re.findall(r"[A-Za-z][A-Za-z'’-]+", str(payer or "")) if len(one) > 1]
@@ -584,7 +620,7 @@ def _payer_named(text: str, payer: str) -> bool:
 
 def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     if paid.name and theirs.name and not same_person(paid.name, theirs.name):
-        if _payer_named(result.setup_text, paid.name):
+        if _payer_named(result.setup_text, paid.name) or _BUSINESS.search(paid.name):
             # Somebody paying for them, and Rook's setup says so - Preston
             # Tackett's, two parts sent by his friend Ryan M Thompson.
             result.notes.append(f"Paid by {paid.name} for {theirs.name} - Rook's setup says so")

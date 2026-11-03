@@ -12143,10 +12143,18 @@ async def _ledger_text(bot, which: str) -> str:
     except Exception:
         log.warning("Couldn't hold Payra up against #new-payment", exc_info=True)
         missing = []
-    aged = []
+    from .. import agedqc
+
+    aged, pulls = [], agedqc.recalled()
     for key, card in paycards.recalled().items():
         if not key.startswith("aged:"):
             continue
+        if not card.get("title"):
+            # A card from before its name was kept: the pull's, else unsaid.
+            got = pulls.get(key.split(":", 1)[1]) or {}
+            if not got.get("client"):
+                continue
+            card = dict(card, title=got["client"] + (f" ({got['invoice']})" if got.get("invoice") else ""))
         at = _moment_of(card.get("at"))
         if at is None or now - at > timedelta(days=ledger.OPEN_DAYS):
             continue
@@ -12157,22 +12165,26 @@ async def _ledger_text(bot, which: str) -> str:
             aged.append(f"• **{card.get('title') or '?'}** - the pull doesn't match" + (
                 f" <{card['link']}>" if card.get("link") else ""))
     try:
-        board = await _launching_board(bot)
+        board, complete = await _launching_board(bot)
     except Exception:
         log.warning("Couldn't read Nova's #launching board", exc_info=True)
-        board = {}
+        board, complete = {}, False
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
-                        morning=which == "morning", payra_missing=missing, aged=aged, board=board)
+                        morning=which == "morning", payra_missing=missing, aged=aged, board=board,
+                        board_complete=complete)
 
 
-async def _launching_board(bot) -> dict:
+async def _launching_board(bot) -> tuple[dict, bool]:
     """Nova's newest "Launching — where everyone stands" in #launching, the
-    last day's: {name: what it says}. Its thread links read as their names."""
+    last day's: ({name: what it says}, whether every name on it was read).
+    Its thread links read as their names - fetched when Discord hasn't them
+    to hand: archived threads aren't, and Sebastian Salas and Kierra Acosta
+    read as "not on Nova's board" while it listed them."""
     from .. import ledger
 
     channel = _launching_channel(bot)
     if channel is None:
-        return {}
+        return {}, False
     since = datetime.now(timezone.utc) - timedelta(days=1)
     async for one in channel.history(limit=80):
         if one.created_at < since:
@@ -12180,15 +12192,21 @@ async def _launching_board(bot) -> dict:
         text = _all_of_it(one)
         if not re.search(r"where\s+everyone\s+stands", text, re.IGNORECASE):
             continue
-
-        def named(found):
-            thread = bot.get_channel(int(found.group(1)))
-            if thread is None and getattr(channel, "guild", None) is not None:
-                thread = getattr(channel.guild, "get_thread", lambda _id: None)(int(found.group(1)))
-            return f" ⬗ {getattr(thread, 'name', '')} " if thread is not None else " "
-
-        return ledger.board_parse(re.sub(r"<#(\d+)>", named, text))
-    return {}
+        names, missed = {}, 0
+        for found in dict.fromkeys(re.findall(r"<#(\d+)>", text)):
+            thread = bot.get_channel(int(found))
+            if thread is None:
+                try:
+                    thread = await bot.fetch_channel(int(found))
+                except Exception:
+                    thread = None
+            if thread is None:
+                missed += 1
+                continue
+            names[found] = str(getattr(thread, "name", "") or "")
+        board = ledger.board_parse(re.sub(r"<#(\d+)>", lambda hit: f" ⬗ {names.get(hit.group(1), '')} ", text))
+        return board, missed == 0 and bool(board)
+    return {}, False
 
 
 async def _ledger_say(bot, which: str, responder: Responder | None = None) -> None:
