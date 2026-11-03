@@ -11746,7 +11746,13 @@ async def _sqc_check(bot, key: str):
         if pinned:
             names, rows, agent = [], pinned, pinned[0]
         for name in names:
-            found = hub.named(everybody, name)
+            found = rookqc.hub_named(everybody, name)
+            if len(name.split()) == 1 and len({str(getattr(one, "name", "")).casefold() for one in found}) > 1:
+                # Only a first name on the payment - "Garrett" - and the hub
+                # has several people by it: not guessed at.
+                hub_problem = (f"only \"{name}\" on the payment, and the hub has "
+                               + ", ".join(sorted({str(one.name) for one in found})[:5]))
+                continue
             if found:
                 rows = found
                 agent = max(found, key=lambda one: one.updated_at or datetime.min.replace(tzinfo=timezone.utc))
@@ -11788,6 +11794,7 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         rookqc.remember(key, aged=True, due_done=True)
         return ""
     waiting = not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result))
+    _sqc_twin(key, post, result, held)
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)
@@ -11819,6 +11826,45 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
                          view=view, quiet=not result.problems)
     return "problem" if result.problems else "todo" if result.todo else "ok"
+
+
+#: Two payment posts this close together, same person and same amount, are
+#: one payment posted twice - or paid twice.
+SETUP_QC_TWIN_WITHIN = timedelta(hours=2)
+
+
+def _sqc_twin(key: str, post, result, held: dict) -> None:
+    """The second of two payment posts from the same person for the same
+    amount close together - Anthony Speciale's two $1,500, Calvin Child's two
+    $1,050, Ayman Kafafi's two $990, minutes apart. Its "nobody's said
+    anything" is the first one's; what's asked is whether it's the same
+    payment posted twice or a second charge. Not when Rook's said it's paid
+    in parts."""
+    from .. import rookqc
+
+    amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1]
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    who = result.client or held.get("name") or ""
+    if not amount or posted is None or not who:
+        return
+    for other, one in rookqc.recalled().items():
+        if other == key or str(one.get("amount") or "") != amount:
+            continue
+        when = _moment_of(one.get("posted"))
+        if when is None or not (posted - SETUP_QC_TWIN_WITHIN <= when < posted):
+            continue
+        if not rookqc.same_person(str(one.get("client") or one.get("name") or ""), who):
+            continue
+        if any(note.startswith("Paid in parts") for note in result.notes):
+            return
+        minutes = int((posted - when).total_seconds() // 60)
+        for problem in [problem for problem in result.problems if problem.startswith((
+                "Rook and Nova haven't said", "Not on the hub", "Nothing on the hub", "Nova hasn't answered"))]:
+            result.problems.remove(problem)
+        result.problems.insert(0, f"Same ${amount} from them {minutes} min after <{one.get('link') or 'their other payment'}>"
+                                  " - the same payment posted twice, or paid twice? Check Payra / the bank")
+        result.twin = str(one.get("link") or other)
+        return
 
 
 def _ledger_keep(key: str, post, result, held: dict) -> None:
@@ -12318,6 +12364,8 @@ async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
     about yet. Not overflow (the team's), nor a can't-set-up (a card)."""
     if not SETUP_QC_AUTO_ASK or result.overflow or result.cant or not result.problems:
         return
+    if getattr(result, "twin", ""):
+        return  # Payra / the bank's to answer, not Rook and Nova
     if str(getattr(getattr(result, "hub", None), "status", "") or "").casefold() in rookqc_finished():
         # Delivered already - Jason Lewis' done 25 of 25: nothing on the hub
         # to fix. It's on the day's list, not asked about.

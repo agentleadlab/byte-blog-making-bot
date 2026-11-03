@@ -815,3 +815,49 @@ def test_trucker_real_times_is_trucker_iul():
     assert rookqc.family("Text Verified Trucker Real Times") == rookqc.family("Text-Verified Trucker IUL leads (fresh)")
     assert rookqc.family("Text Verified Trucker Real Time") == rookqc.family("Text Verified Trucker IUL")
     assert rookqc.family("Text Verified Trucker FEX") != rookqc.family("Text Verified Trucker IUL")
+
+
+def test_will_is_william_on_the_hub():
+    """William Stanger paid; the hub, and Nova's #launching, have Will Stanger."""
+    rows = [_hub(name="Will Stanger"), _hub(name="Will Smith"), _hub(name="Bill Stanger Jr")]
+    assert [one.name for one in rookqc.hub_named(rows, "William Stanger")] == ["Will Stanger"]
+    assert [one.name for one in rookqc.hub_named(rows, "Will Stanger")] == ["Will Stanger"]
+    assert rookqc.hub_named(rows, "Wilma Stanger") == []
+
+
+def test_fresh_and_aged_on_one_invoice():
+    """William McClure: 50 Fresh Vets and 100 Aged IUL 180+ read as 150 "Fresh
+    Vets + Aged IUL 180+" against his Vets setup."""
+    post = PAYRA.replace("> Fresh FEX: 40 @ $32.00 — states TX, FL, GA",
+                         "> Fresh FEX: 40 @ $32.00 — states TX, FL, GA\n> Aged IUL 180+: 100 @ $3.00 — states TX")
+    paid = rookqc.payment(post)
+    assert paid.count == 40 and paid.lead_type == "Fresh FEX" and paid.states == ["TX", "FL", "GA"]
+    assert paid.aged == "100 Aged IUL 180+"
+    result = rookqc.check(post, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(), sheet_rows=1)
+    assert result.problems == [], result.problems
+    assert any("Also on the invoice: 100 Aged IUL 180+" in one for one in result.notes)
+
+
+def test_iuls_plural_is_iul():
+    """Connor Swartz: "Fresh Trucker IULs" against the hub's Trucker IUL."""
+    assert rookqc.family("Fresh Trucker IULs") == rookqc.family("Text Verified Trucker IUL")
+
+
+def test_the_same_amount_twice_minutes_apart(monkeypatch):
+    """Anthony Speciale, Calvin Child, Ayman Kafafi: two posts each, same
+    amount, minutes apart - one said nothing's been said about it."""
+    from wilbyte.bot import client
+
+    now = datetime.now(timezone.utc)
+    rookqc.remember("900", posted=(now - timedelta(minutes=9)).isoformat(), name="Calvin Child", client="Calvin Child",
+                    amount="1,050.00", link="https://discord.com/channels/1/2/900")
+    rookqc.remember("901", posted=now.isoformat(), name="Calvin Child")
+    post = SimpleNamespace(content="AMOUNT: $1,050.00", embeds=[], message_snapshots=[], created_at=now)
+    result = SimpleNamespace(client="Calvin Child", notes=[],
+                             problems=["Rook and Nova haven't said anything about this payment in #rook-nova"])
+    client._sqc_twin("901", post, result, rookqc.recalled()["901"])
+    assert len(result.problems) == 1 and "Same $1,050.00 from them 9 min after" in result.problems[0]
+    assert "posted twice, or paid twice" in result.problems[0] and result.twin
+    parts = SimpleNamespace(client="Calvin Child", notes=["Paid in parts - “two parts”"], problems=[])
+    client._sqc_twin("901", post, parts, rookqc.recalled()["901"])
+    assert parts.problems == []

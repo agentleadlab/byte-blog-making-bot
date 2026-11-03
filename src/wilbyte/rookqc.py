@@ -31,7 +31,7 @@ PATH = _state_dir() / "rook-qc.json"
 #: A labelled line. Never the next line's: Max Wilson's blank "Email:" was
 #: read as "Phone: +1561...", his blank "States:" as the line under it.
 _FIELD = r"^[ \t>*•-]*{label}[ \t]*:\**[ \t]*(?P<value>[^\n]*)$"
-_FAMILIES = (("vet", r"\bvet|veteran"), ("fex", r"\bfex\b|final\s*expense"), ("iul", r"\biul\b"),
+_FAMILIES = (("vet", r"\bvet|veteran"), ("fex", r"\bfex\b|final\s*expense"), ("iul", r"\biuls?\b"),
              ("mtg", r"\bmtg\b|mortgage"), ("widow", r"widow"), ("trucker", r"truck"),
              ("blue collar", r"blue\s*collar"), ("spanish", r"spanish|espa[nñ]ol"))
 _AGED = re.compile(r"\baged\b|\b\d{2,3}\s*(?:\+|[-–]\s*\d{2,3})\s*(?:days?)?\b", re.IGNORECASE)
@@ -58,6 +58,8 @@ class Order:
     count: int | None = None
     launch: str = ""
     amount: str = ""
+    #: The aged lines on the same invoice - Nova's pull, not the setup's.
+    aged: str = ""
 
 
 @dataclass
@@ -87,6 +89,8 @@ class Checked:
     setup_text: str = ""
     #: Rook or Nova saying they've taken it to Therese / Nicole themselves.
     with_team: str = ""
+    #: The other payment post this one looks to be a second of.
+    twin: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -144,6 +148,56 @@ def family(lead_type: str) -> frozenset:
     return frozenset(names)
 
 
+#: First names that are the same person's - "William Stanger" paid, the hub
+#: has "Will Stanger".
+_NICKNAMES = [set(one.split()) for one in (
+    "william will bill billy willy liam", "robert rob bob bobby robby bert", "michael mike mikey mick",
+    "james jim jimmy jamie", "thomas tom tommy", "anthony tony", "christopher chris kit", "matthew matt matty",
+    "daniel dan danny", "david dave davey", "joseph joe joey", "joshua josh", "nicholas nick nicky",
+    "steven stephen steve", "alexander alex al xander", "alexandra alex lexi sandra", "benjamin ben benny",
+    "samuel sam sammy", "samantha sam sammy", "katherine catherine kate katie kathy cathy kat",
+    "elizabeth liz lizzy beth betsy eliza", "jennifer jen jenny", "edward ed eddie ted", "gregory greg",
+    "jeffrey jeff", "jonathan john jon johnny jack", "ronald ron ronnie", "donald don donnie", "richard rick rich ricky dick",
+    "patrick pat", "patricia pat patty trish", "timothy tim timmy", "zachary zach zack", "andrew andy drew",
+    "charles charlie chuck chas", "francis frank frankie", "franklin frank", "gabriel gabe", "jacob jake",
+    "nathan nate", "nathaniel nate nat", "abigail abby", "amanda mandy", "deborah debbie deb",
+    "susan sue susie", "margaret maggie meg peggy", "rebecca becky becca", "victoria vicky tori",
+    "kenneth ken kenny", "lawrence larry", "leonard leo len lenny", "raymond ray", "jose pepe",
+    "isaiah ike", "frederick fred freddie", "vincent vince vinny", "eugene gene", "theodore ted teddy theo",
+    "cameron cam", "dominic dom", "jessica jess jessie", "melissa missy mel", "christine chris christy tina",
+    "angela angie", "kimberly kim", "cynthia cindy", "douglas doug", "gerald gerry jerry", "harold harry hal",
+    "henry hank harry", "jerome jerry", "joanne jo", "jordan jordy", "leslie les", "louis lou", "manuel manny",
+    "mitchell mitch", "phillip philip phil", "russell russ", "stanley stan", "terrence terry", "walter walt",
+)]
+
+
+def _same_first(one: str, other: str) -> bool:
+    if one == other:
+        return True
+    return any(one in names and other in names for names in _NICKNAMES)
+
+
+def hub_named(found: list, who: str) -> list:
+    """The hub's agents by this name: every word of it, as the hub writes
+    it - else the same last name and a first name that's the same person's
+    (Will for William)."""
+    from .hub import named
+
+    exact = named(found, who)
+    if exact:
+        return exact
+    words = [one for one in re.findall(r"[a-z]+", str(who or "").casefold()) if len(one) > 1]
+    if len(words) < 2:
+        return []
+    first, last = words[0], words[-1]
+    out = []
+    for one in found:
+        theirs = [word for word in re.findall(r"[a-z]+", str(getattr(one, "name", "") or "").casefold()) if len(word) > 1]
+        if len(theirs) >= 2 and theirs[-1] == last and _same_first(theirs[0], first):
+            out.append(one)
+    return out
+
+
 def payment(post: str) -> Order:
     """What the payment post in #new-payment says was bought - the invoice's
     notes over the post's own lines, as the client wrote them."""
@@ -157,6 +211,14 @@ def payment(post: str) -> Order:
     )
     lines = re.findall(r"^[\s>*•-]*([A-Za-z][A-Za-z0-9 +&/().'-]{1,60}?)\s*:\s*(\d[\d,]*)\s*(?:x|@)\s*\$?[\d,.]+"
                        r"[^\n—–]*?(?:[—–-]\s*states?\s*:?\s*([^\n]+))?$", text, re.IGNORECASE | re.MULTILINE)
+    # Fresh and aged on one invoice - William McClure's 50 Fresh Vets and 100
+    # Aged IUL 180+, read as 150 "Fresh Vets + Aged IUL 180+" and held up
+    # against his Vets setup: the setup is the fresh lines; the aged ones are
+    # Nova's pull, the aged QC's.
+    fresh = [one for one in lines if "aged" not in family(one[0])]
+    if fresh and len(fresh) < len(lines):
+        order.aged = " + ".join(f"{one[1]} {' '.join(one[0].split())}" for one in lines if one not in fresh)
+        lines = fresh
     if lines:
         order.lead_type = " + ".join(" ".join(one[0].split()) for one in lines)
         order.count = sum(int(one[1].replace(",", "")) for one in lines)
@@ -263,6 +325,8 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     result.notes += called_off
     result.setup_text = said[0] if said else ""
     result.wanted = _filled(paid, rook)
+    if paid.aged:
+        result.notes.append(f"Also on the invoice: {paid.aged} - Nova's pull, checked by the aged QC")
     if rook is not None and rook.name:
         # A business paying - "Kunz Marketing, Llc" for Kurtis Kunz.
         result.client = rook.name
