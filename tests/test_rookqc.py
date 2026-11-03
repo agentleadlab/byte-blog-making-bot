@@ -582,3 +582,17 @@ def test_the_cards_go_in_agent_setup(monkeypatch):
     assert asyncio.run(client._card_channel(SimpleNamespace(), "aged")) is aged
     guild.text_channels[:] = [board]
     assert asyncio.run(client._card_channel(SimpleNamespace(), "setup")) is None
+
+
+def test_a_done_row_smaller_than_the_payment_is_an_older_order():
+    """Jared Flanigan: paid for 40, his only hub row done at 10 of 10 -
+    "The hub has 10 ordered - less than the 40 paid for", when this order
+    isn't on the hub at all yet."""
+    done = _hub(status="done", ordered=10, delivered=10)
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=done)
+    said = " ".join(result.problems)
+    assert "Nothing on the hub for this order yet" in said and "done, 10 of 10 delivered" in said, result.problems
+    assert "an older order" in said and "less than the 40 paid for" not in said
+    # Done and as big as the payment: this order, delivered.
+    full = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(status="done", ordered=40, delivered=40))
+    assert not any("Nothing on the hub" in one for one in full.problems), full.problems

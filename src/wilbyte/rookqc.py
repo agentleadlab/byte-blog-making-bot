@@ -536,6 +536,18 @@ def pick_row(rows: list, wanted: Order):
     return min(rows, key=misfit)
 
 
+def _over(row) -> bool:
+    return str(getattr(row, "status", "") or "").casefold() in FINISHED
+
+
+def _described(row) -> str:
+    """"Text Verified Vet (done, 10 of 10 delivered)"."""
+    bits = [str(getattr(row, "status", "") or "?")]
+    if getattr(row, "ordered", None) is not None:
+        bits.append(f"{getattr(row, 'delivered', None) or 0} of {row.ordered} delivered")
+    return f"{getattr(row, 'lead_type', '') or '?'} ({', '.join(bits)})"
+
+
 def resolve_hub(rows: list, wanted: Order) -> tuple:
     """(the hub row this order is or None, a note, what they're on the hub
     for instead when none of their rows is this lead type)."""
@@ -543,14 +555,20 @@ def resolve_hub(rows: list, wanted: Order) -> tuple:
     if not rows:
         return None, "", ""
     fits = [one for one in rows if not _wrong_kind(one, wanted)]
+    # A row that's over and holds fewer than this payment bought is an older
+    # order, not this one renewed - Jared Flanigan's done 10 of 10, held up
+    # as "the hub has 10 ordered - less than the 40 paid for".
+    fits = [one for one in fits if not (_over(one) and wanted.count and getattr(one, "ordered", None) is not None
+                                        and one.ordered < wanted.count)]
+    if not fits and any(not _wrong_kind(one, wanted) for one in rows):
+        return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows)) + " - an older order"
     if not fits:
         # An open row of another lead type may be this order set up wrong -
         # held up against it, its lead type is said. Only rows that are over
         # are older orders: nothing for this one is on the hub yet.
         fits = [one for one in rows if str(getattr(one, "status", "") or "").casefold() not in FINISHED]
     if not fits:
-        return None, "", ", ".join(dict.fromkeys(
-            f"{getattr(one, 'lead_type', '') or '?'} ({getattr(one, 'status', '') or '?'})" for one in rows))
+        return None, "", ", ".join(dict.fromkeys(_described(one) for one in rows))
     row = pick_row(fits, wanted)
     note = (f"{len(rows)} hub rows for them - checked {getattr(row, 'name', '?')}, the one that fits this payment best"
             if len(rows) > 1 else "")
