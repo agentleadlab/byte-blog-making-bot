@@ -95,6 +95,8 @@ class Checked:
     twin: str = ""
     #: Its Trello card, once made.
     trello: str = ""
+    #: Rook or Nova's answer to Ryte that it's right as it is.
+    rook_ok: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -463,6 +465,10 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if handed:
         result.with_team = " ".join(handed.split())[:200]
         result.notes.append(f"Rook/Nova took it to the team: “{result.with_team}”")
+    # Rook or Nova answering Ryte's question that it's right as it is -
+    # "Expected — INV-21202 (paid by Chris Amaya) is Alain Ishimwe's order ...
+    # No fix needed."
+    result.rook_ok = answered_ok(talk)
     asked = open_question(talk)
     if asked:
         # James Wyman's "Can you confirm his exact start time for Wednesday
@@ -827,6 +833,27 @@ def card_notes(result: Checked, *, paid_at=None) -> str:
     extra = _field(text, r"Specific\s+Notes", r"Notes")
     lines += [f"Specific Notes: {extra}" if extra else ""]
     return "\n".join(one for one in lines if one)
+
+
+#: An answer that what Ryte asked about is meant to be.
+_ALL_RIGHT = re.compile(r"\bno\s+fix\s+needed\b|\bnothing\s+(?:to\s+fix|wrong)\b|^\W*expected\b|"
+                        r"\bset\s+up\s+(?:right|correctly)\b|\bis\s+(?:right|correct)\s+as\s+is\b|"
+                        r"\bas\s+(?:intended|expected)\b|\bthat'?s\s+(?:right|correct|expected|intended)\b|"
+                        r"\bare\s+the\s+same\s+(?:lead\s+type|product)\b", re.IGNORECASE | re.MULTILINE)
+
+
+def answered_ok(talk) -> str:
+    """Rook or Nova's word, after Ryte last asked, that it's right as it is -
+    "" when there's none. Not a "forwarded to Nicole", nor a "can't"."""
+    asked = next((at for at in range(len(talk) - 1, -1, -1) if talk[at][0].casefold().startswith("ryte")
+                  and "QC on" in talk[at][1]), None)
+    if asked is None:
+        return ""
+    for who, said in talk[asked + 1:]:
+        if (who.casefold().startswith(("rook", "nova")) and _ALL_RIGHT.search(said) and not CANT.search(said)
+                and not _TO_TEAM.search(said)):
+            return " ".join(said.split())[:240]
+    return ""
 
 
 def open_question(talk) -> str:

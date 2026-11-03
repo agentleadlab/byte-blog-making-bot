@@ -11835,6 +11835,14 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if made.get("status") == "made" and made.get("url"):
         result.trello = str(made["url"])
         result.notes.insert(0, f"🃏 Its Trello card is made: <{result.trello}>")
+    if result.rook_ok:
+        # What Ryte asked and Rook said is right as it is: OK'd, in Rook's words.
+        answered = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))
+                    and not rookqc.among(one, held.get("ok_problems"))]
+        if answered:
+            rookqc.remember(key, ok_problems=list(dict.fromkeys([*(held.get("ok_problems") or []), *answered])),
+                            ok_by=f"Rook – “{result.rook_ok[:160]}”")
+            held = rookqc.recalled().get(key) or held
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)

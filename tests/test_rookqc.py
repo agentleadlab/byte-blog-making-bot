@@ -988,3 +988,41 @@ def test_rooks_launch_day_is_read_from_the_day_they_paid():
     rook = ROOK.replace("Launch Date: as soon as he signs", "Launch Date: Monday")
     result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
     assert "Launch Date: Monday Nov 2" in rookqc.card_notes(result, paid_at=paid)
+
+
+def test_rook_saying_its_right_as_it_is_oks_what_was_asked(monkeypatch):
+    """Chris Amaya: "Expected — INV-21202 (paid by Chris Amaya) is Alain
+    Ishimwe's order ... the hub uses his list ... No fix needed."."""
+    from wilbyte.bot import client
+
+    asked = ("@Rook @Nova QC on Jonathan Carter - paid $1,280.00\\n"
+             "• The hub states don't match the payment - has WA not ordered")
+    answer = "Expected — INV-21202 is another agent's order, so the hub uses his list. No fix needed."
+    talk = [("Rook", ROOK), ("Nova", NOVA), ("Ryte", asked), ("Rook", answer)]
+    hub = _hub(states=("TX", "FL", "GA", "WA"))
+    assert rookqc.check(PAYRA, talk, hub=hub).rook_ok.startswith("Expected")
+    assert not rookqc.check(PAYRA, talk[:3] + [("Rook", "Forwarded to Nicole in his #rook-qc thread.")],
+                            hub=hub).rook_ok
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/900", content=PAYRA, embeds=[],
+                           message_snapshots=[], created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+                           channel=SimpleNamespace(id=2), guild=None)
+
+    async def checking(bot, key):
+        return post, rookqc.check(PAYRA, talk, hub=hub)
+
+    sent = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "")
+    rookqc.remember("900", posted=post.created_at.isoformat(), due_done=True,
+                    asked_problems=["The hub states don't match the payment - has WA not ordered"])
+    asyncio.run(client._sqc_run(SimpleNamespace(), "900", force=True))
+    held = rookqc.recalled()["900"]
+    assert held["ok_problems"] == ["The hub states don't match the payment - has WA not ordered"]
+    assert held["ok_by"].startswith("Rook – “Expected")
+    assert "OK'd by Rook" in sent[-1] and "⚠" not in sent[-1].split("\\n")[0]
