@@ -1056,3 +1056,15 @@ def test_a_different_phone_is_a_note():
     result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub())
     assert not any("phone" in one for one in result.problems)
     assert any("has the phone +15555550199" in one for one in result.notes)
+
+
+def test_the_same_states_in_another_order_are_the_same_problem():
+    """Connor Swartz: asked again at 2:08 - the hub listed his extra states in
+    another order."""
+    one = "The hub states don't match the payment - has MT, PA, SD, WI, WV not ordered"
+    other = "The hub states don't match the payment - has SD, MT, WI, WV, PA not ordered"
+    assert rookqc.among(other, [one])
+    assert not rookqc.among("The hub states don't match the payment - has SD not ordered", [one])
+    said = "Already with Nicole in Jonathan Carter's #rook-qc thread (states mismatch)."
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA), ("Rook", said)], hub=_hub())
+    assert result.with_team

@@ -718,7 +718,7 @@ def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) 
     # Duehat Kanan's and Ciana Araya's were flagged as not matching.
     theirs, wanted = _state_set(states, left_out), _state_set(paid.states, paid.left_out)
     if theirs and wanted:
-        extra = [code for code in (states or sorted(theirs)) if code in theirs - wanted]
+        extra = sorted(theirs - wanted)
         missing = [code for code in (paid.states or sorted(wanted)) if code in wanted - theirs]
         if "DC" in extra + missing:
             # DC, which a list of "all states" has or hasn't: said, not flagged.
@@ -956,7 +956,8 @@ def _hub(result: Checked, hub, paid: Order) -> None:
 
 #: Rook or Nova taking it to the team: "forwarded to Therese + Nicole".
 _TO_TEAM = re.compile(r"\b(?:forward(?:ed|ing)?|passed|sent|flagged|escalated)\b[^.\n]{0,30}\bto\s+"
-                      r"@?(?:therese|nicole)\b", re.IGNORECASE)
+                      r"@?(?:therese|nicole|faith)\b|\balready\s+with\s+@?(?:therese|nicole|faith|the\s+team)\b",
+                      re.IGNORECASE)
 
 
 #: Nova saying the setup's done: "Done ✅ Jared's start is set for tomorrow".
@@ -1080,8 +1081,12 @@ def flagged_before(result: Checked, held: dict) -> dict:
 
 
 def problem_key(problem: str) -> str:
-    """A problem as itself, whatever its numbers say today."""
-    return re.sub(r"\d[\d,.:]*", "#", " ".join(str(problem or "").split()))
+    """A problem as itself, whatever its numbers say today, and whatever order
+    the hub listed its states in - Connor Swartz's "has MT, PA, SD, WI, WV"
+    came back "has SD, MT, WI, WV, PA" and was asked about again."""
+    said = re.sub(r"\d[\d,.:]*", "#", " ".join(str(problem or "").split()))
+    return re.sub(r"\b[A-Z]{2}(?:,\s*[A-Z]{2}\b)+", lambda run: ", ".join(sorted(re.findall(r"[A-Z]{2}", run.group(0)))),
+                  said)
 
 
 def among(problem: str, problems) -> bool:
