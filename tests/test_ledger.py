@@ -591,9 +591,17 @@ def test_what_ryte_asked_about_that_is_right_now_is_said(monkeypatch):
     bot = SimpleNamespace(get_channel=lambda _id: Channel())
     asked = "The hub states don't match the payment - has IN not ordered"
     rookqc.remember("900", asked="https://discord.com/channels/1/2/3", asked_problems=[asked])
-    result = rookqc.Checked(client="Justin Techer", problems=[])
+    result = rookqc.Checked(client="Justin Techer", problems=[], hub=_row(status="live"))
+    # Mai Nguyen, William McClure: what was asked went, something else stayed.
+    other = rookqc.Checked(client="Mai Nguyen", problems=["Not on the hub"])
+    asyncio.run(client._sqc_tell_fixed(bot, "900", other, rookqc.recalled()["900"]))
+    assert replies == [], "not while anything else is open"
+    asyncio.run(client._sqc_tell_fixed(bot, "900", rookqc.Checked(client="J", problems=[]),
+                                       rookqc.recalled()["900"]))
+    assert replies == [], "not when it isn't on the hub"
     asyncio.run(client._sqc_tell_fixed(bot, "900", result, rookqc.recalled()["900"]))
     assert len(replies) == 1 and "Justin Techer" in replies[0] and "has IN not ordered" in replies[0]
+    assert "checks out on the hub now" in replies[0]
     asyncio.run(client._sqc_tell_fixed(bot, "900", result, rookqc.recalled()["900"]))
     assert len(replies) == 1, "once"
     still = rookqc.Checked(client="X", problems=[asked])

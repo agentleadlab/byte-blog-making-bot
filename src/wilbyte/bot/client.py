@@ -12467,15 +12467,25 @@ async def _sqc_tell_fixed(bot, key: str, result, held: dict) -> None:
     found = re.search(r"/channels/\d+/(\d+)/(\d+)", link)
     if not cleared or not found or not SETUP_QC_AUTO_ASK:
         return
+    # Only when the whole payment checks out - on the hub for this order, as
+    # paid for, nothing else open. Mai Nguyen's "nobody's said anything" went
+    # once Rook answered, and William McClure's flags once his invoice was read
+    # right - neither on the hub, and both were told "nothing to fix".
+    hub = getattr(result, "hub", None)
+    if (result.problems or result.cant or result.overflow or hub is None
+            or str(getattr(hub, "status", "") or "").casefold() in rookqc.FINISHED):
+        return
     if not _room(_ASKED_TIMES, SETUP_QC_ASKS_AN_HOUR + 4):
         return  # said next pass - #rook-nova isn't flooded with these either
     rookqc.remember(key, told_fixed=list(dict.fromkeys([*told, *cleared])))
     try:
         channel = bot.get_channel(int(found.group(1))) or await bot.fetch_channel(int(found.group(1)))
         question = await channel.fetch_message(int(found.group(2)))
-        text = (f"✅ Update on **{result.client or 'this payment'}** - this is right now, nothing to fix:\n"
+        text = (f"✅ Update on **{result.client or 'this payment'}** - it checks out on the hub now "
+                f"({getattr(hub, 'name', '?')}, {getattr(hub, 'status', '') or '?'}, "
+                f"{getattr(hub, 'ordered', '?')} ordered), so what I asked is answered:\n"
                 + "\n".join(f"• ~~{one}~~" for one in cleared)
-                + "\nIf it went to the team, they can close it.")
+                + "\nIf it went to the team for this, they can close it.")
         with mirror.answering():
             await question.reply(text[:1900], mention_author=False)
     except Exception:
