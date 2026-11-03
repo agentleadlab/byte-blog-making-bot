@@ -85,6 +85,9 @@ class Checked:
     asked: tuple = ()
     #: Rook's setup message the QC was held to, as it was written.
     setup_text: str = ""
+    #: The hub row this order is, when there's one - and what it was held to.
+    hub: object = None
+    wanted: object = None
 
     def talk_about_setup(self) -> bool:
         """Whether Rook and Nova talked about setting it up at all."""
@@ -252,6 +255,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     rook, called_off, *said = the_setup(talk, paid)
     result.notes += called_off
     result.setup_text = said[0] if said else ""
+    result.wanted = _filled(paid, rook)
     if rook is not None and rook.name:
         # A business paying - "Kunz Marketing, Llc" for Kurtis Kunz.
         result.client = rook.name
@@ -261,6 +265,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # The hub row this order is - of its lead type, an open one first.
     hub, hub_note, hub_elsewhere = resolve_hub(hub_rows or ([hub] if hub is not None else []), _filled(paid, rook),
                                                paid_at=paid_at)
+    result.hub = hub
     if OVERFLOW.search(str(post or "")):
         # "Overflow Trucker - $25/lead": the team delivers it from overflow -
         # not Rook and Nova's, not on the hub. Karli Kelley's was held to her
@@ -336,6 +341,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # What the hub is held to: the payment, and Rook's setup for whatever
     # the payment doesn't say - a Zelle post carries no states or count.
     wanted = _filled(paid, rook)
+    result.wanted = wanted
     if hub_note:
         result.notes.append(hub_note)
     if any(getattr(wanted, key) != getattr(paid, key) for key in ("email", "lead_type", "count", "states", "left_out")):

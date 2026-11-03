@@ -357,7 +357,7 @@ class HeldButton(discord.ui.DynamicItem[discord.ui.Button], template=r"ryte:held
 
 
 class SetupQcButton(discord.ui.DynamicItem[discord.ui.Button],
-                    template=r"ryte:sqc:(?P<key>\d+):(?P<act>ask|card)"):
+                    template=r"ryte:sqc:(?P<key>\d+):(?P<act>ask|card|ok)"):
     """A setup QC's Ask Rook & Nova / Make the card - "give me a button before
     ryte actually engage with the two of them". Answered after a restart too.
     `on_press(interaction, key, act)` does the work."""
@@ -365,8 +365,9 @@ class SetupQcButton(discord.ui.DynamicItem[discord.ui.Button],
     on_press = None
 
     def __init__(self, key: str, act: str):
-        label, emoji, style = (("Ask Rook & Nova", "❓", discord.ButtonStyle.primary) if act == "ask" else
-                               ("Make the card", "🃏", discord.ButtonStyle.success))
+        label, emoji, style = {"ask": ("Ask Rook & Nova", "❓", discord.ButtonStyle.primary),
+                               "card": ("Make the card", "🃏", discord.ButtonStyle.success),
+                               "ok": ("OK as is", "👌", discord.ButtonStyle.secondary)}[act]
         super().__init__(discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=f"ryte:sqc:{key}:{act}"))
         self.key, self.act = key, act
 
@@ -379,14 +380,17 @@ class SetupQcButton(discord.ui.DynamicItem[discord.ui.Button],
             await SetupQcButton.on_press(interaction, self.key, self.act)
 
 
-def setup_qc_view(key: str, *, ask: bool, card: bool) -> discord.ui.View | None:
+def setup_qc_view(key: str, *, ask: bool, card: bool, ok: bool = False) -> discord.ui.View | None:
     """The buttons under a setup QC: ask when there's something to ask, the
-    card when Rook or Nova can't set it up."""
-    if not (ask or card):
+    card when Rook or Nova can't set it up, and OK as is for a problem that's
+    meant to be that way."""
+    if not (ask or card or ok):
         return None
     view = discord.ui.View(timeout=None)
     if ask:
         view.add_item(SetupQcButton(key, "ask"))
     if card:
         view.add_item(SetupQcButton(key, "card"))
+    if ok:
+        view.add_item(SetupQcButton(key, "ok"))
     return view

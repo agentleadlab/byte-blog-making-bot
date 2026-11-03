@@ -294,6 +294,10 @@ class WilByteBot(discord.Client):
         # Payments still inside their fifteen minutes when RYTE restarted -
         # an update restarts it - looked at when they come due all the same.
         _sqc_rearm(self)
+        # Every payment followed until it's delivered, and the day's lists -
+        # "by the end of the day, hey, this is all the person you didn't set up".
+        if SETUP_QC_ON and (getattr(self, "ledger_task", None) is None or self.ledger_task.done()):
+            self.ledger_task = self.loop.create_task(ledger_loop(self))
         # The page scripts the GHL pages load from leadlabcrm.com, kept the
         # same as the copies here - so an update reaches every page by itself.
         if getattr(self.config.secrets, "wordpress_app_password", None) and not getattr(self, "site_code_sent", False):
@@ -1779,6 +1783,12 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
             if request.action == "setupqc":
                 await _sqc_days(bot, responder, request.brief or "")
+                return
+
+            if request.action == "ledger":
+                # "@Ryte who's not set up" - the day's list, now.
+                await _ledger_say(bot, "morning" if re.search(r"\bmorning|today'?s\s+launch", request.brief or "",
+                                                              re.IGNORECASE) else "now", responder)
                 return
 
             if request.action == "agedqc":
@@ -11678,6 +11688,11 @@ async def _sqc_check(bot, key: str):
     agent, hub_problem, rows = None, "", []
     try:
         everybody = await _sqc_hub(bot)
+        # The row found for it before, by the hub's own id: not guessed by
+        # name again - Aaron Crane's FEX and Vets rows.
+        pinned = [one for one in everybody if held.get("hub_id") and str(getattr(one, "id", "")) == held["hub_id"]]
+        if pinned:
+            names, rows, agent = [], pinned, pinned[0]
         for name in names:
             found = hub.named(everybody, name)
             if found:
@@ -11721,6 +11736,9 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         rookqc.remember(key, aged=True, due_done=True)
         return ""
     waiting = not (due or force or held.get("due_done")) and not (result.picked_up and _nova_answered(result))
+    _ledger_keep(key, post, result, held)
+    held = rookqc.recalled().get(key) or held
+    _okd(result, held)
     if result.cant and not waiting:
         await _sqc_auto_hammer(bot, key, post, result, held)
     cards = await _card_channel(bot, "setup")
@@ -11749,6 +11767,37 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                          + rookqc.said(result, link=post.jump_url, amount=amount)[:1900],
                          view=view, quiet=not result.problems)
     return "problem" if result.problems else "todo" if result.todo else "ok"
+
+
+def _ledger_keep(key: str, post, result, held: dict) -> None:
+    """Where the payment stands, kept for the day's lists - and its hub row
+    pinned by id once it's found for this order."""
+    from .. import ledger, rookqc
+
+    kept = ledger.stage(result)
+    fields = dict(kept, client=result.client or held.get("client") or held.get("name") or "",
+                  amount=(_AMOUNT.search(_all_of_it(post)) or [None, ""])[1], link=getattr(post, "jump_url", ""),
+                  open_problems=list(result.problems), todo=list(result.todo), cant=result.cant,
+                  checked=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    if not kept["hub_id"]:
+        fields.pop("hub_id")
+    elif held.get("hub_id") != kept["hub_id"]:
+        # Pinned only to a row that's open, and for this order.
+        hub = result.hub
+        if str(getattr(hub, "status", "") or "").casefold() in rookqc.FINISHED:
+            fields.pop("hub_id")
+    rookqc.remember(key, **fields)
+
+
+def _okd(result, held: dict) -> None:
+    """What somebody OK'd as it is - Kyle Moffitt's extra states - moved to
+    the notes: not flagged, nor asked about, again."""
+    okd = set(held.get("ok_problems") or [])
+    if not okd:
+        return
+    for one in [one for one in result.problems if one in okd]:
+        result.problems.remove(one)
+        result.notes.append(f"👌 OK'd by {held.get('ok_by') or 'the team'}: {one}")
 
 
 #: Rook or Nova saying they can't set it up: the payment hammered for its
@@ -11818,11 +11867,16 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
     new = [one for one in result.problems if one not in result.still]
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
                     cant=result.cant, flagged=flagged)
+    await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)
+    escalate = _sqc_escalation(bot, key, result, rookqc.recalled().get(key) or held)
     standing, title, body = paycards.setup_card(result, amount=amount, link=post.jump_url)
+    if escalate:
+        body = escalate + "\n\n" + body
     view = views.setup_qc_view(key, ask=bool(result.problems or result.todo) and not result.cant
-                               and not result.overflow, card=bool(result.cant))
+                               and not result.overflow, card=bool(result.cant), ok=bool(result.problems))
     await _card_put(bot, channel, "setup", key, standing, title, body, link=post.jump_url, view=view,
-                    ping=bool(new) or (bool(result.cant) and not held.get("cant")))
+                    ping=bool(new) or (bool(result.cant) and not held.get("cant")) or bool(escalate),
+                    who=(_team_tags(bot, channel.guild) + " " + _card_ping(bot)).strip() if escalate else None)
     return standing
 
 
@@ -11849,7 +11903,7 @@ async def _card_channel(bot, kind: str):
 
 
 async def _card_put(bot, channel, kind: str, key: str, standing: str, title: str, body: str, *, link: str = "",
-                    view=None, ping: bool = False) -> None:
+                    view=None, ping: bool = False, who: str | None = None) -> None:
     """A card edited where it is - or sent again at the bottom, Franklin
     tagged, when there's something new to look at."""
     from .. import paycards
@@ -11865,21 +11919,155 @@ async def _card_put(bot, channel, kind: str, key: str, standing: str, title: str
                 old = await channel.fetch_message(int(held["message_id"]))
             except Exception:
                 old = None
-        who = _card_ping(bot).strip() if ping else ""
+        who = (who if who is not None else _card_ping(bot).strip()) if ping else ""
         if old is not None and not who:
             kwargs = {"embed": embed}
             if view is not None or getattr(old, "components", None):
                 kwargs["view"] = view
             await old.edit(**kwargs)
-            paycards.remember(kind, key, standing=standing)
+            paycards.remember(kind, key, standing=standing, title=title, link=link)
             return
         sent = await channel.send(content=who or None, embed=embed, view=view)
-        paycards.remember(kind, key, channel_id=str(channel.id), message_id=str(sent.id), standing=standing)
+        paycards.remember(kind, key, channel_id=str(channel.id), message_id=str(sent.id), standing=standing,
+                          title=title, link=link)
         if old is not None:
             try:
                 await old.delete()
             except Exception:
                 pass
+
+
+#: How often every payment still followed is checked again, and the day's
+#: lists looked at.
+LEDGER_EVERY_SECONDS = 30 * 60
+
+
+async def ledger_loop(bot) -> None:
+    """Every half hour: payments missed while Ryte was away picked up, every
+    payment not done with checked again (its card brought up to date - asked
+    about, or taken to Therese and Nicole), and the day's lists said when
+    they're due."""
+    from .. import dailyops, ledger
+
+    await asyncio.sleep(120)
+    while not bot.is_closed():
+        try:
+            await _ledger_pass(bot)
+            today = _today(bot.config)
+            if today.weekday() < 5 and today not in dailyops.days_off():
+                for which in ledger.due_lists(datetime.now(timezone.utc), ledger.said_today(today)):
+                    await _ledger_say(bot, which)
+                    ledger.said_on(today, which)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("The payments pass failed; trying again next time")
+        await asyncio.sleep(LEDGER_EVERY_SECONDS)
+
+
+async def _ledger_pass(bot) -> int:
+    """One pass: today's and yesterday's payment posts nobody's watching
+    taken in, and each payment still followed checked again. How many."""
+    from .. import ledger, rookqc
+
+    today = _today(bot.config)
+    for day in (today - timedelta(days=1), today):
+        for post in await _payments_on(bot, day):
+            if str(post.id) not in rookqc.recalled():
+                _sqc_watch(bot, post)
+    now = datetime.now(timezone.utc)
+    followed = ledger.open_ones(rookqc.recalled(), now=now)
+    # Taken in, but never checked once: a restart lost its timer.
+    for key, one in rookqc.recalled().items():
+        posted = _moment_of(one.get("posted"))
+        if (key not in followed and not one.get("stage") and not one.get("aged") and posted is not None
+                and timedelta(seconds=SETUP_QC_WAIT) < now - posted < timedelta(days=ledger.OPEN_DAYS)):
+            followed[key] = one
+    if not followed:
+        return 0
+    channel = _rook_nova_channel(bot)
+    _RN["hold"] += 1
+    try:
+        if channel is not None:
+            earliest = min(_moment_of(one.get("posted")) or now for one in followed.values())
+            _RN.update(since=None, messages=[], threads=None, inside={})
+            await _rn_messages(channel, earliest - timedelta(minutes=5))
+            await _rn_threads(channel)
+        for key, one in followed.items():
+            posted = _moment_of(one.get("posted"))
+            due = not one.get("due_done") and posted is not None and (now - posted).total_seconds() >= SETUP_QC_WAIT
+            try:
+                await _sqc_run(bot, key, due=due)
+            except Exception:
+                log.warning("Couldn't check %s again", key, exc_info=True)
+    finally:
+        _RN["hold"] -= 1
+        _RN["at"] = time.time()
+    return len(followed)
+
+
+async def _ledger_text(bot, which: str) -> str:
+    """The list itself - "morning", or an evening one."""
+    from .. import dailyops, ledger, paycards, payraapi, rookqc
+
+    today = _today(bot.config)
+    now = datetime.now(timezone.utc)
+    posted = []
+    for day in (today - timedelta(days=1), today):
+        posted += [_all_of_it(one) for one in await _payments_on(bot, day)]
+    try:
+        missing = ledger.payra_missing(await asyncio.to_thread(payraapi.load), "\n".join(posted), day=today)
+    except Exception:
+        log.warning("Couldn't hold Payra up against #new-payment", exc_info=True)
+        missing = []
+    aged = []
+    for key, card in paycards.recalled().items():
+        if not key.startswith("aged:"):
+            continue
+        at = _moment_of(card.get("at"))
+        if at is None or now - at > timedelta(days=ledger.OPEN_DAYS):
+            continue
+        if card.get("standing") == "waiting" and now - at > timedelta(hours=4):
+            aged.append(f"• **{card.get('title') or '?'}** - paid, not pulled yet" + (
+                f" <{card['link']}>" if card.get("link") else ""))
+        elif card.get("standing") == "problem":
+            aged.append(f"• **{card.get('title') or '?'}** - the pull doesn't match" + (
+                f" <{card['link']}>" if card.get("link") else ""))
+    return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
+                        morning=which == "morning", payra_missing=missing, aged=aged)
+
+
+async def _ledger_say(bot, which: str, responder: Responder | None = None) -> None:
+    """The list said in #agent-setup - Franklin tagged when there's something
+    on it - or as an answer, when somebody asked."""
+    text = await _ledger_text(bot, which)
+    if responder is not None:
+        for chunk in _chunks(text):
+            await responder.send(chunk)
+        return
+    channel = await _card_channel(bot, "setup")
+    if channel is None:
+        found = _order_responder(bot)
+        if found is None:
+            return
+        for chunk in _chunks(text):
+            await found.send(chunk)
+        return
+    ping = _card_ping(bot) if "Nothing to chase" not in text else ""
+    for at, chunk in enumerate(_chunks(text)):
+        await channel.send((ping if at == 0 else "") + chunk)
+
+
+def _chunks(text: str, most: int = 1900) -> list[str]:
+    out, chunk = [], ""
+    for line in text.split("\n"):
+        if chunk and len(chunk) + len(line) + 1 > most:
+            out.append(chunk)
+            chunk = ""
+        chunk = f"{chunk}\n{line}" if chunk else line[:most]
+    if chunk:
+        out.append(chunk)
+    return out
 
 
 def _sqc_said_lately(held: dict) -> bool:
@@ -11907,6 +12095,19 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
     except Exception as exc:
         await interaction.followup.send(f"⚠ Couldn't read it again: {_readable(exc)}", ephemeral=True)
         return
+    if act != "ok":
+        _okd(result, rookqc.recalled().get(key) or {})
+    if act == "ok":
+        # "OK as is": what's flagged now is meant to be - not flagged, asked
+        # about or on the day's list again. Anything new still is.
+        held = rookqc.recalled().get(key) or {}
+        who = str(getattr(interaction.user, "display_name", "") or "the team")
+        rookqc.remember(key, ok_problems=list(dict.fromkeys([*(held.get("ok_problems") or []), *result.problems])),
+                        ok_by=who)
+        _sqc_later(bot, key, 2)
+        await interaction.followup.send(f"👌 OK'd for **{result.client}**: " + "; ".join(result.problems)[:1500],
+                                        ephemeral=True)
+        return
     if act == "card":
         notes = rookqc.card_notes(result)
         await _order_gavelled(bot, SimpleNamespace(
@@ -11924,26 +12125,150 @@ async def _sqc_pressed(bot, interaction, key: str, act: str) -> None:
     if not (result.problems or result.todo):
         await interaction.followup.send(f"✅ {result.client} checks out now - nothing to ask.", ephemeral=True)
         return
-    channel = _rook_nova_channel(bot)
-    if channel is None:
+    link = await _sqc_ask(bot, key, post, result, by=str(getattr(interaction.user, "display_name", "")))
+    if not link:
         await interaction.followup.send("⚠ I can't find #rook-nova.", ephemeral=True)
         return
+    _sqc_later(bot, key, 5)  # its card says it was asked, and when
+    await interaction.followup.send(f"❓ Asked in #rook-nova: <{link}> - I'll check their answers.", ephemeral=True)
+
+
+#: "Ok to communicate with Nova and rook": what Ryte can't check, asked in
+#: the payment's #rook-nova thread by itself - once for each problem.
+SETUP_QC_AUTO_ASK = True
+#: Asked and still open this long in working hours: Therese and Nicole
+#: tagged on its card in #agent-setup.
+SETUP_QC_ESCALATE = True
+SETUP_QC_ESCALATE_AFTER = timedelta(hours=2)
+#: Asked again no sooner than this.
+SETUP_QC_ASK_GAP = timedelta(minutes=30)
+#: Who's asked when Rook and Nova haven't sorted it - by the start of their
+#: names as Discord shows them.
+SETUP_QC_TEAM = ("therese", "nicole")
+
+
+async def _rn_thread_for(bot, channel, client: str, posted: datetime | None):
+    """Rook's thread in #rook-nova for this client - "Charles Sellers",
+    "James Wyman · setup" - made since the payment. None: there isn't one."""
+    from .. import rookqc
+
+    if not client:
+        return None
+    found = []
+    for thread in await _rn_threads(channel):
+        name = str(getattr(thread, "name", "") or "").split("·")[0].strip()
+        made = getattr(thread, "created_at", None)
+        if name and rookqc.same_person(name, client) and (
+                posted is None or made is None or made >= posted - timedelta(minutes=5)):
+            found.append(thread)
+    return max(found, key=lambda one: getattr(one, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+               default=None)
+
+
+async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list | None = None) -> str:
+    """Rook and Nova asked about this payment - in its thread when there's
+    one, else #rook-nova. The question's link, or "" with nowhere to ask."""
+    from .. import rookqc
+
+    channel = _rook_nova_channel(bot)
+    if channel is None:
+        return ""
     tags = []
     for wanted in ("rook", "nova"):
         member = next((one for one in getattr(channel.guild, "members", None) or []
                        if getattr(one, "bot", False)
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
         tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
-    # The button is the go-ahead to speak in the Growth server: without it
-    # the "only when spoken to" guard sent Jake Scott's question to Ryte The
-    # Goat's #announcements instead, where Rook and Nova never saw it.
+    asking = result if problems is None else SimpleNamespace(client=result.client, problems=problems, todo=[])
+    where = await _rn_thread_for(bot, channel, result.client, getattr(post, "created_at", None)) or channel
+    # Only ever a question about one payment, in #rook-nova: the go-ahead to
+    # speak in the Growth server ("Ok to communicate with Nova and rook").
     with mirror.answering():
-        asked = await channel.send(" ".join(tags) + " " + rookqc.question(result, link=post.jump_url)[:1800])
-    rookqc.remember(key, asked=asked.jump_url, asked_by=str(getattr(interaction.user, "display_name", "")),
-                    asked_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-    _sqc_later(bot, key, 5)  # its card says it was asked, and when
-    await interaction.followup.send(f"❓ Asked in #rook-nova: <{asked.jump_url}> - I'll check their answers.",
-                                    ephemeral=True)
+        asked = await where.send(" ".join(tags) + " " + rookqc.question(asking, link=post.jump_url)[:1800])
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    held = rookqc.recalled().get(key) or {}
+    rookqc.remember(key, asked=asked.jump_url, asked_by=by or "Ryte", asked_at=now,
+                    asked_problems=list(dict.fromkeys([*(held.get("asked_problems") or []),
+                                                       *(asking.problems or [])])))
+    return asked.jump_url
+
+
+def _work_hours(bot, now: datetime | None = None) -> bool:
+    """A working day, 9 to 7 Eastern - when the team's there to be asked."""
+    from .. import dailyops
+
+    zone = getattr(getattr(getattr(bot, "config", None), "schedule", None), "timezone", None) or "America/New_York"
+    at = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(zone))
+    return at.weekday() < 5 and at.date() not in dailyops.days_off() and 9 <= at.hour < 19
+
+
+async def _sqc_auto_ask(bot, key: str, post, result, held: dict) -> None:
+    """Asked by itself: what's wrong that Rook and Nova haven't been asked
+    about yet. Not overflow (the team's), nor a can't-set-up (a card)."""
+    if not SETUP_QC_AUTO_ASK or result.overflow or result.cant or not result.problems:
+        return
+    new = [one for one in result.problems if one not in (held.get("asked_problems") or [])]
+    if not new:
+        return
+    last = _moment_of(held.get("asked_at"))
+    if last is not None and datetime.now(timezone.utc) - last < SETUP_QC_ASK_GAP:
+        return
+    try:
+        if await _sqc_ask(bot, key, post, result, problems=new):
+            result.asked = (rookqc_recalled_link(key), datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    except Exception:
+        log.warning("Couldn't ask Rook and Nova about %s", key, exc_info=True)
+
+
+def rookqc_recalled_link(key: str) -> str:
+    from .. import rookqc
+
+    return str((rookqc.recalled().get(key) or {}).get("asked") or "")
+
+
+def _moment_of(said) -> datetime | None:
+    try:
+        at = datetime.fromisoformat(str(said or ""))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def _team_tags(bot, guild) -> str:
+    """Therese and Nicole, tagged - as Discord names them, fancy letters and all."""
+    tags = []
+    for wanted in SETUP_QC_TEAM:
+        member = next((one for one in getattr(guild, "members", None) or [] if not getattr(one, "bot", False)
+                       and _plain_letters(str(getattr(one, "display_name", "") or getattr(one, "name", "")))
+                       .startswith(wanted)), None)
+        tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
+    return " ".join(tags)
+
+
+def _sqc_escalation(bot, key: str, result, held: dict) -> str:
+    """What's still open two working hours after Rook and Nova were asked -
+    or handed to the team two hours ago: the line for its card, "" when
+    there's nothing to take to Therese and Nicole."""
+    from .. import rookqc
+
+    if not SETUP_QC_ESCALATE or result.overflow or not _work_hours(bot):
+        return ""
+    now = datetime.now(timezone.utc)
+    asked_at, posted = _moment_of(held.get("asked_at")), _moment_of(held.get("posted"))
+    still = [one for one in result.problems if one in (held.get("asked_problems") or [])]
+    if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER):
+        still = []
+    team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"] if result.cant else [])
+    if not (posted and now - posted >= SETUP_QC_ESCALATE_AFTER):
+        team = []
+    open_now = still + team
+    if not open_now or set(open_now) <= set(held.get("escalated") or []):
+        return ""
+    rookqc.remember(key, escalated=list(dict.fromkeys([*(held.get("escalated") or []), *open_now])),
+                    escalated_at=now.isoformat(timespec="seconds"))
+    return ("📣 **Still open"
+            + (f" - Rook & Nova were asked {rookqc._when(held.get('asked_at'))}" if still else "")
+            + "**: can you check?\n" + "\n".join(f"→ {one}" for one in open_now))
 
 
 async def _sqc_days(bot, responder: Responder, said: str) -> None:

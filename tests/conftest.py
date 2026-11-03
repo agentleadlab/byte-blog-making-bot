@@ -158,4 +158,7 @@ def _rook_nova_read_afresh(tmp_path, monkeypatch):
     from wilbyte import paycards
 
     monkeypatch.setattr(paycards, "PATH", tmp_path / "payment-cards.json")
+    from wilbyte import ledger
+
+    monkeypatch.setattr(ledger, "SAID_PATH", tmp_path / "ledger-said.json")
     monkeypatch.setattr(client, "_CARD_LOCKS", {})

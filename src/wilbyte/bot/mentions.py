@@ -1048,6 +1048,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # A person's name - a word or four, not "it" or "the board".
     if who and len(who.split()) <= 4 and not re.match(r"(?:the|it|this|that|my|our|everyone|everybody)\b", who, re.IGNORECASE):
         return MentionRequest(action="hubcheck", brief=who)
+    # "by the end of the day, hey, this is all the person you didn't set up":
+    # the day's list of payments, asked for.
+    if re.match(r"\s*(?:payments?\s+(?:list|report)|eod|end\s+of\s+(?:the\s+)?day|"
+                r"who(?:'s|\s+is)?\s+not\s+set\s*up|morning\s+(?:list|report))\b", text, re.IGNORECASE):
+        return MentionRequest(action="ledger", brief=text)
     # "i want ryte qc-ing all of rook channel for me".
     if re.match(r"\s*(?:setup|rook|payments?)\s+qc\b|qc\s+(?:the\s+)?(?:setups?|rook|payments?)\b", text,
                 re.IGNORECASE):
@@ -1559,6 +1564,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > New ones are checked by themselves and only the short ones said
 > @RYTE **update** — take a newly pushed version now instead of at the next
 > check (every 2 minutes). Never with a run open
+> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.
 > @RYTE **setup qc** (or **setup qc 3 days**) — every payment's setup by Rook and Nova held up against the payment, the hub and the sheet, with a button to ask them about what doesn't match. I do each one by myself once they've answered, and say it 15 minutes after a payment nobody has picked up.
 > @RYTE **aged qc** (or **aged qc 3 days**) — every aged payment's pull by Nova checked against what was paid for: counts, states, the email it's shared with and the sheet itself. I check each one by myself when Nova says it's done.
 > @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.
