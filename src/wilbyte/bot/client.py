@@ -11754,7 +11754,7 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
 #: Rook or Nova saying they can't set it up: the payment hammered for its
 #: Trello card straight away - "this should auto hammer then right? so we
 #: can set it up trello way" (Charles Sellers).
-SETUP_QC_AUTO_HAMMER = True
+SETUP_QC_AUTO_HAMMER = False
 
 
 async def _sqc_auto_hammer(bot, key: str, post, result, held: dict) -> None:

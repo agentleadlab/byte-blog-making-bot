@@ -670,6 +670,11 @@ def test_cant_set_it_up_is_hammered_once(monkeypatch):
     monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
     monkeypatch.setattr(client, "_card_ping", lambda bot: "")
     now = datetime.now(timezone.utc).isoformat()
+    # Off: "okay fine turn it off" - nothing hammered, the button's there.
+    rookqc.remember("899", posted=now, name="Somebody Else")
+    asyncio.run(client._sqc_run(SimpleNamespace(), "899", due=True))
+    assert hammered == [] and "Hammered" not in result["one"]
+    monkeypatch.setattr(client, "SETUP_QC_AUTO_HAMMER", True)
     rookqc.remember("900", posted=now, name="Jonathan Carter")
     rookqc.remember("901", posted=now, name="Jonathan Carter")
     asyncio.run(client._sqc_run(SimpleNamespace(), "900", due=True))
@@ -686,6 +691,7 @@ def test_a_cant_flagged_before_the_hammer_is_checked_again_on_starting(monkeypat
     from wilbyte.bot import client
 
     later = []
+    monkeypatch.setattr(client, "SETUP_QC_AUTO_HAMMER", True)
     monkeypatch.setattr(client, "_sqc_later", lambda bot, key, wait, due=False: later.append((key, due)))
     now = datetime.now(timezone.utc)
     rookqc.remember("900", posted=(now - timedelta(hours=3)).isoformat(), due_done=True, cant="Nova: couldn't set")
