@@ -160,6 +160,26 @@ def _heading_row(rows: list) -> int:
     return 0
 
 
+def lead_keys(rows: list) -> set:
+    """Each lead row on a tab, as something that's the same lead on another
+    tab: its phone, else its email, else the row itself."""
+    if not rows:
+        return set()
+    top = _heading_row(rows)
+    keys = set()
+    for row in rows[top + 1:]:
+        filled = [str(cell).strip() for cell in row if str(cell).strip()]
+        if not filled or any(_NOT_A_LEAD.search(str(cell or "")) for cell in row[:3]):
+            continue
+        if len(filled) == 1 and _ORDER_MARK.search(filled[0]):
+            continue
+        phone = next((digits for cell in filled for digits in [re.sub(r"\D", "", cell)]
+                      if 10 <= len(digits) <= 11 and not re.search(r"[A-Za-z@]", cell)), "")
+        email = next((cell.casefold() for cell in filled if re.fullmatch(r"[^@\s]+@[^@\s]+\.\w+", cell)), "")
+        keys.add(phone[-10:] if phone else email or tuple(filled))
+    return keys
+
+
 def count_rows(rows: list, *, tab: str = "") -> Counted:
     """The lead rows on a sheet: everything under the heading row that has
     anything in it - not the test leads it was set up with, not a banner."""

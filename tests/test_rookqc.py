@@ -726,3 +726,22 @@ def test_the_question_says_what_was_paid_for_and_what_to_do():
     assert asked.endswith("Is this order set up on the hub? If not, please set it up - or say so if you can't.")
     fine = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(sheet_url=""))
     assert rookqc.question(fine).endswith("fix what's wrong on the hub, and confirm?")
+
+
+def test_rook_taking_it_to_the_team_is_heard():
+    """Carson Rentz: "Got it — forwarded to Therese + Nicole in Carson Rentz's
+    #rook-qc thread to check the 100 vs 21"."""
+    rook_said = "Got it — forwarded to Therese + Nicole in Jonathan Carter's #rook-qc thread to check the 100 vs 21."
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA), ("Rook", rook_said)], hub=_hub())
+    assert result.with_team and any("took it to the team" in one for one in result.notes)
+    assert not rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub()).with_team
+
+
+def test_leads_split_over_tabs_are_counted_once_each():
+    from wilbyte import delivery
+
+    head = ["Name", "Phone", "State"]
+    one = [head, ["A B", "(555) 555-0101", "TX"], ["C D", "555-555-0102", "TX"]]
+    two = [head, ["E F", "5555550103", "FL"]]
+    summary = [head, ["A B", "5555550101", "TX"], ["C D", "5555550102", "TX"], ["E F", "5555550103", "FL"]]
+    assert len(delivery.lead_keys(one) | delivery.lead_keys(two) | delivery.lead_keys(summary)) == 3

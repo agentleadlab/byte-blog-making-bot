@@ -12284,8 +12284,8 @@ def _sqc_escalation(bot, key: str, result, held: dict) -> str:
     now = datetime.now(timezone.utc)
     asked_at, posted = _moment_of(held.get("asked_at")), _moment_of(held.get("posted"))
     still = [one for one in result.problems if one in (held.get("asked_problems") or [])]
-    if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER):
-        still = []
+    if not (asked_at and now - asked_at >= SETUP_QC_ESCALATE_AFTER) or getattr(result, "with_team", ""):
+        still = []  # not yet - or Rook took it to them already
     team = list(result.todo) + ([f"Rook/Nova can't set it up - {result.cant}"] if result.cant else [])
     if not (posted and now - posted >= SETUP_QC_ESCALATE_AFTER):
         team = []

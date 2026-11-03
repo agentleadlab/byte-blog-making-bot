@@ -85,6 +85,8 @@ class Checked:
     asked: tuple = ()
     #: Rook's setup message the QC was held to, as it was written.
     setup_text: str = ""
+    #: Rook or Nova saying they've taken it to Therese / Nicole themselves.
+    with_team: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -333,6 +335,13 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.problems.append(f"{who} said they can't set it up - “{_quote(said, CANT)}”")
     if not nova:
         result.problems.append("Nova hasn't answered Rook yet - nothing says it's set up")
+    # Rook taking it to the team itself - "forwarded to Therese + Nicole in
+    # Carson Rentz's #rook-qc thread": Ryte doesn't tag them again for it.
+    handed = next((said for who, said in talk if who.casefold().startswith(("rook", "nova"))
+                   and _TO_TEAM.search(said)), "")
+    if handed:
+        result.with_team = " ".join(handed.split())[:200]
+        result.notes.append(f"Rook/Nova took it to the team: “{result.with_team}”")
     asked = open_question(talk)
     if asked:
         # James Wyman's "Can you confirm his exact start time for Wednesday
@@ -671,6 +680,11 @@ def _hub(result: Checked, hub, paid: Order) -> None:
         result.problems.append("The hub shows no states for them")
     if not getattr(hub, "sheet_url", ""):
         result.problems.append("The hub has no sheet for them")
+
+
+#: Rook or Nova taking it to the team: "forwarded to Therese + Nicole".
+_TO_TEAM = re.compile(r"\b(?:forward(?:ed|ing)?|passed|sent|flagged|escalated)\b[^.\n]{0,30}\bto\s+"
+                      r"@?(?:therese|nicole)\b", re.IGNORECASE)
 
 
 #: Nova saying the setup's done: "Done ✅ Jared's start is set for tomorrow".

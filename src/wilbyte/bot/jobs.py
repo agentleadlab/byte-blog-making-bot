@@ -16895,11 +16895,18 @@ def lead_sheet_rows(config: Config, link: str) -> tuple[int | None, str]:
             tabs = client.tabs(sheet_id)
             if not tabs:
                 return None, "no tabs I can read"
-            titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:8]]
+            titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:20]]
             every = client.rows_of(sheet_id, [f"'{title}'!A1:Z3000" for title in titles])
     except Exception as exc:
         return None, f"couldn't open it ({_short(exc, 100)})"
-    return max((delivery.count_rows(rows, tab=title).rows for title, rows in zip(titles, every)), default=0), ""
+    most = max((delivery.count_rows(rows, tab=title).rows for title, rows in zip(titles, every)), default=0)
+    # Leads split over several tabs - a tab a batch, a tab a state - counted
+    # once each across them all: Carson Rentz's "the hub says 100 delivered,
+    # but the sheet has 21". A lead on a summary tab and its own isn't twice.
+    every_lead = set()
+    for rows in every:
+        every_lead |= delivery.lead_keys(rows)
+    return max(most, len(every_lead)), ""
 
 
 #: Update items RYTE has ticked, by item id - never ticked twice, so one a
