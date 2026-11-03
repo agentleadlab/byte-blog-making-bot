@@ -283,3 +283,84 @@ def test_rook_and_nova_have_longer_before_being_asked_about_one_they_havent_touc
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "2", SimpleNamespace(), done_wrong,
                                      {"posted": (now - timedelta(minutes=16)).isoformat()}))
     assert asked == ["1", "2"], "a setup done wrong is asked about straight away"
+
+
+BOARD = """Launching — where everyone stands (Tue Nov 3)
+❌ **Paid, not set up yet** (needs the order added + a launch date)
+ ⬗ Isaiah Wehner  ⬗ Sebastian Salas  ⬗ Charles Sellers
+⏸️ **On the hub, paused — payment to check**
+ ⬗ Marco Ayala
+✍️ **Signed — tap Go live now or Schedule**
+ ⬗ Joevanny Astorga  ⬗ Jake Scott
+🟢 **Live**
+ ⬗ Kyle Cassidy  ⬗ Will Stanger · Text Verified Veteran Plus  (Kyle: contract still unsigned)
+@Nicole @Therese"""
+
+
+def test_novas_launching_board_is_read_and_held_up_against_the_hub():
+    """"we have this new channel as well, ryte needs to qc ... doesnt need to
+    message there"."""
+    board = ledger.board_parse(BOARD)
+    assert board["Isaiah Wehner"] == ledger.NOT_SET_UP and board["Charles Sellers"] == ledger.NOT_SET_UP
+    assert board["Marco Ayala"] == ledger.SET_UP and board["Jake Scott"] == ledger.SET_UP
+    assert board["Kyle Cassidy"] == ledger.LIVE and board["Will Stanger"] == ledger.LIVE
+    assert "Nicole" not in " ".join(board)
+    records = {
+        "1": _kept("Kyle Cassidy", ledger.SET_UP, status="unsigned"),
+        "2": _kept("Marco Ayala", ledger.NOT_SET_UP),
+        "3": _kept("Isaiah Wehner", ledger.LIVE, status="live"),
+        "4": _kept("Will Stanger", ledger.LIVE, status="live"),
+        "5": _kept("Nobody Listed", ledger.NOT_SET_UP, hours=3),
+    }
+    said = "\n".join(ledger.board_vs(records, board, now=NOW))
+    assert "Kyle Cassidy" in said and "board says live - the hub has them unsigned" in said
+    assert "Marco Ayala" in said and "not for this order" in said
+    assert "Isaiah Wehner" in said and "says not set up - the hub has them live" in said
+    assert "Will Stanger" not in said
+    assert "Nobody Listed" in said and "not on Nova's #launching board" in said
+    whole = ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4), board=board)
+    assert "🔀 Nova's #launching board vs the hub" in whole
+
+
+def test_launching_is_read_as_talk_and_never_said_in(monkeypatch):
+    from wilbyte.bot import client
+
+    paid = datetime.now(timezone.utc) - timedelta(hours=1)
+    said_in = []
+
+    class Thread:
+        id, name, created_at = 70, "Will Stanger", paid + timedelta(minutes=2)
+
+        def history(self, **kw):
+            async def gen():
+                yield SimpleNamespace(id=1, created_at=paid + timedelta(minutes=3), content=(
+                    "Will Stanger — VET · 15 leads · Set up on hub ✅"), embeds=[], message_snapshots=[],
+                    reference=None, author=SimpleNamespace(display_name="Nova", name="Nova", bot=True))
+            return gen()
+
+    class Launching:
+        name, threads = "📋│launching", [Thread()]
+
+        def history(self, **kw):
+            async def gen():
+                if False:
+                    yield None
+            return gen()
+
+        def archived_threads(self, **kw):
+            async def gen():
+                if False:
+                    yield None
+            return gen()
+
+        async def send(self, *a, **kw):
+            said_in.append(a)
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: None)
+    monkeypatch.setattr(client, "_launching_channel", lambda bot: Launching())
+    talk = asyncio.run(client._sqc_talk(SimpleNamespace(), "900", {"names": ["Will Stanger"]}, paid))
+    assert talk == [("Nova", "Will Stanger — VET · 15 leads · Set up on hub ✅")]
+    post = SimpleNamespace(jump_url="https://discord.com/x", created_at=paid, content="")
+    result = SimpleNamespace(client="Will Stanger", problems=["Not on the hub"], todo=[], wanted=None)
+    assert asyncio.run(client._sqc_ask(SimpleNamespace(), "900", post, result)) == ""
+    assert said_in == [], "nothing said in #launching"

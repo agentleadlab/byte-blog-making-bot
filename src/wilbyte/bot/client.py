@@ -562,7 +562,8 @@ class WilByteBot(discord.Client):
         if SETUP_QC_ON and _in_setup_guild(self, getattr(message, "guild", None)):
             if getattr(message.author, "bot", False) and _is_payment_post(message):
                 _sqc_watch(self, message)
-            elif _in_rook_nova(message):
+            elif _in_rook_nova(message) or _in_launching(message):
+                # #launching only read: "doesnt need to message there".
                 _sqc_heard(self, message)
             elif _in_payment_thread(message) and message.author.id != getattr(self.user, "id", None):
                 # Luna's "This order has been fulfilled", the team's notes,
@@ -11397,6 +11398,37 @@ def _in_rook_nova(message) -> bool:
     return "rooknova" in _plain_letters(getattr(where, "name", ""))
 
 
+async def _launching_prime(bot, earliest) -> None:
+    """#launching read once for a whole run, like #rook-nova."""
+    channel = _launching_channel(bot)
+    if channel is None or earliest is None:
+        return
+    try:
+        _LAUNCHING.update(since=None, messages=[], threads=None, inside={})
+        await _rn_messages(channel, earliest - timedelta(minutes=5), _LAUNCHING)
+        await _rn_threads(channel, _LAUNCHING)
+    except Exception:
+        log.warning("Couldn't read #launching", exc_info=True)
+
+
+def _in_launching(message) -> bool:
+    channel = getattr(message, "channel", None)
+    where = getattr(channel, "parent", None) or channel
+    return _plain_letters(getattr(where, "name", "")) == "launching"
+
+
+def _launching_channel(bot):
+    """Nova's #launching in the Growth server - read, never said in."""
+    try:
+        guild = _setup_guild(bot, bot.config)
+    except Exception:
+        return None
+    for channel in getattr(guild, "text_channels", None) or []:
+        if _plain_letters(getattr(channel, "name", "")) == "launching":
+            return channel
+    return None
+
+
 def _in_payment_thread(message) -> bool:
     parent = getattr(getattr(message, "channel", None), "parent", None)
     return parent is not None and "newpayment" in _plain_letters(getattr(parent, "name", ""))
@@ -11530,17 +11562,27 @@ def _sqc_heard(bot, message) -> None:
 
 async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
     """[(who, what they said)] in #rook-nova about one payment, oldest first -
-    and whatever answers one of those."""
+    and whatever answers one of those. And in Nova's #launching, read too:
+    "ryte can observe it as well, doesnt need to message there"."""
+    talk = []
+    for channel, store in ((_rook_nova_channel(bot), _RN), (_launching_channel(bot), _LAUNCHING)):
+        if channel is not None:
+            talk += await _talk_in(channel, store, key, held, posted)
+    # Oldest first, the channel and its threads together: which setup was
+    # called off by what came after it - Marcus Uhrich's - turns on it.
+    talk.sort(key=lambda one: one[0] or posted)
+    return [(who, said) for _at, who, said in talk]
+
+
+async def _talk_in(channel, store: dict, key: str, held: dict, posted: datetime) -> list:
+    """[(when, who, what)] about one payment in a channel and its threads."""
     from .. import rookqc
 
-    channel = _rook_nova_channel(bot)
-    if channel is None:
-        return []
     talk, theirs = [], set()
     # Everything since the payment, up to three days on - the first 400
     # messages after a Friday payment didn't reach Thomas Poulin's.
     until = posted + timedelta(days=3)
-    for one in await _rn_messages(channel, posted - timedelta(minutes=5)):
+    for one in await _rn_messages(channel, posted - timedelta(minutes=5), store):
         if one.created_at > until:
             break
         said = _all_of_it(one)
@@ -11555,14 +11597,14 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
                 held = dict(held, names=[one for one in dict.fromkeys([*(held.get("names") or []), setup.name]) if one],
                             emails=[one for one in dict.fromkeys([*(held.get("emails") or []), setup.email]) if one])
     # And their threads off #rook-nova - Rook and Nova answer in those too.
-    threads = await _rn_threads(channel)
+    threads = await _rn_threads(channel, store)
     seen = set()
     for thread in threads:
         made = getattr(thread, "created_at", None)
         if thread.id in seen or (made is not None and not (posted - timedelta(minutes=5) <= made <= until)):
             continue
         seen.add(thread.id)
-        inside = await _rn_inside(thread)
+        inside = await _rn_inside(thread, store)
         if inside is None:
             continue
         name = str(getattr(thread, "name", "") or "")
@@ -11572,10 +11614,7 @@ async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
             talk.append((getattr(one, "created_at", None),
                          str(getattr(one.author, "display_name", "") or getattr(one.author, "name", "") or "?"),
                          _all_of_it(one)))
-    # Oldest first, the channel and its threads together: which setup was
-    # called off by what came after it - Marcus Uhrich's - turns on it.
-    talk.sort(key=lambda one: one[0] or posted)
-    return [(who, said) for _at, who, said in talk]
+    return talk
 
 
 #: #rook-nova read once and shared - "why so long??": "setup qc" read the
@@ -11585,44 +11624,52 @@ _RN: dict = {"at": 0.0, "since": None, "messages": [], "threads": None, "inside"
 RN_FRESH = 120
 
 
-def _rn_fresh() -> bool:
-    return bool(_RN["hold"]) or time.time() - _RN["at"] < RN_FRESH
+#: #launching, Nova's, read the same way - only read, never said in.
+_LAUNCHING: dict = {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {}, "hold": 0}
 
 
-async def _rn_messages(channel, since: datetime) -> list:
+def _rn_fresh(store: dict | None = None) -> bool:
+    store = _RN if store is None else store
+    return bool(_RN["hold"]) or time.time() - store["at"] < RN_FRESH
+
+
+async def _rn_messages(channel, since: datetime, store: dict | None = None) -> list:
     """#rook-nova's messages after `since`, oldest first - read again only
     when what's held is stale or doesn't reach back that far."""
-    if not (_rn_fresh() and _RN["since"] is not None and _RN["since"] <= since):
-        start = min(since, _RN["since"]) if _rn_fresh() and _RN["since"] is not None else since
+    store = _RN if store is None else store
+    if not (_rn_fresh(store) and store["since"] is not None and store["since"] <= since):
+        start = min(since, store["since"]) if _rn_fresh(store) and store["since"] is not None else since
         found = [one async for one in channel.history(after=start, limit=None, oldest_first=True)]
-        if not _rn_fresh():
-            _RN.update(threads=None, inside={})
-        _RN.update(at=time.time(), since=start, messages=found)
-    return [one for one in _RN["messages"] if one.created_at > since]
+        if not _rn_fresh(store):
+            store.update(threads=None, inside={})
+        store.update(at=time.time(), since=start, messages=found)
+    return [one for one in store["messages"] if one.created_at > since]
 
 
-async def _rn_threads(channel) -> list:
-    if _RN["threads"] is None or not _rn_fresh():
+async def _rn_threads(channel, store: dict | None = None) -> list:
+    store = _RN if store is None else store
+    if store["threads"] is None or not _rn_fresh(store):
         threads = list(getattr(channel, "threads", None) or [])
         try:
             async for one in channel.archived_threads(limit=50):
                 threads.append(one)
         except Exception:
             pass
-        if not _rn_fresh():
-            _RN.update(inside={}, at=time.time())
-        _RN["threads"] = threads
-    return _RN["threads"]
+        if not _rn_fresh(store):
+            store.update(inside={}, at=time.time())
+        store["threads"] = threads
+    return store["threads"]
 
 
-async def _rn_inside(thread) -> list | None:
+async def _rn_inside(thread, store: dict | None = None) -> list | None:
     """A #rook-nova thread's messages, read once while fresh. None: unreadable."""
-    if thread.id not in _RN["inside"]:
+    store = _RN if store is None else store
+    if thread.id not in store["inside"]:
         try:
-            _RN["inside"][thread.id] = [one async for one in thread.history(limit=100, oldest_first=True)]
+            store["inside"][thread.id] = [one async for one in thread.history(limit=100, oldest_first=True)]
         except Exception:
             return None
-    return _RN["inside"][thread.id]
+    return store["inside"][thread.id]
 
 
 #: Lead sheets read lately, by link: (when, rows, problem).
@@ -11998,6 +12045,8 @@ async def _ledger_pass(bot) -> int:
             _RN.update(since=None, messages=[], threads=None, inside={})
             await _rn_messages(channel, earliest - timedelta(minutes=5))
             await _rn_threads(channel)
+        await _launching_prime(bot, min((_moment_of(one.get("posted")) or now for one in followed.values()),
+                                        default=None))
         for key, one in followed.items():
             posted = _moment_of(one.get("posted"))
             due = not one.get("due_done") and posted is not None and (now - posted).total_seconds() >= SETUP_QC_WAIT
@@ -12038,8 +12087,39 @@ async def _ledger_text(bot, which: str) -> str:
         elif card.get("standing") == "problem":
             aged.append(f"• **{card.get('title') or '?'}** - the pull doesn't match" + (
                 f" <{card['link']}>" if card.get("link") else ""))
+    try:
+        board = await _launching_board(bot)
+    except Exception:
+        log.warning("Couldn't read Nova's #launching board", exc_info=True)
+        board = {}
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
-                        morning=which == "morning", payra_missing=missing, aged=aged)
+                        morning=which == "morning", payra_missing=missing, aged=aged, board=board)
+
+
+async def _launching_board(bot) -> dict:
+    """Nova's newest "Launching — where everyone stands" in #launching, the
+    last day's: {name: what it says}. Its thread links read as their names."""
+    from .. import ledger
+
+    channel = _launching_channel(bot)
+    if channel is None:
+        return {}
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    async for one in channel.history(limit=80):
+        if one.created_at < since:
+            break
+        text = _all_of_it(one)
+        if not re.search(r"where\s+everyone\s+stands", text, re.IGNORECASE):
+            continue
+
+        def named(found):
+            thread = bot.get_channel(int(found.group(1)))
+            if thread is None and getattr(channel, "guild", None) is not None:
+                thread = getattr(channel.guild, "get_thread", lambda _id: None)(int(found.group(1)))
+            return f" ⬗ {getattr(thread, 'name', '')} " if thread is not None else " "
+
+        return ledger.board_parse(re.sub(r"<#(\d+)>", named, text))
+    return {}
 
 
 async def _ledger_say(bot, which: str, responder: Responder | None = None) -> None:
@@ -12335,6 +12415,7 @@ async def _sqc_days(bot, responder: Responder, said: str) -> None:
             _RN.update(since=None, messages=[], threads=None, inside={})  # read afresh, once
             await _rn_messages(channel, min(post.created_at for post in posts) - timedelta(minutes=5))
             await _rn_threads(channel)
+        await _launching_prime(bot, min((post.created_at for post in posts), default=None))
         standing: dict = {}
         for post in posts:
             if str(post.id) not in rookqc.recalled():

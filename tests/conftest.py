@@ -155,6 +155,8 @@ def _rook_nova_read_afresh(tmp_path, monkeypatch):
     monkeypatch.setattr(client, "_RN", {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {},
                                         "hold": 0})
     monkeypatch.setattr(client, "_SHEETS_READ", {})
+    monkeypatch.setattr(client, "_LAUNCHING", {"at": 0.0, "since": None, "messages": [], "threads": None,
+                                               "inside": {}, "hold": 0})
     from wilbyte import paycards
 
     monkeypatch.setattr(paycards, "PATH", tmp_path / "payment-cards.json")

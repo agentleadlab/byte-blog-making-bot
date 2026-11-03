@@ -149,7 +149,7 @@ def _ready(one: dict) -> str:
 
 
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
-          payra_missing: list | None = None, aged: list | None = None) -> str:
+          payra_missing: list | None = None, aged: list | None = None, board: dict | None = None) -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -189,6 +189,8 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
                                                             for one in waiting]))
     sections.append(("🚚 Overflow not delivered yet", [_line(one, now) for one in by(
         lambda one: one.get("stage") == OVERFLOW)]))
+    if board:
+        sections.append(("🔀 Nova's #launching board vs the hub", board_vs(records, board, now=now)))
     if payra_missing:
         sections.append(("💸 Paid in Payra, never posted in #new-payment", list(payra_missing)))
     if aged:
@@ -272,4 +274,76 @@ def payra_missing(data: dict, posted_text: str, *, day: date) -> list[str]:
             continue
         lines.append(f"• **{one.get('customer') or '?'}** ${one.get('amount')} · {number} · "
                      f"{paid.astimezone(_ny()):%-I:%M %p}")
+    return lines
+
+
+# ------------------------------------------------ Nova's #launching board
+
+#: The board's sections, by the words in their heading: what Nova says of
+#: everyone listed under it.
+_BOARD = (
+    (re.compile(r"\bpaid\b.*\bnot\s+set\s*up\b", re.IGNORECASE), NOT_SET_UP),
+    (re.compile(r"\bon\s+the\s+hub\b|\bpaused\b|\bpayment\s+to\s+check\b", re.IGNORECASE), SET_UP),
+    (re.compile(r"\bsigned\b|\bgo\s+live\b|\bschedule\b", re.IGNORECASE), SET_UP),
+    (re.compile(r"^\W*live\b", re.IGNORECASE), LIVE),
+)
+
+
+def board_parse(text: str) -> dict:
+    """Nova's "Launching — where everyone stands": {name: what it says},
+    from a message whose thread links have been put as names. Each heading
+    line, then the names under it, until the next heading."""
+    found, under = {}, None
+    for line in str(text or "").splitlines():
+        bare = re.sub(r"[*_`]", "", line).strip()
+        if not bare:
+            continue
+        heading = next((kind for pattern, kind in _BOARD if pattern.search(bare.split("(")[0])), None)
+        names_part = bare
+        if heading is not None and not re.search(r"⬗|«", bare):
+            under = heading
+            continue
+        if under is None:
+            continue
+        for name in re.split(r"\s*[⬗«]\s*|\s{2,}|\s*,\s*", names_part):
+            name = re.sub(r"\(.*?\)", "", name).split("·")[0].strip(" -—")
+            if re.fullmatch(r"[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){1,3}", name):
+                found.setdefault(name, under)
+    return found
+
+
+def board_vs(records: dict, board: dict, *, now: datetime) -> list[str]:
+    """Where Nova's board and the hub (by Ryte's list) disagree - Kyle
+    Cassidy "Live" on the board, the hub still waiting on his signature."""
+    from .rookqc import same_person
+
+    lines = []
+    if not board:
+        return lines
+    recent = {key: one for key, one in records.items()
+              if (_moment(one.get("posted")) or datetime.min.replace(tzinfo=timezone.utc)) > now - timedelta(
+                  days=OPEN_DAYS) and one.get("stage") and not one.get("aged")}
+    for name, said in board.items():
+        mine = [one for one in recent.values() if same_person(str(one.get("client") or ""), name)]
+        if not mine:
+            continue
+        one = max(mine, key=lambda item: str(item.get("posted") or ""))
+        stage, status = one.get("stage"), one.get("status") or "?"
+        if said == LIVE and stage not in (LIVE, DELIVERING, FULFILLED):
+            lines.append(_line(one, now, f"Nova's board says live - the hub has them {status}"
+                                         if stage != NOT_SET_UP else "Nova's board says live - not on the hub "
+                                                                     "for this order"))
+        elif said == NOT_SET_UP and stage in (SET_UP, LIVE, DELIVERING):
+            lines.append(_line(one, now, f"Nova's board says not set up - the hub has them {status}"))
+        elif said == SET_UP and stage == NOT_SET_UP:
+            lines.append(_line(one, now, "Nova's board has them on the hub - not for this order"))
+    listed = list(board)
+    for one in recent.values():
+        if one.get("stage") != NOT_SET_UP:
+            continue
+        posted = _moment(one.get("posted"))
+        if posted is None or now - posted < timedelta(hours=1):
+            continue
+        if not any(same_person(str(one.get("client") or ""), name) for name in listed):
+            lines.append(_line(one, now, "paid, not set up, and not on Nova's #launching board"))
     return lines
