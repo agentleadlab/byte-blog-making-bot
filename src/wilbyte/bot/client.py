@@ -1786,6 +1786,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _sqc_days(bot, responder, request.brief or "")
                 return
 
+            if request.action == "sqcwhy":
+                await _sqc_why(bot, responder, request.brief or "")
+                return
+
             if request.action == "todays":
                 # "how can i make sure that people are setup for today's payment"
                 await _todays_say(bot, responder)
@@ -12333,6 +12337,67 @@ async def _launching_board(bot) -> tuple[dict, bool]:
         board = ledger.board_parse(re.sub(r"<#(\d+)>", lambda hit: f" ⬗ {names.get(hit.group(1), '')} ", text))
         return board, missed == 0 and bool(board)
     return {}, False
+
+
+async def _sqc_why(bot, responder: Responder, who: str) -> None:
+    """"@Ryte why <name>" - what Ryte read for one person's payments, so a
+    wrong card is fixed from what it saw, not guessed at: the payment, the
+    names looked for, every hub row by those names and by the last name, the
+    talk it took in, the setup it used, and where it came out."""
+    from .. import hub as hubmod, ledger, rookqc
+
+    who = " ".join(who.split()).strip(" ?")
+    if not who:
+        await responder.send("Who? `@Ryte why <their name>`")
+        return
+    keys = [key for key, one in sorted(rookqc.recalled().items(), key=lambda item: str(item[1].get("posted") or ""),
+                                       reverse=True)
+            if rookqc.same_person_strict(str(one.get("client") or one.get("name") or ""), who)
+            or who.casefold() in str(one.get("client") or one.get("name") or "").casefold()][:3]
+    if not keys:
+        await responder.send(f"No payment I'm following for **{who}** in the last three weeks.")
+        return
+    try:
+        everybody = await _sqc_hub(bot)
+    except Exception as exc:
+        everybody = []
+        await responder.send(f"⚠ Couldn't read the hub: {_readable(exc)}")
+    last = (rookqc._name_words(who) or [""])[-1]
+    for key in keys:
+        held = rookqc.recalled().get(key) or {}
+        try:
+            post, result = await _sqc_check(bot, key)
+        except Exception as exc:
+            await responder.send(f"⚠ Couldn't check {key}: {_readable(exc)}")
+            continue
+        names = list(dict.fromkeys([*(held.get("names") or []), held.get("name") or "", result.client or ""]))
+        lines = [f"🔍 **{result.client or who}** - ${(_AMOUNT.search(_all_of_it(post)) or [None, '?'])[1]} "
+                 f"<{post.jump_url}>",
+                 f"• Paid as: {getattr(result.paid, 'name', '') or '?'} · "
+                 f"{getattr(result.paid, 'count', None) or '?'} {getattr(result.paid, 'lead_type', '') or '?'}",
+                 f"• Names I look for on the hub: {', '.join(one for one in names if one) or '?'}"]
+        found = {id(one): one for name in names if name for one in rookqc.hub_named(everybody, name)}
+        same_last = [one for one in everybody if last and (rookqc._name_words(getattr(one, "name", "")) or [""])[-1]
+                     == last and id(one) not in found]
+        for label, rows in (("Hub rows by those names", list(found.values())),
+                            (f"Other hub rows with the last name {last.title()}", same_last[:8])):
+            lines.append(f"• {label}: " + ("none" if not rows else ""))
+            for one in rows[:8]:
+                start = getattr(one, "start_date", None)
+                lines.append(f"  - {getattr(one, 'name', '?')} (row {getattr(one, 'id', '?')}) · "
+                             f"{getattr(one, 'lead_type', '') or '?'} · {getattr(one, 'status', '') or '?'} · "
+                             f"{getattr(one, 'delivered', None) or 0} of {getattr(one, 'ordered', '?')} · "
+                             f"start {start or '?'}")
+        hub_row = getattr(result, "hub", None)
+        lines.append(f"• The row I took as this order: "
+                     + (f"{getattr(hub_row, 'name', '?')} (row {getattr(hub_row, 'id', '?')})" if hub_row else "none"))
+        lines.append(f"• Rook's setup I used: " + (f"{rookqc.rook_setup(result.setup_text).name}"
+                                                    if result.setup_text else "none"))
+        lines.append(f"• Aged pull seen: {'yes' if getattr(result, 'aged_pull', False) else 'no'} · "
+                     f"where it stands: {ledger.stage(result)['stage']}")
+        lines.append("• Problems: " + ("; ".join(result.problems) if result.problems else "none"))
+        for chunk in _chunks("\n".join(lines)):
+            await responder.send(chunk)
 
 
 async def _todays_say(bot, responder: Responder) -> None:

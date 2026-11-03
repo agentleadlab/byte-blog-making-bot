@@ -515,7 +515,20 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.notes.append("The payment doesn't say everything (a Zelle post, or no invoice notes) - the hub is "
                             "checked against Rook's setup where it doesn't")
     recent = _paid_for_recent(hub_rows or [], wanted, paid_at) if hub is None and hub_elsewhere else None
-    if recent is not None:
+    # Nova saying it's set up, or pulled, while Ryte finds no row for it: not
+    # "not on the hub" - "some of thse are live, and some of these are aged
+    # and delivered". Ryte can't find what Nova did, and says so.
+    nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and (
+        _SET_UP.search(said) or re.search(r"\bset\s+(?:\w+\s+){0,3}up\b[^.\n]{0,20}✅|✅[^.\n]{0,60}\bset\s+up\b|"
+                                          r"\bpulled\b|\border\s+is\s+(?:done|finished)\b", said, re.IGNORECASE))
+        and not CANT.search(said)), "") if hub is None else ""
+    if nova_did:
+        looked = ", ".join(dict.fromkeys(f"{getattr(one, 'name', '?')} ({getattr(one, 'status', '') or '?'})"
+                                         for one in hub_rows or [])) or "nobody by this name"
+        result.problems.append(f"Nova says it's done (“{' '.join(nova_did.split())[:140]}”), but I can't find it on "
+                               f"the hub - I looked for {result.client or paid.name or '?'} and found {looked}. "
+                               "What name is it under?")
+    elif recent is not None:
         # Brandon Nguyen's $400 Zelle, no product on it, the day after his
         # Vets order started - read as a new order nobody set up, when it
         # paid for that one, delivered. Which it is isn't guessed.

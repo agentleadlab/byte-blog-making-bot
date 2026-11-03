@@ -1048,6 +1048,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # A person's name - a word or four, not "it" or "the board".
     if who and len(who.split()) <= 4 and not re.match(r"(?:the|it|this|that|my|our|everyone|everybody)\b", who, re.IGNORECASE):
         return MentionRequest(action="hubcheck", brief=who)
+    # "some of thse are live, and some of these are aged and delivered" -
+    # what Ryte read for one person, to fix from what it saw.
+    why = re.match(r"\s*(?:why|qc\s+why|explain)\s+(?!not\b)(.{2,60})$", text, re.IGNORECASE)
+    if why:
+        return MentionRequest(action="sqcwhy", brief=why.group(1))
     # "how can i make sure that people are setup for today's payment".
     if re.match(r"\s*(?:today'?s\s+payments?|payments?\s+today|who\s+paid\s+today|today)\s*\??\s*$", text,
                 re.IGNORECASE):
@@ -1568,6 +1573,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > New ones are checked by themselves and only the short ones said
 > @RYTE **update** — take a newly pushed version now instead of at the next
 > check (every 2 minutes). Never with a run open
+> @RYTE **why <name>** — what I read for their payment: the names I looked for on the hub, every hub row by those names and their last name, the row and the setup I used, and the problems - so a wrong card is fixed from what I saw.
 > @RYTE **today's payments** — every payment of today, a line each: not on the hub yet, can't set up, set up but not as paid for, waiting on Rook & Nova, waiting on a signature, starting later, live - and today's aged pulls.
 > @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.
 > @RYTE **setup qc** (or **setup qc 3 days**) — every payment's setup by Rook and Nova held up against the payment, the hub and the sheet, with a button to ask them about what doesn't match. I do each one by myself once they've answered, and say it 15 minutes after a payment nobody has picked up.

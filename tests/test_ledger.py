@@ -735,3 +735,44 @@ def test_todays_payments_a_line_each():
     assert "Kailey Hull" in said and "✍️ Set up - waiting on their signature** (1)" in said
     assert "⚠️ Set up, but not as paid for** (1)" in said and "has MT" in said
     assert "⏳ Just paid" in said and "Yesterday Person" not in said and "Roman Edwards" in said
+
+
+def test_why_shows_what_ryte_read(monkeypatch):
+    from wilbyte.bot import client, mentions
+
+    assert mentions.parse("why Kane Curtis").action == "sqcwhy"
+    assert mentions.parse("why Kane Curtis").brief == "Kane Curtis"
+    said = []
+
+    class Responder:
+        async def send(self, text=None, **kw):
+            said.append(text)
+
+    rows = [_row(name="Kailee Hull", id=11, lead_type="Mortgage Protection", status="live"),
+            _row(name="Kailey Hull", id=12, status="done", delivered=20, ordered=20)]
+
+    async def hub(bot):
+        return rows
+
+    async def checking(bot, key):
+        post = SimpleNamespace(content="AMOUNT: $600.00", embeds=[], message_snapshots=[], jump_url="https://x/900")
+        return post, rookqc.Checked(client="Kailey Hull", problems=["Not on the hub"],
+                                    paid=rookqc.Order(name="Kailey Hull", count=20, lead_type="Mortgage Protection"))
+
+    monkeypatch.setattr(client, "_sqc_hub", hub)
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    rookqc.remember("900", name="Kailey Hull", posted=NOW.isoformat())
+    asyncio.run(client._sqc_why(SimpleNamespace(), Responder(), "Kailey Hull"))
+    text = "\n".join(said)
+    assert "Kailey Hull (row 12)" in text and "Kailee Hull (row 11)" in text, text
+    assert "Problems: Not on the hub" in text
+
+
+def test_nova_saying_done_isnt_said_as_not_on_the_hub():
+    """"some of thse are live, and some of these are aged and delivered"."""
+    from tests.test_rookqc import PAYRA, ROOK
+
+    result = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", "Got it ✅ I set up Jonathan's order: 40 FEX in TX FL GA")],
+                          hub=None, hub_rows=[])
+    said = " ".join(result.problems)
+    assert "Nova says it's done" in said and "What name is it under?" in said and "Not on the hub" not in said
