@@ -776,3 +776,16 @@ def test_nova_saying_done_isnt_said_as_not_on_the_hub():
                           hub=None, hub_rows=[])
     said = " ".join(result.problems)
     assert "Nova says it's done" in said and "What name is it under?" in said and "Not on the hub" not in said
+
+
+def test_why_takes_a_list_of_names():
+    """Franklin's six in one message got "fire them off separately"."""
+    from wilbyte.bot import mentions
+
+    said = ("why Kane Curtis\n<@123> why Kailey Hull\n@Ryte why Jensin Philpott\n@Ryte why Wes Stoecklin\n"
+            "@Ryte why Killtech Financial\n@Ryte why Airr")
+    got = mentions.parse(said)
+    assert got.action == "sqcwhy"
+    assert got.brief.split("\n") == ["Kane Curtis", "Kailey Hull", "Jensin Philpott", "Wes Stoecklin",
+                                     "Killtech Financial", "Airr"], got.brief
+    assert mentions.parse("why Kane Curtis").brief == "Kane Curtis"

@@ -1787,7 +1787,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "sqcwhy":
-                await _sqc_why(bot, responder, request.brief or "")
+                for name in [one for one in (request.brief or "").split("\n") if one.strip()][:10]:
+                    await _sqc_why(bot, responder, name)
                 return
 
             if request.action == "todays":

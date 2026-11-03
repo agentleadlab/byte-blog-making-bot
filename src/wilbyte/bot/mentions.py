@@ -1050,9 +1050,15 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="hubcheck", brief=who)
     # "some of thse are live, and some of these are aged and delivered" -
     # what Ryte read for one person, to fix from what it saw.
-    why = re.match(r"\s*(?:why|qc\s+why|explain)\s+(?!not\b)(.{2,60})$", text, re.IGNORECASE)
+    # One name, or a list of them - each its own line, "@Ryte why ..." again
+    # or not: Franklin's six in one message got "fire them off separately".
+    why = re.match(r"\s*(?:why|qc\s+why|explain)\s+(?!not\b)\S", text, re.IGNORECASE)
     if why:
-        return MentionRequest(action="sqcwhy", brief=why.group(1))
+        names = [" ".join(one.split()).strip(" ?,") for one in re.split(
+            r"(?:<@!?\d+>|@\w+)?\s*\b(?:qc\s+)?(?:why|explain)\b|\n|,|;", text, flags=re.IGNORECASE)]
+        names = [one for one in names if 2 <= len(one) <= 60]
+        if names:
+            return MentionRequest(action="sqcwhy", brief="\n".join(names))
     # "how can i make sure that people are setup for today's payment".
     if re.match(r"\s*(?:today'?s\s+payments?|payments?\s+today|who\s+paid\s+today|today)\s*\??\s*$", text,
                 re.IGNORECASE):
