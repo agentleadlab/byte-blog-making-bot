@@ -11458,7 +11458,16 @@ def _sqc_rearm(bot) -> None:
             posted = datetime.fromisoformat(str(held.get("posted") or ""))
         except ValueError:
             continue
-        if held.get("due_done") or now - posted > timedelta(days=1) or key in _SQC_TASKS:
+        if now - posted > timedelta(days=SETUP_QC_DAYS) or key in _SQC_TASKS:
+            continue
+        if held.get("due_done"):
+            # Flagged before as Rook/Nova can't set it up, and not hammered:
+            # checked again on starting - Charles Sellers' was flagged before
+            # the hammer came in, and nothing new was said to bring it back.
+            if held.get("cant") and not held.get("hammered") and SETUP_QC_AUTO_HAMMER:
+                _sqc_later(bot, key, 30.0)
+            continue
+        if now - posted > timedelta(days=1):
             continue
         _sqc_later(bot, key, max(5.0, SETUP_QC_WAIT - (now - posted).total_seconds()), due=True)
 

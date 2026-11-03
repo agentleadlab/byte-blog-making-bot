@@ -673,3 +673,19 @@ def test_cant_set_it_up_is_hammered_once(monkeypatch):
     asyncio.run(client._sqc_run(SimpleNamespace(), "901", due=True))
     assert hammered == [900], "once, and not for the other part of the same order"
     assert "other payment was hammered" in result["one"]
+
+
+def test_a_cant_flagged_before_the_hammer_is_checked_again_on_starting(monkeypatch):
+    """"why no hammer here?" - Charles Sellers was flagged can't-set-up before
+    the hammer came in, and nothing new was said to bring his QC back."""
+    from wilbyte.bot import client
+
+    later = []
+    monkeypatch.setattr(client, "_sqc_later", lambda bot, key, wait, due=False: later.append((key, due)))
+    now = datetime.now(timezone.utc)
+    rookqc.remember("900", posted=(now - timedelta(hours=3)).isoformat(), due_done=True, cant="Nova: couldn't set")
+    rookqc.remember("901", posted=(now - timedelta(hours=3)).isoformat(), due_done=True, cant="Nova: couldn't set",
+                    hammered=True)
+    rookqc.remember("902", posted=(now - timedelta(hours=3)).isoformat(), due_done=True)
+    client._sqc_rearm(SimpleNamespace())
+    assert later == [("900", False)], later
