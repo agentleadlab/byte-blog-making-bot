@@ -1796,6 +1796,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _todays_say(bot, responder)
                 return
 
+            if request.action == "sqcsaid":
+                kind, name, said = ((request.brief or "") + "\n\n").split("\n", 2)
+                await _sqc_team_said(bot, responder, message, kind, name.strip(), said.strip())
+                return
+
             if request.action == "ledgerclear":
                 await _ledger_clear(bot, responder, message)
                 return
@@ -11790,6 +11795,9 @@ async def _sqc_check(bot, key: str):
             pass
         if notes:
             text += ("\n" if "Notes:" in text else "\nNotes:\n") + "\n".join(notes)
+    if held.get("said_overflow"):
+        # The team said it's overflow - Therese's "Shea ordered overflow".
+        text += ("\n" if "Notes:" in text else "\nNotes:\n") + f"Overflow - {held['said_overflow']}"
     talk = await _sqc_talk(bot, key, held, post.created_at) + in_thread
     # Pulled as aged in #rook-nova - Kane Curtis' $175 Zelle, "Aged FEX 30-90:
     # 50 pulled" in his thread, was asked about as a setup. The aged QC's.
@@ -11902,6 +11910,14 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
             rookqc.remember(key, ok_problems=list(dict.fromkeys([*(held.get("ok_problems") or []), *answered])),
                             ok_by=f"Rook – “{result.rook_ok[:160]}”")
             held = rookqc.recalled().get(key) or held
+    if held.get("said_no_setup") and not result.overflow:
+        # "No setup needed on hub", from the team: nothing to set up, ask or flag.
+        result.no_setup = str(held["said_no_setup"])
+        result.problems[:] = [one for one in result.problems if not one.startswith(_NOT_SET_UP_YET)]
+        result.cant = ""
+        result.notes.insert(0, f"✅ No setup needed - {result.no_setup}")
+    if result.overflow and held.get("said_overflow"):
+        result.cant = ""
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)
@@ -12527,6 +12543,57 @@ async def _todays_say(bot, responder: Responder) -> None:
                     + (f" <{card['link']}>" if card.get("link") else ""))
     for chunk in _chunks(ledger.todays(rookqc.recalled(), now=now, day=today, aged=aged)):
         await responder.send(chunk)
+
+
+async def _sqc_team_said(bot, responder: Responder, message, kind: str, name: str, said: str) -> None:
+    """"Shea ordered overflow. No setup needed on hub" - kept on the payment:
+    overflow, the team's to deliver, or nothing to set up at all. The card
+    it answers, or the one payment followed by that name."""
+    from .. import ledger, paycards, rookqc
+
+    records = rookqc.recalled()
+    key = ""
+    replied = await _replied_to(message) if message is not None else None
+    if replied is not None:
+        key = next((card.split(":", 1)[1] for card, one in paycards.recalled().items()
+                    if card.startswith("setup:") and str(one.get("message_id")) == str(getattr(replied, "id", ""))), "")
+    if not key:
+        if not name or name.casefold() in ("this", "this one", "that", "that one", "it"):
+            await responder.send("Which payment? Reply to its card with it, or say their name.")
+            return
+        open_now = ledger.open_ones(records, now=datetime.now(timezone.utc))
+        words = rookqc._name_words(name)
+        found = [one for one, held in open_now.items() if (
+            rookqc.same_person_strict(name, str(held.get("client") or held.get("name") or "")) if len(words) >= 2
+            else words and any(rookqc._same_first(words[0], theirs[0]) for theirs in
+                               [rookqc._name_words(held.get("client") or held.get("name") or "")] if theirs))]
+        if not found:
+            await responder.send(f"I can't find a payment I'm following for **{name}**. Reply to its card with it.")
+            return
+        if len(found) > 1:
+            listed = "\n".join(f"• **{records[one].get('client') or '?'}** ${records[one].get('amount') or '?'} "
+                                f"<{records[one].get('link') or ''}>" for one in found[:8])
+            await responder.send(f"More than one payment for **{name}** - reply to the right card with it:\n{listed}")
+            return
+        key = found[0]
+    who = _asker(message) or "the team"
+    note = f"{who}: “{' '.join(said.split())[:160]}”"
+    if kind == "overflow":
+        rookqc.remember(key, said_overflow=note)
+    else:
+        rookqc.remember(key, said_no_setup=note)
+    one = rookqc.recalled().get(key) or {}
+    whose = f"**{one.get('client') or one.get('name') or name}**" + (f" ${one['amount']}" if one.get("amount") else "")
+    try:
+        await _sqc_run(bot, key, force=True)
+    except Exception:
+        log.warning("Couldn't check %s again after it was said", key, exc_info=True)
+    if kind == "overflow":
+        await responder.send(f"🚚 Got it - {whose} is overflow: the team delivers it, nothing on the hub. Off "
+                             "\"Paid, not set up\"; on \"Overflow not delivered yet\" until Luna's \"This order has been "
+                             "fulfilled\".")
+    else:
+        await responder.send(f"✅ Got it - {whose} needs no setup. Off the list, and not asked about again.")
 
 
 async def _ledger_clear(bot, responder: Responder, message) -> None:

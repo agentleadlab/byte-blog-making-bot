@@ -79,6 +79,8 @@ class Checked:
     aged_pull: bool = False
     #: An overflow order - the team delivers it; nothing to ask Rook and Nova.
     overflow: bool = False
+    #: Somebody on the team said it needs no setup: who, and what they said.
+    no_setup: str = ""
     #: Problems flagged by an earlier QC and still there: {problem: when}.
     still: dict = field(default_factory=dict)
     #: Problems an earlier QC flagged that are gone now.

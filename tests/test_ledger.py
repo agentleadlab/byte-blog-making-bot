@@ -1003,3 +1003,44 @@ def test_clearing_by_a_time_holds_the_other_lines_to_it_too():
     cut = ledger._snowflake_time("1567000000000000000")
     _keys, lines = ledger.clear({}, now=NOW, by="Franklin", today=TODAY, through=TODAY, before=cut, lines=[old, new])
     assert lines == [old]
+
+
+def test_the_team_saying_its_overflow_is_kept(monkeypatch):
+    """Therese: "@Ryte Shea ordered overflow. No setup needed on hub" - and
+    Ryte answered "Every agent going live today or tomorrow is set up"."""
+    from wilbyte.bot import client, mentions
+
+    asked = mentions.parse("<@1> Shea ordered overflow. No setup needed on hub")
+    assert asked.action == "sqcsaid"
+    kind, name, said = asked.brief.split("\n", 2)
+    assert (kind, name) == ("overflow", "Shea")
+    now = datetime.now(timezone.utc)
+    rookqc.remember("950", **dict(_kept("Shea Scotty", ledger.CANT, hours=2, problems=["Not on the hub"]),
+                                  posted=(now - timedelta(hours=2)).isoformat()))
+    rookqc.remember("951", **dict(_kept("Kyle Moffitt", ledger.NOT_SET_UP, hours=2, problems=["Not on the hub"]),
+                                  posted=(now - timedelta(hours=2)).isoformat()))
+    sent, ran = [], []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def replied(_message):
+        return None
+
+    async def run(bot, key, **kw):
+        ran.append(key)
+        return ""
+
+    monkeypatch.setattr(client, "_replied_to", replied)
+    monkeypatch.setattr(client, "_sqc_run", run)
+    asking = SimpleNamespace(author=SimpleNamespace(display_name="Therese", name="therese"))
+    asyncio.run(client._sqc_team_said(SimpleNamespace(), Said(), asking, kind, name, said))
+    assert ran == ["950"] and "Shea Scotty" in sent[0] and "overflow" in sent[0]
+    assert rookqc.recalled()["950"]["said_overflow"].startswith("Therese:")
+    # Read as overflow from then on.
+    result = rookqc.check("AMOUNT: $279.45\nNAME: Shea Scotty\nNotes:\nOverflow - Therese: “Shea ordered overflow”", [])
+    assert result.overflow and ledger.stage(result)["stage"] in (ledger.OVERFLOW, ledger.OVERFLOW_DONE)
+    # Nobody by that name: said, not guessed.
+    asyncio.run(client._sqc_team_said(SimpleNamespace(), Said(), asking, "overflow", "Zed", "Zed is overflow"))
+    assert "can't find" in sent[-1]

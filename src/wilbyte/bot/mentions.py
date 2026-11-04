@@ -907,6 +907,17 @@ LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^
                           r"|\bunclear\s*$", re.IGNORECASE)
 
 
+#: Somebody telling Ryte a payment needs no setup: "Shea ordered overflow",
+#: "Shea's is overflow", "Shea Scotty - no setup needed on hub", "this one's
+#: overflow" (a reply to the card).
+TEAM_SAYS = re.compile(
+    r"^\s*(?P<name>(?:this(?:\s+one)?|that(?:\s+one)?|it)|(?!(?:ordered|bought|paid|got|is|was|wants?|went|no|doesn|does|an?|the|over)\b)[A-Z][\w’.-]*?(?:\s+(?!(?:ordered|bought|paid|got|is|was|wants?|went|no|doesn|does|an?|the|over)\b)[A-Z][\w’.-]*?){0,3}?)(?:['’]s)?\s*"
+    r"(?:(?:ordered|bought|paid\s+for|got|is|was|wants?|went)\s+(?:an?\s+|the\s+)?over\s*flow\b"
+    r"|(?:is\s+|was\s+)?(?:an?\s+)?over\s*flow(?:\s+order)?\b"
+    r"|[-:,.]?\s*no\s+set\s*-?\s*up\s+(?:is\s+)?needed\b|\s+(?:doesn['’]?t|does\s+not)\s+need\s+(?:a\s+)?set\s*-?\s*up\b)",
+    re.IGNORECASE)
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -930,6 +941,17 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # "these are all good to go so clear them out" - the day's payments list
     # cleared, not a clear-out: "clear" is the agent clear-out's word, and
     # that read "them out" as somebody to close down.
+    # "Shea ordered overflow. No setup needed on hub" - the team telling Ryte
+    # about a payment, answered with "every agent going live today is set up".
+    said = TEAM_SAYS.match(text)
+    # Said of a payment - "Shea ordered / is / 's overflow" - not "trucker
+    # overflow leads are low".
+    if said and not re.search(r"(?:\b(?:ordered|bought|paid\s+for|got|is|was|wants?|went)|['’]s)\s+(?:an?\s+|the\s+)?"
+                              r"over\s*flow\b|set\s*-?\s*up", said.group(0), re.IGNORECASE):
+        said = None
+    if said:
+        kind = "overflow" if re.search(r"over\s*flow", text, re.IGNORECASE) else "nosetup"
+        return MentionRequest(action="sqcsaid", brief=f"{kind}\n{(said.group('name') or '').strip()}\n{text}")
     if LIST_UNCLEAR.search(text):
         return MentionRequest(action="ledgerunclear", brief=text)
     if LIST_CLEAR.search(text):
@@ -1606,7 +1628,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > check (every 2 minutes). Never with a run open
 > @RYTE **why <name>** — what I read for their payment: the names I looked for on the hub, every hub row by those names and their last name, the row and the setup I used, and the problems - so a wrong card is fixed from what I saw.
 > @RYTE **today's payments** — every payment of today, a line each: not on the hub yet, can't set up, set up but not as paid for, waiting on Rook & Nova, waiting on a signature, starting later, live - and today's aged pulls.
-> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.\n> @RYTE **clear them out** (reply to the list) — everything on it is good to go: off the list, not asked or flagged again unless something new goes wrong. **undo clear** puts them back.
+> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.\n> @RYTE **clear them out** (reply to the list) — everything on it is good to go: off the list, not asked or flagged again unless something new goes wrong. **undo clear** puts them back.\n> @RYTE **Shea ordered overflow** (or **Shea - no setup needed on hub**, or either as a reply to the card) — kept on that payment: overflow goes to the team's overflow list; no setup needed takes it off the list, not asked about again.
 > @RYTE **setup qc** (or **setup qc 3 days**) — every payment's setup by Rook and Nova held up against the payment, the hub and the sheet, with a button to ask them about what doesn't match. I do each one by myself once they've answered, and say it 15 minutes after a payment nobody has picked up.
 > @RYTE **aged qc** (or **aged qc 3 days**) — every aged payment's pull by Nova checked against what was paid for: counts, states, the email it's shared with and the sheet itself. I check each one by myself when Nova says it's done.
 > @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.

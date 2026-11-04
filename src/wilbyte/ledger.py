@@ -51,6 +51,10 @@ def stage(result) -> dict:
     hub = getattr(result, "hub", None)
     kept = {"stage": NOT_SET_UP, "hub_id": "", "hub_name": "", "status": "", "start": "", "ordered": None,
             "delivered": None}
+    if getattr(result, "no_setup", ""):
+        # "No setup needed on hub", from the team: done with.
+        kept["stage"] = FULFILLED
+        return kept
     if getattr(result, "overflow", False):
         done = any(one.startswith("Delivered") for one in result.ok) and not any(
             one.startswith("Delivered") for one in result.problems)
