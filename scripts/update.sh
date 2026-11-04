@@ -23,6 +23,12 @@ BLOCKED_FILE="${WILBYTE_STATE_DIR:-state}/update-blocked"
 mkdir -p "$(dirname "$BLOCKED_FILE")" 2>/dev/null
 rm -f "$BLOCKED_FILE"
 
+# iCloud's copies inside .git - "refs/heads/<branch> 2" - from the folder
+# being on a synced Desktop. Git can't read them and every fetch fails ("bad
+# object ... 2"), which kept RYTE on old code for an evening. Git never puts a
+# space in its own names, so these are only ever iCloud's.
+find .git -name "* [2-9]" -delete 2>/dev/null
+
 printf '\033[1mChecking for updates\033[0m (%s)... ' "$branch"
 
 if ! git fetch --quiet origin "$branch" 2>/dev/null; then

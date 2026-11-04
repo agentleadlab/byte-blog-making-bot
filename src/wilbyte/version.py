@@ -49,8 +49,30 @@ def update_waiting() -> str:
     return _git("log", "-1", "--format=%h %s", f"origin/{branch}")
 
 
+def _icloud_copies() -> list:
+    """iCloud's "<name> 2" copies inside .git, removed - the folder on a
+    synced Desktop made "refs/heads/<branch> 2", and every fetch failed on it.
+    Git never puts a space in its own names, so these are only iCloud's."""
+    import re
+    from pathlib import Path
+
+    gone = []
+    root = Path(REPO_ROOT) / ".git"
+    if not root.is_dir():
+        return gone
+    for one in root.rglob("* *"):
+        if re.search(r" [2-9]$", one.name) and one.is_file():
+            try:
+                one.unlink()
+                gone.append(str(one.relative_to(REPO_ROOT)))
+            except OSError:
+                pass
+    return gone
+
+
 def fetch_trouble(branch: str) -> str:
     """"" when `git fetch origin <branch>` works, else what went wrong."""
+    _icloud_copies()
     try:
         result = subprocess.run(["git", "-C", str(REPO_ROOT), "fetch", "--quiet", "origin", branch],
                                 capture_output=True, text=True, timeout=30)

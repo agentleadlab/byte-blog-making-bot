@@ -63,3 +63,16 @@ def test_where_it_goes(tmp_path, monkeypatch):
 def test_backup_now_is_asked_for():
     for typed in ("<@1> backup now", "<@1> back up", "<@1> backup"):
         assert mentions.parse(typed).action == "backupnow"
+
+
+def test_icloud_copies_inside_git_are_removed(tmp_path, monkeypatch):
+    """"fatal: bad object refs/heads/<branch> 2" - every update failed."""
+    from wilbyte import version
+
+    heads = tmp_path / ".git" / "refs" / "heads" / "claude"
+    heads.mkdir(parents=True)
+    (heads / "branch").write_text("abc\n")
+    (heads / "branch 2").write_text("abc\n")
+    monkeypatch.setattr(version, "REPO_ROOT", tmp_path)
+    assert version._icloud_copies() == [".git/refs/heads/claude/branch 2"]
+    assert (heads / "branch").exists() and not (heads / "branch 2").exists()
