@@ -1201,3 +1201,22 @@ def test_okd_states_taken_out_of_a_bigger_problem():
     assert rookqc.ok_left("The hub's states don't match the payment - has CT not ordered", okd) == (
         None, "The hub's states don't match the payment - has CT not ordered")
     assert rookqc.ok_left("Not on the hub", okd) == ("Not on the hub", "")
+
+
+def test_nova_saying_it_isnt_done_isnt_done():
+    from wilbyte import rookqc
+
+    assert rookqc._done_said("@Rook Got it ✅ I set up Kurtis's 25 Text-Verified Veteran leads in his 20 states.")
+    assert rookqc._done_said("Done ✅ Jay's order is live now")
+    assert rookqc._done_said("> 💰 Aged MTG 180+: 100 pulled (Connecticut 8)")
+    assert not rookqc._done_said("@Rook Scout has never had a Widow order, so there's no last count, states or price "
+                                 "to copy. Neither of his two orders is live. Once you send it I'll get him set up.")
+    assert not rookqc._done_said("Is he set up already?")
+
+
+def test_a_business_payer_isnt_any_message_with_the_and_llc():
+    from wilbyte import rookqc
+
+    eissa = rookqc.Order(name="The Eissa Group Llc")
+    assert not rookqc.about("The $800 Zelle from Kunz Marketing, Llc was for Kurtis", eissa)
+    assert rookqc.about("The Eissa Group Llc paid for Mohammad", eissa)

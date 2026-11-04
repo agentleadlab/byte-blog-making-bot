@@ -322,6 +322,12 @@ def about(text: str, order: Order) -> bool:
     if order.phone and len(_digits(order.phone)) == 10 and _digits(order.phone) in re.sub(r"\D", "", said):
         return True
     words = [word for word in re.findall(r"[a-z]+", order.name.casefold()) if len(word) >= 2]
+    if _BUSINESS.search(order.name or ""):
+        # "The Eissa Group Llc" - "the" and "llc" are in any message about
+        # any company: Nova's on Kunz Marketing, Llc was read as theirs.
+        words = [word for word in words if word not in _NOT_NAMES and not _BUSINESS.fullmatch(word)]
+        return bool(words) and all(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", said.casefold())
+                                   for word in words)
     return len(words) >= 2 and all(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", said.casefold())
                                    for word in (words[0], words[-1]))
 
@@ -528,9 +534,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # Only a message about them, by first and last name, that's about nobody
     # else first - Jay Trandahl's card quoted Nova on Jay Rodriguez.
     whom = Order(name=result.client or paid.name or "")
-    nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and (
-        _SET_UP.search(said) or re.search(r"✅[^.\n]{0,60}\bset\s+up\b|\bpulled\b|\border\s+is\s+(?:done|finished)\b",
-                                          said, re.IGNORECASE))
+    nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and _done_said(said)
         and not CANT.search(said) and (about(said, whom) or _first_named(said, whom.name))
         and not _names_someone_else_first(said, whom.name)),
         "") if hub is None and whom.name else ""
@@ -732,6 +736,30 @@ _NOT_NAMES = {"the", "his", "her", "their", "this", "that", "these", "those", "o
               "more", "one", "both", "team", "start", "discount", "card", "sheet", "zelle", "payra", "after",
               "before", "if", "when", "once", "still", "already", "please", "pending", "veteran", "trucker",
               "fresh", "aged", "text", "everything", "someone", "somebody", "nobody", "lead", "can't", "cannot"}
+
+
+_DONE_MORE = r"|✅[^.\n]{0,60}\bset\s+up\b|\bpulled\b|\border\s+is\s+(?:done|finished)\b"
+#: A sentence that isn't saying it's done: "Scout has never had a Widow
+#: order, so there's no last count ... Neither of his two orders is live" -
+#: read as Nova saying it was set up.
+_NOT_DONE = re.compile(r"\bnever\b|\bnot\b|n['’]t\b|\bno\b|\bneither\b|\bonce\b|\bif\b|\buntil\b|\bbefore\b|"
+                       r"\bneeds?\b|\bwaiting\b|\bconfirm\b|\bwill\b|['’]ll\b|\bshould\b|\bwould\b|\?",
+                       re.IGNORECASE)
+
+
+def _done_said(said: str) -> bool:
+    """Nova saying it's set up or pulled - in a sentence that says so, not
+    one that says it isn't, or asks, or waits on something."""
+    text = str(said or "")
+    for found in re.finditer(_SET_UP.pattern + _DONE_MORE, text, re.IGNORECASE):
+        start = max(text.rfind(". ", 0, found.start()), text.rfind("\n", 0, found.start()),
+                    text.rfind("? ", 0, found.start()), text.rfind("! ", 0, found.start())) + 1
+        ends = [one for one in (text.find(". ", found.end()), text.find("\n", found.end()),
+                                text.find("? ", found.end())) if one >= 0]
+        end = min(ends) + 1 if ends else len(text)
+        if not _NOT_DONE.search(text[start:end]):
+            return True
+    return False
 
 
 def _first_named(said: str, client: str) -> bool:
