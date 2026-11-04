@@ -889,6 +889,15 @@ def _ask_first(text: str) -> str:
     return text
 
 
+#: The day's payments list cleared as good to go - "clear them out", "clear
+#: the list", "all good, clear these".
+LIST_CLEAR = re.compile(r"\b(?:clear|clean)\s+(?:(?:them|these|those|em|'em|it|everything|all(?:\s+of\s+(?:them|these))?)"
+                        r"(?:\s+out)?|(?:out\s+)?(?:the|this|that|today'?s)\s+(?:payments?\s+)?list|the\s+eod|"
+                        r"(?:the\s+)?payments?\s+list)\s*[.!]*\s*$", re.IGNORECASE)
+LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^\n]{0,20}\b(?:clear(?:ed|ing)?|list)\b"
+                          r"|\bunclear\s*$", re.IGNORECASE)
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -909,6 +918,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="faithvoice", brief=voice)
     if asks_about_faith(_without_links(text)):
         return MentionRequest(action="askfaith", brief=text)
+    # "these are all good to go so clear them out" - the day's payments list
+    # cleared, not a clear-out: "clear" is the agent clear-out's word, and
+    # that read "them out" as somebody to close down.
+    if LIST_UNCLEAR.search(text):
+        return MentionRequest(action="ledgerunclear", brief=text)
+    if LIST_CLEAR.search(text):
+        return MentionRequest(action="ledgerclear", brief=text)
     # Looking back over the clear-outs already done, and redrawing one
     # client's ring-da-bell picture from their own messages. Before the
     # action words: "clearout" in "check clearouts" is not a clear-out.
@@ -1581,7 +1597,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > check (every 2 minutes). Never with a run open
 > @RYTE **why <name>** — what I read for their payment: the names I looked for on the hub, every hub row by those names and their last name, the row and the setup I used, and the problems - so a wrong card is fixed from what I saw.
 > @RYTE **today's payments** — every payment of today, a line each: not on the hub yet, can't set up, set up but not as paid for, waiting on Rook & Nova, waiting on a signature, starting later, live - and today's aged pulls.
-> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.
+> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.\n> @RYTE **clear them out** (reply to the list) — everything on it is good to go: off the list, not asked or flagged again unless something new goes wrong. **undo clear** puts them back.
 > @RYTE **setup qc** (or **setup qc 3 days**) — every payment's setup by Rook and Nova held up against the payment, the hub and the sheet, with a button to ask them about what doesn't match. I do each one by myself once they've answered, and say it 15 minutes after a payment nobody has picked up.
 > @RYTE **aged qc** (or **aged qc 3 days**) — every aged payment's pull by Nova checked against what was paid for: counts, states, the email it's shared with and the sheet itself. I check each one by myself when Nova says it's done.
 > @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.

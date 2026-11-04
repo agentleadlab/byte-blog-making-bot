@@ -127,8 +127,102 @@ def open_ones(records: dict, *, now: datetime) -> dict:
             pass
         if one["stage"] in CLOSED and not _still_wrong(one):
             continue
+        if one.get("cleared_at") and not _new_since_cleared(one):
+            continue
         found[key] = one
     return found
+
+
+#: Lines on the list that aren't a payment of the setup QC's - the aged pulls,
+#: Payra's, Nova's board - cleared by what they say: {line: when}.
+CLEARED_PATH = _state_dir() / "ledger-cleared.json"
+
+
+def _new_since_cleared(one: dict) -> bool:
+    """Something wrong it didn't have when it was cleared - "these are all
+    good to go so clear them out" clears what was there, not what comes."""
+    from .rookqc import among
+
+    before = [*(one.get("cleared_problems") or []), *(one.get("ok_problems") or [])]
+    if any(not among(problem, before) for problem in [*(one.get("open_problems") or []), *(one.get("todo") or [])]):
+        return True
+    return one.get("stage") == SHORT and one.get("cleared_stage") != SHORT
+
+
+def line_key(line: str) -> str:
+    """A list line as itself, whenever it's said: no "paid 4h ago", no links."""
+    said = re.sub(r"<?https?://\S+>?", "", str(line or ""))
+    said = re.sub(r"·?\s*paid\s+[^—-]*?\bago\b", "", said)
+    said = re.sub(r"\b\d+\s*(?:m|h|min|hours?|days?)\s+ago\b", "", said)
+    return " ".join(said.replace("*", "").split()).strip(" •-—").casefold()
+
+
+def cleared() -> dict:
+    try:
+        held = json.loads(CLEARED_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
+def _cleared_save(held: dict) -> None:
+    CLEARED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CLEARED_PATH.write_text(json.dumps(held, indent=1))
+
+
+def clear(records: dict, *, now: datetime, by: str, before: datetime | None = None,
+          lines: list | None = None) -> tuple[list, list]:
+    """Everything on the list cleared as good to go - the payments posted by
+    `before` (the list being answered), and the other `lines` on it. (payment
+    keys, lines) cleared. What's wrong with each is OK'd by whoever cleared it,
+    so nothing more is asked or flagged about it."""
+    from . import rookqc
+
+    when = now.isoformat(timespec="seconds")
+    keys = []
+    for key, one in open_ones(records, now=now).items():
+        posted = _moment(one.get("posted"))
+        if before is not None and posted is not None and posted > before:
+            continue
+        wrong = [*(one.get("open_problems") or []), *(one.get("todo") or [])]
+        rookqc.remember(key, cleared_at=when, cleared_by=by, cleared_problems=wrong,
+                        cleared_stage=one.get("stage"), ok_before=list(one.get("ok_problems") or []),
+                        ok_by_before=one.get("ok_by") or "",
+                        ok_problems=list(dict.fromkeys([*(one.get("ok_problems") or []), *wrong])),
+                        ok_by=f"{by} - cleared from the day's list")
+        keys.append(key)
+    held = cleared()
+    gone = held.setdefault("lines", {})
+    said = []
+    for line in lines or []:
+        if line_key(line) and line_key(line) not in gone:
+            gone[line_key(line)] = when
+            said.append(line)
+    held["last"] = {"at": when, "by": by, "keys": keys, "lines": [line_key(one) for one in said]}
+    _cleared_save(held)
+    return keys, said
+
+
+def unclear(*, now: datetime) -> tuple[list, list]:
+    """The last clear undone. (payment keys, lines) back on the list."""
+    from . import rookqc
+
+    held = cleared()
+    last = held.pop("last", None) or {}
+    records = rookqc.recalled()
+    for key in last.get("keys") or []:
+        one = records.get(key) or {}
+        rookqc.remember(key, cleared_at="", cleared_by="", cleared_problems=[], cleared_stage="",
+                        ok_problems=list(one.get("ok_before") or []), ok_by=one.get("ok_by_before") or "")
+    for line in last.get("lines") or []:
+        (held.get("lines") or {}).pop(line, None)
+    _cleared_save(held)
+    return list(last.get("keys") or []), list(last.get("lines") or [])
+
+
+def _not_cleared(lines) -> list:
+    gone = cleared().get("lines") or {}
+    return [line for line in lines or [] if line_key(line) not in gone]
 
 
 def _still_wrong(one: dict) -> list:
@@ -240,11 +334,11 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         lambda one: one.get("stage") == OVERFLOW)]))
     if board:
         sections.append(("🔀 Nova's #launching board vs the hub",
-                         board_vs(records, board, now=now, complete=board_complete)))
+                         _not_cleared(board_vs(records, board, now=now, complete=board_complete))))
     if payra_missing:
-        sections.append(("💸 Paid in Payra, never posted in #new-payment", list(payra_missing)))
+        sections.append(("💸 Paid in Payra, never posted in #new-payment", _not_cleared(payra_missing)))
     if aged:
-        sections.append(("🧺 Aged", list(aged)))
+        sections.append(("🧺 Aged", _not_cleared(aged)))
     counts = {}
     for one in followed.values():
         counts[one.get("stage")] = counts.get(one.get("stage"), 0) + 1

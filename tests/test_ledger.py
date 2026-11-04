@@ -838,3 +838,72 @@ def test_a_payment_asked_about_today_isnt_asked_again(monkeypatch):
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "2", SimpleNamespace(), handed,
                                      {"posted": (now - timedelta(hours=2)).isoformat()}))
     assert asked == [], "Rook's taken it to the team"
+
+
+def test_clear_them_out_takes_everything_off_until_something_new():
+    """"these are all good to go so clear them out"."""
+    for key, one in {
+        "1": _kept("Keven Mata Hernandez", ledger.NOT_SET_UP, hours=90, problems=["Not on the hub"]),
+        "2": _kept("Laura Vargas", ledger.SET_UP, hours=90, start="2026-11-02", status="scheduled"),
+        "3": _kept("Dillon Willis", ledger.DELIVERING, hours=90,
+                   problems=["The hub states don't match the payment - has NM not ordered"]),
+        "4": _kept("Came In Later", ledger.NOT_SET_UP, hours=1, problems=["Not on the hub"]),
+    }.items():
+        rookqc.remember(key, **one)
+    aged = ["• **Rachna (INV-1)** - the pull doesn't match <https://discord.com/x>"]
+    keys, lines = ledger.clear(rookqc.recalled(), now=NOW, by="Franklin", before=NOW - timedelta(hours=2),
+                               lines=aged)
+    assert sorted(keys) == ["1", "2", "3"] and lines == aged
+    said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1), aged=aged)
+    for name in ("Keven Mata Hernandez", "Laura Vargas", "Dillon Willis", "Rachna"):
+        assert name not in said
+    assert "Came In Later" in said  # paid after the list that was answered
+    # OK'd, so Rook and Nova aren't asked about it again.
+    assert rookqc.among("The hub states don't match the payment - has NM not ordered",
+                        rookqc.recalled()["3"]["ok_problems"])
+    # Something new wrong puts it back.
+    rookqc.remember("3", open_problems=["The hub states don't match the payment - has NM, TX not ordered"])
+    said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1))
+    assert "Dillon Willis" in said
+    # And undo puts the rest back.
+    back, _lines = ledger.unclear(now=NOW)
+    assert sorted(back) == ["1", "2", "3"]
+    said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1), aged=aged)
+    assert "Keven Mata Hernandez" in said and "Laura Vargas" in said and "Rachna" in said
+    assert not rookqc.recalled()["1"].get("ok_problems")
+
+
+def test_clear_them_out_is_not_a_clearout():
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("these are all good to go so clear them out").action == "ledgerclear"
+    assert mentions.parse("<@1> clear the list").action == "ledgerclear"
+    assert mentions.parse("undo clear").action == "ledgerunclear"
+    assert mentions.parse("clear Jay Rodriguez").action == "clearout"
+
+
+def test_clearing_answering_rytes_list(monkeypatch):
+    from wilbyte.bot import client
+
+    rookqc.remember("1", **_kept("Keven Mata Hernandez", ledger.NOT_SET_UP, hours=90, problems=["Not on the hub"]))
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def text(_bot, _which, parts=None):
+        parts["lines"] = []
+        return ""
+
+    listed = SimpleNamespace(created_at=datetime.now(timezone.utc), author=SimpleNamespace(bot=True))
+
+    async def replied(_message):
+        return listed
+
+    monkeypatch.setattr(client, "_ledger_text", text)
+    monkeypatch.setattr(client, "_replied_to", replied)
+    asking = SimpleNamespace(author=SimpleNamespace(display_name="Franklin", name="franklin"))
+    asyncio.run(client._ledger_clear(SimpleNamespace(), Said(), asking))
+    assert "Cleared 1 payment" in sent[0] and "Keven Mata Hernandez" in sent[0]
+    assert rookqc.recalled()["1"]["cleared_by"] == "Franklin"

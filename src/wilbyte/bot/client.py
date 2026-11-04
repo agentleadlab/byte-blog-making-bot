@@ -1796,6 +1796,19 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _todays_say(bot, responder)
                 return
 
+            if request.action == "ledgerclear":
+                await _ledger_clear(bot, responder, message)
+                return
+
+            if request.action == "ledgerunclear":
+                from .. import ledger
+
+                keys, lines = ledger.unclear(now=datetime.now(timezone.utc))
+                await responder.send(f"↩️ Back on the list: {len(keys)} payment(s)"
+                                     + (f" and {len(lines)} other line(s)" if lines else "") + "."
+                                     if keys or lines else "Nothing cleared to undo.")
+                return
+
             if request.action == "ledger":
                 # "@Ryte who's not set up" - the day's list, now.
                 await _ledger_say(bot, "morning" if re.search(r"\bmorning|today'?s\s+launch", request.brief or "",
@@ -12274,8 +12287,9 @@ async def _aged_catch_up(bot) -> int:
     return done
 
 
-async def _ledger_text(bot, which: str) -> str:
-    """The list itself - "morning", or an evening one."""
+async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
+    """The list itself - "morning", or an evening one. `parts`: filled with
+    the lines on it that aren't a payment's - to clear them."""
     from .. import dailyops, ledger, paycards, payraapi, rookqc
 
     today = _today(bot.config)
@@ -12314,6 +12328,9 @@ async def _ledger_text(bot, which: str) -> str:
     except Exception:
         log.warning("Couldn't read Nova's #launching board", exc_info=True)
         board, complete = {}, False
+    if parts is not None:
+        parts["lines"] = [*aged, *missing, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
+                                             if board else [])]
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
                         board_complete=complete)
@@ -12439,6 +12456,43 @@ async def _todays_say(bot, responder: Responder) -> None:
                     + (f" <{card['link']}>" if card.get("link") else ""))
     for chunk in _chunks(ledger.todays(rookqc.recalled(), now=now, day=today, aged=aged)):
         await responder.send(chunk)
+
+
+async def _ledger_clear(bot, responder: Responder, message) -> None:
+    """"these are all good to go so clear them out" - everything on the
+    day's list taken off it as good to go: the payments, OK'd as they are
+    (no more asking Rook and Nova about them), and the aged, Payra and
+    board lines. Answering one of Ryte's lists: only what was paid by the
+    time it was said - not a payment that came in after. Anything new
+    wrong with one of them puts it back."""
+    from .. import ledger, rookqc
+
+    now = datetime.now(timezone.utc)
+    replied = await _replied_to(message) if message is not None else None
+    before = getattr(replied, "created_at", None) if replied is not None and getattr(
+        getattr(replied, "author", None), "bot", False) else None
+    parts: dict = {}
+    try:
+        await _ledger_text(bot, "now", parts)
+    except Exception:
+        log.warning("Couldn't read the list's other lines to clear them", exc_info=True)
+    records = rookqc.recalled()
+    keys, lines = await asyncio.to_thread(partial(ledger.clear, records, now=now, by=_asker(message) or "the team",
+                                                  before=before, lines=parts.get("lines") or []))
+    if not keys and not lines:
+        await responder.send("Nothing on the list to clear.")
+        return
+    names = list(dict.fromkeys(str((records.get(key) or {}).get("client") or (records.get(key) or {}).get("name")
+                                   or "?") for key in keys))
+    said = [f"🧹 Cleared {len(keys)} payment(s)" + (f" and {len(lines)} other line(s)" if lines else "")
+            + " off the list as good to go - not asked about or flagged again unless something new goes wrong."]
+    if names:
+        said.append("-# " + ", ".join(names)[:1500])
+    if before is not None:
+        said.append(f"-# Only what was paid by the list you answered ({before.astimezone(ledger._ny()):%-I:%M %p}) - "
+                    "anything after it stays on.")
+    said.append("-# `@Ryte undo clear` puts them back.")
+    await responder.send("\n".join(said))
 
 
 async def _ledger_say(bot, which: str, responder: Responder | None = None) -> None:
