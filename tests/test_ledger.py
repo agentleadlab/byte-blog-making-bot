@@ -879,6 +879,8 @@ def test_clear_them_out_is_not_a_clearout():
     assert mentions.parse("these are all good to go so clear them out").action == "ledgerclear"
     assert mentions.parse("<@1> clear the list").action == "ledgerclear"
     assert mentions.parse("undo clear").action == "ledgerunclear"
+    # Franklin's first try, with nobody after "clear" - read as a clear-out.
+    assert mentions.parse("<@1> these are all good to go so clear").action == "ledgerclear"
     assert mentions.parse("clear Jay Rodriguez").action == "clearout"
 
 
