@@ -534,7 +534,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # Only a message about them, by first and last name, that's about nobody
     # else first - Jay Trandahl's card quoted Nova on Jay Rodriguez.
     whom = Order(name=result.client or paid.name or "")
-    nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and _done_said(said)
+    nova_did = next((said for who, said in talk if who.casefold().startswith("nova") and _done_said(said, pulls=not paid.aged)
         and not CANT.search(said) and (about(said, whom) or _first_named(said, whom.name))
         and not _names_someone_else_first(said, whom.name)),
         "") if hub is None and whom.name else ""
@@ -747,11 +747,15 @@ _NOT_DONE = re.compile(r"\bnever\b|\bnot\b|n['’]t\b|\bno\b|\bneither\b|\bonce\
                        re.IGNORECASE)
 
 
-def _done_said(said: str) -> bool:
+def _done_said(said: str, *, pulls: bool = True) -> bool:
     """Nova saying it's set up or pulled - in a sentence that says so, not
-    one that says it isn't, or asks, or waits on something."""
+    one that says it isn't, or asks, or waits on something. `pulls`: whether
+    "pulled" counts - not when the invoice has aged lines too: William
+    McClure's "Pulled 100" was his Aged IUL, not his Veteran setup."""
     text = str(said or "")
     for found in re.finditer(_SET_UP.pattern + _DONE_MORE, text, re.IGNORECASE):
+        if not pulls and re.fullmatch(r"pulled", found.group(0), re.IGNORECASE):
+            continue
         start = max(text.rfind(". ", 0, found.start()), text.rfind("\n", 0, found.start()),
                     text.rfind("? ", 0, found.start()), text.rfind("! ", 0, found.start())) + 1
         ends = [one for one in (text.find(". ", found.end()), text.find("\n", found.end()),

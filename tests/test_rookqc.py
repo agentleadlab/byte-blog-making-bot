@@ -1220,3 +1220,11 @@ def test_a_business_payer_isnt_any_message_with_the_and_llc():
     eissa = rookqc.Order(name="The Eissa Group Llc")
     assert not rookqc.about("The $800 Zelle from Kunz Marketing, Llc was for Kurtis", eissa)
     assert rookqc.about("The Eissa Group Llc paid for Mohammad", eissa)
+
+
+def test_an_aged_pull_on_the_same_invoice_isnt_the_setup_done():
+    from wilbyte import rookqc
+
+    said = "Pulled 100 for William McClure — sheet shared with ww@example.com."
+    assert rookqc._done_said(said)
+    assert not rookqc._done_said(said, pulls=False)
