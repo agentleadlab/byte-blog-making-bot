@@ -35,8 +35,11 @@ def update_waiting() -> str:
     if not branch or branch == "HEAD":
         return ""
     # A network round trip, so it gets longer than the local commands do. A
-    # failed fetch just means no news - the next check tries again.
-    _git("fetch", "--quiet", "origin", branch, check=False, timeout=30)
+    # failed fetch is said, not taken for "no news": it read as "Already on
+    # the latest" while RYTE sat seven commits behind.
+    trouble = fetch_trouble(branch)
+    if trouble:
+        raise RuntimeError(trouble)
     behind = _git("rev-list", "--count", f"HEAD..origin/{branch}")
     ahead = _git("rev-list", "--count", f"origin/{branch}..HEAD")
     if not behind.isdigit() or int(behind) == 0:
@@ -44,6 +47,27 @@ def update_waiting() -> str:
     if ahead.isdigit() and int(ahead) > 0:
         return ""
     return _git("log", "-1", "--format=%h %s", f"origin/{branch}")
+
+
+def fetch_trouble(branch: str) -> str:
+    """"" when `git fetch origin <branch>` works, else what went wrong."""
+    try:
+        result = subprocess.run(["git", "-C", str(REPO_ROOT), "fetch", "--quiet", "origin", branch],
+                                capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return "GitHub didn't answer in 30 seconds"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"couldn't run git: {exc}"
+    if result.returncode == 0:
+        return ""
+    said = " ".join((result.stderr or result.stdout or "").split())
+    return f"couldn't fetch from GitHub ({branch}): {said[:300] or f'git exited {result.returncode}'}"
+
+
+def where_from() -> str:
+    """`origin/main` - where updates come from, to say with the version."""
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    return f"origin/{branch}" if branch and branch != "HEAD" else ""
 
 
 def _git(*args: str, check: bool = True, timeout: float = 5) -> str:

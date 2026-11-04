@@ -2390,7 +2390,9 @@ async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
     try:
         waiting = await asyncio.to_thread(version.update_waiting)
     except Exception as exc:
-        await responder.send(f"Couldn't check for an update: {jobs._short(exc, 200)}")
+        await responder.send(f"⚠ Couldn't check for an update: {jobs._short(exc, 400)}\n"
+                             f"-# Still running `{version.code_version()}`. On the Mac: open Terminal, go to RYTE's "
+                             "folder and run `git pull`, then double-click Start RYTE.")
         return
     if not waiting:
         here = version.code_version() or "this version"
@@ -2398,7 +2400,8 @@ async def _update_now(bot: "WilByteBot", responder: Responder) -> None:
             # Railway: a push deploys by itself, there's nothing to pull.
             await responder.send("I'm hosted — every update deploys by itself as soon as it's pushed.")
             return
-        await responder.send(f"Already on the latest — {here}.")
+        await responder.send(f"Already on the latest — {here}"
+                             + (f" (checked {version.where_from()})" if version.where_from() else "") + ".")
         return
     if bot.run_lock.locked() or _clearing_out():
         await responder.send(
