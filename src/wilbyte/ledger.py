@@ -223,12 +223,25 @@ def clear(records: dict, *, now: datetime, by: str, today: date, through: date, 
     gone = held.setdefault("lines", {})
     said = []
     for line in lines or []:
+        # Held to the same time as the payments, by its message's own id -
+        # "clear yesterday" cleared today's aged lines with yesterday's.
+        post = _POST_LINK.search(line)
+        if before is not None and post and _snowflake_time(post.group(1)) > before:
+            continue
         if line_key(line) and line_key(line) not in gone:
             gone[line_key(line)] = when
             said.append(line)
     held["last"] = {"at": when, "by": by, "keys": keys, "lines": [line_key(one) for one in said]}
     _cleared_save(held)
     return keys, said
+
+
+def _snowflake_time(message_id: str) -> datetime:
+    """When a Discord message was sent, from its id."""
+    try:
+        return datetime.fromtimestamp(((int(message_id) >> 22) + 1420070400000) / 1000, tz=timezone.utc)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def unclear(*, now: datetime) -> tuple[list, list]:

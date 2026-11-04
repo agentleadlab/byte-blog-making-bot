@@ -995,3 +995,11 @@ def test_clear_yesterday_leaves_todays_payments(monkeypatch):
     asyncio.run(client._ledger_clear(SimpleNamespace(config=None), Said(), asking))
     assert rookqc.recalled()["1"].get("cleared_at") and not rookqc.recalled()["2"].get("cleared_at")
     assert "Keven Mata Hernandez" in sent[0] and "Paid This Morning" not in sent[0]
+
+
+def test_clearing_by_a_time_holds_the_other_lines_to_it_too():
+    old = "• **Luke borges (INV-21112)** - the pull doesn't match <https://discord.com/channels/1/2/1566863736684281909>"
+    new = "• **Joseph Thomas (INV-21297)** - the pull doesn't match <https://discord.com/channels/1/2/1567292757859639432>"
+    cut = ledger._snowflake_time("1567000000000000000")
+    _keys, lines = ledger.clear({}, now=NOW, by="Franklin", today=TODAY, through=TODAY, before=cut, lines=[old, new])
+    assert lines == [old]

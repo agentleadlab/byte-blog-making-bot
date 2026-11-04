@@ -12347,8 +12347,9 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         log.warning("Couldn't read Nova's #launching board", exc_info=True)
         board, complete = {}, False
     if parts is not None:
-        parts["lines"] = [*aged, *missing, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
-                                             if board else [])]
+        parts["lines"] = [*aged, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
+                                   if board else [])]
+        parts["today"] = list(missing)  # Payra's are today's, by what they are
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
                         board_complete=complete)
@@ -12504,6 +12505,10 @@ async def _ledger_clear(bot, responder: Responder, message) -> None:
         start = datetime.combine(_today(bot.config), datetime.min.time(), tzinfo=ledger._ny())
         before = min(before, start) if before else start
     before = before or ledger.last_listed() or now
+    # Payra's lines are today's payments: not cleared with yesterday's.
+    if before < datetime.combine(_today(bot.config), datetime.min.time(), tzinfo=ledger._ny()) + timedelta(seconds=1):
+        parts.pop("today", None)
+    parts["lines"] = [*(parts.get("lines") or []), *(parts.get("today") or [])]
     from .. import dailyops
 
     today = _today(bot.config)
