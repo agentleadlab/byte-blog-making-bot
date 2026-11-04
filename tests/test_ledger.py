@@ -851,9 +851,12 @@ def test_clear_them_out_takes_everything_off_until_something_new():
     }.items():
         rookqc.remember(key, **one)
     aged = ["• **Rachna (INV-1)** - the pull doesn't match <https://discord.com/x>"]
+    # Not on the list at all: delivering, nothing wrong.
+    rookqc.remember("5", **_kept("Quiet Fine", ledger.DELIVERING, hours=90))
     keys, lines = ledger.clear(rookqc.recalled(), now=NOW, by="Franklin", before=NOW - timedelta(hours=2),
-                               lines=aged)
+                               lines=aged, today=TODAY, through=TODAY + timedelta(days=1))
     assert sorted(keys) == ["1", "2", "3"] and lines == aged
+    assert not rookqc.recalled()["5"].get("cleared_at")  # never on the list, never cleared
     said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1), aged=aged)
     for name in ("Keven Mata Hernandez", "Laura Vargas", "Dillon Willis", "Rachna"):
         assert name not in said
@@ -865,6 +868,10 @@ def test_clear_them_out_takes_everything_off_until_something_new():
     rookqc.remember("3", open_problems=["The hub states don't match the payment - has NM, TX not ordered"])
     said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1))
     assert "Dillon Willis" in said
+    # Moving section puts it back too - Laura Vargas paused.
+    rookqc.remember("2", stage=ledger.PAUSED, delivered=3, ordered=30)
+    said = ledger.daily(rookqc.recalled(), now=NOW, today=TODAY, through=TODAY + timedelta(days=1))
+    assert "Laura Vargas" in said
     # And undo puts the rest back.
     back, _lines = ledger.unclear(now=NOW)
     assert sorted(back) == ["1", "2", "3"]
@@ -906,6 +913,20 @@ def test_clearing_answering_rytes_list(monkeypatch):
     monkeypatch.setattr(client, "_ledger_text", text)
     monkeypatch.setattr(client, "_replied_to", replied)
     asking = SimpleNamespace(author=SimpleNamespace(display_name="Franklin", name="franklin"))
-    asyncio.run(client._ledger_clear(SimpleNamespace(), Said(), asking))
+    monkeypatch.setattr(client, "_today", lambda _config: TODAY)
+    asyncio.run(client._ledger_clear(SimpleNamespace(config=None), Said(), asking))
     assert "Cleared 1 payment" in sent[0] and "Keven Mata Hernandez" in sent[0]
     assert rookqc.recalled()["1"]["cleared_by"] == "Franklin"
+
+
+def test_the_first_clear_of_171_is_undone_once():
+    """Cleared before sections were kept: everything open, OK'd."""
+    rookqc.remember("9", **_kept("Scout Allen", ledger.NOT_SET_UP, hours=1, problems=["Not on the hub"]))
+    held = ledger.cleared()
+    held["last"] = {"at": NOW.isoformat(), "by": "Franklin", "keys": ["9"], "lines": []}
+    ledger._cleared_save(held)
+    rookqc.remember("9", cleared_at=NOW.isoformat(), cleared_by="Franklin", cleared_problems=["Not on the hub"],
+                    ok_before=[], ok_by_before="", ok_problems=["Not on the hub"], ok_by="Franklin - cleared")
+    assert ledger.undo_unsectioned_clear() == 1
+    assert not rookqc.recalled()["9"].get("ok_problems") and not rookqc.recalled()["9"].get("cleared_at")
+    assert ledger.undo_unsectioned_clear() == 0

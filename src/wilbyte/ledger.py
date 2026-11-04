@@ -127,8 +127,6 @@ def open_ones(records: dict, *, now: datetime) -> dict:
             pass
         if one["stage"] in CLOSED and not _still_wrong(one):
             continue
-        if one.get("cleared_at") and not _new_since_cleared(one):
-            continue
         found[key] = one
     return found
 
@@ -144,9 +142,21 @@ def _new_since_cleared(one: dict) -> bool:
     from .rookqc import among
 
     before = [*(one.get("cleared_problems") or []), *(one.get("ok_problems") or [])]
-    if any(not among(problem, before) for problem in [*(one.get("open_problems") or []), *(one.get("todo") or [])]):
-        return True
-    return one.get("stage") == SHORT and one.get("cleared_stage") != SHORT
+    return any(not among(problem, before)
+               for problem in [*(one.get("open_problems") or []), *(one.get("todo") or [])])
+
+
+def _hidden(one: dict, title: str) -> bool:
+    """A payment's line kept off the list: cleared from that same section,
+    and nothing new wrong since. Moved to another section - paused, ended
+    short, should be live and isn't - it's back. Cleared before sections
+    were kept (171 at once, ones never on the list among them): not hidden."""
+    sections = one.get("cleared_sections")
+    return bool(one.get("cleared_at")) and isinstance(sections, list) and title in sections \
+        and not _new_since_cleared(one)
+
+
+_POST_LINK = re.compile(r"/channels/\d+/\d+/(\d+)")
 
 
 def line_key(line: str) -> str:
@@ -170,22 +180,40 @@ def _cleared_save(held: dict) -> None:
     CLEARED_PATH.write_text(json.dumps(held, indent=1))
 
 
-def clear(records: dict, *, now: datetime, by: str, before: datetime | None = None,
+def listed(now: datetime) -> None:
+    """When a list was last said - what "clear them out" clears up to."""
+    held = cleared()
+    held["listed_at"] = now.isoformat(timespec="seconds")
+    _cleared_save(held)
+
+
+def last_listed() -> datetime | None:
+    return _moment(cleared().get("listed_at"))
+
+
+def clear(records: dict, *, now: datetime, by: str, today: date, through: date, before: datetime | None = None,
           lines: list | None = None) -> tuple[list, list]:
-    """Everything on the list cleared as good to go - the payments posted by
-    `before` (the list being answered), and the other `lines` on it. (payment
-    keys, lines) cleared. What's wrong with each is OK'd by whoever cleared it,
-    so nothing more is asked or flagged about it."""
+    """What's on the list cleared as good to go - only the payments on it, by
+    the section each is in, and paid by `before` (the list being answered):
+    "these are all good to go so clear them out" cleared 171, the list had
+    about a hundred, and two that came in after it. What's wrong with each
+    is OK'd by whoever cleared it, so nothing more is asked or flagged about
+    it - until it's wrong in a new way, or moves to another section."""
     from . import rookqc
 
+    placed: dict = {}
+    daily(records, now=now, today=today, through=through, placed=placed)
     when = now.isoformat(timespec="seconds")
     keys = []
-    for key, one in open_ones(records, now=now).items():
+    for key, sections in placed.items():
+        one = records.get(key) or {}
         posted = _moment(one.get("posted"))
         if before is not None and posted is not None and posted > before:
             continue
         wrong = [*(one.get("open_problems") or []), *(one.get("todo") or [])]
         rookqc.remember(key, cleared_at=when, cleared_by=by, cleared_problems=wrong,
+                        cleared_sections=list(dict.fromkeys([*((one.get("cleared_sections") or [])
+                                                               if one.get("cleared_at") else []), *sections])),
                         cleared_stage=one.get("stage"), ok_before=list(one.get("ok_problems") or []),
                         ok_by_before=one.get("ok_by") or "",
                         ok_problems=list(dict.fromkeys([*(one.get("ok_problems") or []), *wrong])),
@@ -212,12 +240,28 @@ def unclear(*, now: datetime) -> tuple[list, list]:
     records = rookqc.recalled()
     for key in last.get("keys") or []:
         one = records.get(key) or {}
-        rookqc.remember(key, cleared_at="", cleared_by="", cleared_problems=[], cleared_stage="",
+        rookqc.remember(key, cleared_at="", cleared_by="", cleared_problems=[], cleared_stage="", cleared_sections=[],
                         ok_problems=list(one.get("ok_before") or []), ok_by=one.get("ok_by_before") or "")
     for line in last.get("lines") or []:
         (held.get("lines") or {}).pop(line, None)
     _cleared_save(held)
     return list(last.get("keys") or []), list(last.get("lines") or [])
+
+
+def undo_unsectioned_clear() -> int:
+    """The first "clear them out" took 171 payments off - ones never on the
+    list, and ones paid after it, OK'd so nobody would be asked about them.
+    Without the sections each was cleared from, that clear is undone once,
+    to be said again against a list. How many came back."""
+    from . import rookqc
+
+    last = cleared().get("last") or {}
+    records = rookqc.recalled()
+    if not any((records.get(key) or {}).get("cleared_at") and "cleared_sections" not in (records.get(key) or {})
+               for key in last.get("keys") or []):
+        return 0
+    back, _lines = unclear(now=datetime.now(timezone.utc))
+    return len(back)
 
 
 def _not_cleared(lines) -> list:
@@ -261,7 +305,7 @@ def _ready(one: dict) -> str:
 
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
           payra_missing: list | None = None, aged: list | None = None, board: dict | None = None,
-          board_complete: bool = True) -> str:
+          board_complete: bool = True, placed: dict | None = None) -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -339,6 +383,24 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         sections.append(("💸 Paid in Payra, never posted in #new-payment", _not_cleared(payra_missing)))
     if aged:
         sections.append(("🧺 Aged", _not_cleared(aged)))
+    # Each payment's line, by its post: where it is, and off the list where
+    # it was cleared from.
+    kept_sections = []
+    by_post = {found.group(1): key for key, one in records.items()
+               for found in [_POST_LINK.search(str(one.get("link") or ""))] if found}
+    for title, items in sections:
+        mine = []
+        for line in items:
+            post = _POST_LINK.search(line)
+            key = by_post.get(post.group(1), "") if post else ""
+            if key:
+                if placed is not None:
+                    placed.setdefault(key, []).append(title)
+                if _hidden(records[key], title):
+                    continue
+            mine.append(line)
+        kept_sections.append((title, mine))
+    sections = kept_sections
     counts = {}
     for one in followed.values():
         counts[one.get("stage")] = counts.get(one.get("stage"), 0) + 1

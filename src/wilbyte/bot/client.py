@@ -12297,6 +12297,12 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
 
     today = _today(bot.config)
     now = datetime.now(timezone.utc)
+    try:
+        back = ledger.undo_unsectioned_clear()
+        if back:
+            log.info("Undid the first clear of the list - %s payments back on it", back)
+    except Exception:
+        log.warning("Couldn't undo the first clear", exc_info=True)
     posted = []
     for day in (today - timedelta(days=1), today):
         posted += [_all_of_it(one) for one in await _payments_on(bot, day)]
@@ -12479,8 +12485,16 @@ async def _ledger_clear(bot, responder: Responder, message) -> None:
         await _ledger_text(bot, "now", parts)
     except Exception:
         log.warning("Couldn't read the list's other lines to clear them", exc_info=True)
+    # Not answering a list: up to the last one said - not a payment that came
+    # in after it (Francisco Javier Durazo Aldecoa and Scout Allen, 7:50, were
+    # cleared with the 7 PM list).
+    before = before or ledger.last_listed() or now
+    from .. import dailyops
+
+    today = _today(bot.config)
     records = rookqc.recalled()
     keys, lines = await asyncio.to_thread(partial(ledger.clear, records, now=now, by=_asker(message) or "the team",
+                                                  today=today, through=dailyops.chased_through(today),
                                                   before=before, lines=parts.get("lines") or []))
     if not keys and not lines:
         await responder.send("Nothing on the list to clear.")
@@ -12491,9 +12505,9 @@ async def _ledger_clear(bot, responder: Responder, message) -> None:
             + " off the list as good to go - not asked about or flagged again unless something new goes wrong."]
     if names:
         said.append("-# " + ", ".join(names)[:1500])
-    if before is not None:
-        said.append(f"-# Only what was paid by the list you answered ({before.astimezone(ledger._ny()):%-I:%M %p}) - "
-                    "anything after it stays on.")
+    said.append(f"-# Only what's on the list and was paid by {before.astimezone(ledger._ny()):%-I:%M %p} - anything "
+                "after it stays on, and a cleared one comes back if it moves (paused, ended short, should be live "
+                "and isn't) or something new goes wrong.")
     said.append("-# `@Ryte undo clear` puts them back.")
     await responder.send("\n".join(said))
 
@@ -12502,6 +12516,9 @@ async def _ledger_say(bot, which: str, responder: Responder | None = None) -> No
     """The list said in #agent-setup - Franklin tagged when there's something
     on it - or as an answer, when somebody asked."""
     text = await _ledger_text(bot, which)
+    from .. import ledger
+
+    ledger.listed(datetime.now(timezone.utc))
     if responder is not None:
         for chunk in _chunks(text):
             await responder.send(chunk)
