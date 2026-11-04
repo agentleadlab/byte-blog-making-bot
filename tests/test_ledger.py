@@ -963,3 +963,35 @@ def test_a_problem_back_after_an_ok_is_not_tagged_again(monkeypatch):
     assert card(["Not on the hub"]) is None, "back after the OK - not tagged again"
     assert card(["Not on the hub", "The hub says 10 delivered, but the sheet has 0 lead row(s)"]) == "<@1>", \
         "something it never had is"
+
+
+def test_clear_yesterday_leaves_todays_payments(monkeypatch):
+    """"i forgot to clear out payments yesterday"."""
+    from wilbyte.bot import client
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> clear yesterday").action == "ledgerclear"
+    assert mentions.parse("clear out payments yesterday").action == "ledgerclear"
+    rookqc.remember("1", **_kept("Keven Mata Hernandez", ledger.NOT_SET_UP, hours=90, problems=["Not on the hub"]))
+    rookqc.remember("2", **_kept("Paid This Morning", ledger.NOT_SET_UP, hours=1, problems=["Not on the hub"]))
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def text(_bot, _which, parts=None):
+        parts["lines"] = []
+        return ""
+
+    async def replied(_message):
+        return None
+
+    monkeypatch.setattr(client, "_ledger_text", text)
+    monkeypatch.setattr(client, "_replied_to", replied)
+    monkeypatch.setattr(client, "_today", lambda _config: TODAY)
+    asking = SimpleNamespace(content="<@1> clear yesterday",
+                             author=SimpleNamespace(display_name="Franklin", name="franklin"))
+    asyncio.run(client._ledger_clear(SimpleNamespace(config=None), Said(), asking))
+    assert rookqc.recalled()["1"].get("cleared_at") and not rookqc.recalled()["2"].get("cleared_at")
+    assert "Keven Mata Hernandez" in sent[0] and "Paid This Morning" not in sent[0]

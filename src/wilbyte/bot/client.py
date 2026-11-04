@@ -12497,6 +12497,12 @@ async def _ledger_clear(bot, responder: Responder, message) -> None:
     # Not answering a list: up to the last one said - not a payment that came
     # in after it (Francisco Javier Durazo Aldecoa and Scout Allen, 7:50, were
     # cleared with the 7 PM list).
+    # "clear yesterday" - what was paid before today began, Eastern: the
+    # lists of a day not cleared that day ("i forgot to clear out payments
+    # yesterday"), not this morning's payments.
+    if re.search(r"\byesterday", str(getattr(message, "content", "") or ""), re.IGNORECASE):
+        start = datetime.combine(_today(bot.config), datetime.min.time(), tzinfo=ledger._ny())
+        before = min(before, start) if before else start
     before = before or ledger.last_listed() or now
     from .. import dailyops
 
