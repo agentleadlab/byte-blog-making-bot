@@ -1265,3 +1265,42 @@ def test_a_payment_made_into_a_trello_card_isnt_asked_which_order(monkeypatch):
     asyncio.run(client._sqc_run(SimpleNamespace(), "902", due=True))
     assert not any(one.startswith("Not sure which order") for one in result.problems)
     assert any("new order on Trello" in one for one in result.notes)
+
+
+def test_a_new_agent_card_made_by_hand_answers_which_order(monkeypatch):
+    """Franklin made "New Agent - Robert Hollis" by hand for the $245; Ryte
+    still asked "Not sure which order this pays for"."""
+    import asyncio
+    import time as _time
+
+    from wilbyte.bot import client
+
+    posted = datetime(2026, 11, 4, 15, 0, tzinfo=timezone.utc)
+    made = format(int(posted.timestamp()) + 600, "x") + "0" * 16
+    monkeypatch.setattr(client, "_BOARD_CARDS", [_time.time(), [
+        {"id": made, "name": "New Agent - Robert Hollis", "shortUrl": "https://trello.com/c/hand1"},
+        {"id": format(int(posted.timestamp()) - 86400 * 20, "x") + "0" * 16, "name": "New Agent - Robert Hollis",
+         "shortUrl": "https://trello.com/c/old1"}]])
+    result = rookqc.Checked(client="Robert Hollis", problems=[
+        "Not sure which order this pays for - the payment doesn't say, and their Text Verified Veteran Plus order "
+        "started Oct 20 (done, 10 of 10 delivered). Payment for that one, or a new order not set up yet?"])
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/903", content="AMOUNT: $245.00", embeds=[],
+                           message_snapshots=[], created_at=posted)
+
+    async def checking(bot, key):
+        return post, result
+
+    async def card(bot, cards, key, post_, result_, held, **kw):
+        return "ok"
+
+    async def channel(bot, kind):
+        return object()
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_sqc_card", card)
+    monkeypatch.setattr(client, "_card_channel", channel)
+    rookqc.remember("903", posted=posted.isoformat())
+    asyncio.run(client._sqc_run(SimpleNamespace(config=SimpleNamespace()), "903", due=True))
+    assert result.trello == "https://trello.com/c/hand1"
+    assert not result.problems
+    assert rookqc.recalled()["903"]["trello"] == "https://trello.com/c/hand1"

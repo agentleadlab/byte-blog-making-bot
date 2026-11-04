@@ -11872,6 +11872,15 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if made.get("status") == "made" and made.get("url"):
         result.trello = str(made["url"])
         result.notes.insert(0, f"🃏 Its Trello card is made: <{result.trello}>")
+    elif result.hub is None and any(one.startswith(_NOT_SET_UP_YET) for one in result.problems):
+        # A New Agent card made by hand since the payment - Franklin's for
+        # Robert Hollis' $245 and William J Seitz's $480, asked "which order"
+        # under them because only Make the card's were known.
+        found = await _sqc_card_by_hand(bot, result.client or held.get("name") or "", held, post)
+        if found:
+            result.trello = found
+            result.notes.insert(0, f"🃏 Its Trello card is made (by hand): <{found}>")
+    if result.trello:
         # Its card made: the team's setting it up as a new order - Robert
         # Hollis' "Not sure which order this pays for" asked again under it.
         for one in [one for one in result.problems if one.startswith("Not sure which order this pays for")]:
@@ -11965,6 +11974,32 @@ def _sqc_twin(key: str, post, result, held: dict) -> None:
                                   " - the same payment posted twice, or paid twice? Check Payra / the bank")
         result.twin = str(one.get("link") or other)
         return
+
+
+#: What a payment nobody's set up yet says.
+_NOT_SET_UP_YET = ("Not sure which order this pays for", "Not on the hub", "Nothing on the hub for this order")
+
+#: The board's cards as last read: [read at, cards]. Read again after this long.
+_BOARD_CARDS: list = [0.0, None]
+BOARD_CARDS_SECONDS = 300
+
+
+async def _sqc_card_by_hand(bot, client: str, held: dict, post) -> str:
+    """A New Agent card for them made since the payment, by anyone: its link,
+    or ""."""
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    if not client or posted is None or len(client.split()) < 2:
+        return ""
+    try:
+        if _BOARD_CARDS[1] is None or time.time() - _BOARD_CARDS[0] > BOARD_CARDS_SECONDS:
+            _BOARD_CARDS[1] = await asyncio.to_thread(jobs.board_cards, bot.config)
+            _BOARD_CARDS[0] = time.time()
+        found = jobs.cards_made_since(bot.config, client, since=posted, kind="fresh", cards=_BOARD_CARDS[1])
+    except Exception:
+        log.warning("Couldn't look on the board for %s's card", client, exc_info=True)
+        return ""
+    card = found[0] if found else None
+    return str(card.get("shortUrl") or card.get("url") or "") if card else ""
 
 
 def _invoice_of(post) -> str:

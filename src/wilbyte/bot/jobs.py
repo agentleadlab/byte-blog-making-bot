@@ -5177,17 +5177,24 @@ def client_card_for(config: Config, text: str, client: str = "") -> dict | None:
     return max(theirs, key=lambda one: one[0])[2]
 
 
-def cards_made_since(config: Config, client: str, *, since, kind: str = "") -> list[dict]:
-    """Every New Agent / Aged Leads card for this client made since then,
-    newest first - "AGED LEAD - Joshua Holt" made by hand counts too."""
-    from .. import agents, clearout
-
+def board_cards(config: Config) -> list[dict]:
+    """Every card on the board, as it is now."""
     board = open_trello(config)
     try:
         lists = board.board_lists(config.secrets.trello_board_id)
-        cards = _cards_of(board, config.secrets.trello_board_id, lists)
+        return _cards_of(board, config.secrets.trello_board_id, lists)
     finally:
         board.close()
+
+
+def cards_made_since(config: Config, client: str, *, since, kind: str = "", cards: list | None = None) -> list[dict]:
+    """Every New Agent / Aged Leads card for this client made since then,
+    newest first - "AGED LEAD - Joshua Holt" made by hand counts too.
+    `cards`: the board's, already read."""
+    from .. import agents, clearout
+
+    if cards is None:
+        cards = board_cards(config)
     stamp = int(since.timestamp())
     found = []
     for card in cards:
