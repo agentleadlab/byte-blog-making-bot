@@ -4898,7 +4898,10 @@ def test_after_hours_a_task_goes_on_tomorrows_card():
 
     today = _date(2026, 10, 28)
     assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=20) == _date(2026, 10, 29)
-    assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=19) is None
+    assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=17) is None
+    # Today's cards go to Quality Check at six: Enmanuel Cabanilla's 6:59 PM
+    # schedule was for 11/04's card, "NOO< IT SHOULD BE ON 11/04".
+    assert dailyops.after_hours_day("add to trello tag nicole", today=today, hour=18) == _date(2026, 10, 29)
     assert dailyops.after_hours_day("add to trello today tag nicole", today=today, hour=21) is None
     assert dailyops.after_hours_day("add to trello on friday ads", today=today, hour=21) is None
 
