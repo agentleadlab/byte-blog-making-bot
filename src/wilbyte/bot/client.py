@@ -12081,11 +12081,20 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
     posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
     settled = (_nova_answered(result) and bool(result.setup_text)) or posted is None or (
         datetime.now(timezone.utc) - posted >= SETUP_QC_ASK_UNTOUCHED)
+    # Ever tagged for, not only while it's on the card: undoing the clear of
+    # 171 brought every OK'd problem back, each read as new, and 26 cards
+    # were sent again with Franklin tagged. Cards from before this was kept:
+    # what was asked about, OK'd or flagged counts.
+    ever = set(held.get("ever_flagged") or [rookqc.problem_key(one) for one in [
+        *(held.get("asked_problems") or []), *(held.get("ok_problems") or []), *(held.get("flagged") or {})]])
+    new = [one for one in new if rookqc.problem_key(one) not in ever]
     if not settled:
         flagged = {one: when for one, when in flagged.items() if one in result.still}
         new = []
+    else:
+        ever |= {rookqc.problem_key(one) for one in result.problems}
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
-                    cant=result.cant, flagged=flagged)
+                    cant=result.cant, flagged=flagged, ever_flagged=sorted(ever))
     await _sqc_tell_fixed(bot, key, result, rookqc.recalled().get(key) or held)
     await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)
     escalate = _sqc_escalation(bot, key, result, rookqc.recalled().get(key) or held)

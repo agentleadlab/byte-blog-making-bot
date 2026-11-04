@@ -930,3 +930,36 @@ def test_the_first_clear_of_171_is_undone_once():
     assert ledger.undo_unsectioned_clear() == 1
     assert not rookqc.recalled()["9"].get("ok_problems") and not rookqc.recalled()["9"].get("cleared_at")
     assert ledger.undo_unsectioned_clear() == 0
+
+
+def test_a_problem_back_after_an_ok_is_not_tagged_again(monkeypatch):
+    """Undoing the clear of 171 sent 26 cards again with Franklin tagged:
+    their problems had been OK'd off the card, came back, and read as new."""
+    from wilbyte.bot import client
+    from tests.test_rookqc import _CardChannel
+
+    cards = _CardChannel()
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(client, "_card_ping", lambda bot: "<@1> ")
+    monkeypatch.setattr(client, "_sqc_auto_ask", lambda *a, **k: asyncio.sleep(0))
+    monkeypatch.setattr(client, "_sqc_escalation", lambda *a, **k: "")
+    post = SimpleNamespace(content="AMOUNT: $125.00", embeds=[], message_snapshots=[], jump_url="https://x/901",
+                           created_at=now - timedelta(days=4))
+    held = {"posted": (now - timedelta(days=4)).isoformat()}
+    rookqc.remember("901", **held)
+
+    def card(problems):
+        one = rookqc.recalled()["901"]
+        before = len(cards.sent)
+        asyncio.run(client._sqc_card(SimpleNamespace(), cards, "901", post,
+                                     rookqc.Checked(client="Keven Mata Hernandez", problems=list(problems)), one,
+                                     due=False, waiting=False))
+        return cards.sent[-1].content if len(cards.sent) > before else None
+
+    assert card(["Not on the hub"]) == "<@1>", "tagged the first time"
+    card([])  # OK'd off the card
+    # A day on, so the once-a-day rule isn't what holds it back.
+    rookqc.remember("901", pinged_at=(now - timedelta(days=2)).isoformat())
+    assert card(["Not on the hub"]) is None, "back after the OK - not tagged again"
+    assert card(["Not on the hub", "The hub says 10 delivered, but the sheet has 0 lead row(s)"]) == "<@1>", \
+        "something it never had is"
