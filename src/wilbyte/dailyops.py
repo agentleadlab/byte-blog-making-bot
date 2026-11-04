@@ -295,10 +295,8 @@ def _weekday_named(said: str, *, today: date) -> date | None:
 
 #: From this hour on the board's clock, a task for "today" is tomorrow's:
 #: "if its after 8 and cards get moved on done, add this type on next day
-#: aswell right? because we cant check the after 8 since we're out". Six,
-#: when today's cards go to Quality Check: Enmanuel Cabanilla's 6:59 PM
-#: schedule, "NOO< IT SHOULD BE ON 11/04".
-AFTER_HOURS = 18
+#: aswell right? because we cant check the after 8 since we're out".
+AFTER_HOURS = 20
 
 
 def after_hours_day(text: str, *, today: date, hour: int) -> date | None:
