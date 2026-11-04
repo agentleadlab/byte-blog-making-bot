@@ -1228,3 +1228,40 @@ def test_an_aged_pull_on_the_same_invoice_isnt_the_setup_done():
     said = "Pulled 100 for William McClure — sheet shared with ww@example.com."
     assert rookqc._done_said(said)
     assert not rookqc._done_said(said, pulls=False)
+
+
+def test_a_payment_made_into_a_trello_card_isnt_asked_which_order(monkeypatch):
+    """Robert Hollis: "Not sure which order this pays for" under "Its Trello
+    card is made" - the team made it a new order."""
+    import asyncio
+
+    from wilbyte import ordercards
+    from wilbyte.bot import client
+
+    result = rookqc.Checked(client="Robert Hollis", problems=[
+        "Not sure which order this pays for - the payment doesn't say, and their Text Verified Veteran Plus order "
+        "started Oct 20 (done, 10 of 10 delivered). Payment for that one, or a new order not set up yet?"])
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/902", content="AMOUNT: $340.00", embeds=[],
+                           message_snapshots=[], created_at=None)
+
+    async def checking(bot, key):
+        return post, result
+
+    seen = []
+
+    async def card(bot, cards, key, post_, result_, held, **kw):
+        seen.append(result_)
+        return "ok"
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(ordercards, "load", lambda: {"902": {"status": "made", "url": "https://trello.com/c/TesCSkss"}})
+    monkeypatch.setattr(client, "_sqc_card", card)
+
+    async def channel(bot, kind):
+        return object()
+
+    monkeypatch.setattr(client, "_card_channel", channel)
+    rookqc.remember("902", posted="2026-11-04T15:00:00+00:00")
+    asyncio.run(client._sqc_run(SimpleNamespace(), "902", due=True))
+    assert not any(one.startswith("Not sure which order") for one in result.problems)
+    assert any("new order on Trello" in one for one in result.notes)

@@ -11872,6 +11872,11 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if made.get("status") == "made" and made.get("url"):
         result.trello = str(made["url"])
         result.notes.insert(0, f"🃏 Its Trello card is made: <{result.trello}>")
+        # Its card made: the team's setting it up as a new order - Robert
+        # Hollis' "Not sure which order this pays for" asked again under it.
+        for one in [one for one in result.problems if one.startswith("Not sure which order this pays for")]:
+            result.problems.remove(one)
+            result.notes.append("Made into a new order on Trello - not the one before it")
     if result.rook_ok:
         # What Ryte asked and Rook said is right as it is: OK'd, in Rook's words.
         answered = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))
