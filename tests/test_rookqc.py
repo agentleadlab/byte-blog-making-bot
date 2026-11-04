@@ -1283,7 +1283,8 @@ def test_a_new_agent_card_made_by_hand_answers_which_order(monkeypatch):
          "shortUrl": "https://trello.com/c/old1"}]])
     result = rookqc.Checked(client="Robert Hollis", problems=[
         "Not sure which order this pays for - the payment doesn't say, and their Text Verified Veteran Plus order "
-        "started Oct 20 (done, 10 of 10 delivered). Payment for that one, or a new order not set up yet?"])
+        "started Oct 20 (done, 10 of 10 delivered). Payment for that one, or a new order not set up yet?",
+        "Not on the hub"])
     post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/903", content="AMOUNT: $245.00", embeds=[],
                            message_snapshots=[], created_at=posted)
 
@@ -1303,4 +1304,8 @@ def test_a_new_agent_card_made_by_hand_answers_which_order(monkeypatch):
     asyncio.run(client._sqc_run(SimpleNamespace(config=SimpleNamespace()), "903", due=True))
     assert result.trello == "https://trello.com/c/hand1"
     assert not result.problems
+    from wilbyte import paycards
+
+    standing, _title, body = paycards.setup_card(result)
+    assert standing == "cant" and "With the team on Trello - not on the hub yet" in body
     assert rookqc.recalled()["903"]["trello"] == "https://trello.com/c/hand1"

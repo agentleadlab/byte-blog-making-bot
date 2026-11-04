@@ -11886,6 +11886,14 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         for one in [one for one in result.problems if one.startswith("Not sure which order this pays for")]:
             result.problems.remove(one)
             result.notes.append("Made into a new order on Trello - not the one before it")
+        if result.hub is None:
+            # Gavelled: the team's to set up from its card, not Rook and Nova's
+            # miss - not asked about in #rook-nova, nor taken to Therese and
+            # Nicole as one. Once it's on the hub, it's held to the payment.
+            for one in [one for one in result.problems if one.startswith(_NOT_SET_UP_YET)]:
+                result.problems.remove(one)
+                result.notes.append("With the team on Trello - not on the hub yet; checked against the payment "
+                                    "once it is")
     if result.rook_ok:
         # What Ryte asked and Rook said is right as it is: OK'd, in Rook's words.
         answered = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))

@@ -74,7 +74,10 @@ def setup_card(result, *, amount: str = "", link: str = "", waiting: bool = Fals
         standing = "todo"
     else:
         standing = "ok"
-    if getattr(result, "overflow", False) and standing in ("todo", "ok"):
+    if getattr(result, "trello", "") and getattr(result, "hub", None) is None and standing in ("todo", "ok"):
+        # Its Trello card made, not on the hub yet: the team's, not set up.
+        standing, first = "cant", "🃏 With the team on Trello - not on the hub yet"
+    elif getattr(result, "overflow", False) and standing in ("todo", "ok"):
         first = "🚚 Overflow - the team delivers it" + (" (delivered)" if standing == "ok" else "")
     else:
         first = STANDING[standing]
