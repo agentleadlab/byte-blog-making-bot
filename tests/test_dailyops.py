@@ -5023,3 +5023,20 @@ def test_updates_the_automation_put_on_a_checklist_are_ticked(monkeypatch, tmp_p
     ticked.clear()
     jobs.tick_update_items(config, day=_date(2026, 11, 2))
     assert ticked == [], "each once - one a person unticks stays unticked"
+
+
+def test_a_schedule_is_not_the_cards_day():
+    """Emanuel Cabanilla's "monday through saturday 8 am to 8 pm" looked for
+    Monday's Ads card and said there wasn't one."""
+    said = "Emanuel Cabanilla (vets) monday through saturday 8 am to 8 pm add to trello and tag Nicole"
+    assert dailyops.comment_target(said, today=FRIDAY)[2] == FRIDAY
+    assert dailyops.day_named("mon-fri 9 to 5", today=FRIDAY) is None
+    assert dailyops.comment_target("schedule monday to friday on ads", today=FRIDAY) == (
+        "schedule monday to friday", "ads", FRIDAY)
+    # A day in the handed-over words is the client's, not the card's.
+    assert dailyops.comment_target("Kyle starts monday, cap at 10", today=FRIDAY)[2] == FRIDAY
+    # The card's own day still reads.
+    assert dailyops.comment_target("cap Kyle at 10 for tomorrow's card", today=FRIDAY)[2] == date(2026, 8, 29)
+    assert dailyops.comment_target("cap Kyle at 10 trello for monday", today=FRIDAY)[2] == date(2026, 8, 31)
+    # After hours, a schedule doesn't keep it off tomorrow's card.
+    assert dailyops.after_hours_day(said, today=FRIDAY, hour=21) == date(2026, 8, 29)

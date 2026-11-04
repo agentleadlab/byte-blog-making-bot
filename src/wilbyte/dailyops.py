@@ -268,6 +268,19 @@ WEEKDAYS = (
 _TOMORROW = re.compile(r"\btomorrow\b", re.IGNORECASE)
 
 
+_WEEKDAY_WORD = (r"(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|"
+                 r"sat(?:urday)?|sun(?:day)?)")
+#: A schedule, not a day: Emanuel Cabanilla's "monday through saturday 8 am to
+#: 8 pm" went looking for Monday's Ads card, 11/09, and said "No Ads card".
+_WEEKDAY_RANGE = re.compile(rf"\b{_WEEKDAY_WORD}\.?\s*(?:through|thru|to|till|until|-|–|—|&|and)\s*"
+                            rf"{_WEEKDAY_WORD}\b\.?", re.IGNORECASE)
+_DAY_WORD = r"(today|tomorrow|yesterday|" + "|".join(WEEKDAYS) + r"|\d{1,2}/\d{1,2}(?:/\d{2,4})?)"
+#: The day of the card itself, when no card's named - "for tomorrow's card",
+#: "trello for monday". Not a day in what's being handed over.
+_CARD_DAY = re.compile(rf"\b{_DAY_WORD}\s+(?:\w+\s+)?(?:card|cards|board|trello)\b"
+                       rf"|\b(?:card|cards|board|trello)\s+(?:for\s+|on\s+)?{_DAY_WORD}\b", re.IGNORECASE)
+
+
 def _weekday_named(said: str, *, today: date) -> date | None:
     """"monday" -> the next Monday on or after today.
 
@@ -289,7 +302,7 @@ AFTER_HOURS = 20
 def after_hours_day(text: str, *, today: date, hour: int) -> date | None:
     """The next day, when it's after hours and the words name no day - else
     None, and the day is the one they said."""
-    if hour < AFTER_HOURS or day_named(text, today=today) is not None or re.search(
+    if hour < AFTER_HOURS or comment_target(text, today=today)[2] != today or re.search(
             r"\btoday(?:['’]s)?\b", str(text or ""), re.IGNORECASE):
         return None
     return today + timedelta(days=1)
@@ -302,7 +315,7 @@ def day_named(text: str, *, today: date) -> date | None:
     morning: the rollover always works from a day to the day after it, so
     running it today would read today's cards and miss the ones held back.
     """
-    said = " ".join((text or "").split())
+    said = _WEEKDAY_RANGE.sub(" ", " ".join((text or "").split()))
     if _YESTERDAY.search(said):
         return today - timedelta(days=1)
     if _TOMORROW.search(said):
@@ -419,7 +432,11 @@ def comment_target(text: str, *, today: date) -> tuple[str, str | None, date]:
                 kinds[0],
                 day_named(tail, today=today) or today,
             )
-    return said, None, day_named(said, today=today) or today
+    # No card named: the day only when it's the card's - "start monday" or
+    # "monday through saturday" is the client's, not the board's.
+    card_day = _CARD_DAY.search(_WEEKDAY_RANGE.sub(" ", said))
+    picked = next((one for one in (card_day.groups() if card_day else ()) if one), "")
+    return said, None, (day_named(picked, today=today) if picked else None) or today
 
 
 # "and tag nicole:", "tag nicole and therese", "please tag nic0l3". The names
