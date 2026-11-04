@@ -1796,6 +1796,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _todays_say(bot, responder)
                 return
 
+            if request.action == "missedsetup":
+                await _missed_say(bot, responder)
+                return
+
             if request.action == "sqcsaid":
                 kind, name, said = ((request.brief or "") + "\n\n").split("\n", 2)
                 await _sqc_team_said(bot, responder, message, kind, name.strip(), said.strip())
@@ -12542,6 +12546,18 @@ async def _todays_say(bot, responder: Responder) -> None:
         aged.append(f"• **{card.get('title') or (pulled or {}).get('client') or '?'}** - {state}"
                     + (f" <{card['link']}>" if card.get("link") else ""))
     for chunk in _chunks(ledger.todays(rookqc.recalled(), now=now, day=today, aged=aged)):
+        await responder.send(chunk)
+
+
+async def _missed_say(bot, responder: Responder) -> None:
+    """"did we miss anything" - paid and not set up, can't set up, and set up
+    wrong; nothing else on the day's list."""
+    from .. import dailyops, ledger, rookqc
+
+    today = _today(bot.config)
+    text = ledger.daily(rookqc.recalled(), now=datetime.now(timezone.utc), today=today,
+                        through=dailyops.chased_through(today), only=ledger.MISSED)
+    for chunk in _chunks(text):
         await responder.send(chunk)
 
 

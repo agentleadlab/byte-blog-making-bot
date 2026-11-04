@@ -1044,3 +1044,25 @@ def test_the_team_saying_its_overflow_is_kept(monkeypatch):
     # Nobody by that name: said, not guessed.
     asyncio.run(client._sqc_team_said(SimpleNamespace(), Said(), asking, "overflow", "Zed", "Zed is overflow"))
     assert "can't find" in sent[-1]
+
+
+def test_did_we_miss_anything_is_only_the_misses():
+    """"can i ask him did we miss anything and he'll just send me those not
+    setup and wrong setup?\""""
+    from wilbyte.bot import mentions
+
+    assert mentions.parse("<@1> did we miss anything").action == "missedsetup"
+    assert mentions.parse("did rook and nova miss anyone?").action == "missedsetup"
+    records = {
+        "1": _kept("Keven Mata Hernandez", ledger.NOT_SET_UP, problems=["Not on the hub"]),
+        "2": _kept("Dillon Willis", ledger.DELIVERING, problems=["The hub states don't match the payment - has NM not ordered"]),
+        "3": _kept("Laura Vargas", ledger.SET_UP, hours=90, start="2026-11-02", status="scheduled"),
+        "4": _kept("Riley Noah", ledger.OVERFLOW),
+        "5": _kept("Kailey Hull", ledger.NOT_SET_UP, problems=["Not on the hub"], trello="https://trello.com/c/x"),
+    }
+    said = ledger.daily(records, now=NOW, today=TODAY, through=TODAY, only=ledger.MISSED)
+    assert "Keven Mata Hernandez" in said and "Dillon Willis" in said
+    for name in ("Laura Vargas", "Riley Noah", "Kailey Hull"):
+        assert name not in said
+    assert "Nothing missed" in ledger.daily({"3": records["3"]}, now=NOW, today=TODAY, through=TODAY,
+                                            only=ledger.MISSED)

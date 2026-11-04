@@ -240,6 +240,11 @@ def clear(records: dict, *, now: datetime, by: str, today: date, through: date, 
     return keys, said
 
 
+#: What "did we miss anything" answers with: paid and not set up (nor on
+#: Trello with the team), Rook/Nova can't set up, and set up wrong.
+MISSED = ("❌ Paid, not set up", "🃏 Rook/Nova can't set up", "⚠️ Set up wrong")
+
+
 def _snowflake_time(message_id: str) -> datetime:
     """When a Discord message was sent, from its id."""
     try:
@@ -322,7 +327,7 @@ def _ready(one: dict) -> str:
 
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
           payra_missing: list | None = None, aged: list | None = None, board: dict | None = None,
-          board_complete: bool = True, placed: dict | None = None) -> str:
+          board_complete: bool = True, placed: dict | None = None, only: tuple | None = None) -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -418,6 +423,18 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
             mine.append(line)
         kept_sections.append((title, mine))
     sections = kept_sections
+    if only is not None:
+        # "did we miss anything" - only what's Rook and Nova's to fix.
+        sections = [(title, items) for title, items in sections if title.startswith(only)]
+        lines = [f"🔎 **What was missed - {now.astimezone(_ny()):%a %b} {now.astimezone(_ny()).day}, "
+                 f"{now.astimezone(_ny()):%-I:%M %p}**"]
+        for title, items in sections:
+            if items:
+                lines.append(f"\n**{title}** ({len(items)})")
+                lines += items
+        if len(lines) == 1:
+            lines.append("✅ Nothing missed - everyone paid is set up, and set up as paid for.")
+        return "\n".join(lines)
     counts = {}
     for one in followed.values():
         counts[one.get("stage")] = counts.get(one.get("stage"), 0) + 1

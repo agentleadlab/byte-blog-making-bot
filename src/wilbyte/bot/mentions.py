@@ -907,6 +907,17 @@ LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^
                           r"|\bunclear\s*$", re.IGNORECASE)
 
 
+#: "did we miss anything", "what did rook and nova miss", "who's not set up or
+#: set up wrong".
+MISSED_ASK = re.compile(
+    r"\b(?:did|have|has)\s+(?:we|they|you|anyone|anybody|rook|nova|rook\s+(?:and|&)\s+nova)\s+miss(?:ed)?\s+"
+    r"(?:any(?:thing|one|body)?|someone|somebody)\b"
+    r"|\bwhat\s+(?:did|have)\s+(?:we|they|rook|nova|rook\s+(?:and|&)\s+nova)\s+miss(?:ed)?\b"
+    r"|\b(?:any(?:thing|one|body))\s+(?:we|they|rook|nova|rook\s+(?:and|&)\s+nova)\s+missed\b"
+    r"|\bmissed\s+(?:any(?:thing|one|body)|someone|somebody)\b"
+    r"|\bnot\s+set\s*-?\s*up\s+(?:or|and|&)\s+(?:set\s*-?\s*up\s+)?wrong\b"
+    r"|\bwrong\s+set\s*-?\s*ups?\s+(?:or|and|&)\s+not\s+set\s*-?\s*up\b", re.IGNORECASE)
+
 #: Somebody telling Ryte a payment needs no setup: "Shea ordered overflow",
 #: "Shea's is overflow", "Shea Scotty - no setup needed on hub", "this one's
 #: overflow" (a reply to the card).
@@ -941,6 +952,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # "these are all good to go so clear them out" - the day's payments list
     # cleared, not a clear-out: "clear" is the agent clear-out's word, and
     # that read "them out" as somebody to close down.
+    # "can i ask him did we miss anything and he'll just send me those not
+    # setup and wrong setup?"
+    if MISSED_ASK.search(text):
+        return MentionRequest(action="missedsetup", brief=text)
     # "Shea ordered overflow. No setup needed on hub" - the team telling Ryte
     # about a payment, answered with "every agent going live today is set up".
     said = TEAM_SAYS.match(text)
@@ -1628,7 +1643,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > check (every 2 minutes). Never with a run open
 > @RYTE **why <name>** — what I read for their payment: the names I looked for on the hub, every hub row by those names and their last name, the row and the setup I used, and the problems - so a wrong card is fixed from what I saw.
 > @RYTE **today's payments** — every payment of today, a line each: not on the hub yet, can't set up, set up but not as paid for, waiting on Rook & Nova, waiting on a signature, starting later, live - and today's aged pulls.
-> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.\n> @RYTE **clear them out** (reply to the list) — everything on it is good to go: off the list, not asked or flagged again unless something new goes wrong. **undo clear** puts them back.\n> @RYTE **Shea ordered overflow** (or **Shea - no setup needed on hub**, or either as a reply to the card) — kept on that payment: overflow goes to the team's overflow list; no setup needed takes it off the list, not asked about again.
+> @RYTE **who's not set up** (or **eod**) — the payments list now: paid and not set up, set up wrong, should be live and isn't, going live next and not ready, waiting on an answer, and Payra payments never posted. Said by itself in #agent-setup at 9 AM and 5, 6 and 7 PM Eastern.\n> @RYTE **clear them out** (reply to the list) — everything on it is good to go: off the list, not asked or flagged again unless something new goes wrong. **undo clear** puts them back.\n> @RYTE **did we miss anything** — only what's paid and not set up, can't be set up, or set up wrong.\n> @RYTE **Shea ordered overflow** (or **Shea - no setup needed on hub**, or either as a reply to the card) — kept on that payment: overflow goes to the team's overflow list; no setup needed takes it off the list, not asked about again.
 > @RYTE **setup qc** (or **setup qc 3 days**) — every payment's setup by Rook and Nova held up against the payment, the hub and the sheet, with a button to ask them about what doesn't match. I do each one by myself once they've answered, and say it 15 minutes after a payment nobody has picked up.
 > @RYTE **aged qc** (or **aged qc 3 days**) — every aged payment's pull by Nova checked against what was paid for: counts, states, the email it's shared with and the sheet itself. I check each one by myself when Nova says it's done.
 > @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.
