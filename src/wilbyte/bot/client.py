@@ -12163,7 +12163,11 @@ async def _card_put(bot, channel, kind: str, key: str, standing: str, title: str
                 old = await channel.fetch_message(int(held["message_id"]))
             except Exception:
                 old = None
-        who = (who if who is not None else _card_ping(bot).strip()) if ping else ""
+        # Nicole and Therese tagged with Franklin on every card that's sent
+        # again for something new - "whenever there's something like these,
+        # tag nicole and therese on the message as well, not just me".
+        who = (who if who is not None else (_team_tags(bot, getattr(channel, "guild", None)) + " "
+                                            + _card_ping(bot)).strip()) if ping else ""
         if old is not None and not who:
             kwargs = {"embed": embed}
             if view is not None or getattr(old, "components", None):

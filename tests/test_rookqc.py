@@ -528,7 +528,7 @@ def test_each_payment_has_one_card_kept_up_to_date(monkeypatch):
     assert len(cards.sent) == 1 and cards.sent[0].content is None and "Waiting on Rook" in cards.sent[0].embed.description
     # Fifteen minutes on, Nova still quiet: a problem - sent again at the bottom, Franklin tagged.
     assert asyncio.run(client._sqc_run(bot, "900", due=True)) == "problem"
-    assert len(cards.sent) == 2 and cards.sent[1].content == "<@1>" and cards.sent[0].deleted
+    assert len(cards.sent) == 2 and cards.sent[1].content == "@Therese @Nicole <@1>" and cards.sent[0].deleted
     assert "Nova hasn't answered" in cards.sent[1].embed.description
     # Nova answers: the same card edited, nobody tagged, nothing new in the channel.
     state["result"] = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(), sheet_rows=1)

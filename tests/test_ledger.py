@@ -560,7 +560,7 @@ def test_franklin_isnt_tagged_before_rook_and_nova_have_had_their_time(monkeypat
     rookqc.remember("900", **held)
     result = rookqc.Checked(client="Anthony Portillo", problems=["Not on the hub"])
     asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, result, held, due=False, waiting=False))
-    assert cards.sent[-1].content == "<@1>", "tagged once it's due"
+    assert cards.sent[-1].content == "@Therese @Nicole <@1>", "tagged once it's due"
 
 
 def test_a_cant_with_its_trello_card_made_is_with_the_team():
@@ -808,7 +808,7 @@ def test_franklin_is_tagged_once_a_day_for_a_payment(monkeypatch):
     first = rookqc.Checked(client="Brandon Nguyen", problems=["Nothing on the hub for this order yet"])
     asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, first, rookqc.recalled()["900"],
                                  due=True, waiting=False))
-    assert cards.sent[-1].content == "<@1>"
+    assert cards.sent[-1].content == "@Therese @Nicole <@1>"
     again = rookqc.Checked(client="Brandon Nguyen", problems=["Not sure which order this pays for"])
     asyncio.run(client._sqc_card(SimpleNamespace(), cards, "900", post, again, rookqc.recalled()["900"],
                                  due=False, waiting=False))
@@ -956,12 +956,12 @@ def test_a_problem_back_after_an_ok_is_not_tagged_again(monkeypatch):
                                      due=False, waiting=False))
         return cards.sent[-1].content if len(cards.sent) > before else None
 
-    assert card(["Not on the hub"]) == "<@1>", "tagged the first time"
+    assert card(["Not on the hub"]) == "@Therese @Nicole <@1>", "tagged the first time"
     card([])  # OK'd off the card
     # A day on, so the once-a-day rule isn't what holds it back.
     rookqc.remember("901", pinged_at=(now - timedelta(days=2)).isoformat())
     assert card(["Not on the hub"]) is None, "back after the OK - not tagged again"
-    assert card(["Not on the hub", "The hub says 10 delivered, but the sheet has 0 lead row(s)"]) == "<@1>", \
+    assert card(["Not on the hub", "The hub says 10 delivered, but the sheet has 0 lead row(s)"]) == "@Therese @Nicole <@1>", \
         "something it never had is"
 
 
