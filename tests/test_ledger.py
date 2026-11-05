@@ -1114,3 +1114,41 @@ def test_the_teams_answers_are_kept_on_each_payment(monkeypatch):
     other = SimpleNamespace(content="Nobody Here - hello", embeds=[], message_snapshots=[],
                             author=SimpleNamespace(display_name="Therese", bot=False))
     assert not asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), other))
+
+
+def test_good_to_go_lines_are_the_payments_not_an_ad(monkeypatch):
+    """"@Ryte this are good to go: ... Francesca - Spark ad spend agent" was
+    written into three ads."""
+    from wilbyte.bot import client, mentions
+
+    said = ("<@2> this are good to go:\nAnwari - aged lead orders\n"
+            "Juan Serna - Spark agent, has a setup card for Sunday, Nov 8.\n"
+            "Zachary Johnson - Spark agent. Already setup under DapperLife name\nDylan Walker - Aged lead\n"
+            "Francesca - Spark ad spend agent. Taken care of.\n"
+            "Mark Christopherson - Already setup on the hub. 20 OTP VET")
+    notes = client.team_notes(said)
+    assert len(notes) == 6 and mentions.parse(said).action != "comment"
+    now = datetime.now(timezone.utc)
+    for key, name in (("971", "Haroon Anwari"), ("972", "Juan Serna"), ("973", "Zachary Johnson"),
+                      ("974", "Francesca Lopez"), ("975", "Mark Christopherson")):
+        rookqc.remember(key, **dict(_kept(name, ledger.NOT_SET_UP, problems=["Not on the hub"]),
+                                    posted=(now - timedelta(hours=3)).isoformat()))
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def run(bot, key, **kw):
+        return ""
+
+    monkeypatch.setattr(client, "_sqc_run", run)
+    franklin = SimpleNamespace(content=said, embeds=[], message_snapshots=[],
+                               author=SimpleNamespace(display_name="Franklin", bot=False))
+    assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), franklin))
+    held = rookqc.recalled()
+    assert held["971"]["aged"] is True
+    assert held["972"].get("team_note") and not held["972"].get("said_no_setup")
+    for key in ("973", "974", "975"):
+        assert held[key].get("said_no_setup"), key
+    assert "Dylan Walker" in sent[-1]  # not followed: said, not guessed

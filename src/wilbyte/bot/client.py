@@ -1590,6 +1590,16 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     request = mentions.parse(message.content, max_batch=config.discord.max_batch)
     responder = MessageResponder(message)
 
+    # "@Ryte this are good to go: / Anwari - aged lead orders / Juan Serna -
+    # Spark agent ... / Francesca - Spark ad spend agent" went to the ad
+    # writer on "ad spend". The team's lines about payments are read first -
+    # kept only when they name a payment Ryte follows. Not an "add to trello",
+    # whose lines are tasks.
+    notes = team_notes(message.content)
+    if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(message.content or "")):
+        if await _sqc_team_notes(bot, responder, message):
+            return
+
     # Replying to a command and saying nothing but "@RYTE" means run that
     # again. Somebody who pasted a dispute notice with six screenshots on it
     # is not going to paste it a second time, and the message RYTE gets on a
@@ -12577,6 +12587,15 @@ _TEAM_NOTE = re.compile(
     r"(?:\s*(?:&|,|\band\b)\s*[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*){0,3})*)\s+[-–—:]\s+(?P<note>\S.*)$")
 
 
+_GOOD_TO_GO = re.compile(r"\bgood\s+to\s+go\b|\b(?:these|this|they)\s+(?:are|is)\s+(?:all\s+)?(?:good|fine|done|ok)\b",
+                         re.IGNORECASE)
+#: A note that says it's done with: "Already setup under DapperLife name",
+#: "Already setup on the hub", "Spark ad spend agent. Taken care of."
+_DONE_WITH = re.compile(r"no\s+set\s*-?\s*up\s+(?:is\s+)?needed|(?:doesn['’]?t|does\s+not)\s+need\s+(?:a\s+)?set\s*-?\s*up|"
+                        r"\balready\s+set\s*-?\s*up\b|\btaken\s+care\s+of\b|\bad\s*spend\b|\ball\s+good\b|"
+                        r"\bgood\s+to\s+go\b|\bdone\b|\bon\s+the\s+hub\b", re.IGNORECASE)
+
+
 def team_notes(text: str) -> list:
     """[(names, what's said)] - the lines of a message that are "Name - note"."""
     out = []
@@ -12620,10 +12639,10 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
                 elif re.search(r"over\s*flow", note, re.IGNORECASE):
                     rookqc.remember(key, said_overflow=said)
                     kept.append(f"• {whose} - overflow: the team delivers it")
-                elif re.search(r"no\s+set\s*-?\s*up\s+(?:is\s+)?needed|(?:doesn['’]?t|does\s+not)\s+need\s+(?:a\s+)?set\s*-?\s*up",
-                               note, re.IGNORECASE):
+                elif _DONE_WITH.search(note) and not re.search(r"\b(?:waiting|not\s+yet|still|confirm)", note,
+                                                                 re.IGNORECASE):
                     rookqc.remember(key, said_no_setup=said)
-                    kept.append(f"• {whose} - no setup needed: off the list")
+                    kept.append(f"• {whose} - done with: “{note[:120]}” - off the list")
                 else:
                     rookqc.remember(key, team_note=said)
                     kept.append(f"• {whose} - with the team: “{note[:120]}”")
