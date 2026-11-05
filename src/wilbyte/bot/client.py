@@ -12621,6 +12621,11 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
     open_now = ledger.open_ones(records, now=datetime.now(timezone.utc))
     who = str(getattr(getattr(message, "author", None), "display_name", "")
               or getattr(getattr(message, "author", None), "name", "") or "the team")
+    # "this are good to go:" - every one on it accepted as it is and off the
+    # QC: "those are payments/setup that are already setup that he keeps on
+    # flagging so i want him to accept it and remove them from his list".
+    good = bool(_GOOD_TO_GO.search(_all_of_it(message) if hasattr(message, "embeds")
+                                   else getattr(message, "content", "") or ""))
     kept, nobody = [], []
     for names, note in lines:
         for name in names:
@@ -12639,10 +12644,15 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
                 elif re.search(r"over\s*flow", note, re.IGNORECASE):
                     rookqc.remember(key, said_overflow=said)
                     kept.append(f"• {whose} - overflow: the team delivers it")
-                elif _DONE_WITH.search(note) and not re.search(r"\b(?:waiting|not\s+yet|still|confirm)", note,
-                                                                 re.IGNORECASE):
-                    rookqc.remember(key, said_no_setup=said)
-                    kept.append(f"• {whose} - done with: “{note[:120]}” - off the list")
+                elif good or (_DONE_WITH.search(note) and not re.search(r"\b(?:waiting|not\s+yet|still|confirm)",
+                                                                         note, re.IGNORECASE)):
+                    # Accepted as it is: what it's flagged for now OK'd too, so
+                    # a "set up wrong" doesn't keep it on the list.
+                    wrong = [*(one.get("open_problems") or []), *(one.get("todo") or [])]
+                    rookqc.remember(key, said_no_setup=said,
+                                    ok_problems=list(dict.fromkeys([*(one.get("ok_problems") or []), *wrong])),
+                                    ok_by=f"{who} - good to go")
+                    kept.append(f"• {whose} - accepted as it is: “{note[:120]}” - off the QC list")
                 else:
                     rookqc.remember(key, team_note=said)
                     kept.append(f"• {whose} - with the team: “{note[:120]}”")
@@ -12654,8 +12664,9 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
             await _sqc_run(bot, key, force=True)
         except Exception:
             log.warning("Couldn't check %s again after the team's note", key, exc_info=True)
-    said = ["📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not asked "
-            "about again:", *kept]
+    said = [("✅ Accepted - off the QC list, not flagged or asked about again unless something new goes wrong:"
+             if good else "📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not "
+             "asked about again:"), *kept]
     if nobody:
         said.append(f"-# No payment I'm following for: {', '.join(dict.fromkeys(nobody))}")
     said.append("-# A payment with the team stays under \"Waiting on the team\" until it's on the hub - checked "

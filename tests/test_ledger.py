@@ -1148,7 +1148,13 @@ def test_good_to_go_lines_are_the_payments_not_an_ad(monkeypatch):
     assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), franklin))
     held = rookqc.recalled()
     assert held["971"]["aged"] is True
-    assert held["972"].get("team_note") and not held["972"].get("said_no_setup")
-    for key in ("973", "974", "975"):
+    # "good to go": every one accepted and off the QC, Juan Serna's too.
+    for key in ("972", "973", "974", "975"):
         assert held[key].get("said_no_setup"), key
+        assert rookqc.among("Not on the hub", held[key]["ok_problems"]), key
     assert "Dylan Walker" in sent[-1]  # not followed: said, not guessed
+    for key in ("972", "973", "974", "975"):
+        rookqc.remember(key, stage=ledger.FULFILLED)
+    listed = ledger.daily(rookqc.recalled(), now=now, today=now.date(), through=now.date())
+    for name in ("Haroon Anwari", "Juan Serna", "Zachary Johnson", "Francesca Lopez", "Mark Christopherson"):
+        assert name not in listed, name
