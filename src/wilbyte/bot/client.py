@@ -1598,6 +1598,13 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     # something, not for a repeat.
     if request.action == "help" and not mentions.said_anything(message.content):
         replied = await _replied_to(message)
+        # The team's answers about payments, one a line - Therese's "Juan
+        # Serna - Spark agent, has a setup card for Sunday, Nov 8 / Dylan
+        # Walker - Aged lead delivered", answered with "I can't find a New
+        # Agent card for ...". Kept on each one's payment instead.
+        if replied is not None and not getattr(getattr(replied, "author", None), "bot", False) \
+                and await _sqc_team_notes(bot, MessageResponder(message), replied):
+            return
         if replied is not None and (replied.content or "").strip():
             again = mentions.parse(
                 replied.content, max_batch=config.discord.max_batch
@@ -1628,6 +1635,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
             # new, this copy is old" is the likeliest reason a command wasn't
             # recognised.
             await responder.send(f"{mentions.HELP_TEXT}\n\n-# Running `{version.code_version()}`")
+            return
+        # The team's answers about payments said to Ryte straight - "@Ryte
+        # Juan Serna - Spark agent, has a setup card" - not chatted back at.
+        if await _sqc_team_notes(bot, responder, message):
             return
         # Not a command, and not asking for the menu: talked to.
         async with _typing(message.channel):
@@ -11922,6 +11933,12 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         result.notes.insert(0, f"✅ No setup needed - {result.no_setup}")
     if result.overflow and held.get("said_overflow"):
         result.cant = ""
+    if held.get("team_note") and result.hub is None and not result.overflow:
+        # The team's on it, in their words - Therese's "Spark agent, has a
+        # setup card for Sunday": not Rook and Nova's miss, nor asked about.
+        result.problems[:] = [one for one in result.problems if not one.startswith(_NOT_SET_UP_YET)]
+        result.with_team = str(held["team_note"])
+        result.notes.insert(0, f"🤝 With the team - {held['team_note']}")
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)
@@ -12547,6 +12564,82 @@ async def _todays_say(bot, responder: Responder) -> None:
                     + (f" <{card['link']}>" if card.get("link") else ""))
     for chunk in _chunks(ledger.todays(rookqc.recalled(), now=now, day=today, aged=aged)):
         await responder.send(chunk)
+
+
+#: A line of the team's about a payment: "Juan Serna - Spark agent, has a
+#: setup card", "Jorge Gonzalez-Marin & Anwari - confirming with Faith".
+_TEAM_NOTE = re.compile(
+    r"^\s*[•*·-]?\s*(?P<names>[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*){0,3}"
+    r"(?:\s*(?:&|,|\band\b)\s*[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*){0,3})*)\s+[-–—:]\s+(?P<note>\S.*)$")
+
+
+def team_notes(text: str) -> list:
+    """[(names, what's said)] - the lines of a message that are "Name - note"."""
+    out = []
+    for line in str(text or "").splitlines():
+        found = _TEAM_NOTE.match(re.sub(r"<@!?\d+>", "", line).strip())
+        if found:
+            names = [" ".join(one.split()) for one in re.split(r"\s*(?:&|,|\band\b)\s*", found["names"]) if one.strip()]
+            out.append((names, " ".join(found["note"].split())))
+    return out
+
+
+async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
+    """The team's lines about payments kept on each one's payment: aged -
+    the aged QC's; overflow; no setup needed; anything else - with the team,
+    in their words, and not Rook and Nova's miss. Whether any line was
+    about a payment Ryte follows (else it's not this, and nothing's said)."""
+    from .. import ledger, rookqc
+
+    lines = team_notes(_all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", ""))
+    if not lines:
+        return False
+    records = rookqc.recalled()
+    open_now = ledger.open_ones(records, now=datetime.now(timezone.utc))
+    who = str(getattr(getattr(message, "author", None), "display_name", "")
+              or getattr(getattr(message, "author", None), "name", "") or "the team")
+    kept, nobody = [], []
+    for names, note in lines:
+        for name in names:
+            found = [key for key, one in open_now.items()
+                     if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))]
+            if not found:
+                nobody.append(name)
+                continue
+            said = f"{who}: “{note[:200]}”"
+            for key in found:
+                one = records.get(key) or {}
+                whose = f"**{one.get('client') or name}**" + (f" ${one['amount']}" if one.get("amount") else "")
+                if re.search(r"\baged\b", note, re.IGNORECASE):
+                    rookqc.remember(key, aged=True, aged_by=said, due_done=True)
+                    kept.append(f"• {whose} - aged: off the setup list, the aged QC has it")
+                elif re.search(r"over\s*flow", note, re.IGNORECASE):
+                    rookqc.remember(key, said_overflow=said)
+                    kept.append(f"• {whose} - overflow: the team delivers it")
+                elif re.search(r"no\s+set\s*-?\s*up\s+(?:is\s+)?needed|(?:doesn['’]?t|does\s+not)\s+need\s+(?:a\s+)?set\s*-?\s*up",
+                               note, re.IGNORECASE):
+                    rookqc.remember(key, said_no_setup=said)
+                    kept.append(f"• {whose} - no setup needed: off the list")
+                else:
+                    rookqc.remember(key, team_note=said)
+                    kept.append(f"• {whose} - with the team: “{note[:120]}”")
+    if not kept:
+        return False
+    for key in {key for names, _note in lines for name in names for key, one in open_now.items()
+                if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))}:
+        try:
+            await _sqc_run(bot, key, force=True)
+        except Exception:
+            log.warning("Couldn't check %s again after the team's note", key, exc_info=True)
+    said = ["📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not asked "
+            "about again:", *kept]
+    if nobody:
+        said.append(f"-# No payment I'm following for: {', '.join(dict.fromkeys(nobody))}")
+    said.append("-# A payment with the team stays under \"Waiting on the team\" until it's on the hub - checked "
+                "against the payment then.")
+    for chunk in _chunks("\n".join(said)):
+        await responder.send(chunk)
+    return True
 
 
 async def _missed_say(bot, responder: Responder) -> None:

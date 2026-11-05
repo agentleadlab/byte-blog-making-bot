@@ -356,12 +356,16 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     if morning:
         sections.append(("🚀 Going live today", [_line(one, now, ("❌ " + _ready(one)) if _ready(one) else "✅ ready")
                                                 for one in launching if _day(one.get("start")) == today]))
-    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello"))
+    def with_team(one):
+        """Not set up, and the team's said what's happening with it."""
+        return bool(one.get("team_note")) and one.get("stage") in (NOT_SET_UP, CANT)
+
+    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello") and not with_team(one))
     sections.append(("❌ Paid, not set up", [_line(one, now, (_still_wrong(one) or ["not on the hub"])[0])
                                             for one in not_set_up]))
     sections.append(("🃏 Rook/Nova can't set up - press Make the card on its card",
                      [_line(one, now, one.get("cant") or "") for one in by(
-                         lambda one: one.get("stage") == CANT and not one.get("trello"))]))
+                         lambda one: one.get("stage") == CANT and not one.get("trello") and not with_team(one))]))
     sections.append(("🃏 With the team on Trello - not on the hub yet",
                      [_line(one, now, f"card <{one['trello']}>") for one in by(
                          lambda one: one.get("stage") in (CANT, NOT_SET_UP) and one.get("trello"))]))
@@ -393,9 +397,11 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     short = by(lambda one: one.get("stage") == SHORT)
     sections.append(("📉 Ended short", [_line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered")
                                         for one in short]))
-    waiting = by(lambda one: one.get("todo") and one.get("stage") not in (NOT_SET_UP, CANT) and not _still_wrong(one))
-    sections.append(("❓ Waiting on the team or an answer", [_line(one, now, "; ".join(one.get("todo"))[:300])
-                                                            for one in waiting]))
+    waiting = by(lambda one: (one.get("todo") and one.get("stage") not in (NOT_SET_UP, CANT) or with_team(one))
+                 and not _still_wrong(one))
+    sections.append(("❓ Waiting on the team or an answer", [
+        _line(one, now, "; ".join(([one["team_note"]] if with_team(one) else []) + list(one.get("todo") or []))[:300])
+        for one in waiting]))
     sections.append(("🚚 Overflow not delivered yet", [_line(one, now) for one in by(
         lambda one: one.get("stage") == OVERFLOW)]))
     if board:

@@ -1066,3 +1066,48 @@ def test_did_we_miss_anything_is_only_the_misses():
         assert name not in said
     assert "Nothing missed" in ledger.daily({"3": records["3"]}, now=NOW, today=TODAY, through=TODAY,
                                             only=ledger.MISSED)
+
+
+def test_the_teams_answers_are_kept_on_each_payment(monkeypatch):
+    """Franklin replying "@Ryte" to Therese's answers - "I can't find a New
+    Agent card for "Juan Serna - Spark agent, ..." anywhere on the board"."""
+    from wilbyte.bot import client
+
+    now = datetime.now(timezone.utc)
+    for key, name in (("961", "Juan Serna"), ("962", "Dylan Walker"), ("963", "Jorge Gonzalez-Marin"),
+                      ("964", "Mujeeb Anwari"), ("965", "Haroon Anwari"), ("966", "Zachary Johnson")):
+        rookqc.remember(key, **dict(_kept(name, ledger.NOT_SET_UP, problems=["Not on the hub"]),
+                                    posted=(now - timedelta(hours=3)).isoformat()))
+    therese = SimpleNamespace(
+        content=("<@2> Juan Serna - Spark agent, has a setup card for Sunday, Nov 8.\n"
+                 "Zachary Johnson - Spark agent. Repeat order. Waiting for launch date\n"
+                 "Dylan Walker - Aged lead delivered\n"
+                 "Jorge Gonzalez-Marin & Anwari - cinonfirm ko pa kay faith ano binayaran, walang details yung zelle"),
+        embeds=[], message_snapshots=[], author=SimpleNamespace(display_name="Therese", name="therese", bot=False))
+    sent, ran = [], []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def run(bot, key, **kw):
+        ran.append(key)
+        held = rookqc.recalled()[key]
+        if held.get("team_note"):
+            rookqc.remember(key, open_problems=[])
+        return ""
+
+    monkeypatch.setattr(client, "_sqc_run", run)
+    assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), therese))
+    held = rookqc.recalled()
+    assert held["962"]["aged"] is True
+    for key in ("961", "963", "964", "965", "966"):
+        assert held[key]["team_note"].startswith("Therese:"), key
+    said = ledger.daily(held, now=now, today=now.date(), through=now.date())
+    head, _, tail = said.partition("Waiting on the team")
+    assert "Juan Serna" not in head and "Juan Serna" in tail and "Dylan Walker" not in said
+    assert "Nothing missed" in ledger.daily(held, now=now, today=now.date(), through=now.date(), only=ledger.MISSED)
+    # A message that isn't about anyone followed isn't taken for one.
+    other = SimpleNamespace(content="Nobody Here - hello", embeds=[], message_snapshots=[],
+                            author=SimpleNamespace(display_name="Therese", bot=False))
+    assert not asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), other))
