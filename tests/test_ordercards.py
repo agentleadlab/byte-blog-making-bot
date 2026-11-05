@@ -647,7 +647,9 @@ def test_aged_orders_are_off_for_now_and_left_alone_said_so(order, monkeypatch):
     """"actually focus on new agent setup for now, not aged leads"."""
     monkeypatch.setattr(client, "AGED_ORDERS_ON", False)
     asyncio.run(client._order_gavelled(_bot(_message()), GAVEL))
-    assert order.made == [] and "900" not in ordercards.load()
+    # Kept as aged, so a restart's catch-up doesn't say it again - Nick Pass's
+    # "is aged leads" at 7:20 and again at 8:05.
+    assert order.made == [] and ordercards.load()["900"]["status"] == "aged"
     [(said, _view)] = _said(order)
     assert "aged leads — Nova pulls those now" in said
 

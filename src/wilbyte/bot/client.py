@@ -10540,7 +10540,7 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None, gone: datetime |
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
                     held = (await asyncio.to_thread(ordercards.load)).get(str(message.id)) or {}
-                    if held.get("status") in ("made", "left", "held") or str(message.id) in _ORDER_ACTIVE:
+                    if held.get("status") in ("made", "left", "held", "aged") or str(message.id) in _ORDER_ACTIVE:
                         break
                     async for person in reaction.users():
                         if not getattr(person, "bot", False) and (
@@ -10985,7 +10985,11 @@ async def _order_make(bot, payload, key: str, responder) -> None:
                                  f"make the right card. <{link}>", quiet=True)
         return
     if kind == "aged" and not AGED_ORDERS_ON:
-        await _order_forget(key)
+        # Kept as aged, not forgotten: forgotten, every restart's catch-up
+        # found its gavel again and said it again - Nick Pass's, at 7:20 and
+        # 8:05, each time an update came in. A gavel dropped on it again still
+        # gets an answer.
+        await _order_note(key, status="aged")
         if responder is not None:
             await responder.send(f"🔨 {card['client'] or 'That order'} is aged leads — Nova pulls those now and I "
                                  f"check its pull when it says it's done, so there's no card.\n<{link}>", quiet=True)
