@@ -12928,6 +12928,11 @@ async def _rn_thread_for(bot, channel, client: str, posted: datetime | None):
                default=None)
 
 
+#: Who's tagged by id when Ryte asks in #rook-nova - Nova Cloud, the Nova
+#: that answers; the other "Nova" is the Mac app's.
+ROOK_NOVA_IDS = {"nova": 1529479205165858923}
+
+
 async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list | None = None) -> str:
     """Rook and Nova asked about this payment - in its thread when there's
     one, else #rook-nova. The question's link, or "" with nowhere to ask."""
@@ -12938,6 +12943,12 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
         return ""
     tags = []
     for wanted in ("rook", "nova"):
+        if wanted in ROOK_NOVA_IDS:
+            # By its own id: two bot accounts are named "Nova", and the first
+            # by name was the Mac app nobody listens on - every ask to Nova
+            # went unseen.
+            tags.append(f"<@{ROOK_NOVA_IDS[wanted]}>")
+            continue
         member = next((one for one in getattr(channel.guild, "members", None) or []
                        if getattr(one, "bot", False)
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)

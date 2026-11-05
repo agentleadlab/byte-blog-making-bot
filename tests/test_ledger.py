@@ -158,7 +158,10 @@ def test_ryte_asks_rook_and_nova_once_in_the_clients_thread(monkeypatch):
     rookqc.remember("900", posted=paid.isoformat())
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "900", post, result, rookqc.recalled()["900"]))
     assert len(theirs.sent) == 1 and not other.sent and not channel.sent
-    assert theirs.sent[0].startswith("<@11> <@12>") and "Nothing on the hub for this order yet" in theirs.sent[0]
+    # Nova by Nova Cloud's own id, not the first bot named "Nova" - that was
+    # the Mac app's, and nobody listens on it.
+    assert theirs.sent[0].startswith("<@11> <@1529479205165858923>")
+    assert "<@12>" not in theirs.sent[0] and "Nothing on the hub for this order yet" in theirs.sent[0]
     # The same problem isn't asked again; a new one is, once the gap's past.
     asyncio.run(client._sqc_auto_ask(SimpleNamespace(), "900", post, result, rookqc.recalled()["900"]))
     assert len(theirs.sent) == 1
