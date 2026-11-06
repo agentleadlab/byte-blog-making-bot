@@ -6145,3 +6145,47 @@ def test_a_spark_members_state_change_isnt_an_order():
         url=None, footer=None, author=None)]
     assert not client._spark_member(message)
     assert client._spark_member(_spark_post(962)), "a new member still is"
+
+
+def test_a_spark_state_change_goes_on_the_ads_card_and_agent_setup(monkeypatch):
+    """"tag them on today's ads as comment and tag them on discord here" -
+    FND Life's new states on Spark."""
+    from wilbyte.bot import jobs
+
+    message = _spark_post(963)
+    message.content = "📍 A lead pool member changed their states on Spark"
+    message.jump_url = "https://discord.com/channels/1/2/963"
+    message.embeds = [SimpleNamespace(
+        title="Veteran Widow FEX",
+        description="This member changed the states on their order. It applies from their next lead.",
+        fields=[SimpleNamespace(name="Buyer", value="FND Life"), SimpleNamespace(name="Pool", value="Veteran Widow FEX"),
+                SimpleNamespace(name="Added", value="HI, ID, IN"), SimpleNamespace(name="States now", value="TX, NC, HI, ID, IN")],
+        url=None, footer=None, author=None)]
+    assert client._spark_states_changed(message) and not client._spark_member(message)
+    comments, sent = [], []
+
+    def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by="", guessed=False):
+        comments.append((kind, text, list(tag)))
+        return "Ads", "https://trello.com/c/ads1", []
+
+    class Setup:
+        guild = SimpleNamespace(members=[SimpleNamespace(bot=False, display_name="Therese", name="t", mention="<@31>"),
+                                         SimpleNamespace(bot=False, display_name="𝓝𝓲𝓬𝓸𝓵𝓮", name="n", mention="<@32>")])
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    async def card_channel(bot, kind):
+        return Setup()
+
+    monkeypatch.setattr(jobs, "comment_on_daily", comment)
+    monkeypatch.setattr(client, "_card_channel", card_channel)
+    monkeypatch.setattr(client, "_today", lambda config: date(2026, 11, 6))
+    monkeypatch.setattr(client, "_board_hour", lambda config: 11)
+    bot = SimpleNamespace(config=None)
+    assert asyncio.run(client._spark_states_said(bot, message)) == "https://trello.com/c/ads1"
+    assert comments[0][0] == "ads" and comments[0][2] == ["Therese", "Nicole"]
+    assert "FND Life changed their Spark states - Veteran Widow FEX" in comments[0][1] and "Added: HI, ID, IN" in comments[0][1]
+    assert sent[0].startswith("<@31> <@32> **") and "trello.com/c/ads1" in sent[0]
+    # Once a post.
+    assert asyncio.run(client._spark_states_said(bot, message)) == "" and len(sent) == 1

@@ -586,6 +586,11 @@ class WilByteBot(discord.Client):
         if (SPARK_AUTO and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_member(message)):
             _also_running(self.loop.create_task(_spark_from_post(self, message)))
+        # A Spark member changing their states: said on today's Ads card and
+        # in #agent-setup, Therese and Nicole tagged - not a new card.
+        if (SPARK_AUTO and getattr(message.author, "bot", False)
+                and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_states_changed(message)):
+            _also_running(self.loop.create_task(_spark_states_said(self, message)))
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
         if (TEAM_TASKS_ON and not getattr(message.author, "bot", False)
@@ -10552,6 +10557,12 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None, gone: datetime |
                         bot, message, wait=0.0, catching_up=True)))
                     done.append(str(message.id))
                     continue
+                # A Spark member's state change posted while RYTE was down.
+                if (SPARK_AUTO and getattr(message.author, "bot", False) and message.created_at >= SPARK_AUTO_FROM
+                        and _spark_states_changed(message) and not paycards_where("spark", str(message.id))):
+                    _also_running(asyncio.get_running_loop().create_task(_spark_states_said(bot, message)))
+                    done.append(str(message.id))
+                    continue
                 for reaction in getattr(message, "reactions", None) or []:
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
@@ -10638,6 +10649,74 @@ def _spark_member(message) -> bool:
     # And a one-time order - "veteran-widows — 20 leads · one-time pack" for
     # Soar Life Agency: "why no auto hammer on spark".
     return jobs.spark_post(_all_of_it(message))
+
+
+def _spark_states_changed(message) -> bool:
+    """Capture Info's "A lead pool member changed their states on Spark"."""
+    if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != "spark":
+        return False
+    said = _all_of_it(message)
+    return bool(jobs.SPARK_CHANGE.search(said) and re.search(r"\bstates?\b", said, re.IGNORECASE))
+
+
+def paycards_where(kind: str, key: str) -> dict:
+    from .. import paycards
+
+    return paycards.where(kind, key)
+
+
+#: Who's tagged for a Spark member's state change.
+SPARK_STATES_TAG = ("therese", "nicole")
+
+
+async def _spark_states_said(bot, message) -> str:
+    """A Spark member's new states, said where the team works them - a
+    comment on today's Ads card and a message in #agent-setup, Therese and
+    Nicole tagged on both: "tag them on today's ads as comment and tag them
+    on discord here". Once a post. The Ads card's link, or ""."""
+    from .. import dailyops, paycards
+
+    key = str(message.id)
+    if paycards.where("spark", key):
+        return ""
+    paycards.remember("spark", key, at_post=str(getattr(message, "jump_url", "")))
+    fields = {}
+    title = ""
+    for embed in getattr(message, "embeds", None) or []:
+        title = title or str(getattr(embed, "title", "") or "")
+        for field in getattr(embed, "fields", None) or []:
+            fields[" ".join(str(getattr(field, "name", "") or "").split()).casefold()] = \
+                " ".join(str(getattr(field, "value", "") or "").split())
+    buyer = fields.get("buyer") or "A Spark member"
+    pool = fields.get("pool") or title
+    lines = [f"📍 {buyer} changed their Spark states" + (f" - {pool}" if pool else "")]
+    for label in ("added", "removed"):
+        if fields.get(label):
+            lines.append(f"{label.capitalize()}: {fields[label]}")
+    if fields.get("states now"):
+        lines.append(f"States now: {fields['states now']}")
+    lines.append("From their next lead - Spark refuses a lead outside the list.")
+    link = str(getattr(message, "jump_url", "") or "")
+    today = _today(bot.config)
+    day = dailyops.after_hours_day("", today=today, hour=_board_hour(bot.config)) or today
+    url = ""
+    try:
+        for when in dict.fromkeys((day, today)):
+            _title, url, _problems = await asyncio.to_thread(partial(
+                jobs.comment_on_daily, bot.config, kind="ads", day=when, text="\n".join(lines) + f"\n{link}",
+                tag=[one.capitalize() for one in SPARK_STATES_TAG], asked_by="Ryte"))
+            if url:
+                break
+    except Exception:
+        log.warning("Couldn't put %s's state change on the Ads card", buyer, exc_info=True)
+    channel = await _card_channel(bot, "setup")
+    if channel is not None:
+        tags = _team_tags(bot, getattr(channel, "guild", None), SPARK_STATES_TAG)
+        said = [f"{tags} **{lines[0][2:]}**", *(f"• {one}" for one in lines[1:]),
+                f"-# On the Ads card: <{url}>" if url else "-# ⚠ Couldn't put it on today's Ads card",
+                f"-# <{link}>" if link else ""]
+        await channel.send("\n".join(one for one in said if one)[:1900])
+    return url
 
 
 def _spark_note(message) -> str:
@@ -13244,10 +13323,11 @@ def _moment_of(said) -> datetime | None:
     return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
 
 
-def _team_tags(bot, guild) -> str:
-    """Therese and Nicole, tagged - as Discord names them, fancy letters and all."""
+def _team_tags(bot, guild, names=None) -> str:
+    """Therese and Nicole (or `names`), tagged - as Discord names them, fancy
+    letters and all."""
     tags = []
-    for wanted in SETUP_QC_TEAM:
+    for wanted in (SETUP_QC_TEAM if names is None else names):
         member = next((one for one in getattr(guild, "members", None) or [] if not getattr(one, "bot", False)
                        and _plain_letters(str(getattr(one, "display_name", "") or getattr(one, "name", "")))
                        .startswith(wanted)), None)
