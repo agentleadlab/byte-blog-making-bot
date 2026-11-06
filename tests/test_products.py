@@ -131,3 +131,15 @@ def test_the_plural_of_a_number_is_not_a_word():
 def test_both_forms_are_kept_rather_than_one_replaced():
     """So a package whose alias really does end in an s still matches."""
     assert {"vet", "vets"} <= products._words("OTP VETS")
+
+
+def test_the_total_is_charged_not_the_price_a_lead():
+    """"Payment link for 15 Text-Verified Mortgage Protection leads at $43
+    each, with a 10% discount. Total: $580.50" - made a $43.00 link."""
+    said = ("Payment link for 15 Text-Verified Mortgage Protection leads at $43 each, with a 10% discount. "
+            "Total: $580.50")
+    assert products.amount_asked(said) == 580.50
+    assert products.amount_asked(said.replace(" Total: $580.50", "")) == 580.50
+    assert products.amount_asked("20 vets at $45 each") == 900.0
+    assert products.amount_asked("20 vets @ $45") == 900.0
+    assert products.how_many(said) == 15

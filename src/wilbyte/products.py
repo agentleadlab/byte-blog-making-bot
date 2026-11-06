@@ -195,20 +195,48 @@ _MONEY = re.compile(r"\$\s*([\d,]+(?:\.\d{1,2})?)")
 _HOW_MANY = re.compile(r"\b(\d{1,5})\s*(?=[a-z])", re.IGNORECASE)
 
 
-def amount_asked(said: str) -> float | None:
-    """The dollar amount, in dollars. None when nobody said one."""
-    found = _MONEY.search(said or "")
-    if not found:
-        return None
+_TOTAL = re.compile(r"\b(?:total|grand\s+total|amount\s+due|charge|comes?\s+to)\b\W{0,6}\$\s*([\d,]+(?:\.\d{1,2})?)",
+                    re.IGNORECASE)
+_EACH = re.compile(r"\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:each|apiece|per\s+lead|a\s+lead|/\s*lead|/\s*ea)\b"
+                   r"|@\s*\$\s*([\d,]+(?:\.\d{1,2})?)", re.IGNORECASE)
+_DISCOUNT = re.compile(r"\b(\d{1,2}(?:\.\d+)?)\s*%\s*(?:off|discount)\b|\bdiscount\s+of\s+(\d{1,2}(?:\.\d+)?)\s*%",
+                       re.IGNORECASE)
+
+
+def _dollars(said: str) -> float | None:
     try:
-        return float(found.group(1).replace(",", ""))
+        return float(str(said).replace(",", ""))
     except ValueError:
         return None
 
 
+def amount_asked(said: str) -> float | None:
+    """The dollar amount to charge, in dollars. None when nobody said one.
+
+    The total when one's said - "15 ... leads at $43 each, with a 10%
+    discount. Total: $580.50" was made a $43.00 link. Else a price a lead
+    times the count, less any discount. Else the one amount said."""
+    text = said or ""
+    total = _TOTAL.search(text)
+    if total:
+        return _dollars(total.group(1))
+    each = _EACH.search(text)
+    many = how_many(text)
+    if each and many:
+        price = _dollars(each.group(1) or each.group(2))
+        if price is not None:
+            off = _DISCOUNT.search(text)
+            share = 1 - float(off.group(1) or off.group(2)) / 100 if off else 1
+            return round(price * many * share, 2)
+    found = _MONEY.search(text)
+    if not found:
+        return None
+    return _dollars(found.group(1))
+
+
 def how_many(said: str) -> int | None:
-    """How many leads. The number that isn't the money."""
-    text = _MONEY.sub(" ", said or "")
+    """How many leads. The number that isn't the money, nor a percentage."""
+    text = re.sub(r"\d+(?:\.\d+)?\s*%", " ", _MONEY.sub(" ", said or ""))
     found = _HOW_MANY.search(text)
     return int(found.group(1)) if found else None
 
