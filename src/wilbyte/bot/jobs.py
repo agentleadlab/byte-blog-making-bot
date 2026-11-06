@@ -5224,6 +5224,31 @@ def card_made_since(config: Config, client: str, *, since, kind: str = "") -> di
     return found[0] if found else None
 
 
+def spark_member_card(config: Config, membership: str, *, before=None) -> dict | None:
+    """The card of a Spark membership, by its id in the card's notes - FND
+    Life has two (IUL - Volume and Veteran Widow FEX), and a name finds both.
+    Open ones first; not one made after `before` (the post it's for)."""
+    membership = str(membership or "").strip()
+    if len(membership) < 8:
+        return None
+    board = open_trello(config)
+    try:
+        cards = board.board_cards(config.secrets.trello_board_id, archived=True)
+    finally:
+        board.close()
+    found = []
+    for card in cards or []:
+        if membership.casefold() not in str(card.get("desc") or "").casefold():
+            continue
+        made = card_made_at(str(card.get("id") or ""))
+        if before is not None and made is not None and made >= before:
+            continue
+        found.append(card)
+    open_ones = [one for one in found if not one.get("closed")]
+    return (max(open_ones, key=lambda one: str(one.get("id") or "")) if open_ones
+            else max(found, key=lambda one: str(one.get("id") or "")) if found else None)
+
+
 def comment_on_client_card(config: Config, card: dict, text: str, pictures=(), asked_by: str = "") -> str:
     """The task on the client's own card, with its screenshots. Its link."""
     board = open_trello(config)

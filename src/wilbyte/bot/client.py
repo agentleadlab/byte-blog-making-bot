@@ -10709,11 +10709,25 @@ async def _spark_states_said(bot, message) -> str:
                 break
     except Exception:
         log.warning("Couldn't put %s's state change on the Ads card", buyer, exc_info=True)
+    # And on the membership's own card, found by its id - not by name: FND
+    # Life's Widow FEX change was being pasted onto their IUL - Volume card.
+    theirs = ""
+    membership = fields.get("membership") or ""
+    try:
+        card = await asyncio.to_thread(partial(jobs.spark_member_card, bot.config, membership,
+                                               before=getattr(message, "created_at", None)))
+        if card is not None:
+            theirs = await asyncio.to_thread(partial(jobs.comment_on_client_card, bot.config, card,
+                                                     "\n".join(lines) + f"\n{link}", asked_by="Ryte"))
+    except Exception:
+        log.warning("Couldn't comment on %s's Spark card", buyer, exc_info=True)
     channel = await _card_channel(bot, "setup")
     if channel is not None:
         tags = _team_tags(bot, getattr(channel, "guild", None), SPARK_STATES_TAG)
         said = [f"{tags} **{lines[0][2:]}**", *(f"• {one}" for one in lines[1:]),
                 f"-# On the Ads card: <{url}>" if url else "-# ⚠ Couldn't put it on today's Ads card",
+                (f"-# On their card: <{theirs}>" if theirs else
+                 f"-# No card on the board for this membership ({membership or 'no id on the post'})"),
                 f"-# <{link}>" if link else ""]
         await channel.send("\n".join(one for one in said if one)[:1900])
     return url

@@ -6159,10 +6159,23 @@ def test_a_spark_state_change_goes_on_the_ads_card_and_agent_setup(monkeypatch):
         title="Veteran Widow FEX",
         description="This member changed the states on their order. It applies from their next lead.",
         fields=[SimpleNamespace(name="Buyer", value="FND Life"), SimpleNamespace(name="Pool", value="Veteran Widow FEX"),
-                SimpleNamespace(name="Added", value="HI, ID, IN"), SimpleNamespace(name="States now", value="TX, NC, HI, ID, IN")],
+                SimpleNamespace(name="Added", value="HI, ID, IN"), SimpleNamespace(name="States now", value="TX, NC, HI, ID, IN"),
+                SimpleNamespace(name="Membership", value="b6c4cae3-bbe3-4042-be20-6a4757ce8721")],
         url=None, footer=None, author=None)]
+    message.created_at = datetime(2026, 11, 6, 15, 27, tzinfo=timezone.utc)
     assert client._spark_states_changed(message) and not client._spark_member(message)
-    comments, sent = [], []
+    comments, sent, theirs = [], [], []
+
+    def member_card(config, membership, *, before=None):
+        assert membership == "b6c4cae3-bbe3-4042-be20-6a4757ce8721"
+        return {"id": "c1", "shortUrl": "https://trello.com/c/widow1"}
+
+    def on_card(config, card, text, pictures=(), asked_by=""):
+        theirs.append((card["id"], text))
+        return card["shortUrl"]
+
+    monkeypatch.setattr(jobs, "spark_member_card", member_card)
+    monkeypatch.setattr(jobs, "comment_on_client_card", on_card)
 
     def comment(config, *, kind, day, text, tag=(), pictures=(), asked_by="", guessed=False):
         comments.append((kind, text, list(tag)))
@@ -6187,5 +6200,32 @@ def test_a_spark_state_change_goes_on_the_ads_card_and_agent_setup(monkeypatch):
     assert comments[0][0] == "ads" and comments[0][2] == ["Therese", "Nicole"]
     assert "FND Life changed their Spark states - Veteran Widow FEX" in comments[0][1] and "Added: HI, ID, IN" in comments[0][1]
     assert sent[0].startswith("<@31> <@32> **") and "trello.com/c/ads1" in sent[0]
+    assert theirs and theirs[0][0] == "c1" and "On their card: <https://trello.com/c/widow1>" in sent[0]
     # Once a post.
     assert asyncio.run(client._spark_states_said(bot, message)) == "" and len(sent) == 1
+
+
+def test_a_spark_membership_card_is_found_by_its_id(monkeypatch):
+    """FND Life has two memberships; a name finds both, the id one."""
+    from wilbyte.bot import jobs
+
+    made = lambda when: format(int(when.timestamp()), "x") + "0" * 16  # noqa: E731
+    post = datetime(2026, 11, 6, 15, 27, tzinfo=timezone.utc)
+    cards = [{"id": made(post - timedelta(days=5)), "name": "New Agent - FND Life", "desc": "Membership - d1600cd2-c691",
+              "closed": False},
+             {"id": made(post - timedelta(days=9)), "name": "New Agent - FND Life",
+              "desc": "Membership - b6c4cae3-bbe3-4042-be20-6a4757ce8721", "closed": False},
+             {"id": made(post + timedelta(minutes=1)), "name": "New Agent - FND Life",
+              "desc": "Membership - b6c4cae3-bbe3-4042-be20-6a4757ce8721", "closed": False}]
+
+    class Board:
+        def board_cards(self, board_id, archived=False):
+            return cards
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(jobs, "open_trello", lambda config: Board())
+    config = SimpleNamespace(secrets=SimpleNamespace(trello_board_id="b"))
+    found = jobs.spark_member_card(config, "b6c4cae3-bbe3-4042-be20-6a4757ce8721", before=post)
+    assert found is cards[1], "the Widow FEX card from before - not IUL Volume, not the one made from the post"
