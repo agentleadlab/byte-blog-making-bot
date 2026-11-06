@@ -12358,6 +12358,10 @@ async def _ledger_pass(bot) -> int:
         await _aged_catch_up(bot)
     except Exception:
         log.warning("Couldn't catch up the aged pulls", exc_info=True)
+    try:
+        await _aged_team_answers(bot)
+    except Exception:
+        log.warning("Couldn't read #rook-qc for the aged pulls", exc_info=True)
     followed = ledger.open_ones(rookqc.recalled(), now=now)
     # Taken in, but never checked once: a restart lost its timer.
     for key, one in rookqc.recalled().items():
@@ -12393,6 +12397,62 @@ async def _ledger_pass(bot) -> int:
 #: Aged cards still "waiting on Nova's pull" looked for in their payment's
 #: thread this many at a time, each no more than every two hours.
 AGED_CATCH_UP_AT_ONCE = 15
+
+
+async def _aged_team_answers(bot) -> list:
+    """Aged pulls that don't match, held up against #rook-qc: the team's
+    answer there - Nicole's "All good. I've shared it with him" on Dane
+    Orshoff's sheet - closes the card, in their words. The cards closed."""
+    from .. import ledger, paycards, rookqc
+
+    channel = _rook_qc_channel(bot)
+    if channel is None:
+        return []
+    now = datetime.now(timezone.utc)
+    closed = []
+    for card_key, card in list(paycards.recalled().items()):
+        if not card_key.startswith("aged:") or card.get("standing") != "problem":
+            continue
+        key = card_key.split(":", 1)[1]
+        posted = ledger._snowflake_time(key)
+        if now - posted > timedelta(days=ledger.OPEN_DAYS):
+            continue
+        client = re.sub(r"\s*\(INV-?\d+\)\s*$", "", str(card.get("title") or "")).strip()
+        if len(client.split()) < 2:
+            continue
+        talk = await _talk_in(channel, _ROOKQC, key, {"names": [client]}, posted)
+        team = rookqc.team_answered([(who + rookqc.IN_ROOK_QC, said) for _at, who, said in
+                                     sorted(talk, key=lambda one: one[0] or posted)])
+        # The same answer as last time, and the card's a problem again: it was
+        # checked again since and is wrong anew - not hidden under the old word.
+        if not team or team == card.get("team_ok"):
+            continue
+        await _aged_card_answered(bot, card_key, card, team)
+        closed.append(client)
+    return closed
+
+
+async def _aged_card_answered(bot, card_key: str, card: dict, team: str) -> None:
+    """An aged card closed by the team's answer: edited where it is, what it
+    said kept under it, and off the day's list."""
+    from .. import paycards
+
+    kind, key = card_key.split(":", 1)
+    try:
+        channel = bot.get_channel(int(card["channel_id"])) or await bot.fetch_channel(int(card["channel_id"]))
+        message = await channel.fetch_message(int(card["message_id"]))
+        old = (message.embeds[0].description if message.embeds else "") or ""
+        lines = old.split("\n")
+        was = lines[0].strip("* ") if lines else ""
+        body = "\n".join([f"**✅ The team answered in #rook-qc**", f"-# {team}",
+                          *( [f"-# Was: {was}"] if was else []), *lines[1:]])
+        embed = discord.Embed(title=(message.embeds[0].title if message.embeds else card.get("title") or "")[:256],
+                              description=body[:4000], colour=paycards.COLOURS["ok"],
+                              url=card.get("link") or None)
+        await message.edit(embed=embed)
+    except Exception:
+        log.warning("Couldn't edit the aged card %s", card_key, exc_info=True)
+    paycards.remember(kind, key, standing="ok", team_ok=team)
 
 
 async def _aged_catch_up(bot) -> int:

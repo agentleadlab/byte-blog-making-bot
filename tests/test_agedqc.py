@@ -203,3 +203,66 @@ def test_every_sheet_nova_linked_is_counted(monkeypatch):
     post = "NAME: Kinley\nEMAIL: k@example.com\nNotes:\n> Aged FEX 90-180: 15 @ $5.00\n> Aged FEX 180+: 10 @ $4.00"
     result = agedqc.check(post, done, sheet_rows=25)
     assert "The 2 sheets have 25 leads" in result.ok and not result.problems, result.problems
+
+
+def test_the_teams_answer_in_rook_qc_closes_an_aged_card(monkeypatch):
+    """Dane Orshoff: "sheet share failed" taken to Nicole in #rook-qc, and her
+    "All good. I've shared it with him" - his aged card still said doesn't
+    match."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from wilbyte import ledger, paycards
+    from wilbyte.bot import client
+
+    posted = datetime.now(timezone.utc) - timedelta(hours=3)
+    post_id = str(((int(posted.timestamp() * 1000) - 1420070400000) << 22) + 1)
+
+    class Message:
+        def __init__(self, who, said, at):
+            self.author = SimpleNamespace(display_name=who, name=who, bot=who == "Rook")
+            self.content, self.embeds, self.message_snapshots = said, [], []
+            self.created_at, self.reference, self.id = at, None, id(self)
+
+    class Thread:
+        id, name, created_at = 77, "Dane Orshoff", posted + timedelta(minutes=10)
+
+        async def history(self, **kw):
+            for one in (Message("Rook", "@Nicole Dane Orshoff's 11 aged IUL are pulled but the sheet share failed",
+                                posted + timedelta(minutes=10)),
+                        Message("Nicole", "All good. I've shared it with him using his email", posted + timedelta(minutes=20))):
+                yield one
+
+    class QC:
+        threads = [Thread()]
+
+        async def history(self, **kw):
+            return
+            yield
+
+        async def archived_threads(self, **kw):
+            return
+            yield
+
+    edited = []
+
+    class Card:
+        embeds = [SimpleNamespace(title="Dane Orshoff (INV-21500)", description="**⚠️ Doesn't match**\n• share failed")]
+
+        async def edit(self, **kw):
+            edited.append(kw["embed"].description)
+
+    class CardChannel:
+        async def fetch_message(self, _id):
+            return Card()
+
+    monkeypatch.setattr(client, "_rook_qc_channel", lambda bot: QC())
+    paycards.remember("aged", post_id, channel_id="5", message_id="6", standing="problem",
+                      title="Dane Orshoff (INV-21500)", link="https://x")
+    bot = SimpleNamespace(get_channel=lambda _id: CardChannel())
+    assert asyncio.run(client._aged_team_answers(bot)) == ["Dane Orshoff"]
+    assert paycards.where("aged", post_id)["standing"] == "ok"
+    assert edited and edited[0].startswith("**✅ The team answered in #rook-qc**") and "Was: ⚠️ Doesn't match" in edited[0]
+    # Said once: not again on the next pass.
+    assert asyncio.run(client._aged_team_answers(bot)) == []
