@@ -12540,6 +12540,9 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         elif card.get("standing") == "problem":
             aged.append(f"• **{card.get('title') or '?'}** - the pull doesn't match" + (
                 f" <{card['link']}>" if card.get("link") else ""))
+        elif card.get("standing") == "todo":
+            aged.append(f"• **{card.get('title') or '?'}** - short, waiting on the team's answer" + (
+                f" <{card['link']}>" if card.get("link") else ""))
     try:
         board, complete = await _launching_board(bot)
     except Exception:

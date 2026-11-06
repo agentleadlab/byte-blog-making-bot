@@ -67,6 +67,9 @@ class Checked:
     notes: list[str] = field(default_factory=list)
     #: What the pull is held to: "the payment", or "Rook's ask" in #rook-nova.
     against: str = "the payment"
+    #: Short, and Nova's already asked the team what to do about it -
+    #: "needs Tre's approval": waiting on them, not a mistake to tag for.
+    waiting: list[str] = field(default_factory=list)
 
 
 def _count(said) -> int:
@@ -141,6 +144,21 @@ def pulled(done: str) -> list[Line]:
     return found
 
 
+#: Nova saying it's short and asking what to do: "needs Tre's approval",
+#: "reply fill from <range>", "or credit the rest".
+_ASKED_SHORT = re.compile(r"\bneeds?\s+\w+['’]s\s+approval\b|\bfill\s+from\b|\bcredit\s+the\s+rest\b|"
+                          r"\bto\s+approve\b|\bwaiting\s+on\s+(?:tre|the\s+team|approval)\b", re.IGNORECASE)
+
+
+def _quote_short(done: str) -> str:
+    found = _ASKED_SHORT.search(str(done or ""))
+    if not found:
+        return ""
+    text = str(done)
+    start = max(text.rfind("\n", 0, found.start()), text.rfind(". ", 0, found.start())) + 1
+    return " ".join(re.sub(r"[*`_]", "", text[start:found.end() + 80]).split())[:160]
+
+
 def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows: int | None = None,
           sheet_problem: str = "", asked: "Asked | None" = None) -> Checked:
     """Nova's pull held up against the payment - or, `asked`, against what
@@ -171,7 +189,19 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
             continue
         left.remove(match)
         if match.count != line.count:
-            result.problems.append(f"{line.package}: {paid_for} {line.count}, Nova pulled {match.count}")
+            short = f"{line.package}: {paid_for} {line.count}, Nova pulled {match.count}"
+            got_states = set(match.by_state) or (set(sheet_states or {}) if len(bought) == 1 else set())
+            unpulled = [code for code in line.states if code not in got_states] if got_states else []
+            if match.count < line.count and unpulled and got_states:
+                # Michael Mcallister's: "14 available to them (Ohio 14)", short
+                # 36 - and 25 of the 26 states he paid for never looked in.
+                result.problems.append(
+                    f"{short} - only in {', '.join(sorted(got_states))}, and {len(unpulled)} more state(s) were "
+                    f"ordered: {', '.join(unpulled[:30])}. Were those looked in before calling it short?")
+            elif match.count < line.count and _ASKED_SHORT.search(str(done or "")):
+                result.waiting.append(f"{short} - Nova's asked the team: “{_quote_short(done)}”")
+            else:
+                result.problems.append(short)
         else:
             result.ok.append(f"{line.package}: {match.count} pulled, as {paid_for.replace('Rook asked for', 'asked')}")
         if line.states:

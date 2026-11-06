@@ -266,3 +266,44 @@ def test_the_teams_answer_in_rook_qc_closes_an_aged_card(monkeypatch):
     assert edited and edited[0].startswith("**✅ The team answered in #rook-qc**") and "Was: ⚠️ Doesn't match" in edited[0]
     # Said once: not again on the next pass.
     assert asyncio.run(client._aged_team_answers(bot)) == []
+
+
+MCALLISTER_POST = """New Payment | Payra
+NAME: Michael Mcallister
+EMAIL: mike@example.com
+PHONE: +15555550111
+AMOUNT: $207.00
+PRODUCT: Text-Verified Aged Final Expense Leads
+INVOICE: INV-21568 · card •••• 3246 · 11/06/2026 9:26 AM
+Notes:
+Name: Michael Mcallister
+Email: mike@example.com
+Aged FEX 30-90: 50 @ $4.00 — states OH, CA, MA, SC, NC, PA, MD, FL, GA, AL, AZ, CO, CT, IN, KS, ME, MI, MN, NJ, OR, TN, TX, VA, WA, WI, MT, IA
+"""
+
+MCALLISTER_DONE = """@Rook @Nicole Michael Mcallister's aged order is done (INV-21568) — let them know their sheet is shared with their email:
+✅ Aged FEX 30-90: 14 pulled () · sheet shared with mike@example.com
+https://docs.google.com/spreadsheets/d/abc123/edit
+Short 36 at 30-90.
+⏸ Still 36 short at 30-90 — short, needs Tre's approval; nothing outside the ordered range or states was pulled. In the same states: 90-180 has 19. Reply fill from <range> to approve an older range, add states (add TX, FL), or credit the rest."""
+
+
+def test_short_and_only_one_of_the_states_ordered():
+    """Michael Mcallister: 50 paid in 27 states, Nova pulled 14 "(Ohio 14)" -
+    short 36 and asking Tre, while 26 states were never looked in."""
+    result = agedqc.check(MCALLISTER_POST, MCALLISTER_DONE, sheet_rows=14, sheet_states={"OH": 14})
+    assert any("only in OH" in one and "26 more state(s)" in one for one in result.problems)
+    assert not result.waiting
+
+
+def test_short_and_asked_is_waiting_not_a_mistake():
+    """The same short, every ordered state pulled from: Nova's asked Tre -
+    waiting on the team, not tagged as new."""
+    post = MCALLISTER_POST.replace("states OH, CA, MA, SC, NC, PA, MD, FL, GA, AL, AZ, CO, CT, IN, KS, ME, MI, MN, NJ, "
+                                   "OR, TN, TX, VA, WA, WI, MT, IA", "states OH")
+    result = agedqc.check(post, MCALLISTER_DONE, sheet_rows=14, sheet_states={"OH": 14})
+    assert not result.problems and result.waiting and "needs Tre's approval" in result.waiting[0]
+    from wilbyte import paycards
+
+    standing, _title, body = paycards.aged_card(result)
+    assert standing == "todo" and "waiting on the team" in body

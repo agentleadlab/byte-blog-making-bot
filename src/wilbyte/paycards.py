@@ -102,7 +102,10 @@ def aged_card(result, *, link: str = "", waiting: str = "") -> tuple[str, str, s
     if waiting:
         body = ["**⏳ Waiting on Nova's pull**", waiting] + ([f"-# <{link}>"] if link else [])
         return "waiting", title, "\n".join(body)
-    standing = "problem" if result.problems else "ok"
-    first = "⚠️ Doesn't match" if result.problems else f"✅ Pulled - matches {result.against}"
-    body = [f"**{first}**", *said(result).split("\n")[1:]] + ([f"-# <{link}>"] if link else [])
+    waiting = list(getattr(result, "waiting", None) or [])
+    standing = "problem" if result.problems else "todo" if waiting else "ok"
+    first = ("⚠️ Doesn't match" if result.problems else "🟡 Short - waiting on the team's answer" if waiting
+             else f"✅ Pulled - matches {result.against}")
+    body = [f"**{first}**", *(f"• {one}" for one in waiting), *said(result).split("\n")[1:]] \
+        + ([f"-# <{link}>"] if link else [])
     return standing, title, "\n".join(body)
