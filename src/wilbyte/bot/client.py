@@ -1828,6 +1828,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _todays_say(bot, responder)
                 return
 
+            if request.action == "ordergiven":
+                await _order_given(bot, responder, message, request.brief or "")
+                return
+
             if request.action == "missedsetup":
                 await _missed_say(bot, responder)
                 return
@@ -12878,6 +12882,48 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
 
     _also_running(asyncio.get_running_loop().create_task(again()))
     return True
+
+
+async def _order_given(bot, responder: Responder, message, said: str) -> None:
+    """An order's details given to Ryte - "Invoice number : 21537 / He bought
+    50 aged IUL (30-90) and 50 aged vet (30-90) / States are ..." in Richard
+    De Paula's #rook-nova thread: kept on that payment, aged or not, and said
+    so in a line. The payment is the thread's client's, or the one with that
+    invoice; not guessed past that."""
+    from .. import ledger, rookqc
+
+    number = re.search(r"(?:inv-?|invoice\s*(?:number|no\.?|num|#)\s*[:#-]?\s*(?:inv-?)?)(\d{4,6})", said,
+                       re.IGNORECASE)
+    invoice = f"INV-{number.group(1)}" if number else ""
+    channel = getattr(message, "channel", None)
+    thread_name = str(getattr(channel, "name", "") or "") if getattr(channel, "parent", None) is not None else ""
+    records = rookqc.recalled()
+    open_now = ledger.open_ones(records, now=datetime.now(timezone.utc))
+    found = [key for key, one in open_now.items() if invoice and str(one.get("invoice") or "").upper() == invoice]
+    if not found and thread_name:
+        found = [key for key, one in open_now.items()
+                 if rookqc.same_person_strict(thread_name, str(one.get("client") or one.get("name") or ""))]
+    if not found:
+        # Taken in, nothing said in the Growth server for it.
+        log.info("Order details given for %s, no payment followed", thread_name or invoice or "?")
+        return
+    aged = bool(re.search(r"\baged\b", said, re.IGNORECASE))
+    who = _asker(message) or "the team"
+    plain = " ".join(re.sub(r"<@[!&]?\d+>", "", said).split())
+    note = f"{who}: “{plain[:240]}”"
+    names = []
+    for key in found[:3]:
+        if aged:
+            rookqc.remember(key, aged=True, aged_by=note, due_done=True, invoice=invoice or records[key].get("invoice"))
+        else:
+            rookqc.remember(key, team_note=note, invoice=invoice or records[key].get("invoice"))
+        one = records.get(key) or {}
+        names.append(f"{one.get('client') or thread_name}" + (f" ${one['amount']}" if one.get("amount") else ""))
+    with mirror.answering():
+        await responder.send(
+            f"📝 Kept on {', '.join(names)}" + (f" ({invoice})" if invoice else "") + " - "
+            + ("aged, so it's Nova's pull: off the setup list, checked when the pull's done."
+               if aged else "the order as you gave it, checked against the hub once it's set up."))
 
 
 async def _missed_say(bot, responder: Responder) -> None:

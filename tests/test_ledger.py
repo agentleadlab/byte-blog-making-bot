@@ -1214,3 +1214,35 @@ def test_is_someone_still_active_is_answered_from_the_hub(monkeypatch):
     asyncio.run(client._hub_status(Said(), SimpleNamespace(secrets=None), "robert allaraj"))
     assert "✅ Yes - Robert Allaraj" in sent[0] and "22/25 sent, 3 to go" in sent[0]
     assert "switched **on**" in sent[0] and "**1** today" in sent[0] and "schedule 24/7" in sent[0]
+
+
+def test_order_details_given_in_a_thread_are_kept(monkeypatch):
+    """Santiago's "Invoice number : 21537 / He bought 50 aged IUL ... @Ryte"
+    in Richard De Paula's thread: "You pinged and said nothing", then "No
+    Payra invoice for 'number : 21537 He bought...'"."""
+    from wilbyte.bot import client, mentions
+
+    said = ("<@1> Invoice number : 21537\nHe bought 50 aged IUL (30-90) and 50 aged vet (30-90)\n"
+            "States are Florida Georgia California Illinois\n<@2>")
+    assert mentions.parse(said).action == "ordergiven"
+    assert mentions.parse("add to trello INV-21537 bought 50 leads").action != "ordergiven"
+    assert mentions.parse("invoice of David Pereira").action == "invoice"
+    now = datetime.now(timezone.utc)
+    rookqc.remember("981", **dict(_kept("Richard De Paula", ledger.NOT_SET_UP, problems=["Not on the hub"]),
+                                  amount="750.00", posted=(now - timedelta(hours=20)).isoformat()))
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    thread = SimpleNamespace(name="Richard De Paula", parent=SimpleNamespace(name="rook-nova"))
+    santiago = SimpleNamespace(channel=thread, author=SimpleNamespace(display_name="Santiago Villegas", name="s"))
+    asyncio.run(client._order_given(SimpleNamespace(), Said(), santiago, said))
+    held = rookqc.recalled()["981"]
+    assert held["aged"] is True and held["invoice"] == "INV-21537" and "Santiago Villegas" in held["aged_by"]
+    assert "Kept on Richard De Paula $750.00 (INV-21537)" in sent[0] and "Nova's pull" in sent[0]
+    # Nobody followed by that name: nothing said.
+    asyncio.run(client._order_given(SimpleNamespace(), Said(), SimpleNamespace(
+        channel=SimpleNamespace(name="Nobody Here", parent=SimpleNamespace()), author=santiago.author), said.replace("21537", "99999")))
+    assert len(sent) == 1

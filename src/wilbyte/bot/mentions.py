@@ -917,6 +917,13 @@ LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^
                           r"|\bunclear\s*$", re.IGNORECASE)
 
 
+#: An invoice number given - "Invoice number : 21537", "INV-21537".
+ORDER_GIVEN = re.compile(r"\binvoice\s*(?:number|no\.?|num|#)\s*[:#-]?\s*(?:inv-?)?\d{4,6}\b|\binv-?\d{4,6}\b",
+                         re.IGNORECASE)
+#: And what was bought: "He bought 50 aged IUL", "ordered 25 vets", "states are".
+ORDER_BOUGHT = re.compile(r"\b(?:bought|ordered|purchased|paid\s+for|got)\s+(?:\w+\s+){0,2}\d+\b|\bstates?\s+(?:are|is)\b",
+                          re.IGNORECASE)
+
 #: "did we miss anything", "what did rook and nova miss", "who's not set up or
 #: set up wrong".
 MISSED_ASK = re.compile(
@@ -962,6 +969,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # "these are all good to go so clear them out" - the day's payments list
     # cleared, not a clear-out: "clear" is the agent clear-out's word, and
     # that read "them out" as somebody to close down.
+    # Santiago's "Invoice number : 21537 / He bought 50 aged IUL (30-90) and
+    # 50 aged vet (30-90) / States are ..." in Richard De Paula's thread -
+    # answered "No Payra invoice for 'number : 21537 He bought...'". The
+    # details of an order, given: kept on that payment.
+    if ORDER_GIVEN.search(text) and ORDER_BOUGHT.search(text) and not re.search(
+            r"\btrello\b|\bon\s+the\s+board\b|\b(?:comment|checklist)\b", text, re.IGNORECASE):
+        return MentionRequest(action="ordergiven", brief=text)
     # "can i ask him did we miss anything and he'll just send me those not
     # setup and wrong setup?"
     if MISSED_ASK.search(text):
