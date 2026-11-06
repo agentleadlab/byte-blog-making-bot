@@ -453,6 +453,12 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     touched = (hub is not None and not _over(hub) and getattr(hub, "updated_at", None) is not None
                and paid_at is not None and not _before(hub.updated_at, paid_at))
     if quiet and not touched:
+        if _small(paid):
+            # Thomas Poulin's $90: nothing said, and too little to be an order
+            # of its own - an add-on or a fee. Said, not flagged.
+            result.notes.append(f"A small payment (${paid.amount}) nobody's said anything about - an add-on or a "
+                                "fee, most likely")
+            return result
         result.problems.append("Rook and Nova haven't said anything about this payment in #rook-nova")
         return result
     if quiet:
@@ -640,9 +646,13 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
         result.problems.append(f"The sheet: {sheet_problem}")
     elif sheet_rows is not None:
         delivered = getattr(hub, "delivered", None) if hub is not None else None
-        if delivered and sheet_rows < delivered:
+        if delivered and sheet_rows < delivered - 1:
             # Carson Rentz: 100 delivered on the hub, "0 row(s)" on the sheet.
             result.problems.append(f"The hub says {delivered} delivered, but the sheet has {sheet_rows} lead row(s)")
+        elif delivered and sheet_rows < delivered:
+            # One off - a lead the sheet has once and the hub twice, a row
+            # moved: Scout Allen's 24/23, Cameron Bertok's 11/10.
+            result.notes.append(f"The hub says {delivered} delivered, the sheet has {sheet_rows} - one off, not flagged")
         else:
             result.ok.append(f"The sheet opens - {sheet_rows} lead row(s) on it")
     return result
@@ -832,7 +842,11 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
             result.notes.append(f"Paid by {paid.name} for {theirs.name} - Rook's setup says so")
         else:
             result.problems.append(f"{whose} has the name {theirs.name}, the payment {paid.name}")
-    if paid.email and theirs.email:
+    if theirs.email and re.search(r"@agentleadlab\.com$", theirs.email.strip(), re.IGNORECASE):
+        # Our own address in Rook's setup - a stand-in, not theirs: Perry
+        # Sandlin's "support@agentleadlab.com".
+        result.notes.append(f"{whose} has our own {theirs.email} as the email - a stand-in, not checked")
+    elif paid.email and theirs.email:
         if paid.email.casefold() != theirs.email.casefold():
             result.problems.append(f"{whose} has the email {theirs.email}, the payment {paid.email}")
         else:
@@ -852,7 +866,13 @@ def _compare(result: Checked, whose: str, theirs: Order, paid: Order) -> None:
     elif paid.count is not None:
         result.notes.append(f"{whose} gives no lead count (paid for {paid.count})")
     paid_kind, their_kind = family(paid.lead_type), family(theirs.lead_type)
-    if paid_kind and their_kind and (paid_kind - {"aged"}) != (their_kind - {"aged"}):
+    several = len(re.findall(r"\bx\s*\d+|\d+\s*x\b|×\s*\d+|\band\b|\+|,", str(theirs.lead_type or ""), re.IGNORECASE)) >= 1
+    if (paid_kind and their_kind and (paid_kind - {"aged"}) != (their_kind - {"aged"}) and several
+            and (paid_kind - {"aged"}) < (their_kind - {"aged"})):
+        # Rook's setup for the whole order, the payment's line one product of
+        # it - Evan Mori's "Veteran x10, and IUL Plus x10" against "Veteran".
+        result.notes.append(f"{whose} is for “{theirs.lead_type}” - more than this payment's “{paid.lead_type}” line")
+    elif paid_kind and their_kind and (paid_kind - {"aged"}) != (their_kind - {"aged"}):
         result.problems.append(f"{whose} has the lead type “{theirs.lead_type}”, the payment “{paid.lead_type}”")
     elif paid_kind and their_kind and ("aged" in paid_kind) != ("aged" in their_kind):
         result.problems.append(f"{whose} reads {'aged' if 'aged' in their_kind else 'fresh'}, the payment "
@@ -882,11 +902,18 @@ def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) 
             # DC, which a list of "all states" has or hasn't: said, not flagged.
             result.notes.append(f"{whose}: DC " + ("not ordered" if "DC" in extra else "left off"))
             extra, missing = [one for one in extra if one != "DC"], [one for one in missing if one != "DC"]
+        if extra and whose == "The hub":
+            # More states on the hub than ordered: the team widens them to
+            # deliver - owen anderson's, Amari Conway's, a dozen a list, all
+            # "wrong". Rook's setup with extra states is still said: David
+            # Jacob's came off the lead request, not the payment.
+            result.notes.append(f"{whose} has {', '.join(extra)} too - more states than ordered, not flagged")
+            extra = []
         if extra or missing:
             result.problems.append(f"{whose} states don't match the payment"
                                    + (f" - has {', '.join(extra)} not ordered" if extra else "")
                                    + (f" - missing {', '.join(missing)}" if missing else ""))
-        else:
+        elif not any(one.startswith(f"{whose} has ") and "more states than ordered" in one for one in result.notes):
             result.ok.append(f"{whose}: all {len(theirs)} states match")
     elif wanted and not theirs:
         if whose == "The hub":
@@ -1207,6 +1234,22 @@ def _set_up_twice(result: Checked, rows, paid: Order, talk) -> bool:
     return True
 
 
+#: Under this, a payment nobody's said a word about is an add-on or a fee.
+SMALL_PAYMENT = 150.0
+
+
+def _small(paid: Order) -> bool:
+    try:
+        return 0 < float(str(paid.amount or "0").replace(",", "").replace("$", "")) < SMALL_PAYMENT
+    except ValueError:
+        return False
+
+
+#: A payment for this many leads or fewer onto an order that's running is an
+#: add-on to it, not an order of its own.
+SMALL_ADD_ON = 5
+
+
 def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
     """More still to deliver on the hub than this payment bought: a renewal
     added twice - Luna's 50 for Marcus Uhrich on top of the 55 from
@@ -1220,6 +1263,12 @@ def _added_twice(result: Checked, hub, paid: Order, talk) -> None:
         return  # one setup for several payments - Ryan Gsell's
     extra = ordered - delivered - paid.count
     if extra <= 0:
+        return
+    if paid.count <= SMALL_ADD_ON:
+        # A few leads added to an order that's running - Connor Swartz's 4:
+        # what's left of the order is the order's, not "added twice".
+        result.notes.append(f"{paid.count} lead(s) added to an order still running - {ordered - delivered} to deliver "
+                            f"on it")
         return
     line = (f"The hub has {ordered - delivered} still to deliver ({ordered} ordered, {delivered} delivered) - "
             f"{extra} more than the {paid.count} paid for")

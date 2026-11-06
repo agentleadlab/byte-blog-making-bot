@@ -304,7 +304,9 @@ def test_left_out_isnt_wrong_and_the_payment_nova_couldnt_find_is_this_one():
             "Handed to the team: The hub holds him for the team's go-ahead after signing.")
     result = rookqc.check(PAYRA, [("Rook", bare), ("Nova", nova)], hub=_hub(status="unsigned",
                                                                              states=("TX", "FL", "GA", "VT")))
-    assert result.problems == ["The hub states don't match the payment - has VT not ordered"], result.problems
+    # More states on the hub than ordered is said, not flagged.
+    assert result.problems == [], result.problems
+    assert any("VT too" in one for one in result.notes)
     assert result.todo == ["The hub holds him for the team's go-ahead after signing."]
     assert any("couldn't find the payment" in one for one in result.notes)
 
@@ -1005,10 +1007,10 @@ def test_rook_saying_its_right_as_it_is_oks_what_was_asked(monkeypatch):
     from wilbyte.bot import client
 
     asked = ("@Rook @Nova QC on Jonathan Carter - paid $1,280.00\\n"
-             "• The hub states don't match the payment - has WA not ordered")
+             "• The hub states don't match the payment - missing GA")
     answer = "Expected — INV-21202 is another agent's order, so the hub uses his list. No fix needed."
     talk = [("Rook", ROOK), ("Nova", NOVA), ("Ryte", asked), ("Rook", answer)]
-    hub = _hub(states=("TX", "FL", "GA", "WA"))
+    hub = _hub(states=("TX", "FL"))
     assert rookqc.check(PAYRA, talk, hub=hub).rook_ok.startswith("Expected")
     assert not rookqc.check(PAYRA, talk[:3] + [("Rook", "Forwarded to Nicole in his #rook-qc thread.")],
                             hub=hub).rook_ok
@@ -1029,10 +1031,10 @@ def test_rook_saying_its_right_as_it_is_oks_what_was_asked(monkeypatch):
     monkeypatch.setattr(client, "_order_responder", lambda bot: Responder())
     monkeypatch.setattr(client, "_card_ping", lambda bot: "")
     rookqc.remember("900", posted=post.created_at.isoformat(), due_done=True,
-                    asked_problems=["The hub states don't match the payment - has WA not ordered"])
+                    asked_problems=["The hub states don't match the payment - missing GA"])
     asyncio.run(client._sqc_run(SimpleNamespace(), "900", force=True))
     held = rookqc.recalled()["900"]
-    assert held["ok_problems"] == ["The hub states don't match the payment - has WA not ordered"]
+    assert held["ok_problems"] == ["The hub states don't match the payment - missing GA"]
     assert held["ok_by"].startswith("Rook – “Expected")
     assert "OK'd by Rook" in sent[-1] and "⚠" not in sent[-1].split("\\n")[0]
 
@@ -1042,10 +1044,11 @@ def test_the_question_shows_what_each_side_says():
     without opening the invoice and the hub."""
     rook = ROOK.replace("States: TX, FL, GA", "States: TX, FL, GA, IN")
     result = rookqc.check(PAYRA, [("Rook", rook), ("Nova", NOVA)], hub=_hub(id=2070, states=("TX", "FL", "GA", "IN")))
+    assert any("has IN not ordered" in one for one in result.problems + result.notes), "Rook's extra state is said"
     asked = rookqc.question(result, invoice="INV-21110")
-    assert "The payment (INV-21110): 40 Fresh FEX · states TX, FL, GA (3)" in asked, asked
-    assert "Rook's setup: 40 Text-Verified Final Expense (fresh) · states TX, FL, GA, IN (4)" in asked
-    assert "The hub: Jonathan Carter (row 2070)" in asked and "states TX, FL, GA, IN (4)" in asked
+    assert "The payment (INV-21110): 40 Fresh FEX" in asked, asked
+    assert "Rook's setup: 40 Text-Verified Final Expense (fresh)" in asked
+    assert "The hub: Jonathan Carter (row 2070)" in asked
 
 
 def test_a_line_about_someone_else_in_novas_message_isnt_theirs():
@@ -1379,3 +1382,23 @@ def test_a_lead_type_question_carries_no_state_lists():
                             hub=hub, paid=rookqc.Order(name="Peter Kuyper", lead_type="Veteran Final Expense"))
     said = rookqc.evidence(result)
     assert "states" not in said and "31 ordered / 0 delivered" in said
+
+
+def test_what_the_team_said_was_wrong_on_the_list():
+    """Nov 7: a dozen "has X not ordered", Scout Allen's 24/23, Thomas
+    Poulin's $90, Connor Swartz's 4 add-on leads, Perry Sandlin's
+    support@agentleadlab.com, Evan Mori's two-product setup - "these are
+    wrong"."""
+    extra = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(states=("TX", "FL", "GA", "MI", "VA")))
+    assert not any("states" in one for one in extra.problems)
+    short = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(states=("TX", "FL")))
+    assert any("missing GA" in one for one in short.problems), "a state left off is still said"
+    one_off = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=24), sheet_rows=23)
+    assert not any("sheet" in one for one in one_off.problems)
+    many_off = rookqc.check(PAYRA, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub(delivered=24), sheet_rows=20)
+    assert any("sheet has 20" in one for one in many_off.problems)
+    small = rookqc.check(PAYRA.replace("$1,280.00", "$90.00"), [])
+    assert not small.problems and any("small payment" in one for one in small.notes)
+    stand_in = rookqc.check(PAYRA, [("Rook", ROOK.replace("jcarter@example.com", "support@agentleadlab.com")),
+                                    ("Nova", NOVA)], hub=_hub())
+    assert not any("email" in one for one in stand_in.problems)

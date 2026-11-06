@@ -360,7 +360,16 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         """Not set up, and the team's said what's happening with it."""
         return bool(one.get("team_note") or one.get("team_ok")) and one.get("stage") in (NOT_SET_UP, CANT)
 
-    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello") and not with_team(one))
+    def small_and_quiet(one):
+        """A small payment with nothing wrong said of it - Thomas Poulin's $90."""
+        try:
+            amount = float(str(one.get("amount") or "0").replace(",", ""))
+        except ValueError:
+            return False
+        return 0 < amount < 150 and not _still_wrong(one)
+
+    not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello") and not with_team(one)
+                    and not small_and_quiet(one))
     sections.append(("❌ Paid, not set up", [_line(one, now, (_still_wrong(one) or ["not on the hub"])[0])
                                             for one in not_set_up]))
     sections.append(("🃏 Rook/Nova can't set up - press Make the card on its card",
