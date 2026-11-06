@@ -1246,3 +1246,40 @@ def test_order_details_given_in_a_thread_are_kept(monkeypatch):
     asyncio.run(client._order_given(SimpleNamespace(), Said(), SimpleNamespace(
         channel=SimpleNamespace(name="Nobody Here", parent=SimpleNamespace()), author=santiago.author), said.replace("21537", "99999")))
     assert len(sent) == 1
+
+
+def test_lines_off_rytes_own_list_are_read(monkeypatch):
+    """Franklin's "this are good to go: 📉 Ended short (3) • Jonathan Flores
+    $931.50 · paid 6 days ago — 0 of 25 delivered <link>" - written up as a
+    sales script."""
+    from wilbyte.bot import client
+
+    now = datetime.now(timezone.utc)
+    rookqc.remember("991", **dict(_kept("Jonathan Flores", ledger.SHORT), amount="931.50",
+                                  link="https://discord.com/channels/1/2/991", posted=(now - timedelta(days=6)).isoformat()))
+    rookqc.remember("992", **dict(_kept("Wes Stoecklin", ledger.SHORT), amount="504.04",
+                                  link="https://discord.com/channels/1/2/992", posted=(now - timedelta(days=3)).isoformat()))
+    rookqc.remember("993", **dict(_kept("Wes Stoecklin", ledger.DELIVERING), amount="1000.00",
+                                  link="https://discord.com/channels/1/2/993", posted=(now - timedelta(days=3)).isoformat()))
+    said = ("<@1> this are good to go:\n📉 Ended short (3)\n"
+            "• Jonathan Flores $931.50 · paid 6 days ago — 0 of 25 delivered https://discord.com/channels/1/2/991\n"
+            "• Wes Stoecklin $504.04 · paid 3 days ago — 3 of 10 delivered Agent Lead Lab Growth Team")
+    notes = client.team_notes(said)
+    assert [one[0] for one in notes] == [["Jonathan Flores"], ["Wes Stoecklin"]]
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def run(bot, key, **kw):
+        return ""
+
+    monkeypatch.setattr(client, "_sqc_run", run)
+    franklin = SimpleNamespace(content=said, embeds=[], message_snapshots=[],
+                               author=SimpleNamespace(display_name="Franklin", bot=False))
+    assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), franklin))
+    held = rookqc.recalled()
+    assert held["991"].get("said_no_setup") and held["992"].get("said_no_setup")
+    assert not held["993"].get("said_no_setup"), "Wes's other payment, by the amount"
+    assert "Accepted" in sent[0]

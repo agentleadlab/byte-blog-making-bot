@@ -12796,14 +12796,33 @@ _DONE_WITH = re.compile(r"no\s+set\s*-?\s*up\s+(?:is\s+)?needed|(?:doesn['’]?t
                         r"\bgood\s+to\s+go\b|\bdone\b|\bon\s+the\s+hub\b", re.IGNORECASE)
 
 
+#: A line copied off Ryte's own list: "• Jonathan Flores $931.50 · paid 6
+#: days ago — 0 of 25 delivered <link>" - written into a sales script when
+#: Franklin sent three as "this are good to go".
+_LIST_LINE = re.compile(r"^\s*[•*·-]?\s*\**(?P<name>[^\n$*]+?)\**\s+\$(?P<amount>[\d,]+(?:\.\d{1,2})?)"
+                        r"(?:\s*\(\d+\s+payments?\))?[^—–\n]*?(?:\s[—–-]\s*(?P<note>.+))?$")
+_POST_IN = re.compile(r"discord(?:app)?\.com/channels/\d+/\d+/(\d+)")
+
+
 def team_notes(text: str) -> list:
-    """[(names, what's said)] - the lines of a message that are "Name - note"."""
+    """[(names, what's said, {"posts", "amount"})] - the lines of a message
+    that are "Name - note", or lines off Ryte's own list."""
     out = []
     for line in str(text or "").splitlines():
-        found = _TEAM_NOTE.match(re.sub(r"<@!?\d+>", "", line).strip())
+        line = re.sub(r"<@!?\d+>", "", line).strip()
+        posts = _POST_IN.findall(line)
+        plain = re.sub(r"<?https?://\S+>?", "", line)
+        plain = re.sub(r"Agent Lead Lab Growth Team\s*›?\s*💬?", "", plain).strip()
+        listed = _LIST_LINE.match(plain)
+        if listed and len(listed["name"].split()) <= 8:
+            note = " ".join((listed["note"] or "").split()) or "good to go"
+            out.append(([" ".join(re.sub(r"\(.*?\)", "", listed["name"]).split())], note,
+                        {"posts": posts, "amount": listed["amount"]}))
+            continue
+        found = _TEAM_NOTE.match(plain)
         if found:
             names = [" ".join(one.split()) for one in re.split(r"\s*(?:&|,|\band\b)\s*", found["names"]) if one.strip()]
-            out.append((names, " ".join(found["note"].split())))
+            out.append((names, " ".join(found["note"].split()), {"posts": posts, "amount": ""}))
     return out
 
 
@@ -12826,11 +12845,22 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
     # flagging so i want him to accept it and remove them from his list".
     good = bool(_GOOD_TO_GO.search(_all_of_it(message) if hasattr(message, "embeds")
                                    else getattr(message, "content", "") or ""))
-    kept, nobody = [], []
-    for names, note in lines:
+    kept, nobody, keys = [], [], set()
+    by_post = {found.group(1): key for key, one in records.items()
+               for found in [_POST_IN.search(str(one.get("link") or ""))] if found}
+    for names, note, where in lines:
         for name in names:
-            found = [key for key, one in open_now.items()
-                     if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))]
+            # Its own payment's link first - the line off Ryte's list says
+            # which payment; then the name, and the amount when it's given.
+            found = [by_post[post] for post in where["posts"] if post in by_post]
+            if not found:
+                found = [key for key, one in open_now.items()
+                         if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))]
+                amount = str(where.get("amount") or "").replace(",", "")
+                same = [key for key in found if amount and str(records[key].get("amount") or "").replace(",", "")
+                        .startswith(amount.split(".")[0])]
+                found = same or found
+            keys |= set(found)
             if not found:
                 nobody.append(name)
                 continue
@@ -12858,8 +12888,6 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
                     kept.append(f"• {whose} - with the team: “{note[:120]}”")
     if not kept:
         return False
-    keys = {key for names, _note in lines for name in names for key, one in open_now.items()
-            if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))}
     said = [("✅ Accepted - off the QC list, not flagged or asked about again unless something new goes wrong:"
              if good else "📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not "
              "asked about again:"), *kept]
