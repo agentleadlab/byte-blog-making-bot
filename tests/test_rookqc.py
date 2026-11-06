@@ -1309,3 +1309,55 @@ def test_a_new_agent_card_made_by_hand_answers_which_order(monkeypatch):
     standing, _title, body = paycards.setup_card(result)
     assert standing == "cant" and "With the team on Trello - not on the hub yet" in body
     assert rookqc.recalled()["903"]["trello"] == "https://trello.com/c/hand1"
+
+
+def test_the_teams_answer_in_rook_qc_is_read():
+    """Dane Orshoff: Rook took it to Nicole in #rook-qc, Nicole answered "All
+    good. I've shared it with him" - and Ryte kept following up."""
+    qc = rookqc.IN_ROOK_QC
+    talk = [("Rook", ROOK),
+            ("Rook" + qc, "@Nicole Dane Orshoff's 11 aged IUL are pulled but the sheet share failed - can you share "
+                          "it with dane@example.com please."),
+            ("𝓝𝓲𝓬𝓸𝓵𝓮" + qc, "All good. I've shared it with him using his email: dane@example.com. @Rook")]
+    result = rookqc.check(PAYRA, talk)
+    assert result.with_team and result.team_ok.endswith("“All good. I've shared it with him using his email: "
+                                                         "dane@example.com. @Rook”")
+    assert not rookqc.team_answered([("Nicole" + qc, "Can you send me his email?")])
+    assert not rookqc.team_answered([("Nicole" + qc, "All good"), ("Rook" + qc, "it's still not on the hub")])
+    assert not rookqc.team_answered([("Nicole" + qc, "not yet, waiting on Faith")])
+    assert rookqc.team_answered([("Therese" + qc, "Done ✅ set up on the hub")])
+
+
+def test_the_teams_answer_ends_rytes_follow_ups(monkeypatch):
+    import asyncio
+
+    from wilbyte import ledger
+    from wilbyte.bot import client
+
+    result = rookqc.Checked(client="Dane Orshoff", problems=["Not on the hub"], todo=["share the sheet"],
+                            team_ok="Nicole: “All good. I've shared it with him”")
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/904", content="AMOUNT: $121.50", embeds=[],
+                           message_snapshots=[], created_at=None)
+
+    async def checking(bot, key):
+        return post, result
+
+    seen = []
+
+    async def card(bot, cards, key, post_, result_, held, **kw):
+        seen.append(list(result_.problems))
+        return "ok"
+
+    async def channel(bot, kind):
+        return object()
+
+    monkeypatch.setattr(client, "_sqc_check", checking)
+    monkeypatch.setattr(client, "_sqc_card", card)
+    monkeypatch.setattr(client, "_card_channel", channel)
+    now = datetime.now(timezone.utc)
+    rookqc.remember("904", posted=(now - timedelta(hours=5)).isoformat())
+    asyncio.run(client._sqc_run(SimpleNamespace(), "904", due=True))
+    held = rookqc.recalled()["904"]
+    assert seen == [[]] and rookqc.among("Not on the hub", held["ok_problems"])
+    listed = ledger.daily(rookqc.recalled(), now=now, today=now.date(), through=now.date(), only=ledger.MISSED)
+    assert "Dane Orshoff" not in listed

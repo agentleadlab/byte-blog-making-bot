@@ -11655,14 +11655,32 @@ def _sqc_heard(bot, message) -> None:
         _sqc_later(bot, key, SETUP_QC_SETTLE)
 
 
+def _rook_qc_channel(bot):
+    """#rook-qc in the Growth server - Rook's threads to the team. Read only."""
+    try:
+        guild = _setup_guild(bot, bot.config)
+    except Exception:
+        return None
+    for channel in getattr(guild, "text_channels", None) or []:
+        if _plain_letters(getattr(channel, "name", "")) == "rookqc":
+            return channel
+    return None
+
+
 async def _sqc_talk(bot, key: str, held: dict, posted: datetime) -> list:
     """[(who, what they said)] in #rook-nova about one payment, oldest first -
     and whatever answers one of those. And in Nova's #launching, read too:
     "ryte can observe it as well, doesnt need to message there"."""
+    from .. import rookqc
+
     talk = []
-    for channel, store in ((_rook_nova_channel(bot), _RN), (_launching_channel(bot), _LAUNCHING)):
+    # And #rook-qc - where Rook takes what it can't settle to the team, and
+    # the team answers: Nicole's "All good. I've shared it with him" was
+    # never read, and Ryte kept following up on what was done.
+    for channel, store, where in ((_rook_nova_channel(bot), _RN, ""), (_launching_channel(bot), _LAUNCHING, ""),
+                                  (_rook_qc_channel(bot), _ROOKQC, rookqc.IN_ROOK_QC)):
         if channel is not None:
-            talk += await _talk_in(channel, store, key, held, posted)
+            talk += [(at, who + where, said) for at, who, said in await _talk_in(channel, store, key, held, posted)]
     # Oldest first, the channel and its threads together: which setup was
     # called off by what came after it - Marcus Uhrich's - turns on it.
     talk.sort(key=lambda one: one[0] or posted)
@@ -11728,6 +11746,9 @@ RN_FRESH = 120
 
 #: #launching, Nova's, read the same way - only read, never said in.
 _LAUNCHING: dict = {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {}, "hold": 0}
+
+#: #rook-qc, read the same way - only read, never said in.
+_ROOKQC: dict = {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {}, "hold": 0}
 
 
 def _rn_fresh(store: dict | None = None) -> bool:
@@ -11959,6 +11980,15 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         result.problems[:] = [one for one in result.problems if not one.startswith(_NOT_SET_UP_YET)]
         result.with_team = str(held["team_note"])
         result.notes.insert(0, f"🤝 With the team - {held['team_note']}")
+    if getattr(result, "team_ok", "") and held.get("team_ok") != result.team_ok:
+        # The team's answer in #rook-qc: what's flagged now OK'd in their
+        # words - not followed up again; anything new still is.
+        rookqc.remember(key, team_ok=result.team_ok, ok_by=result.team_ok, ok_problems=list(dict.fromkeys(
+            [*(held.get("ok_problems") or []), *result.problems, *result.todo])))
+        held = rookqc.recalled().get(key) or held
+    if getattr(result, "team_ok", ""):
+        result.todo = []
+        result.cant = ""
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)

@@ -99,6 +99,8 @@ class Checked:
     trello: str = ""
     #: Rook or Nova's answer to Ryte that it's right as it is.
     rook_ok: str = ""
+    #: The team's answer in #rook-qc that it's done: who, and their words.
+    team_ok: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -508,9 +510,15 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     # Carson Rentz's #rook-qc thread": Ryte doesn't tag them again for it.
     handed = next((said for who, said in talk if who.casefold().startswith(("rook", "nova"))
                    and _TO_TEAM.search(said)), "")
+    # Rook's thread in #rook-qc is taking it to the team, whatever it says.
+    in_qc = [(who, said) for who, said in talk if who.endswith(IN_ROOK_QC)]
+    handed = handed or next((said for who, said in in_qc if who.casefold().startswith(("rook", "nova"))), "")
     if handed:
         result.with_team = " ".join(handed.split())[:200]
         result.notes.append(f"Rook/Nova took it to the team: “{result.with_team}”")
+    result.team_ok = team_answered(in_qc)
+    if result.team_ok:
+        result.notes.append(f"✅ The team answered in #rook-qc - {result.team_ok}")
     # Rook or Nova answering Ryte's question that it's right as it is -
     # "Expected — INV-21202 (paid by Chris Amaya) is Alain Ishimwe's order ...
     # No fix needed."
@@ -1029,6 +1037,33 @@ _ALL_RIGHT = re.compile(r"\bno\s+fix\s+needed\b|\bnothing\s+(?:to\s+fix|wrong)\b
                         r"\bset\s+up\s+(?:right|correctly)\b|\bis\s+(?:right|correct)\s+as\s+is\b|"
                         r"\bas\s+(?:intended|expected)\b|\bthat'?s\s+(?:right|correct|expected|intended)\b|"
                         r"\bare\s+the\s+same\s+(?:lead\s+type|product)\b", re.IGNORECASE | re.MULTILINE)
+
+
+#: Said after who it is, for what's said in #rook-qc.
+IN_ROOK_QC = " (#rook-qc)"
+
+#: The team saying it's handled: "All good. I've shared it with him".
+_TEAM_DONE = re.compile(r"\b(?:all\s+good|good\s+to\s+go|done|fixed|sorted|resolved|taken\s+care\s+of|shared|"
+                        r"set\s*-?\s*up|added|updated|pulled|voided|refunded|processed|corrected|changed|"
+                        r"confirmed|handled|no\s+(?:fix|action)\s+needed)\b|✅", re.IGNORECASE)
+_TEAM_NOT = re.compile(r"\?|\b(?:not\s+yet|can['’]?t|cannot|couldn['’]?t|won['’]?t|waiting|pending|need(?:s|ed)?\s+to|"
+                       r"still\s+(?:need|waiting|missing|not))\b", re.IGNORECASE)
+
+
+def team_answered(in_qc) -> str:
+    """The team's last word in #rook-qc, when it says it's handled - "Nicole:
+    “All good. I've shared it…”". Not when Rook or Nova spoke after it, nor
+    a question or a "not yet"."""
+    for who, said in reversed(list(in_qc)):
+        name = who[:-len(IN_ROOK_QC)] if who.endswith(IN_ROOK_QC) else who
+        if name.casefold().startswith(("ryte",)):
+            continue
+        if name.casefold().startswith(("rook", "nova", "luna")):
+            return ""
+        if _TEAM_DONE.search(said) and not _TEAM_NOT.search(said):
+            return f"{' '.join(name.split())}: “{' '.join(str(said).split())[:160]}”"
+        return ""
+    return ""
 
 
 def answered_ok(talk) -> str:

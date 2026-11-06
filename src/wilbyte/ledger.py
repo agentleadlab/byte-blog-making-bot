@@ -358,7 +358,7 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
                                                 for one in launching if _day(one.get("start")) == today]))
     def with_team(one):
         """Not set up, and the team's said what's happening with it."""
-        return bool(one.get("team_note")) and one.get("stage") in (NOT_SET_UP, CANT)
+        return bool(one.get("team_note") or one.get("team_ok")) and one.get("stage") in (NOT_SET_UP, CANT)
 
     not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello") and not with_team(one))
     sections.append(("❌ Paid, not set up", [_line(one, now, (_still_wrong(one) or ["not on the hub"])[0])
@@ -402,7 +402,8 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     waiting = by(lambda one: (one.get("todo") and one.get("stage") not in (NOT_SET_UP, CANT, OVERFLOW, OVERFLOW_DONE)
                               or with_team(one)) and not _still_wrong(one))
     sections.append(("❓ Waiting on the team or an answer", [
-        _line(one, now, "; ".join(([one["team_note"]] if with_team(one) else []) + list(one.get("todo") or []))[:300])
+        _line(one, now, "; ".join(([one.get("team_note") or f"answered in #rook-qc - {one.get('team_ok')}"]
+                                   if with_team(one) else []) + list(one.get("todo") or []))[:300])
         for one in waiting]))
     sections.append(("🚚 Overflow not delivered yet", [_line(one, now) for one in by(
         lambda one: one.get("stage") == OVERFLOW)]))

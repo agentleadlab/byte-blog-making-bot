@@ -155,6 +155,8 @@ def _rook_nova_read_afresh(tmp_path, monkeypatch):
     monkeypatch.setattr(client, "_RN", {"at": 0.0, "since": None, "messages": [], "threads": None, "inside": {},
                                         "hold": 0})
     monkeypatch.setattr(client, "_SHEETS_READ", {})
+    monkeypatch.setattr(client, "_ROOKQC", {"at": 0.0, "since": None, "messages": [], "threads": None,
+                                            "inside": {}, "hold": 0})
     # No board read for a card made by hand, unless a test gives one.
     monkeypatch.setattr(client, "_BOARD_CARDS", [float("inf"), []])
     monkeypatch.setattr(client, "_LAUNCHING", {"at": 0.0, "since": None, "messages": [], "threads": None,
