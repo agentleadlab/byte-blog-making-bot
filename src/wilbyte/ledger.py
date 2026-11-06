@@ -397,16 +397,23 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     short = by(lambda one: one.get("stage") == SHORT)
     sections.append(("📉 Ended short", [_line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered")
                                         for one in short]))
-    waiting = by(lambda one: (one.get("todo") and one.get("stage") not in (NOT_SET_UP, CANT) or with_team(one))
-                 and not _still_wrong(one))
+    # Not overflow: it's under "Overflow not delivered yet" already - Riley
+    # Noah's and eight others were said twice.
+    waiting = by(lambda one: (one.get("todo") and one.get("stage") not in (NOT_SET_UP, CANT, OVERFLOW, OVERFLOW_DONE)
+                              or with_team(one)) and not _still_wrong(one))
     sections.append(("❓ Waiting on the team or an answer", [
         _line(one, now, "; ".join(([one["team_note"]] if with_team(one) else []) + list(one.get("todo") or []))[:300])
         for one in waiting]))
     sections.append(("🚚 Overflow not delivered yet", [_line(one, now) for one in by(
         lambda one: one.get("stage") == OVERFLOW)]))
     if board:
-        sections.append(("🔀 Nova's #launching board vs the hub",
-                         _not_cleared(board_vs(records, board, now=now, complete=board_complete))))
+        # Not again what's under "Paid, not set up" - the same six said twice.
+        unset = {found.group(1) for one in not_set_up for found in [_POST_LINK.search(str(one.get("link") or ""))]
+                 if found}
+        sections.append(("🔀 Nova's #launching board vs the hub", [
+            line for line in _not_cleared(board_vs(records, board, now=now, complete=board_complete))
+            if not (_POST_LINK.search(line) and _POST_LINK.search(line).group(1) in unset
+                    and "not on Nova's #launching board" in line)]))
     if payra_missing:
         sections.append(("💸 Paid in Payra, never posted in #new-payment", _not_cleared(payra_missing)))
     if aged:
@@ -522,7 +529,12 @@ def payra_missing(data: dict, posted_text: str, *, day: date) -> list[str]:
         # Posted under its name and amount, the invoice not named - Cole
         # Jackson's "SW16RFK-39".
         who, amount = str(one.get("customer") or ""), one.get("amount")
-        if who and who.casefold() in (posted_text or "").casefold() and amount is not None and (
+        # Or its first and last name, with a middle one between on the post:
+        # Payra's "GRANT MEZA" was posted as "Grant A Meza", and said never posted.
+        words = re.findall(r"[a-z]+", who.casefold())
+        named = len(words) >= 2 and re.search(
+            rf"\b{re.escape(words[0])}\b(?:\s+[a-z.]+){{0,2}}?\s+{re.escape(words[-1])}\b", (posted_text or "").casefold())
+        if who and (who.casefold() in (posted_text or "").casefold() or named) and amount is not None and (
                 f"{float(amount):,.2f}" in (posted_text or "") or f"{float(amount):.2f}" in (posted_text or "")):
             continue
         lines.append(f"• **{one.get('customer') or '?'}** ${one.get('amount')} · {number} · "

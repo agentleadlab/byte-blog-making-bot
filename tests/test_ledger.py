@@ -1169,3 +1169,25 @@ def test_good_to_go_lines_are_the_payments_not_an_ad(monkeypatch):
     listed = ledger.daily(rookqc.recalled(), now=now, today=now.date(), through=now.date())
     for name in ("Haroon Anwari", "Juan Serna", "Zachary Johnson", "Francesca Lopez", "Mark Christopherson"):
         assert name not in listed, name
+
+
+def test_the_lists_double_entries_and_misreads():
+    """The Nov 5 list: Mitchell Daich "Nova says it's done" from "I didn't
+    set anything up"; Payra's GRANT MEZA "never posted" while Grant A Meza
+    was; overflow and not-set-up names said twice."""
+    said = ("@Ryte I didn't set anything up for Mitchell. The $367.50 Zelle from today isn't tied to any fresh "
+            "order, and I don't have a pull for it either. His aged order is done.")
+    assert not rookqc._done_said(said)
+    assert rookqc._done_said("Done ✅ Jay's order is live now: 25 Text-Verified Veterans") 
+    # Payra, posted under a middle initial.
+    data = {"payments": {"1": {"invoice_number": "INV-21478", "customer": "GRANT MEZA", "amount": 400,
+                               "paid_on": "2026-11-05T17:03:00+00:00", "status": "succeeded"}}}
+    posted = "NAME: Grant A Meza\nAMOUNT: $400.00\nMETHOD: Zelle"
+    assert ledger.payra_missing(data, posted, day=date(2026, 11, 5)) == []
+    # Overflow said once, under its own section.
+    records = {"1": _kept("Riley Noah", ledger.OVERFLOW, todo=["The team still delivers it from overflow"]),
+               "2": _kept("William Monighetti", ledger.NOT_SET_UP, problems=["Not on the hub"])}
+    listed = ledger.daily(records, now=NOW, today=TODAY, through=TODAY,
+                          board={"someone else": "live"})
+    assert listed.count("Riley Noah") == 1
+    assert listed.count("William Monighetti") == 1
