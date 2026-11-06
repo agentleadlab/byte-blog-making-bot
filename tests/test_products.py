@@ -143,3 +143,18 @@ def test_the_total_is_charged_not_the_price_a_lead():
     assert products.amount_asked("20 vets at $45 each") == 900.0
     assert products.amount_asked("20 vets @ $45") == 900.0
     assert products.how_many(said) == 15
+
+
+def test_an_invoice_asked_for_by_its_number():
+    """"@Ryte Invoice #19924" - INV-19924, Joseph Antonucci's $5,589 from Oct 15,
+    came back as "nothing in Payra's last week"."""
+    from wilbyte import payraapi
+
+    data = {"invoices": {"1": {"id": "1", "number": "INV-19924", "name": "Joseph Antonucci", "total": 5400.0,
+                               "invoice_date": "2026-10-15"},
+                         "2": {"id": "2", "number": "INV-19925", "name": "Somebody Else", "total": 100.0}},
+            "payments": {"p1": {"id": "p1", "invoice_id": "1", "invoice_number": "INV-19924", "amount": 5589.0,
+                                "paid_on": "2026-10-15T16:48:00+00:00", "status": "settled"}}}
+    for asked in ("#19924", "19924", "Invoice #19924", "INV-19924", "inv19924"):
+        found = payraapi.paid_invoices(data, asked)
+        assert [one["invoice"]["number"] for one in found] == ["INV-19924"], (asked, found)

@@ -2908,7 +2908,7 @@ async def _send_paid_invoice(responder: Responder, who: str, config: Config | No
     if not found:
         # Out of the inbox: older than the week Payra's API lists.
         await responder.send(
-            f"🧾 **{who}** — nothing in Payra's last week, so here are Payra's own payment "
+            f"🧾 **{who}** — not in Payra's records I can read, so here are Payra's own payment "
             "confirmation emails for them.",
             file=discord.File(io.BytesIO(pdf), filename=f"{who} - Payra payment confirmations.pdf"),
         )

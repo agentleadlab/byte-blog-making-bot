@@ -667,8 +667,12 @@ def paid_invoices(data: dict, who: str, *, most: int = 12) -> list[dict]:
 
     # An invoice number is the invoice, whoever's name is on it.
     number = who.casefold().strip(" .,!?;:").lstrip("#")
+    # "#19924", "19924", "invoice #19924" - the number INV-19924, as Payra
+    # writes it: Franklin's "@Ryte Invoice #19924" found nothing.
+    bare = re.fullmatch(r"(?:invoice\s*)?#?\s*(?:inv-?)?(\d{4,6})", number)
     by_number = [one for one in data.get("invoices", {}).values()
-                 if str(one.get("number") or "").casefold() == number]
+                 if str(one.get("number") or "").casefold() == number
+                 or (bare and re.sub(r"\D", "", str(one.get("number") or "")) == bare.group(1))]
 
     def theirs(one):
         if by_number:

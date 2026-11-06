@@ -7453,6 +7453,18 @@ def paid_invoice_pdf(who: str, config: Config | None = None) -> tuple[bytes, lis
 
     data = payraapi.load()
     found = payraapi.paid_invoices(data, who) if data.get("invoices") else []
+    number = re.fullmatch(r"\s*(?:invoice\s*)?#?\s*(?:inv-?)?(\d{4,6})\s*", str(who or ""), re.IGNORECASE)
+    if not found and number and config is not None:
+        # An invoice number my copy hasn't: looked for in Payra itself, the
+        # way `payra find` does, and kept - INV-19924 from Oct 15 was "nothing
+        # in Payra's last week".
+        try:
+            payra_find(config, f"INV-{number.group(1)}")
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning("Couldn't look for INV-%s in Payra", number.group(1),
+                                                     exc_info=True)
+        data = payraapi.load()
+        found = payraapi.paid_invoices(data, who) if data.get("invoices") else []
     if not found:
         # Payra's API only lists about the last week. What it emailed goes
         # back as far as the inbox does.
