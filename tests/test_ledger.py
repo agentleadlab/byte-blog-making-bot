@@ -1191,3 +1191,26 @@ def test_the_lists_double_entries_and_misreads():
                           board={"someone else": "live"})
     assert listed.count("Riley Noah") == 1
     assert listed.count("William Monighetti") == 1
+
+
+def test_is_someone_still_active_is_answered_from_the_hub(monkeypatch):
+    """"is robert allaraj still active" - "Board says he's live ... that's not
+    something I can see from the hub" from the chat."""
+    from wilbyte import hub
+    from wilbyte.bot import client, mentions
+
+    assert mentions.parse("<@1> is robert allaraj still active").action == "hubstatus"
+    assert mentions.parse("is robert allaraj fulfilled?").action == "hubcheck"
+    row = hub.HubAgent(id="9", name="Robert Allaraj", status="live", lead_type="Text Verified Mortgage Protection Plus",
+                       start_date=date(2026, 10, 29), delivered=22, ordered=25, progress="22/25", schedule="24/7",
+                       sheet_url="https://docs.google.com/x", raw={"enabled": True, "delivered_today": 1})
+    monkeypatch.setattr(hub, "agents", lambda secrets, status="all": [row])
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    asyncio.run(client._hub_status(Said(), SimpleNamespace(secrets=None), "robert allaraj"))
+    assert "✅ Yes - Robert Allaraj" in sent[0] and "22/25 sent, 3 to go" in sent[0]
+    assert "switched **on**" in sent[0] and "**1** today" in sent[0] and "schedule 24/7" in sent[0]

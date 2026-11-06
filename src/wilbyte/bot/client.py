@@ -1832,6 +1832,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _missed_say(bot, responder)
                 return
 
+            if request.action == "hubstatus":
+                await _hub_status(responder, config, request.brief or "")
+                return
+
             if request.action == "sqcsaid":
                 kind, name, said = ((request.brief or "") + "\n\n").split("\n", 2)
                 await _sqc_team_said(bot, responder, message, kind, name.strip(), said.strip())
@@ -15709,6 +15713,60 @@ def _plain_letters(name) -> str:
 
 #: Sheets read for one `@RYTE hub check` of the whole Fulfilled tab.
 HUB_CHECK_MOST = 60
+
+
+def _hub_today(agent) -> str:
+    """What the hub's own record says of today and of being switched on -
+    "on · 1 today" - from whichever of its fields say so. "" when none do."""
+    raw = getattr(agent, "raw", None) or {}
+    bits = []
+    for key, said in raw.items():
+        name = str(key).casefold()
+        if name in ("enabled", "is_enabled", "on", "is_on", "active", "is_active", "toggle", "turned_on"):
+            bits.append("switched **on**" if said in (True, 1, "1", "true", "True", "on") else "switched **off**")
+        elif name in ("paused", "is_paused"):
+            if said in (True, 1, "1", "true", "True"):
+                bits.append("**paused**")
+        elif "today" in name and isinstance(said, (int, float, str)) and str(said).strip().isdigit():
+            bits.append(f"**{int(str(said).strip())}** today")
+        elif name in ("last_lead_at", "last_delivered_at", "last_sent_at", "last_lead"):
+            when = str(said or "").strip()
+            if when:
+                bits.append(f"last lead {when[:16]}")
+    return " · ".join(dict.fromkeys(bits))
+
+
+async def _hub_status(responder: Responder, config: Config, who: str) -> None:
+    """"is robert allaraj still active" - where they are on the hub, from
+    the hub: status, sent, to go, today, schedule, pace."""
+    from .. import hub
+
+    try:
+        found = hub.named(await asyncio.to_thread(hub.agents, config.secrets, status="all"), who)
+    except hub.HubError as exc:
+        await responder.send(f"⚠ Couldn't read the hub: {exc}")
+        return
+    if not found:
+        await responder.send(f"Nobody called **{who}** is on the hub.")
+        return
+    lines = []
+    for one in sorted(found, key=lambda one: one.start_date or date.min, reverse=True)[:5]:
+        left = (one.ordered - one.delivered) if one.ordered is not None and one.delivered is not None else None
+        going = str(one.status or "").casefold() in ("live", "active")
+        bits = [f"**{one.status or '?'}**", f"{one.progress or '?'} sent" + (f", {left} to go" if left else "")]
+        extra = _hub_today(one)
+        if extra:
+            bits.append(extra)
+        if one.schedule:
+            bits.append(f"schedule {one.schedule}")
+        if one.daily_cap:
+            bits.append(f"cap {one.daily_cap}/day")
+        if one.start_date:
+            bits.append(f"live {one.start_date:%b %-d}")
+        head = ("✅ Yes - " if going and left else "") if len(found) == 1 else ""
+        lines.append(f"• {head}{one.name} ({one.lead_type or '?'}) — " + ", ".join(bits)
+                     + (f" · <{one.sheet_url}>" if one.sheet_url else ""))
+    await responder.send(f"On the hub for **{who}**:\n" + "\n".join(lines))
 
 
 async def _hub_check(responder: Responder, config: Config, who: str, *, bot=None) -> None:

@@ -774,6 +774,16 @@ FAITH_ASKED = re.compile(
 _ABOUT_AGENTS = re.compile(r"\b(?:agents?|clients?)\b", re.IGNORECASE)
 
 
+#: "is robert allaraj still active" - answered by the chat as "Board says
+#: he's live", with what the hub shows of today left out.
+HUB_STATUS = re.compile(
+    r"^\s*(?:is|are)\s+(?P<who>.+?)\s+(?:still\s+)?(?:active|live|running|on|turned\s+on|paused|off|"
+    r"getting\s+(?:any\s+)?leads|receiving\s+leads)\s*(?:right\s+now|now|today|yet)?\s*[.?!]*\s*$"
+    r"|^\s*(?:status\s+(?:of|for)\s+|where\s+is\s+|how\s+is\s+)(?P<who2>.+?)(?:\s+at)?\s*[.?!]*\s*$"
+    r"|^\s*(?P<who3>.+?)['’]s\s+status\s*[.?!]*\s*$",
+    re.IGNORECASE)
+
+
 HUB_QUESTION = re.compile(
     r"\s*(?:"
     r"(?:is|was|has|have)\s+(.+?)\s+(?:been\s+)?(?:fulfilled|fulfill?ed)"
@@ -1105,6 +1115,12 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # Asked the way people ask: "is Alexander Manchester fulfilled?", "did
     # Ian Miller get all his leads", "how many leads did Tavin get". Nicole's
     # question went to the chat, which could only guess.
+    status = HUB_STATUS.match(text)
+    whose = " ".join(next((one for one in (status.group("who"), status.group("who2"), status.group("who3")) if one),
+                          "").split()) if status else ""
+    if whose and len(whose.split()) <= 4 and not re.match(
+            r"(?:the|it|this|that|my|our|everyone|everybody|ryte|he|she|they)\b", whose, re.IGNORECASE):
+        return MentionRequest(action="hubstatus", brief=whose)
     asked = HUB_QUESTION.match(text)
     who = " ".join(next((one for one in asked.groups() if one), "").split()) if asked else ""
     # A person's name - a word or four, not "it" or "the board".
