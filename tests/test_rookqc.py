@@ -1361,3 +1361,21 @@ def test_the_teams_answer_ends_rytes_follow_ups(monkeypatch):
     assert seen == [[]] and rookqc.among("Not on the hub", held["ok_problems"])
     listed = ledger.daily(rookqc.recalled(), now=now, today=now.date(), through=now.date(), only=ledger.MISSED)
     assert "Dane Orshoff" not in listed
+
+
+def test_veteran_final_expense_is_the_veteran_product():
+    """Peter Kuyper: "the hub has the lead type “Text Verified Veteran Plus”,
+    the payment “Veteran Final Expense”" - one product, asked as two."""
+    assert rookqc.family("Veteran Final Expense") == rookqc.family("Text Verified Veteran Plus")
+    assert rookqc.family("Veteran Widow FEX") == rookqc.family("Text Verified Veteran Widows")
+    assert rookqc.family("Veteran Widows × 10 @ $25/lead") != rookqc.family("Text Verified Veteran Plus")
+    assert rookqc.family("Text Verified Final Expense") != rookqc.family("Text Verified Veteran Plus")
+
+
+def test_a_lead_type_question_carries_no_state_lists():
+    hub = SimpleNamespace(name="Peter Kuyper", id="2226", lead_type="Text Verified Veteran Plus", status="scheduled",
+                          ordered=31, delivered=0, states=("AK", "AL", "AR"))
+    result = rookqc.Checked(client="Peter Kuyper", problems=["The hub has the lead type “X”, the payment “Y”"],
+                            hub=hub, paid=rookqc.Order(name="Peter Kuyper", lead_type="Veteran Final Expense"))
+    said = rookqc.evidence(result)
+    assert "states" not in said and "31 ordered / 0 delivered" in said

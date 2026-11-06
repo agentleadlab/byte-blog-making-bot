@@ -171,6 +171,11 @@ def family(lead_type: str) -> frozenset:
     if "widow" in names:
         # "Fresh Vet Widows" is the widow product (Alexander Salinas').
         names.discard("vet")
+    if names & {"vet", "widow"}:
+        # "Veteran Final Expense" is the veteran product - final expense for
+        # veterans: Peter Kuyper's payment against the hub's Text Verified
+        # Veteran Plus was asked about as two lead types, at 12:45 AM.
+        names.discard("fex")
     if _AGED.search(said):
         names.add("aged")
     return frozenset(names)
@@ -1367,22 +1372,26 @@ def evidence(result: Checked, *, invoice: str = "") -> str:
     read is plain at a glance, and a right one needs no looking up: Justin
     Techer's "has IN not ordered" was right, and nobody could tell."""
     lines = []
+    # States only when it's the states that are asked about - Peter Kuyper's
+    # lead type question carried all 49 of the hub's, and "states none given".
+    about_states = any("state" in one.casefold() for one in [*result.problems, *result.todo])
     paid = getattr(result, "paid", None)
     if paid is not None:
         bits = [one for one in (f"{paid.count} {paid.lead_type}".strip() if paid.count else paid.lead_type,
-                                "states " + _states_said(paid.states, paid.left_out)) if one]
+                                ("states " + _states_said(paid.states, paid.left_out)) if about_states else "")
+                if one]
         lines.append(f"-# The payment{f' ({invoice})' if invoice else ''}: " + " · ".join(bits))
     rook = rook_setup(getattr(result, "setup_text", "")) if getattr(result, "setup_text", "") else None
     if rook is not None:
-        lines.append(f"-# Rook's setup: {rook.count or '?'} {rook.lead_type or ''} · states "
-                     + _states_said(rook.states, rook.left_out))
+        lines.append(f"-# Rook's setup: {rook.count or '?'} {rook.lead_type or ''}"
+                     + (" · states " + _states_said(rook.states, rook.left_out) if about_states else ""))
     hub = getattr(result, "hub", None)
     if hub is not None:
         states = list(getattr(hub, "states", ()) or ())
         lines.append(f"-# The hub: {getattr(hub, 'name', '?')} (row {getattr(hub, 'id', '?')}) · "
                      f"{getattr(hub, 'lead_type', '') or '?'} · {getattr(hub, 'status', '') or '?'} · "
-                     f"{getattr(hub, 'ordered', '?')} ordered / {getattr(hub, 'delivered', None) or 0} delivered · "
-                     f"states {_states_said(states, [])}")
+                     f"{getattr(hub, 'ordered', '?')} ordered / {getattr(hub, 'delivered', None) or 0} delivered"
+                     + (f" · states {_states_said(states, [])}" if about_states else ""))
     return ("\n" + "\n".join(lines)) if lines else ""
 
 
