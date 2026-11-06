@@ -6130,3 +6130,18 @@ def test_the_audit_reads_an_aged_payment_by_novas_pull():
     agedqc.remember("950", agedqc.Checked(client="Kory Parent", problems=["paid for 25, Nova pulled 20"]))
     stands, line = client._audit_line(post, {}, [])
     assert stands == "check" and "Nova pulled 20" in line
+
+
+def test_a_spark_members_state_change_isnt_an_order():
+    """"why did ryte hammer this its not even a order" - Capture Info's "A
+    lead pool member changed their states on Spark" for FND Life."""
+    message = _spark_post(961)
+    message.content = "📍 A lead pool member changed their states on Spark"
+    message.embeds = [SimpleNamespace(
+        title="Veteran Widow FEX",
+        description="This member changed the states on their order. It applies from their next lead, and Spark "
+                    "refuses a lead outside the list below.",
+        fields=[SimpleNamespace(name="Buyer", value="FND Life"), SimpleNamespace(name="Added", value="HI, ID")],
+        url=None, footer=None, author=None)]
+    assert not client._spark_member(message)
+    assert client._spark_member(_spark_post(962)), "a new member still is"

@@ -13762,10 +13762,22 @@ def discord_times(text: str, timezone_name: str = "America/New_York") -> str:
 SPARK_ORDER = re.compile(r"\blead\s+order\s+on\s+spark\b|\bone-?time\s+pack\b", re.IGNORECASE)
 
 
+#: A Spark post about a membership that's already there - its states
+#: changed, paused, resumed, cancelled, left: not something bought.
+SPARK_CHANGE = re.compile(r"\bchanged\s+(?:their|the|its)\b|\bmember\s+(?:paused|resumed|cancell?ed|left|updated)\b|"
+                          r"\b(?:paused|resumed|cancell?ed)\s+(?:their|the)\s+(?:membership|order|pool)\b|"
+                          r"\bleft\s+the\s+pool\b|\bupdated\s+(?:their|the)\s+(?:states|order|membership)\b",
+                          re.IGNORECASE)
+
+
 def spark_post(text: str) -> bool:
     """Capture Info's post of something bought on Spark - a pool membership
     or a one-time order."""
     said = str(text or "")
+    if SPARK_CHANGE.search(said):
+        # "A lead pool member changed their states on Spark" - FND Life's
+        # states changed on a membership they had, made into a New Agent card.
+        return False
     return bool(re.search(r"\bspark\b", said, re.IGNORECASE)) and bool(
         re.search(r"pool\s+member", said, re.IGNORECASE) or SPARK_ORDER.search(said))
 
