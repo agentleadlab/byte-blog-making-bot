@@ -1600,7 +1600,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     # writer on "ad spend". The team's lines about payments are read first -
     # kept only when they name a payment Ryte follows. Not an "add to trello",
     # whose lines are tasks.
-    notes = team_notes(message.content)
+    try:
+        followed = _followed_names()
+    except Exception:
+        followed = []
+    notes = team_notes(message.content, followed)
     if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(message.content or "")):
         try:
             if await _sqc_team_notes(bot, responder, message):
@@ -12804,9 +12808,37 @@ _LIST_LINE = re.compile(r"^\s*[•*·-]?\s*\**(?P<name>[^\n$*]+?)\**\s+\$(?P<amo
 _POST_IN = re.compile(r"discord(?:app)?\.com/channels/\d+/\d+/(\d+)")
 
 
-def team_notes(text: str) -> list:
+def _followed_names() -> list:
+    """The names of the payments Ryte follows now."""
+    from .. import ledger, rookqc
+
+    return [str(one.get("client") or one.get("name") or "")
+            for one in ledger.open_ones(rookqc.recalled(), now=datetime.now(timezone.utc)).values()]
+
+
+def _named_at_start(line: str, names) -> tuple:
+    """(the name a line starts with, the rest) when its first words are
+    somebody followed - "William Monighetti (AGED)", "Charles loschiavo
+    SETUP DONE", "Cavell M Stubbs Jr SETUP DONE". ("", "") when not."""
+    from .. import rookqc
+
+    words = list(re.finditer(r"[A-Za-z][A-Za-z'’.-]*", line))
+    if not words or words[0].start() > 3:
+        return "", ""
+    for many in range(min(5, len(words)), 1, -1):
+        said = line[:words[many - 1].end()]
+        if len(rookqc._name_words(said)) < 2:
+            continue
+        if any(rookqc.same_person_strict(said, name) and len(rookqc._name_words(name)) >= 2 for name in names):
+            rest = line[words[many - 1].end():]
+            return " ".join(said.split()), " ".join(rest.strip(" -–—:,.()").replace("(", "").replace(")", "").split())
+    return "", ""
+
+
+def team_notes(text: str, names=None) -> list:
     """[(names, what's said, {"posts", "amount"})] - the lines of a message
-    that are "Name - note", or lines off Ryte's own list."""
+    that are "Name - note", lines off Ryte's own list, or - `names`, the ones
+    followed - lines that start with somebody followed and say something."""
     out = []
     for line in str(text or "").splitlines():
         line = re.sub(r"<@!?\d+>", "", line).strip()
@@ -12821,8 +12853,16 @@ def team_notes(text: str) -> list:
             continue
         found = _TEAM_NOTE.match(plain)
         if found:
-            names = [" ".join(one.split()) for one in re.split(r"\s*(?:&|,|\band\b)\s*", found["names"]) if one.strip()]
-            out.append((names, " ".join(found["note"].split()), {"posts": posts, "amount": ""}))
+            whom = [" ".join(one.split()) for one in re.split(r"\s*(?:&|,|\band\b)\s*", found["names"]) if one.strip()]
+            out.append((whom, " ".join(found["note"].split()), {"posts": posts, "amount": ""}))
+            continue
+        if names:
+            # Its first words somebody followed, whatever comes after - no
+            # dash needed: Franklin's "William Monighetti (AGED)" list was
+            # read as "who's going live" on its "SETUP DONE".
+            who, rest = _named_at_start(plain, names)
+            if who and rest:
+                out.append(([who], rest, {"posts": posts, "amount": ""}))
     return out
 
 
@@ -12833,7 +12873,8 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
     about a payment Ryte follows (else it's not this, and nothing's said)."""
     from .. import ledger, rookqc
 
-    lines = team_notes(_all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", ""))
+    lines = team_notes(_all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", ""),
+                       _followed_names())
     if not lines:
         return False
     records = rookqc.recalled()
@@ -12891,6 +12932,14 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
     said = [("✅ Accepted - off the QC list, not flagged or asked about again unless something new goes wrong:"
              if good else "📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not "
              "asked about again:"), *kept]
+    # Lines that named nobody Ryte follows - said, not dropped.
+    text = _all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", "")
+    for line in str(text or "").splitlines():
+        plain = re.sub(r"<@!?\d+>", "", line).strip()
+        if not re.search(r"[A-Za-z]{2,}\s+[A-Za-z]{2,}", plain) or _GOOD_TO_GO.search(plain):
+            continue
+        if not any(name.casefold() in plain.casefold() for names, _note, _where in lines for name in names):
+            nobody.append(" ".join(re.findall(r"[A-Za-z][A-Za-z'’.-]*", plain)[:3]))
     if nobody:
         said.append(f"-# No payment I'm following for: {', '.join(dict.fromkeys(nobody))}")
     said.append("-# A payment with the team stays under \"Waiting on the team\" until it's on the hub - checked "

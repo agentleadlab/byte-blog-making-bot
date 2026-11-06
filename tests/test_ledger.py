@@ -1283,3 +1283,40 @@ def test_lines_off_rytes_own_list_are_read(monkeypatch):
     assert held["991"].get("said_no_setup") and held["992"].get("said_no_setup")
     assert not held["993"].get("said_no_setup"), "Wes's other payment, by the amount"
     assert "Accepted" in sent[0]
+
+
+def test_names_with_their_note_and_no_dash(monkeypatch):
+    """"@Ryte William Monighetti (AGED) / Ethan C Spalla (OVERFLOW) /
+    Charles loschiavo SETUP DONE / ..." - answered "Every agent going live
+    today or tomorrow is set up on what they ordered"."""
+    from wilbyte.bot import client
+
+    now = datetime.now(timezone.utc)
+    for key, name in (("1001", "William Monighetti"), ("1002", "Ethan C Spalla"), ("1003", "charles loschiavo"),
+                      ("1004", "Cavell M Stubbs Jr"), ("1005", "Mitchell Daich")):
+        rookqc.remember(key, **dict(_kept(name, ledger.NOT_SET_UP, problems=["Not on the hub"]),
+                                    posted=(now - timedelta(hours=8)).isoformat()))
+    said = ("<@1>\nWilliam Monighetti (AGED)\nEthan C Spalla  (OVERFLOW)\nMitchell Daich (AGED)\n"
+            "Charles loschiavo SETUP DONE\nLee Ohenry (AGED)\nCavell M Stubbs Jr SETUP DONE\n"
+            "Taylor Ethans SPARK AGENT. Setup done Starts Mon, Nov 9")
+    notes = client.team_notes(said, client._followed_names())
+    assert [one[0][0] for one in notes] == ["William Monighetti", "Ethan C Spalla", "Mitchell Daich",
+                                           "Charles loschiavo", "Cavell M Stubbs Jr"]
+    sent = []
+
+    class Said:
+        async def send(self, text="", **_):
+            sent.append(text)
+
+    async def run(bot, key, **kw):
+        return ""
+
+    monkeypatch.setattr(client, "_sqc_run", run)
+    franklin = SimpleNamespace(content=said, embeds=[], message_snapshots=[],
+                               author=SimpleNamespace(display_name="Franklin", bot=False))
+    assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), franklin))
+    held = rookqc.recalled()
+    assert held["1001"]["aged"] is True and held["1005"]["aged"] is True
+    assert held["1002"].get("said_overflow")
+    assert held["1003"].get("said_no_setup") and held["1004"].get("said_no_setup")
+    assert "Lee Ohenry" in sent[-1] and "Taylor Ethans" in sent[-1]
