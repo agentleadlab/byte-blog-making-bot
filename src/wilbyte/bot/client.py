@@ -1597,7 +1597,13 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     # whose lines are tasks.
     notes = team_notes(message.content)
     if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(message.content or "")):
-        if await _sqc_team_notes(bot, responder, message):
+        try:
+            if await _sqc_team_notes(bot, responder, message):
+                return
+        except Exception as exc:
+            # Said, never silence - "hes not responding".
+            log.exception("Couldn't keep the team's notes")
+            await responder.send(f"⚠ Couldn't keep those on their payments: {_readable(exc)}")
             return
 
     # Replying to a command and saying nothing but "@RYTE" means run that
@@ -12658,12 +12664,8 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
                     kept.append(f"• {whose} - with the team: “{note[:120]}”")
     if not kept:
         return False
-    for key in {key for names, _note in lines for name in names for key, one in open_now.items()
-                if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))}:
-        try:
-            await _sqc_run(bot, key, force=True)
-        except Exception:
-            log.warning("Couldn't check %s again after the team's note", key, exc_info=True)
+    keys = {key for names, _note in lines for name in names for key, one in open_now.items()
+            if rookqc.same_person_strict(name, str(one.get("client") or one.get("name") or ""))}
     said = [("✅ Accepted - off the QC list, not flagged or asked about again unless something new goes wrong:"
              if good else "📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not "
              "asked about again:"), *kept]
@@ -12673,6 +12675,18 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
                 "against the payment then.")
     for chunk in _chunks("\n".join(said)):
         await responder.send(chunk)
+
+    async def again():
+        # Their cards brought up to date after the answer, not before it: each
+        # check reads #rook-nova, the hub and the sheet, and six of them kept
+        # Franklin's "good to go" unanswered for minutes.
+        for key in keys:
+            try:
+                await _sqc_run(bot, key, force=True)
+            except Exception:
+                log.warning("Couldn't check %s again after the team's note", key, exc_info=True)
+
+    _also_running(asyncio.get_running_loop().create_task(again()))
     return True
 
 

@@ -1139,13 +1139,24 @@ def test_good_to_go_lines_are_the_payments_not_an_ad(monkeypatch):
         async def send(self, text="", **_):
             sent.append(text)
 
+    checked_after = []
+
     async def run(bot, key, **kw):
+        # "hes not responding": the answer first, the cards after.
+        checked_after.append(bool(sent))
         return ""
 
     monkeypatch.setattr(client, "_sqc_run", run)
+
+    async def both():
+        done = await client._sqc_team_notes(SimpleNamespace(), Said(), franklin)
+        await asyncio.sleep(0.05)
+        return done
+
     franklin = SimpleNamespace(content=said, embeds=[], message_snapshots=[],
                                author=SimpleNamespace(display_name="Franklin", bot=False))
-    assert asyncio.run(client._sqc_team_notes(SimpleNamespace(), Said(), franklin))
+    assert asyncio.run(both())
+    assert checked_after and all(checked_after)
     held = rookqc.recalled()
     assert held["971"]["aged"] is True
     # "good to go": every one accepted and off the QC, Juan Serna's too.
