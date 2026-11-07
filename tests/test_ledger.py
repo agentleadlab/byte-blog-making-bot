@@ -1320,3 +1320,29 @@ def test_names_with_their_note_and_no_dash(monkeypatch):
     assert held["1002"].get("said_overflow")
     assert held["1003"].get("said_no_setup") and held["1004"].get("said_no_setup")
     assert "Lee Ohenry" in sent[-1] and "Taylor Ethans" in sent[-1]
+
+
+def test_a_long_paste_arrives_as_a_file_and_is_read(monkeypatch):
+    """"these are good to go:" with the list as message.txt - Discord's long
+    paste - answered "That reads like a clear them out"; then "clearout
+    payments" looked for a client channel called payments."""
+    from wilbyte.bot import client, mentions
+
+    assert mentions.parse("clearout payments").action == "ledgerclear"
+    assert mentions.parse("clearout Jay Rodriguez").action == "clearout"
+    pasted = ("• Thomas Poulin $90.00 · paid 7 days ago — Rook and Nova haven't said anything "
+              "https://discord.com/channels/1/2/1565724767644811447\n"
+              "• owen anderson $720.00 · paid 7 days ago — The hub states don't match "
+              "https://discord.com/channels/1/2/1565811739574935586\n")
+
+    class File:
+        filename, size = "message.txt", len(pasted)
+
+        async def read(self):
+            return pasted.encode()
+
+    message = SimpleNamespace(content="these are good to go:", embeds=[], message_snapshots=[], attachments=[File()],
+                              author=SimpleNamespace(display_name="Franklin", bot=False))
+    text = asyncio.run(client._message_text(message))
+    assert "Thomas Poulin" in text and "owen anderson" in text
+    assert len(client.team_notes(text)) == 2

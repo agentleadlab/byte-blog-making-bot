@@ -1604,10 +1604,13 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
         followed = _followed_names()
     except Exception:
         followed = []
-    notes = team_notes(message.content, followed)
-    if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(message.content or "")):
+    # With a long paste's message.txt - Discord makes a file of it, and
+    # Franklin's "these are good to go:" list went unread.
+    said_all = await _message_text(message)
+    notes = team_notes(said_all, followed)
+    if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(said_all or "")):
         try:
-            if await _sqc_team_notes(bot, responder, message):
+            if await _sqc_team_notes(bot, responder, message, text=said_all):
                 return
         except Exception as exc:
             # Said, never silence - "hes not responding".
@@ -1628,7 +1631,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
         # Walker - Aged lead delivered", answered with "I can't find a New
         # Agent card for ...". Kept on each one's payment instead.
         if replied is not None and not getattr(getattr(replied, "author", None), "bot", False) \
-                and await _sqc_team_notes(bot, MessageResponder(message), replied):
+                and await _sqc_team_notes(bot, MessageResponder(message), replied,
+                                          text=await _message_text(replied)):
             return
         if replied is not None and (replied.content or "").strip():
             again = mentions.parse(
@@ -12866,15 +12870,31 @@ def team_notes(text: str, names=None) -> list:
     return out
 
 
-async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
+async def _message_text(message) -> str:
+    """A message's words with its pasted text files' - a long paste arrives
+    as message.txt."""
+    said = _all_of_it(message) if hasattr(message, "embeds") else str(getattr(message, "content", "") or "")
+    for one in getattr(message, "attachments", None) or []:
+        name = str(getattr(one, "filename", "") or "").casefold()
+        if not name.endswith((".txt", ".md")) or (getattr(one, "size", 0) or 0) > 200_000:
+            continue
+        try:
+            said += "\n" + (await one.read()).decode("utf-8", errors="replace")
+        except Exception:
+            log.warning("Couldn't read %s on a message", name, exc_info=True)
+    return said
+
+
+async def _sqc_team_notes(bot, responder: Responder, message, text: str | None = None) -> bool:
     """The team's lines about payments kept on each one's payment: aged -
     the aged QC's; overflow; no setup needed; anything else - with the team,
     in their words, and not Rook and Nova's miss. Whether any line was
     about a payment Ryte follows (else it's not this, and nothing's said)."""
     from .. import ledger, rookqc
 
-    lines = team_notes(_all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", ""),
-                       _followed_names())
+    if text is None:
+        text = _all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", "")
+    lines = team_notes(text, _followed_names())
     if not lines:
         return False
     records = rookqc.recalled()
@@ -12884,8 +12904,7 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
     # "this are good to go:" - every one on it accepted as it is and off the
     # QC: "those are payments/setup that are already setup that he keeps on
     # flagging so i want him to accept it and remove them from his list".
-    good = bool(_GOOD_TO_GO.search(_all_of_it(message) if hasattr(message, "embeds")
-                                   else getattr(message, "content", "") or ""))
+    good = bool(_GOOD_TO_GO.search(text or ""))
     kept, nobody, keys = [], [], set()
     by_post = {found.group(1): key for key, one in records.items()
                for found in [_POST_IN.search(str(one.get("link") or ""))] if found}
@@ -12933,7 +12952,6 @@ async def _sqc_team_notes(bot, responder: Responder, message) -> bool:
              if good else "📝 Kept on their payments - off \"Paid, not set up\" and \"did we miss anything\", not "
              "asked about again:"), *kept]
     # Lines that named nobody Ryte follows - said, not dropped.
-    text = _all_of_it(message) if hasattr(message, "embeds") else getattr(message, "content", "")
     for line in str(text or "").splitlines():
         plain = re.sub(r"<@!?\d+>", "", line).strip()
         if not re.search(r"[A-Za-z]{2,}\s+[A-Za-z]{2,}", plain) or _GOOD_TO_GO.search(plain):

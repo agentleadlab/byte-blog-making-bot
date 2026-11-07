@@ -901,18 +901,18 @@ def _ask_first(text: str) -> str:
 
 #: The day's payments list cleared as good to go - "clear them out", "clear
 #: the list", "all good, clear these".
-LIST_CLEAR = re.compile(r"\b(?:clear|clean)\s+(?:(?:them|these|those|em|'em|it|everything|all(?:\s+of\s+(?:them|these))?)"
+LIST_CLEAR = re.compile(r"\b(?:clear|clean)\s*(?:out\s+)?(?:(?:them|these|those|em|'em|it|everything|all(?:\s+of\s+(?:them|these))?)"
                         r"(?:\s+out)?|(?:out\s+)?(?:the|this|that|today'?s)\s+(?:payments?\s+)?list|the\s+eod|"
                         r"(?:the\s+)?payments?\s+list)\s*[.!]*\s*$"
                         # "these are all good to go so clear" - nobody's name after it.
                         r"|\b(?:good\s+to\s+go|all\s+good|all\s+set|good|fine|done|ok(?:ay)?)\b[^\n]{0,40}"
-                        r"\bclear(?:\s+(?:them|these|those|em|'em|it|all|everything))?(?:\s+out)?\s*[.!]*\s*$"
+                        r"\bclear\s*(?:out\s*)?(?:\s+(?:them|these|those|em|'em|it|all|everything))?(?:\s+out)?\s*[.!]*\s*$"
                         r"|^\s*clear(?:\s+out)?\s*[.!]*\s*$"
                         # "clear yesterday", "clear out yesterday's payments", "clear the
                         # payments from yesterday" - "yesterday" isn't an agent to close.
-                        r"|\bclear(?:\s+out)?\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?(?:payments?\s+(?:from\s+|of\s+)?)?"
+                        r"|\bclear\s*(?:out)?\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?(?:payments?\s+(?:from\s+|of\s+)?)?"
                         r"yesterday(?:['’]?s)?(?:\s+(?:payments?|list|ones))?\s*[.!]*\s*$"
-                        r"|\bclear(?:\s+out)?\s+(?:the\s+)?payments?\s*[.!]*\s*$", re.IGNORECASE)
+                        r"|\bclear\s*(?:out)?\s+(?:the\s+)?(?:payments?|list)\s*[.!]*\s*$", re.IGNORECASE)
 LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^\n]{0,20}\b(?:clear(?:ed|ing)?|list)\b"
                           r"|\bunclear\s*$", re.IGNORECASE)
 
