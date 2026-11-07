@@ -1840,6 +1840,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _order_given(bot, responder, message, request.brief or "")
                 return
 
+            if request.action == "setupask":
+                await _setup_ask(responder, config, await _message_text(message) if message is not None
+                                 else request.brief or "")
+                return
+
             if request.action == "missedsetup":
                 await _missed_say(bot, responder)
                 return
@@ -13019,6 +13024,30 @@ async def _order_given(bot, responder: Responder, message, said: str) -> None:
             f"📝 Kept on {', '.join(names)}" + (f" ({invoice})" if invoice else "") + " - "
             + ("aged, so it's Nova's pull: off the setup list, checked when the pull's done."
                if aged else "the order as you gave it, checked against the hub once it's set up."))
+
+
+async def _setup_ask(responder: Responder, config: Config, said: str) -> None:
+    """"are these people setup?" with a list, or "is Elvis Farina set up?" -
+    each one on the hub held up against what they bought."""
+    from .. import hub, rookqc
+
+    asked = rookqc.asked_orders(said)
+    if not asked:
+        single = re.match(r"^\W*(?:<@!?\d+>\s*)?is\s+(.+?)\s+(?:been\s+)?set\s*-?\s*up\b", said.strip(), re.IGNORECASE)
+        if single:
+            asked = [(" ".join(single.group(1).split()), "")]
+    if not asked:
+        await responder.send("Who? Put their names under the question, one a line - with what they bought if you "
+                             "want that checked too.")
+        return
+    try:
+        rows = await asyncio.to_thread(hub.agents, config.secrets, status="all")
+    except hub.HubError as exc:
+        await responder.send(f"⚠ Couldn't read the hub: {exc}")
+        return
+    lines = [rookqc.setup_answer(name, bought, rows) for name, bought in asked]
+    for chunk in _chunks("\n".join(lines)):
+        await responder.send(chunk)
 
 
 async def _missed_say(bot, responder: Responder) -> None:

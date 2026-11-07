@@ -1459,3 +1459,72 @@ def remember(post_id: str, **fields) -> dict:
     PATH.parent.mkdir(parents=True, exist_ok=True)
     PATH.write_text(json.dumps(held, indent=1))
     return one
+
+
+def asked_orders(text: str) -> list:
+    """[(name, what they bought)] off a list - "1  Elvis Farina  WEEKEND20
+    $1,863.00  50 fresh vets (FL, PA)" - a line each."""
+    out = []
+    for line in str(text or "").splitlines():
+        line = re.sub(r"<@!?\d+>", "", line).strip()
+        line = re.sub(r"^\s*\d{1,3}[.)]?\s+", "", line)
+        if not line or re.search(r"\bset\s*-?\s*up\b\s*\??\s*$", line, re.IGNORECASE):
+            continue
+        parts = [one.strip() for one in re.split(r"\t+|\s{2,}", line) if one.strip()]
+        if len(parts) < 2:
+            # One space between: the name runs to a code, an amount or a count.
+            found = re.match(r"(.+?)\s+(?=(?:[A-Z]{3,}\d+\b|\$|\d))", line)
+            if not found:
+                continue
+            parts = [found.group(1), line[found.end():]]
+        name = " ".join(re.sub(r"\(.*?\)", "", parts[0]).split())
+        if len(name.split()) < 2 or re.search(r"\d|\$", name):
+            continue
+        rest = " ".join(parts[1:])
+        # Promo codes and amounts aren't what was bought: "WEEKEND20 $890.10".
+        rest = re.sub(r"\b[A-Z]{3,}\d+\b|\$[\d,]+(?:\.\d{2})?(?:\s*\([^)]*\))?", " ", rest)
+        out.append((name, " ".join(rest.split())))
+    return out
+
+
+def setup_answer(name: str, bought: str, rows: list) -> str:
+    """One line: whether they're on the hub for what they bought."""
+    found = hub_named(rows, name)
+    if not found:
+        return f"❌ **{name}** — not on the hub" + (f" (bought {bought})" if bought else "")
+    many = re.search(r"\b(\d{1,4})\b", bought or "")
+    wanted = Order(name=name, lead_type=bought, count=int(many.group(1)) if many else None,
+                   states=_states_of(" ".join(re.findall(r"\(([^)]*)\)", bought or "")))[0])
+    if "+" in (bought or ""):
+        # Several products - Evan Mori's "10 fresh vets + 10 fresh IUL Plus +
+        # 10 overflow blue collar": each on a row of its own; overflow isn't
+        # on the hub at all.
+        wants = [one.strip() for one in bought.split("+") if one.strip()]
+        missing = [one for one in wants if "overflow" not in one.casefold() and not any(
+            (family(getattr(row, "lead_type", "")) - {"aged"}) == (family(one) - {"aged"}) for row in found)]
+        rows_said = "; ".join(f"{getattr(row, 'lead_type', '') or '?'} ({getattr(row, 'status', '') or '?'}, "
+                              f"{getattr(row, 'progress', '') or '?'})" for row in found[:4])
+        if missing:
+            return f"⚠️ **{name}** — on the hub: {rows_said}; not there: {', '.join(missing)}"
+        return f"✅ **{name}** — set up: {rows_said}" + (
+            " · overflow's the team's" if "overflow" in bought.casefold() else "")
+    row = pick_row(found, wanted)
+    bits = []
+    kind, theirs = family(getattr(row, "lead_type", "")), family(bought)
+    if kind and theirs and (kind - {"aged"}) != (theirs - {"aged"}):
+        if "overflow" not in (bought or "").casefold() or len(theirs - kind) > 0:
+            bits.append(f"lead type {getattr(row, 'lead_type', '?')} (bought {bought})")
+    ordered = getattr(row, "ordered", None)
+    if wanted.count and ordered is not None and ordered < wanted.count:
+        bits.append(f"{ordered} ordered on the hub, bought {wanted.count}")
+    missing = [code for code in wanted.states if code not in (getattr(row, "states", ()) or ())]
+    if missing and getattr(row, "states", ()):
+        bits.append(f"missing {', '.join(missing)}")
+    sent = getattr(row, "progress", "") or f"{getattr(row, 'delivered', 0) or 0}/{ordered or '?'}"
+    where = (f"{getattr(row, 'lead_type', '') or '?'} · {getattr(row, 'status', '') or '?'} · {sent}"
+             + (f" · live {row.start_date:%b %-d}" if getattr(row, "start_date", None) else ""))
+    others = len(found) - 1
+    tail = f" · {others} other row(s) by that name" if others else ""
+    if bits:
+        return f"⚠️ **{name}** — on the hub ({where}), but " + "; ".join(bits) + tail
+    return f"✅ **{name}** — set up: {where}{tail}"

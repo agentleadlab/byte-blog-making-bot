@@ -1402,3 +1402,29 @@ def test_what_the_team_said_was_wrong_on_the_list():
     stand_in = rookqc.check(PAYRA, [("Rook", ROOK.replace("jcarter@example.com", "support@agentleadlab.com")),
                                     ("Nova", NOVA)], hub=_hub())
     assert not any("email" in one for one in stand_in.problems)
+
+
+def test_are_these_people_set_up():
+    """"are these people setup?" and six names with what they bought -
+    answered "every agent going live today or tomorrow is set up"."""
+    from wilbyte.bot import mentions
+
+    said = ("<@1> are these people setup?\n1\tElvis Farina\tWEEKEND20\t$1,863.00\t50 fresh vets (FL, PA)\n"
+            "3 Jane Torres WEEKEND20 $890.10 25 OTP mortgage protection\n"
+            "4\tCavell (CJ) Stubbs Jr\tWEEKEND20\t$400.00 (Zelle)\t20 fresh widows\n"
+            "6\tEvan Mori\tWEEKEND5\t$937.71\t10 fresh vets + 10 fresh IUL Plus + 10 overflow blue collar\n"
+            "7\tNobody Here\tWEEKEND5\t$100.00\t5 fresh vets")
+    assert mentions.parse(said).action == "setupask"
+    asked = rookqc.asked_orders(said)
+    assert asked[1] == ("Jane Torres", "25 OTP mortgage protection") and asked[2][0] == "Cavell Stubbs Jr"
+    rows = [_hub(name="Elvis Farina", lead_type="Text Verified Veteran Plus", ordered=50, states=("FL", "PA")),
+            _hub(name="Jane Torres", lead_type="Text Verified Mortgage Protection Plus", ordered=20),
+            _hub(name="Cavell Stubbs", lead_type="Text Verified Veteran Widows", ordered=20),
+            _hub(name="Evan Mori", lead_type="Text Verified Veteran Plus", ordered=10),
+            _hub(name="Evan Mori", lead_type="Text Verified IUL Plus", ordered=10)]
+    said_back = [rookqc.setup_answer(name, bought, rows) for name, bought in asked]
+    assert said_back[0].startswith("✅ **Elvis Farina**")
+    assert said_back[1].startswith("⚠️ **Jane Torres**") and "20 ordered on the hub, bought 25" in said_back[1]
+    assert said_back[2].startswith("✅ **Cavell Stubbs Jr**")
+    assert said_back[3].startswith("✅ **Evan Mori**") and "overflow's the team's" in said_back[3]
+    assert said_back[4].startswith("❌ **Nobody Here** — not on the hub")

@@ -924,6 +924,11 @@ ORDER_GIVEN = re.compile(r"\binvoice\s*(?:number|no\.?|num|#)\s*[:#-]?\s*(?:inv-
 ORDER_BOUGHT = re.compile(r"\b(?:bought|ordered|purchased|paid\s+for|got)\s+(?:\w+\s+){0,2}\d+\b|\bstates?\s+(?:are|is)\b",
                           re.IGNORECASE)
 
+#: "are these people setup?", "is Elvis Farina set up?", "are they all set up".
+SETUP_ASKED = re.compile(r"^\s*(?:are|is)\s+(?:these|this|they|those|the\s+following|[A-Za-z][\w'’.-]*(?:\s+[A-Za-z][\w'’.-]*)"
+                         r"{1,3})\s+(?:people\s+|agents?\s+|clients?\s+|guys\s+|ones\s+)?(?:all\s+)?(?:been\s+)?"
+                         r"set\s*-?\s*up\b", re.IGNORECASE)
+
 #: "did we miss anything", "what did rook and nova miss", "who's not set up or
 #: set up wrong".
 MISSED_ASK = re.compile(
@@ -976,6 +981,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if ORDER_GIVEN.search(text) and ORDER_BOUGHT.search(text) and not re.search(
             r"\btrello\b|\bon\s+the\s+board\b|\b(?:comment|checklist)\b", text, re.IGNORECASE):
         return MentionRequest(action="ordergiven", brief=text)
+    # "are these people setup?" and a list of them - answered with "every
+    # agent going live today or tomorrow is set up". Each one checked.
+    if SETUP_ASKED.search(text):
+        return MentionRequest(action="setupask", brief=text)
     # "can i ask him did we miss anything and he'll just send me those not
     # setup and wrong setup?"
     if MISSED_ASK.search(text):
