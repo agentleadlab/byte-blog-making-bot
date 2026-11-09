@@ -328,7 +328,7 @@ def _ready(one: dict) -> str:
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
           payra_missing: list | None = None, aged: list | None = None, board: dict | None = None,
           board_complete: bool = True, placed: dict | None = None, only: tuple | None = None,
-          stalled: list | None = None) -> str:
+          stalled: list | None = None, spark: list | None = None) -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -437,6 +437,10 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         # Live and owed, and no lead in three days - Bryce Evans' recurring
         # Spark order went nine days and nothing said so.
         sections.append(("🛑 Live, no leads in 3+ days", _not_cleared(stalled)))
+    if spark:
+        # A #spark post that isn't a new member or a state change - a
+        # renewal, a recurring charge - never passed over in silence.
+        sections.append(("⚡ #spark posts nobody's acted on", _not_cleared(spark)))
     if payra_missing:
         sections.append(("💸 Paid in Payra, never posted in #new-payment", _not_cleared(payra_missing)))
     if aged:

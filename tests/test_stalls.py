@@ -48,3 +48,27 @@ def test_the_list_says_it():
     said = ledger.daily({}, now=NOW, today=NOW.date(), through=NOW.date() + timedelta(days=1),
                         stalled=["• **Bryce Evans** — live, no new leads in 9 days (row 2301)"])
     assert "🛑 Live, no leads in 3+ days** (1)" in said and "Bryce Evans" in said
+
+
+def test_a_spark_post_ryte_cant_read_is_on_the_list(monkeypatch):
+    # Bryce Evans paid, nobody gavelled it - a #spark post that isn't a new
+    # member or a state change is kept, not passed over.
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    renewal = SimpleNamespace(id=77, channel=SimpleNamespace(name="⚡│ꜱᴘᴀʀᴋ"), created_at=NOW,
+                              jump_url="https://discord.com/channels/1/2/77", content="Membership renewed on Spark: "
+                              "Bryce Evans, Veteran pool, paid through Nov 16", embeds=[], attachments=[])
+    member = SimpleNamespace(id=78, channel=SimpleNamespace(name="spark"), created_at=NOW,
+                             jump_url="https://discord.com/channels/1/2/78",
+                             content="New lead pool member on Spark", embeds=[], attachments=[])
+    assert client._spark_unread(renewal)
+    assert not client._spark_unread(member)
+    assert not client._spark_unread(SimpleNamespace(id=1, channel=SimpleNamespace(name="general"),
+                                                    content="x", embeds=[], attachments=[]))
+    client._spark_keep_unread(renewal)
+    lines = client._spark_unread_lines()
+    assert len(lines) == 1 and "Bryce Evans" in lines[0] and "77" in lines[0]
+    said = ledger.daily({}, now=NOW, today=NOW.date(), through=NOW.date(), spark=lines)
+    assert "⚡ #spark posts nobody's acted on** (1)" in said

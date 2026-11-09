@@ -591,6 +591,12 @@ class WilByteBot(discord.Client):
         if (SPARK_AUTO and getattr(message.author, "bot", False)
                 and _in_setup_guild(self, getattr(message, "guild", None)) and _spark_states_changed(message)):
             _also_running(self.loop.create_task(_spark_states_said(self, message)))
+        # Any other #spark post - a renewal, a recurring charge - kept for the
+        # lists rather than passed over: Bryce Evans paid, nobody gavelled it,
+        # and nothing said so for nine days.
+        if (getattr(message.author, "bot", False) and _in_setup_guild(self, getattr(message, "guild", None))
+                and _spark_unread(message)):
+            _spark_keep_unread(message)
         # The Growth server: somebody asking a teammate to do something, or
         # saying it's done. Read only - nothing is said there.
         if (TEAM_TASKS_ON and not getattr(message.author, "bot", False)
@@ -10930,6 +10936,9 @@ async def _catch_up_gavels(bot, *, now: datetime | None = None, gone: datetime |
                     _also_running(asyncio.get_running_loop().create_task(_spark_states_said(bot, message)))
                     done.append(str(message.id))
                     continue
+                # Any other #spark post while RYTE was down: on the lists.
+                if getattr(message.author, "bot", False) and _spark_unread(message):
+                    _spark_keep_unread(message)
                 for reaction in getattr(message, "reactions", None) or []:
                     if not ordercards.is_gavel(reaction.emoji):
                         continue
@@ -11016,6 +11025,59 @@ def _spark_member(message) -> bool:
     # And a one-time order - "veteran-widows — 20 leads · one-time pack" for
     # Soar Life Agency: "why no auto hammer on spark".
     return jobs.spark_post(_all_of_it(message))
+
+
+#: #spark posts Ryte has no handling for, kept until cleared off the list.
+def _spark_unread_path():
+    from ..state import _state_dir
+
+    return _state_dir() / "spark-unread.json"
+
+
+def _spark_unread(message) -> bool:
+    """A post in #spark that's neither a new pool member nor a state change."""
+    if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != "spark":
+        return False
+    if not _all_of_it(message).strip():
+        return False
+    return not _spark_member(message) and not _spark_states_changed(message)
+
+
+def _spark_keep_unread(message) -> None:
+    import json
+
+    try:
+        where = _spark_unread_path()
+        try:
+            held = json.loads(where.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            held = {}
+        said = " ".join(_all_of_it(message).split())
+        held[str(message.id)] = {"at": message.created_at.isoformat(timespec="seconds"),
+                                 "link": str(getattr(message, "jump_url", "") or ""), "said": said[:160]}
+        # A week's worth: older ones were on six lists already.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        held = {key: one for key, one in held.items() if (_moment_of(one.get("at")) or cutoff) >= cutoff}
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(json.dumps(held, indent=1), encoding="utf-8")
+    except Exception:
+        log.warning("Couldn't keep a #spark post", exc_info=True)
+
+
+def _spark_unread_lines() -> list[str]:
+    import json
+
+    try:
+        held = json.loads(_spark_unread_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for _key, one in sorted(held.items(), key=lambda item: str(item[1].get("at") or "")):
+        at = _moment_of(one.get("at"))
+        when = f"{at.astimezone(ZoneInfo('America/New_York')):%b %-d %-I:%M %p}" if at else "?"
+        out.append(f"• {when} — “{one.get('said') or ''}” — paid or changed? Nobody's set it up "
+                   f"<{one.get('link') or ''}>")
+    return out
 
 
 def _spark_states_changed(message) -> bool:
@@ -13082,13 +13144,14 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         stalled = stalls.lines(stalls.watch(rows, now=now, today=today), now=now)
     except Exception:
         log.warning("Couldn't look for live orders with no leads", exc_info=True)
+    spark = _spark_unread_lines()
     if parts is not None:
-        parts["lines"] = [*aged, *stalled, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
+        parts["lines"] = [*aged, *stalled, *spark, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
                                              if board else [])]
         parts["today"] = list(missing)  # Payra's are today's, by what they are
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
-                        board_complete=complete, stalled=stalled)
+                        board_complete=complete, stalled=stalled, spark=spark)
 
 
 async def _launching_board(bot) -> tuple[dict, bool]:

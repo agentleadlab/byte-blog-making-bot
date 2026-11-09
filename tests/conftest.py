@@ -41,6 +41,7 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     # Nor a clear-out kept and checked, nor the one-time "ayoko nga".
     monkeypatch.setattr(_client, "_kept_and_checked_path", lambda: tmp_path / "clearout-kept.json")
     monkeypatch.setattr(_client, "_ayoko_nga_path", lambda: tmp_path / "ayoko-nga.json")
+    monkeypatch.setattr(_client, "_spark_unread_path", lambda: tmp_path / "spark-unread.json")
     from wilbyte.bot import jobs as _jobs
     monkeypatch.setattr(_jobs, "TAG_CHECKS_PATH", tmp_path / "tag-checks.json")
     monkeypatch.setattr(_jobs, "AGED_OK_PATH", tmp_path / "aged-lines-ok.json")
