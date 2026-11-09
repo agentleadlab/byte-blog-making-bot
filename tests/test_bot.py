@@ -4604,7 +4604,8 @@ def test_no_card_named_lands_on_general_and_says_so(monkeypatch):
         monkeypatch, "", answering=Said(THERESE, author="Therese"),
     )
 
-    assert posted["kind"] == "general"
+    # Truckers on, blue collar held: lead delivery - the Ads card's.
+    assert posted["kind"] == "ads"
     assert "Nobody said which card" in said[0]
 
 

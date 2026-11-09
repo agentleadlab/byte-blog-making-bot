@@ -5054,10 +5054,24 @@ def comment_on_daily(
 
 
 #: What goes on the Ads card - "this is ads related so checklist is on ads".
+#: The states by name, for a task that adds or takes one off.
+_STATE_NAMES = (
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida",
+    "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+    r"new\s+hampshire", r"new\s+jersey", r"new\s+mexico", r"new\s+york", r"north\s+carolina", r"north\s+dakota",
+    "ohio", "oklahoma", "oregon", "pennsylvania", r"rhode\s+island", r"south\s+carolina", r"south\s+dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington", r"west\s+virginia", "wisconsin", "wyoming")
 _ADS_WORDS = re.compile(
     r"\b(?:caps?|capped|daily\s+cap|leads?\s+(?:per|a)\s+day|/\s*day|pause[ds]?|unpause|resume|turn\s+(?:on|off)|"
     r"sched(?:ule)?[sd]?|drip|ads?|campaigns?|budget|spend|pixel|meta|facebook|fb|widows?|vets?|fex|iul|trucker|"
-    r"mtg|otp|states?|replacements?|replaced?|weekdays?|weekends?|mon\s*-\s*fri)\b"
+    r"mtg|otp|states?|replacements?|replaced?|weekdays?|weekends?|mon\s*-\s*fri|"
+    # Products by their own names - "Anderson Bryant (phx standards)".
+    r"phx|phoenix|spanish|blue\s+collar|mortgage|final\s+expense)\b"
+    # A state added or taken off, by name or code - "remove New Hampshire and
+    # MA" went on General: no "states" in it.
+    r"|\b(?:add|adding|added|remove|removing|removed|drop|take\s+(?:out|off)|exclude|include|no\s+more)\b[^.\n]{0,40}"
+    r"\b(?:" + "|".join(_STATE_NAMES) + r"|(?-i:[A-Z]{2}))\b"
     # Hours - "Alexis Lesme's sched From 10am- 6pm ideally" went on General.
     r"|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|–|to)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b"
     r"|\b(?:after|before|from|until|till)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)\b", re.IGNORECASE)

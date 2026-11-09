@@ -5040,3 +5040,17 @@ def test_a_schedule_is_not_the_cards_day():
     assert dailyops.comment_target("cap Kyle at 10 trello for monday", today=FRIDAY)[2] == date(2026, 8, 31)
     # After hours, a schedule doesn't keep it off tomorrow's card.
     assert dailyops.after_hours_day(said, today=FRIDAY, hour=21) == date(2026, 8, 29)
+
+
+def test_a_state_taken_off_is_ads_work():
+    from types import SimpleNamespace
+
+    """"Anderson Bryant (phx standards) remove New Hampshire and MA" went on
+    General - no "states" in it."""
+    from wilbyte.bot import jobs
+
+    config = SimpleNamespace(secrets=SimpleNamespace(anthropic_api_key=""))
+    for said in ("Anderson Bryant (phx standards) remove New Hampshire and MA", "add Michigan to Jay Trandahl",
+                 "remove TX please for Kyle"):
+        assert jobs.trello_ask_kind(config, said)[0] == "ads", said
+    assert jobs.trello_ask_kind(config, "send the contract to Joe today")[0] == "general"
