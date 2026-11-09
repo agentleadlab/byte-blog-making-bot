@@ -13718,9 +13718,21 @@ async def _sqc_read_answers(bot, key: str, post, result, held: dict) -> None:
                 where = None
         if where is None:
             return
+        # A reply to its own question, so it reads as the same conversation -
+        # not a second wall of text loose in #rook-nova.
+        asked_msg = None
+        found_msg = re.search(r"/channels/\d+/\d+/(\d+)", str(held.get("asked") or ""))
+        if found_msg:
+            try:
+                asked_msg = await where.fetch_message(int(found_msg.group(1)))
+            except Exception:
+                asked_msg = None
+        text = _rook_nova_tags(where) + " " + reading["follow_up"][:rytevoice.MOST_CHARS]
         with mirror.answering():
-            await where.send(_rook_nova_tags(where) + " " + reading["follow_up"][:1700]
-                             + f"\n-# <{getattr(post, 'jump_url', '')}>")
+            if asked_msg is not None:
+                await asked_msg.reply(text, mention_author=False)
+            else:
+                await where.send(text + f"\n-# <{getattr(post, 'jump_url', '')}>")
         rookqc.remember(key, followed_hash=digest,
                         followed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 

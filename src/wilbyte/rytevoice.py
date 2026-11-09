@@ -36,17 +36,20 @@ _WHO = (
     "as it was paid for, and that nobody is missed. You answer to Franklin. You check Rook and Nova's work against "
     "the payment, Rook's setup and the hub.\n\n"
     "How you talk to Rook and Nova: like a sharp, respectful colleague who owns the outcome. Direct, specific, no "
-    "filler, no greetings, no emojis, no bullet-point walls - a few short sentences. Quote the exact figures that "
-    "disagree (counts, states, lead types, names, row numbers). Say plainly what you believe is wrong and why. "
+    "filler, no greetings, no emojis, no lists. SHORT: two or three sentences, under 60 words - one point, the one "
+    "that matters most. Quote only the figures that disagree. Say plainly what you believe is wrong and why. "
+    "Stay on THIS payment and on what_ryte_sees_wrong - nothing else. Don't open new issues: not other payments or "
+    "earlier orders, not the order card's wording, not how many aged leads were pulled (aged pulls are checked "
+    "separately). If they've said something is a separate or earlier order, take their word and drop it. "
     "Read everything you're given first - the payment post, the team's notes under it, Rook's setup, the thread - "
     "and never ask for something that's already written there. "
     "When the facts could have an explanation you can't see (a renewal on the same row, states the client changed, "
     "a friend paying, a second product on the invoice), ASK instead of accusing - you must be right, not loud. "
-    "Ask for exactly what you need to close it: a fix on the hub, a confirmation, or who has it. Say what you'll do "
-    "next if it stays open (take it to Therese and Nicole). Never invent a fact that isn't in what you're given.")
+    "Ask for exactly the one thing you need to close it: a fix on the hub, a confirmation, or who has it. No "
+    "deadlines or threats. Never invent a fact that isn't in what you're given.")
 
 #: How long a written question or reading may be.
-MOST_CHARS = 1100
+MOST_CHARS = 500
 
 
 def _client(config):
@@ -129,9 +132,9 @@ _QUESTION = {
     "name": "ask", "description": "Ryte's message to Rook and Nova about this payment.",
     "input_schema": {"type": "object", "properties": {
         "message": {"type": "string", "description": (
-            "The message, without the @ tags (they're added). A few short sentences: what you see, what you "
-            "believe is wrong and why with the exact figures, and exactly what you need from them. Ask where an "
-            "explanation you can't see is possible.")}},
+            "The message, without the @ tags (they're added). Two or three sentences, under 60 words: the one "
+            "thing you see wrong on this payment, the figures that disagree, and the one thing you need. Ask "
+            "where an explanation you can't see is possible.")}},
         "required": ["message"]}}
 
 
@@ -151,18 +154,19 @@ _READING = {
     "name": "read", "description": "What Rook, Nova or the team answered, read against what Ryte sees.",
     "input_schema": {"type": "object", "properties": {
         "verdict": {"type": "string", "enum": list(VERDICTS), "description": (
-            "right_as_is: they explain it's correct as it is and the explanation holds up against the facts. "
+            "right_as_is: they answered what you asked and the explanation holds up against the facts - even if "
+            "you could think of other questions. Anything you didn't ask about is not a reason to follow up. "
             "fixed: they say it's fixed AND the hub row in the facts now shows it fixed. "
             "with_team: they've taken it to Therese / Nicole / Faith / the team. "
             "waiting_client: they're waiting on the client's answer before they can set it up. "
             "cant: they say they can't set it up. "
-            "still_wrong: they answered but what they say doesn't match the facts (e.g. 'done' but the hub doesn't "
-            "show it), or they missed the point - Ryte should follow up. "
+            "still_wrong: they answered but what they say about THE THING YOU ASKED doesn't match the facts (e.g. "
+            "'done' but the hub doesn't show it), or they missed the point - Ryte should follow up. "
             "unclear: nothing that answers it yet.")},
         "reason": {"type": "string", "description": "One sentence: why, citing their words and the facts."},
         "follow_up": {"type": "string", "description": (
-            "Only for still_wrong: Ryte's follow-up to them, without @ tags - what still doesn't add up, the exact "
-            "figures, and what's needed. Empty otherwise.")}},
+            "Only for still_wrong: Ryte's follow-up to them, without @ tags - one or two sentences, under 40 "
+            "words, on the same point you asked: what still doesn't add up and what's needed. Empty otherwise.")}},
         "required": ["verdict", "reason", "follow_up"]}}
 
 
@@ -170,8 +174,8 @@ def read_reply(config, said: dict, asked: str, replies: list) -> dict:
     """What their answers come to: {"verdict", "reason", "follow_up"}. {}
     when Claude couldn't read them."""
     body = ("You asked Rook and Nova about this payment, and they (or the team) answered. Read the answers against "
-            "what you see and decide what they come to. Be strict: 'done' only counts as fixed if the hub row "
-            "below shows it. What you read:\n" + json.dumps(said, default=str, indent=1)
+            "what you see and decide what they come to. Judge only the point you asked about - don't hunt for new "
+            "problems. 'done' only counts as fixed if the hub row below shows it. What you read:\n" + json.dumps(said, default=str, indent=1)
             + "\n\nWhat you asked:\n" + str(asked)[:1500]
             + "\n\nTheir answers, oldest first:\n"
             + "\n".join(f"- {who}: {' '.join(str(text).split())[:700]}" for who, text in replies[-8:]))
@@ -186,8 +190,8 @@ def compose_chase(config, said: dict, question: str, whom: list) -> str:
     """Ryte to the teammates Nova asked, when nobody's answered: what's held
     up on it, and what's needed. "" when Claude couldn't write it."""
     body = (f"Nova asked {', '.join(whom)} a question about this payment and nobody has answered. The setup is "
-            "held up on it. Write your message to them (people on the team, not bots): a few short sentences - "
-            "what's waiting on their answer, the exact figures, and the one thing you need from them. No greeting. "
+            "held up on it. Write your message to them (people on the team, not bots): one or two sentences, under "
+            "40 words - what's waiting on their answer and the one thing you need from them. No greeting. "
             f"Nova's question: {question}\n\nWhat you read:\n" + json.dumps(said, default=str, indent=1))
     got = _ask_claude(config, _WHO, body, _QUESTION)
     return " ".join(str((got or {}).get("message") or "").split())[:MOST_CHARS] if got else ""

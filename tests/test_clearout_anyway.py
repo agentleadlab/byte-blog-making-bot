@@ -137,3 +137,15 @@ def test_quiet_with_everything_held_says_which_and_why(monkeypatch):
     config = SimpleNamespace(discord=SimpleNamespace(approval_timeout_seconds=1))
     asyncio.run(client._the_ones_left(None, Responder(), config, held, datetime.now(timezone.utc)))
     assert "<#5>" in sent[-1] and "still in use" in sent[-1] and "1 quiet channel" in sent[-1]
+
+
+def test_ryte_s_messages_stay_short_and_on_the_one_point():
+    # "broo" - a 900-character follow-up about an earlier order Rook had
+    # already said was separate, the card's wording and 98 of 100 aged.
+    from wilbyte import rytevoice
+
+    assert rytevoice.MOST_CHARS <= 500
+    assert "under 60 words" in rytevoice._WHO
+    assert "separate or earlier order" in rytevoice._WHO
+    assert "aged pulls are checked separately" in rytevoice._WHO
+    assert "No deadlines or threats" in rytevoice._WHO
