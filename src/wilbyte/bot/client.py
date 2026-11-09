@@ -12356,6 +12356,7 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
                     cant=result.cant, flagged=flagged, ever_flagged=sorted(ever))
     await _sqc_tell_fixed(bot, key, result, rookqc.recalled().get(key) or held)
     await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)
+    await _sqc_chase_question(bot, key, post, result, rookqc.recalled().get(key) or held)
     escalate = _sqc_escalation(bot, key, result, rookqc.recalled().get(key) or held)
     standing, title, body = paycards.setup_card(result, amount=amount, link=post.jump_url)
     if escalate:
@@ -13389,6 +13390,59 @@ def _rook_nova_tags(channel) -> str:
                        and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
         tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
     return " ".join(tags)
+
+
+#: The team Nova and Rook ask by name in a question.
+TEAM_NAMES = ("faith", "kharyl", "therese", "nicole", "kathleen", "franklin", "tre")
+
+
+def _asked_whom(question: str) -> list:
+    """The teammates a question tags - "@🌺 Faith 🌺 @Kharyl what is this
+    payment for": ["faith", "kharyl"]."""
+    plain = str(question or "").casefold()
+    return [name for name in TEAM_NAMES if re.search(rf"@[^\w@]*{name}\b", plain)]
+
+
+async def _sqc_chase_question(bot, key: str, post, result, held: dict) -> None:
+    """Nova's question to teammates that nobody's answered - Benny Biniamin's
+    "@Faith @Kharyl what is this payment for (aged or fresh, which order)?" -
+    chased by Ryte in the same thread, the ones she asked tagged: "stuff like
+    ths he should take over no?". Once a question; Therese and Nicole after
+    that, as for anything left open."""
+    from .. import rookqc, rytevoice
+
+    asked = next((one for one in result.todo if one.startswith("Nova asked and nobody's answered")), "")
+    whom = _asked_whom(asked)
+    if not asked or not whom or rookqc.among(asked, held.get("chased")):
+        return
+    now = datetime.now(timezone.utc)
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    heard = _moment_of(held.get("heard"))
+    if posted is None or now - posted < SETUP_QC_ASK_UNTOUCHED or (heard and now - heard < SETUP_QC_ASK_QUIET):
+        return
+    if not _room(_ASKED_TIMES, SETUP_QC_ASKS_AN_HOUR):
+        return
+    channel = _rook_nova_channel(bot)
+    if channel is None:
+        return
+    where = await _rn_thread_for(bot, channel, result.client, getattr(post, "created_at", None)) or channel
+    question = asked.split(":", 1)[-1].strip(" “”\"")
+    written = ""
+    if SETUP_QC_VOICE and getattr(bot, "config", None) is not None:
+        try:
+            written = await asyncio.to_thread(partial(rytevoice.compose_chase, bot.config, rytevoice.facts(
+                result, talk=list(getattr(result, "talk", []) or [])), question, [one.capitalize() for one in whom]))
+        except Exception:
+            log.warning("Couldn't write the chase for %s", result.client, exc_info=True)
+    amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1] if hasattr(post, "content") else ""
+    text = written or (f"Nova's question on {result.client}" + (f"'s ${amount}" if amount else "")
+                       + f" is still open and the setup's waiting on it: “{question}” Can you answer it here?")
+    tags = _team_tags(bot, getattr(where, "guild", None) or getattr(channel, "guild", None), whom)
+    with mirror.answering():
+        await where.send(f"{tags} {text}"[:1800] + f"\n-# <{getattr(post, 'jump_url', '')}>")
+    rookqc.remember(key, chased=list(dict.fromkeys([*(held.get("chased") or []), asked])),
+                    chased_at=now.isoformat(timespec="seconds"))
+    result.notes.append(f"Ryte asked {', '.join(one.capitalize() for one in whom)} for Nova's answer")
 
 
 async def _sqc_read_answers(bot, key: str, post, result, held: dict) -> None:

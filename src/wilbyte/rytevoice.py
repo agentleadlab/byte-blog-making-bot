@@ -172,3 +172,14 @@ def read_reply(config, said: dict, asked: str, replies: list) -> dict:
         return {}
     return {"verdict": got["verdict"], "reason": " ".join(str(got.get("reason") or "").split())[:300],
             "follow_up": " ".join(str(got.get("follow_up") or "").split())[:MOST_CHARS]}
+
+
+def compose_chase(config, said: dict, question: str, whom: list) -> str:
+    """Ryte to the teammates Nova asked, when nobody's answered: what's held
+    up on it, and what's needed. "" when Claude couldn't write it."""
+    body = (f"Nova asked {', '.join(whom)} a question about this payment and nobody has answered. The setup is "
+            "held up on it. Write your message to them (people on the team, not bots): a few short sentences - "
+            "what's waiting on their answer, the exact figures, and the one thing you need from them. No greeting. "
+            f"Nova's question: {question}\n\nWhat you read:\n" + json.dumps(said, default=str, indent=1))
+    got = _ask_claude(config, _WHO, body, _QUESTION)
+    return " ".join(str((got or {}).get("message") or "").split())[:MOST_CHARS] if got else ""

@@ -1466,3 +1466,37 @@ def test_ryte_s_facts_are_what_it_read():
 
 
 PAYRA_FOR_FACTS = "New Payment | Payra\nNAME: Tom Skinner\nAMOUNT: $90.00\nPRODUCT: Text-Verified Veteran Leads\n"
+
+
+def test_nova_s_unanswered_question_is_chased_by_ryte(monkeypatch):
+    """Benny Biniamin: Nova asked Faith and Kharyl "what is this payment for"
+    and nobody answered - "stuff like ths he should take over no?"."""
+    from wilbyte import rytevoice
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(rytevoice, "compose_chase", lambda config, said, question, whom: "")
+    sent = []
+
+    class Thread:
+        guild = SimpleNamespace(members=[SimpleNamespace(bot=False, display_name="🌺 Faith 🌺", name="f", mention="<@41>"),
+                                         SimpleNamespace(bot=False, display_name="Kharyl", name="k", mention="<@42>")])
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+
+    async def thread_for(bot, channel, client_, posted):
+        return Thread()
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Thread())
+    monkeypatch.setattr(client, "_rn_thread_for", thread_for)
+    now = datetime.now(timezone.utc)
+    rookqc.remember("995", posted=(now - timedelta(hours=1)).isoformat())
+    result = rookqc.Checked(client="Benny Biniamin", todo=[
+        "Nova asked and nobody's answered: “@🌺 Faith 🌺 @Kharyl what is this payment for (aged or fresh, which order)?”"])
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/995", content="AMOUNT: $1,920.00", embeds=[],
+                           message_snapshots=[], created_at=now - timedelta(hours=1))
+    bot = SimpleNamespace(config=None)
+    asyncio.run(client._sqc_chase_question(bot, "995", post, result, rookqc.recalled()["995"]))
+    assert sent and sent[0].startswith("<@41> <@42> Nova's question on Benny Biniamin's $1,920.00 is still open")
+    asyncio.run(client._sqc_chase_question(bot, "995", post, result, rookqc.recalled()["995"]))
+    assert len(sent) == 1, "once a question"
