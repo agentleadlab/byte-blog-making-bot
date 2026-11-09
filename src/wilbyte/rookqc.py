@@ -431,6 +431,12 @@ def the_setup(talk, paid: Order) -> tuple:
     same_kind = [one for one in standing if kind and (family(one[1].lead_type) - {"aged"}) == kind]
     if same_kind:
         standing = same_kind
+    # Fresh over aged, for a fresh payment: Rook's aged setup is Nova's pull,
+    # the aged QC's - Hussein Suleiman's fresh Veterans were held to one.
+    paid_aged = "aged" in family(paid.lead_type)
+    same_age = [one for one in standing if ("aged" in family(one[1].lead_type)) == paid_aged]
+    if same_age:
+        standing = same_age
     if not standing:
         return None, notes
     fits = [one for one in standing if paid.count is not None and one[1].count == paid.count]
@@ -657,6 +663,21 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
                                                                        "Rook's setup states"))]:
             result.problems.remove(one)
             result.notes.append(one + " - the hub has the right ones")
+    # Rook's setup for another product, or another count, while the hub's row
+    # is what the payment bought: the setup was for another order of theirs -
+    # Cameron Bertok's 50 FEX against 100 Mortgage Protection paid for and on
+    # the hub, Trey Dougher's Mortgage Protection against his Veterans.
+    if hub is not None and not any(one.startswith(("The hub has the lead type", "The hub has ")) and
+                                   ("lead type" in one or "ordered" in one) for one in result.problems):
+        hub_kind = family(getattr(hub, "lead_type", ""))
+        if hub_kind and (hub_kind - {"aged"}) == (family(paid.lead_type) - {"aged"}):
+            for one in [one for one in result.problems
+                        if one.startswith("Rook's setup has the lead type")
+                        or (one.startswith("Rook's setup has ") and " leads, the payment " in one
+                            and paid.count is not None and getattr(hub, "ordered", None) == paid.count)
+                        or one.startswith("Rook's setup reads ")]:
+                result.problems.remove(one)
+                result.notes.append(one + " - the hub has what was paid for; Rook's setup is another order's")
     # Live or delivering: what was handed over before the setup is done
     # with - Matthew Stewart's "I can't find a PAID payment" under a tick.
     # Scheduled to start, or going, on a row for this order: what was handed

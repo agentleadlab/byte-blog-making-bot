@@ -105,7 +105,7 @@ def test_asking_for_it_and_the_question():
     assert mentions.parse("<@1> setup qc").action == "setupqc"
     assert mentions.parse("<@1> setup qc 3 days").action == "setupqc"
     result = rookqc.check(PAYRA, [("Rook", ROOK.replace("Leads Ordered: 40", "Leads Ordered: 25")), ("Nova", NOVA)],
-                          hub=_hub())
+                          hub=_hub(ordered=25))
     asked = rookqc.question(result, link="https://discord.com/x")
     assert "has 25 leads, the payment 40" in asked and "who has it?" in asked
 
@@ -1443,3 +1443,20 @@ def test_a_name_in_brackets_is_another_it_goes_by():
     assert rookqc.same_person_strict("JT (James) Wideman", "James Wideman")
     assert rookqc.same_person_strict("chaz loschiavo", "Charles loschiavo")
     assert not rookqc.same_person_strict("JT (James) Wideman", "James Wyman")
+
+
+def test_rooks_setup_for_another_order_when_the_hub_has_whats_paid_for():
+    """Cameron Bertok: Rook's 50 FEX against 100 Mortgage Protection, paid for
+    and on the hub; Hussein Suleiman's fresh Veterans held to an aged setup."""
+    paid = PAYRA.replace("Text-Verified Final Expense Leads", "Text Verified Mortgage Protection Plus").replace(
+        "Fresh FEX", "Fresh Mortgage Protection")
+    hub = _hub(lead_type="Text Verified Mortgage Protection Plus")
+    result = rookqc.check(paid, [("Rook", ROOK), ("Nova", NOVA)], hub=hub)
+    assert not any(one.startswith("Rook's setup has the lead type") for one in result.problems), result.problems
+    assert any("Rook's setup is another order's" in one for one in result.notes)
+    # The hub with the wrong product too: still said.
+    wrong = rookqc.check(paid, [("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
+    assert any("lead type" in one for one in wrong.problems)
+    aged = ROOK.replace("Text-Verified Final Expense (fresh)", "Aged Final Expense 90-180")
+    fresh = rookqc.check(PAYRA, [("Rook", aged), ("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
+    assert not any("reads aged" in one for one in fresh.problems)
