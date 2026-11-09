@@ -347,6 +347,7 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
                 seen[same]["_more"] = seen[same].get("_more", 1) + 1
                 continue
             one = dict(one)
+            one["_key"] = _key
             seen[same] = one
             out.append(one)
         return out
@@ -370,11 +371,13 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
 
     not_set_up = by(lambda one: one.get("stage") == NOT_SET_UP and not one.get("trello") and not with_team(one)
                     and not small_and_quiet(one))
+    #: The money at risk, by section: [(title, short label, payments)].
+    at_risk: list = []
     sections.append(("❌ Paid, not set up", [_line(one, now, (_still_wrong(one) or ["not on the hub"])[0])
                                             for one in not_set_up]))
+    cant_set_up = by(lambda one: one.get("stage") == CANT and not one.get("trello") and not with_team(one))
     sections.append(("🃏 Rook/Nova can't set up - press Make the card on its card",
-                     [_line(one, now, one.get("cant") or "") for one in by(
-                         lambda one: one.get("stage") == CANT and not one.get("trello") and not with_team(one))]))
+                     [_line(one, now, one.get("cant") or "") for one in cant_set_up]))
     sections.append(("🃏 With the team on Trello - not on the hub yet",
                      [_line(one, now, f"card <{one['trello']}>") for one in by(
                          lambda one: one.get("stage") in (CANT, NOT_SET_UP) and one.get("trello"))]))
@@ -400,9 +403,14 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         sections.append((f"📅 Going live by {through:%A}", [
             _line(one, now, (f"{_day(one.get('start')):%a} - " if _day(one.get("start")) else "")
                   + (("❌ " + _ready(one)) if _ready(one) else "✅ ready")) for one in ahead]))
+    paused = by(lambda one: one.get("stage") == PAUSED)
     sections.append(("⏸️ Paused with leads still owed", [
         _line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered, the hub has them paused")
-        for one in by(lambda one: one.get("stage") == PAUSED)]))
+        for one in paused]))
+    at_risk = [("❌ Paid, not set up", "❌ not set up", not_set_up),
+               ("🃏 Rook/Nova can't set up - press Make the card on its card", "🃏 can't set up", cant_set_up),
+               ("⚠️ Set up wrong", "⚠️ set up wrong", wrong),
+               ("⏸️ Paused with leads still owed", "⏸️ paused with leads owed", paused)]
     short = by(lambda one: one.get("stage") == SHORT)
     sections.append(("📉 Ended short", [_line(one, now, f"{one.get('delivered')} of {one.get('ordered')} delivered")
                                         for one in short]))
@@ -467,6 +475,9 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
         (SET_UP, "set up, not live"), (LIVE, "live"), (DELIVERING, "delivering"), (NOT_SET_UP, "not set up"),
         (CANT, "can't set up")))
     lines = [head, f"-# Following {len(followed)} payment(s): {tally}"]
+    risk = money_at_risk(records, at_risk)
+    if risk:
+        lines.append(risk)
     said_any = False
     for title, items in sections:
         if not items:
@@ -477,6 +488,39 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     if not said_any:
         lines.append("✅ Nothing to chase - everyone paid is set up as paid for.")
     return "\n".join(lines)
+
+
+def _dollars(amount) -> float:
+    try:
+        return float(re.sub(r"[^\d.]", "", str(amount or "")) or 0)
+    except ValueError:
+        return 0.0
+
+
+def money_at_risk(records: dict, at_risk: list) -> str:
+    """"we cannot lose any money with him qc-ing" - what's paid and not
+    delivering right, in dollars, at the top of the list: not set up, can't
+    set up, set up wrong, paused with leads owed. Not what's with the team,
+    waiting on the client, overflow, or cleared - that's not money falling
+    through. A wrong setup counts the whole payment. "" when there's none."""
+    total, many, parts, seen = 0.0, 0, [], set()
+    for title, label, payments in at_risk:
+        money, count = 0.0, 0
+        for one in payments:
+            key = one.get("_key")
+            if key in seen or (key in records and _hidden(records[key], title)):
+                continue
+            seen.add(key)
+            money += _dollars(one.get("amount"))
+            count += 1
+        if count:
+            parts.append(f"{label} ${money:,.0f} ({count})")
+            total += money
+            many += count
+    if not many:
+        return ""
+    return (f"**💸 ${total:,.0f} paid and not delivering right — {many} payment{'s' if many != 1 else ''}**\n-# "
+            + " · ".join(parts))
 
 
 def _ny():

@@ -1511,3 +1511,34 @@ def test_ryte_s_question_sees_the_team_s_notes_on_the_payment():
             "Will Seitz, Fresh Text Verified Vet: 14, CA, live today or add to his current order")
     said = rytevoice.facts(rookqc.check(post, []))
     assert "Fresh Text Verified Vet: 14, CA" in said["payment_post_and_team_notes"]
+
+
+def test_the_money_at_risk_is_at_the_top():
+    # "we cannot lose any money with him qc-ing" - paid and not delivering
+    # right, in dollars: not set up, can't, set up wrong, paused with leads owed.
+    records = {
+        "1": _kept("Chase Kunkel", ledger.NOT_SET_UP, amount="850", problems=["Nothing on the hub for this order yet"]),
+        "2": _kept("Gabriel Espada", ledger.LIVE, amount="2,041.02", start="2026-11-02", status="live",
+                   problems=["The hub has 30 ordered, paid for 58"]),
+        "3": _kept("Antonio Brancato", ledger.CANT, amount="$400", cant="Nova: couldn't set Antonio up"),
+        "4": _kept("Pat Paused", ledger.PAUSED, amount="300", delivered=3, ordered=14),
+        # Not money falling through: with the team on Trello, and fine.
+        "5": _kept("On Trello", ledger.NOT_SET_UP, amount="999", trello="https://trello.com/c/x"),
+        "6": _kept("Kyle Fine", ledger.LIVE, amount="5000", start="2026-11-02", status="live"),
+    }
+    said = ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4))
+    assert "💸 $3,591 paid and not delivering right — 4 payments" in said
+    assert "❌ not set up $850 (1)" in said and "⚠️ set up wrong $2,041 (1)" in said
+    assert "🃏 can't set up $400 (1)" in said and "⏸️ paused with leads owed $300 (1)" in said
+    assert said.index("💸") < said.index("❌ Paid, not set up")
+
+    # Cleared from its section by a person: not counted.
+    records["1"].update(cleared_at=NOW.isoformat(), cleared_sections=["❌ Paid, not set up"],
+                       cleared_problems=["Nothing on the hub for this order yet"])
+    assert "💸 $2,741 paid and not delivering right — 3 payments" in ledger.daily(
+        records, now=NOW, today=TODAY, through=date(2026, 11, 4))
+
+
+def test_nothing_at_risk_says_nothing():
+    records = {"1": _kept("Kyle Fine", ledger.LIVE, start="2026-11-02", status="live")}
+    assert "💸" not in ledger.daily(records, now=NOW, today=TODAY, through=date(2026, 11, 4))
