@@ -6714,10 +6714,22 @@ def _chargeback_responder(bot: "WilByteBot"):
     configured = getattr(
         bot.config.secrets, "discord_chargeback_channel_id", None
     )
-    if configured:
+    if configured and str(configured).strip().isdigit():
         channel = bot.get_channel(int(configured))
         if channel is not None:
             return ChannelResponder(channel)
+    # No id for it: the team's #dispute-management in Ryte The Goat, found by
+    # its letters however it's styled ("📋│ᴅɪꜱᴘᴜᴛᴇ-ᴍᴀɴᴀɢᴇᴍᴇɴᴛ") - "wrong
+    # channel now dont we", with three chargebacks said in #trello-manager.
+    # Not the acquirer's own notices channel, which isn't for talking in.
+    notices = str(getattr(bot.config.secrets, "discord_dispute_channel_id", "") or "")
+    for guild in getattr(bot, "guilds", None) or []:
+        if not _talk_guild(guild, bot.config):
+            continue
+        for channel in getattr(guild, "text_channels", None) or []:
+            letters = _plain_letters(getattr(channel, "name", ""))
+            if (letters.startswith("dispute") or "chargeback" in letters) and str(channel.id) != notices:
+                return ChannelResponder(channel)
     return _board_responder(bot)
 
 # Terminal colour codes out of a subprocess's error output. yt-dlp writes them

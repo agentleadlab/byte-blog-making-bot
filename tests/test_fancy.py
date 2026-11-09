@@ -84,3 +84,16 @@ def test_never_the_clients_server(monkeypatch):
     guild = SimpleNamespace(id=999, name="Clients", channels=channels, categories=[], me=object())
     sent = _run(guild, monkeypatch=monkeypatch)
     assert channels[0].renamed is None and "clients server" in sent[-1]
+
+
+def test_a_chargeback_goes_to_dispute_management_not_the_board(monkeypatch):
+    # "wrong channel now dont we" - three chargebacks in #trello-manager.
+    trello = SimpleNamespace(id=1, name="👩‍💼│ᴛʀᴇʟʟᴏ-ᴍᴀɴᴀɢᴇʀ")
+    disputes = SimpleNamespace(id=2, name="📋│ᴅɪꜱᴘᴜᴛᴇ-ᴍᴀɴᴀɢᴇᴍᴇɴᴛ")
+    goat = SimpleNamespace(id=10, name="The Goat & The Best", text_channels=[trello, disputes])
+    config = SimpleNamespace(secrets=SimpleNamespace(discord_chargeback_channel_id=None,
+                                                     discord_dispute_channel_id="99",
+                                                     discord_talk_guild_id=""))
+    bot = SimpleNamespace(config=config, guilds=[goat], get_channel=lambda _id: None)
+    monkeypatch.setattr(client, "_board_responder", lambda _bot: "board")
+    assert client._chargeback_responder(bot).channel is disputes
