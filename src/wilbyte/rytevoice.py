@@ -148,7 +148,7 @@ def compose(config, said: dict) -> str:
 
 
 #: What an answer can come to.
-VERDICTS = ("right_as_is", "fixed", "with_team", "waiting_client", "cant", "still_wrong", "unclear")
+VERDICTS = ("right_as_is", "fixed", "being_fixed", "with_team", "waiting_client", "cant", "still_wrong", "unclear")
 
 _READING = {
     "name": "read", "description": "What Rook, Nova or the team answered, read against what Ryte sees.",
@@ -157,11 +157,15 @@ _READING = {
             "right_as_is: they answered what you asked and the explanation holds up against the facts - even if "
             "you could think of other questions. Anything you didn't ask about is not a reason to follow up. "
             "fixed: they say it's fixed AND the hub row in the facts now shows it fixed. "
+            "being_fixed: they agree it's wrong and have asked for the fix or say they're doing it (e.g. Rook: "
+            "'please set row 1457 to 58'), but the hub doesn't show it yet - nothing to follow up, Ryte waits for "
+            "the hub. "
             "with_team: they've taken it to Therese / Nicole / Faith / the team. "
             "waiting_client: they're waiting on the client's answer before they can set it up. "
             "cant: they say they can't set it up. "
             "still_wrong: they answered but what they say about THE THING YOU ASKED doesn't match the facts (e.g. "
-            "'done' but the hub doesn't show it), or they missed the point - Ryte should follow up. "
+            "'done' but the hub doesn't show it), or they missed the point - Ryte should follow up. Not when "
+            "they've agreed and asked for the fix - that's being_fixed. "
             "unclear: nothing that answers it yet.")},
         "reason": {"type": "string", "description": "One sentence: why, citing their words and the facts."},
         "follow_up": {"type": "string", "description": (

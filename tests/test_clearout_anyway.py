@@ -149,3 +149,12 @@ def test_ryte_s_messages_stay_short_and_on_the_one_point():
     assert "separate or earlier order" in rytevoice._WHO
     assert "aged pulls are checked separately" in rytevoice._WHO
     assert "No deadlines or threats" in rytevoice._WHO
+
+
+def test_agreed_and_asked_for_the_fix_is_being_fixed_not_a_follow_up():
+    # Gabriel Espada: row 1457 at 30, INV-21749 paid 58 - Rook "please set
+    # row 1457 to 58". Nothing for Ryte to add; it waits for the hub.
+    from wilbyte import rytevoice
+
+    assert "being_fixed" in rytevoice.VERDICTS
+    assert "being_fixed" in rytevoice._READING["input_schema"]["properties"]["verdict"]["enum"]
