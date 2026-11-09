@@ -189,3 +189,19 @@ def test_a_go_ahead_after_its_kept_is_just_the_delete_button(monkeypatch):
     how = asyncio.run(client._delete_kept(Responder(), None, plan, "madison mcgill", why="a dispute"))
     assert how == "deleted" and deleted == ["madison-mcgill-trucker"]
     assert "already kept and checked" in sent[0] and "a dispute" in sent[0]
+
+
+def test_her_out_still_she_disputed_with_no_comma():
+    who, anyway, why = client.clearout_asked("her out still she disputed")
+    assert (who, anyway, why) == ("her", True, "a dispute")
+
+
+def test_kept_and_checked_survives_a_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(client, "_kept_and_checked_path", lambda: tmp_path / "kept.json")
+    plan = clearout.Plan(name="madison mcgill", sheet="https://docs.google.com/spreadsheets/d/x", guild_id="1",
+                         channel=clearout.Channel(channel_id="9", name="madison-mcgill-trucker", category="TRUCKER"))
+    client._kept_and_checked_save(plan)
+    back = client._kept_and_checked("9")
+    assert back.channel.name == "madison-mcgill-trucker" and back.sheet == plan.sheet and back.guild_id == "1"
+    client._kept_and_checked_drop("9")
+    assert client._kept_and_checked("9") is None

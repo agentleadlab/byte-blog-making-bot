@@ -4402,6 +4402,11 @@ def clearout_asked(brief: str) -> tuple[str, bool, str]:
         text = re.split(r"\s*[,;.\-–—]\s+|\s+(?:because|bc|cause|since|as)\s+", text, maxsplit=1)[0]
         text = _CLEAROUT_ANYWAY.sub(" ", text)
     words = [one for one in text.split() if one.lower() not in ("out", "please", "pls", "now", "too", "also")]
+    # "her out still she disputed" - no comma, so "she" is left with "her":
+    # nothing but pronouns is still somebody named before.
+    if words and all(_CLEAROUT_PRONOUN.match(one.strip(" ,.;:-")) or one.lower() in ("one", "the", "same")
+                     for one in words):
+        return words[0].strip(" ,.;:-"), anyway, why
     return " ".join(words).strip(" ,.;:-"), anyway, why
 
 
@@ -4652,12 +4657,12 @@ async def _clear_out_one(
         )
         return "kept"
 
-    done_before = _KEPT_AND_CHECKED.get(found[0].channel_id)
-    if anyway and not auto and done_before and time.monotonic() - done_before[1] < KEPT_AND_CHECKED_FOR:
+    done_before = _kept_and_checked(found[0].channel_id)
+    if anyway and not auto and done_before:
         # "clear her out still, she disputed" right after: the sheet, the
         # messages and the picture were kept and checked minutes ago - not
         # all of it again, just the button.
-        return await _delete_kept(responder, guild, done_before[0], name, why=anyway)
+        return await _delete_kept(responder, guild, done_before, name, why=anyway)
 
     plan = clearout.Plan(name=name, channel=found[0], guild_id=str(guild.id))
     member = _member_called(guild, name)
@@ -4917,7 +4922,7 @@ async def _clear_out_one(
     # they type "clear her out still, she disputed".
     only_quiet = (not auto and len(failed) == 1 and failed[0].startswith("Not quiet"))
     if not only_quiet:
-        _KEPT_AND_CHECKED.pop(plan.channel.channel_id, None)
+        _kept_and_checked_drop(plan.channel.channel_id)
     if failed and not only_quiet:
         await responder.send(
             "\n".join(kept)
@@ -4925,7 +4930,7 @@ async def _clear_out_one(
             "is the only copy until it is."
         )
         return "trouble"
-    _KEPT_AND_CHECKED[plan.channel.channel_id] = (plan, time.monotonic())
+    _kept_and_checked_save(plan)
 
     going = views.ConfirmView(
         requester_id=responder.requester_id,
@@ -4974,9 +4979,68 @@ async def _clear_out_one(
 
 
 #: Clear-outs whose sheet, messages and picture are kept and checked, by
-#: channel id - (plan, when). A go-ahead soon after goes straight to delete.
-_KEPT_AND_CHECKED: dict[str, tuple] = {}
+#: channel id. A go-ahead soon after goes straight to delete - written down,
+#: so Ryte restarting for an update doesn't make it all start again.
 KEPT_AND_CHECKED_FOR = 3 * 60 * 60
+
+
+def _kept_and_checked_path():
+    from ..state import _state_dir
+
+    return _state_dir() / "clearout-kept.json"
+
+
+def _kept_and_checked_load() -> dict:
+    import json
+
+    try:
+        held = json.loads(_kept_and_checked_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
+def _kept_and_checked_write(held: dict) -> None:
+    import json
+
+    try:
+        where = _kept_and_checked_path()
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(json.dumps(held, indent=1, default=str), encoding="utf-8")
+    except OSError:
+        log.warning("Couldn't write down the kept clear-outs", exc_info=True)
+
+
+def _kept_and_checked_save(plan) -> None:
+    from dataclasses import asdict
+
+    now = time.time()
+    held = {key: value for key, value in _kept_and_checked_load().items()
+            if now - float(value.get("at") or 0) < KEPT_AND_CHECKED_FOR}
+    held[str(plan.channel.channel_id)] = {"at": now, "plan": asdict(plan)}
+    _kept_and_checked_write(held)
+
+
+def _kept_and_checked_drop(channel_id) -> None:
+    held = _kept_and_checked_load()
+    if held.pop(str(channel_id), None) is not None:
+        _kept_and_checked_write(held)
+
+
+def _kept_and_checked(channel_id):
+    """The plan of a clear-out kept and checked in the last three hours."""
+    from .. import clearout
+
+    one = _kept_and_checked_load().get(str(channel_id)) or {}
+    if not one or time.time() - float(one.get("at") or 0) >= KEPT_AND_CHECKED_FOR:
+        return None
+    try:
+        said = dict(one["plan"])
+        said["channel"] = (clearout.Channel(**{**said["channel"], "last_active": None})
+                           if said.get("channel") else None)
+        return clearout.Plan(**said)
+    except Exception:
+        return None
 
 
 async def _delete_kept(responder: Responder, guild, plan, name: str, *, why: str) -> str:
@@ -5001,7 +5065,7 @@ async def _delete_kept(responder: Responder, guild, plan, name: str, *, why: str
     if not going.confirmed:
         await responder.send("Left alone. The sheet row and the messages above stay either way.")
         return "left"
-    _KEPT_AND_CHECKED.pop(plan.channel.channel_id, None)
+    _kept_and_checked_drop(plan.channel.channel_id)
     return await _delete_the_channel(responder, guild, plan, name)
 
 
