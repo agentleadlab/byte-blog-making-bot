@@ -106,6 +106,8 @@ class Checked:
     waiting_client: str = ""
     #: The payment post as read, with the team's notes in its thread.
     post_text: str = ""
+    #: What's been said on the client's Trello cards since the payment.
+    client_asks: list = field(default_factory=list)
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -1619,3 +1621,84 @@ def setup_answer(name: str, bought: str, rows: list) -> str:
     if bits:
         return f"⚠️ **{name}** — on the hub ({where}), but " + "; ".join(bits) + tail
     return f"✅ **{name}** — set up: {where}{tail}"
+
+
+#: A client asking for a state off, or on: "Can we take PA off my fresh pack".
+_STATE_OFF = re.compile(r"(?i)\b(?:take|took|remove[ds]?|removing|drop(?:ped)?|pull|exclude[ds]?|cut|stop|"
+                        r"no\s+more|without|don'?t\s+(?:want|send))\b[^.\n?!]{0,50}")
+_STATE_ON = re.compile(r"(?i)\b(?:add(?:ed|ing)?|include[ds]?|also\s+(?:want|send))\b[^.\n?!]{0,50}")
+
+
+def _states_strict(said: str) -> list:
+    """States written in capitals or by name - "PA", "Pennsylvania" - not
+    "hi" or "ok" as words."""
+    found = [one for one in re.findall(r"(?<![A-Za-z])([A-Z]{2})(?![A-Za-z])", str(said or ""))
+             if one in US_STATES and one not in ("OK", "OR", "IN", "ME", "HI", "OH", "ID", "AS")]
+    lowered = str(said or "").casefold()
+    for code, name in sorted(US_STATES.items(), key=lambda one: -len(one[1])):
+        if len(name) > 2 and re.search(rf"(?<![a-z]){re.escape(name)}(?![a-z])", lowered) and code not in found:
+            found.append(code)
+    return list(dict.fromkeys(found))
+
+
+def client_state_changes(asks: list) -> tuple[dict, dict]:
+    """({state: the ask} taken off, {state: the ask} put on), from what was
+    said on the client's card - the newest word on a state wins."""
+    off, on = {}, {}
+    for ask in sorted(asks or [], key=lambda one: one.get("when") or 0):
+        text = str(ask.get("text") or "")
+        for span in _STATE_OFF.finditer(text):
+            for code in _states_strict(span.group(0)):
+                off[code] = ask
+                on.pop(code, None)
+        for span in _STATE_ON.finditer(text):
+            for code in _states_strict(span.group(0)):
+                on[code] = ask
+                off.pop(code, None)
+    return off, on
+
+
+def _asked_when(ask: dict) -> str:
+    when = ask.get("when")
+    return f"{when:%b} {when.day}" if hasattr(when, "strftime") else ""
+
+
+def apply_client_asks(result, asks: list) -> None:
+    """What the client asked for since paying, held to: a state they asked
+    off isn't "missing", one they asked on isn't "not ordered" - and one they
+    asked off that the hub still has is the problem."""
+    result.client_asks = [f"{_asked_when(one)}: {' '.join(str(one.get('text') or '').split())[:300]}"
+                          for one in asks or []][:6]
+    off, on = client_state_changes(asks)
+    if not off and not on:
+        return
+    kept = []
+    for problem in list(result.problems):
+        found = re.match(r"^(?P<whose>.+?) states don't match the payment"
+                         r"(?: - has (?P<extra>[A-Z, ]+?) not ordered)?(?: - missing (?P<missing>[A-Z, ]+))?$", problem)
+        if not found:
+            kept.append(problem)
+            continue
+        extra = [one.strip() for one in (found.group("extra") or "").split(",") if one.strip()]
+        missing = [one.strip() for one in (found.group("missing") or "").split(",") if one.strip()]
+        asked_off = [one for one in missing if one in off]
+        asked_on = [one for one in extra if one in on]
+        for code in asked_off:
+            result.notes.append(f"{code} off - the client asked ({_asked_when(off[code])}, Trello): "
+                                f"“{' '.join(str(off[code].get('text') or '').split())[:140]}”")
+        for code in asked_on:
+            result.notes.append(f"{code} added - the client asked ({_asked_when(on[code])}, Trello): "
+                                f"“{' '.join(str(on[code].get('text') or '').split())[:140]}”")
+        extra = [one for one in extra if one not in asked_on]
+        missing = [one for one in missing if one not in asked_off]
+        if extra or missing:
+            kept.append(f"{found.group('whose')} states don't match the payment"
+                        + (f" - has {', '.join(extra)} not ordered" if extra else "")
+                        + (f" - missing {', '.join(missing)}" if missing else ""))
+    result.problems[:] = kept
+    hub = getattr(result, "hub", None)
+    has = set(getattr(hub, "states", ()) or ()) if hub is not None else set()
+    for code, ask in off.items():
+        if code in has:
+            result.problems.append(f"The client asked to take {code} off ({_asked_when(ask)}, Trello) - the hub "
+                                   f"still has {code}")

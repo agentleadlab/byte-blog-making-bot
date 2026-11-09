@@ -12405,6 +12405,14 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                 result.notes.append("With the team on Trello - not on the hub yet; checked against the payment "
                                     "once it is")
     try:
+        # What the client asked for on their Trello card since paying - a
+        # state taken off is theirs to take off, not Rook and Nova's miss.
+        asks = await _client_asks(bot, result.client or held.get("name") or "",
+                                  _moment_of(held.get("posted")) or getattr(post, "created_at", None))
+        rookqc.apply_client_asks(result, asks)
+    except Exception:
+        log.warning("Couldn't read %s's Trello card for what they asked", key, exc_info=True)
+    try:
         await _sqc_read_answers(bot, key, post, result, held)
         held = rookqc.recalled().get(key) or held
     except Exception:
@@ -12533,6 +12541,28 @@ _NOT_SET_UP_YET = ("Not sure which order this pays for", "Not on the hub", "Noth
 #: The board's cards as last read: [read at, cards]. Read again after this long.
 _BOARD_CARDS: list = [0.0, None]
 BOARD_CARDS_SECONDS = 300
+
+
+#: A client's card comments as last read: {name: (read at, asks)}.
+_CLIENT_ASKS: dict = {}
+CLIENT_ASKS_SECONDS = 600
+
+
+async def _client_asks(bot, client: str, posted) -> list:
+    """What's been said on this client's Trello cards since the payment
+    (and the day before it), read at most every ten minutes."""
+    if not client or len(client.split()) < 2 or posted is None:
+        return []
+    held = _CLIENT_ASKS.get(client.casefold())
+    if held and time.time() - held[0] < CLIENT_ASKS_SECONDS:
+        return held[1]
+    if _BOARD_CARDS[1] is None or time.time() - _BOARD_CARDS[0] > BOARD_CARDS_SECONDS:
+        _BOARD_CARDS[1] = await asyncio.to_thread(jobs.board_cards, bot.config)
+        _BOARD_CARDS[0] = time.time()
+    asks = await asyncio.to_thread(partial(jobs.client_asks, bot.config, client, since=posted - timedelta(days=1),
+                                           cards=_BOARD_CARDS[1]))
+    _CLIENT_ASKS[client.casefold()] = (time.time(), asks)
+    return asks
 
 
 async def _sqc_card_by_hand(bot, client: str, held: dict, post) -> str:

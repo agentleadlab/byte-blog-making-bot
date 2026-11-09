@@ -292,6 +292,18 @@ class TrelloClient:
             for item in actions or []
         ]
 
+    def card_comments_dated(self, card_id: str) -> list[tuple[str, str]]:
+        """[(when, what was said)] on a card, newest first - `when` as Trello
+        writes it (ISO, UTC)."""
+        actions = self._request(
+            "GET", f"/cards/{card_id}/actions",
+            params={"filter": "commentCard", "limit": 50},
+        )
+        return [
+            (str(item.get("date") or ""), str((item.get("data") or {}).get("text") or ""))
+            for item in actions or []
+        ]
+
     def card_story(self, card_id: str) -> tuple[list[str], bool]:
         """(what people said, whether this card was copied from another one).
 

@@ -41,8 +41,10 @@ _WHO = (
     "Stay on THIS payment and on what_ryte_sees_wrong - nothing else. Don't open new issues: not other payments or "
     "earlier orders, not the order card's wording, not how many aged leads were pulled (aged pulls are checked "
     "separately). If they've said something is a separate or earlier order, take their word and drop it. "
-    "Read everything you're given first - the payment post, the team's notes under it, Rook's setup, the thread - "
-    "and never ask for something that's already written there. "
+    "Read everything you're given first - the payment post, the team's notes under it, Rook's setup, the thread, "
+    "what the client asked for on their Trello card - and never ask for something that's already written there. "
+    "What the client asked for after paying (a state taken off, a schedule) overrides the invoice: never tell "
+    "anyone to undo it. "
     "When the facts could have an explanation you can't see (a renewal on the same row, states the client changed, "
     "a friend paying, a second product on the invoice), ASK instead of accusing - you must be right, not loud. "
     "Ask for exactly the one thing you need to close it: a fix on the hub, a confirmation, or who has it. No "
@@ -117,6 +119,11 @@ def facts(result, *, invoice: str = "", amount: str = "", talk: list | None = No
         "handed_to_the_team": list(dict.fromkeys(getattr(result, "todo", []) or [])),
         "notes": list(getattr(result, "notes", []) or [])[:8],
     }
+    asks = list(getattr(result, "client_asks", []) or [])
+    if asks:
+        # What the client asked for since paying, on their Trello card -
+        # Connor Swartz's "take PA off my fresh pack": not "PA is missing".
+        said["client_asked_since_paying_on_trello"] = asks
     post = str(getattr(result, "post_text", "") or "")
     if post:
         # The payment post itself, and what the team wrote under it - Will

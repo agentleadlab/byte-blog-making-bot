@@ -6645,6 +6645,37 @@ def client_cards(name: str, cards: list[dict]) -> list[dict]:
     ]
 
 
+def client_asks(config: Config, name: str, *, since, cards: list[dict] | None = None) -> list[dict]:
+    """What's been said on this client's cards since `since` - [{"when",
+    "text", "card"}], newest first. Connor Swartz's "Can we take PA off my
+    fresh pack", put on his card by Ryte itself, never reached the setup
+    check, and Ryte had Nova put PA back."""
+    from datetime import datetime as _dt
+
+    from .. import agents as rules
+
+    client = open_trello(config)
+    try:
+        every = cards if cards is not None else client.board_cards(config.secrets.trello_board_id)
+        mine = client_cards(name, every)
+        if not mine or different_people(mine):
+            return []
+        newest = sorted(mine, key=lambda one: rules.made_at(str(one.get("id") or "")) or _NEVER, reverse=True)[:3]
+        out = []
+        for card in newest:
+            for when, text in client.card_comments_dated(str(card.get("id") or "")):
+                try:
+                    at = _dt.fromisoformat(when.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if since is None or at >= since:
+                    out.append({"when": at, "text": text,
+                                "card": str(card.get("shortUrl") or card.get("url") or "")})
+        return sorted(out, key=lambda one: one["when"], reverse=True)
+    finally:
+        client.close()
+
+
 def different_people(cards: list[dict]) -> bool:
     """Whether cards under one name are two people, not one client's orders.
 
