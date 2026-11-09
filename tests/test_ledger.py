@@ -1364,3 +1364,105 @@ def test_monday_catches_up_from_friday(monkeypatch):
     # Never more than a week.
     bot._was_alive = datetime(2026, 10, 1, tzinfo=timezone.utc)
     assert client._catch_up_days(bot, monday)[0] == date(2026, 11, 2)
+
+
+def test_ryte_writes_its_own_question_and_reads_the_answer(monkeypatch):
+    """"he doesnt have to use templated message. if he thinks rook and nova did
+    wrong, he has to let him know - but ryte has to make sure that he is
+    actually right"."""
+    from wilbyte import rytevoice
+    from wilbyte.bot import client
+
+    written = []
+
+    def compose(config, said):
+        written.append(said)
+        return "The hub has Text Verified Veteran Plus for Peter Kuyper, but he paid for 31 Veteran Final Expense..."
+
+    monkeypatch.setattr(rytevoice, "compose", compose)
+    sent = []
+
+    class Thread:
+        guild = SimpleNamespace(members=[SimpleNamespace(bot=True, display_name="Rook", name="Rook", mention="<@11>")])
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+            return SimpleNamespace(jump_url="https://discord.com/channels/1/77/500")
+
+    async def thread_for(bot, channel, client_, posted):
+        return Thread()
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Thread())
+    monkeypatch.setattr(client, "_rn_thread_for", thread_for)
+    result = rookqc.Checked(client="Peter Kuyper", problems=["The hub has the lead type “X”, the payment “Y”"])
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/990", content="AMOUNT: $1,050.00", embeds=[],
+                           message_snapshots=[], created_at=datetime.now(timezone.utc))
+    bot = SimpleNamespace(config=SimpleNamespace())
+    asyncio.run(client._sqc_ask(bot, "990", post, result))
+    assert sent[0].startswith("<@11> <@1529479205165858923> The hub has Text Verified Veteran Plus")
+    assert written[0]["client"] == "Peter Kuyper" and written[0]["what_ryte_sees_wrong"] == result.problems
+
+    # Their answer read: "done" while the hub doesn't show it - one follow-up.
+    rookqc.remember("990", asked="https://discord.com/channels/1/77/500", asked_at=datetime.now(timezone.utc).isoformat())
+
+    def read(config, said, asked, replies):
+        return {"verdict": "still_wrong", "reason": "Nova says done, the hub still has 0 rows for him.",
+                "follow_up": "Nova, you said it's done but I still don't see a row for Peter Kuyper on the hub."}
+
+    monkeypatch.setattr(rytevoice, "read_reply", read)
+    bot = SimpleNamespace(config=SimpleNamespace(), get_channel=lambda _id: Thread())
+    result = rookqc.Checked(client="Peter Kuyper", problems=["Not on the hub"],
+                            talk=[("Ryte", "QC on Peter Kuyper ..."), ("Nova", "Done ✅ Peter's set up")])
+    asyncio.run(client._sqc_read_answers(bot, "990", post, result, rookqc.recalled()["990"]))
+    assert "you said it's done but I still don't see a row" in sent[-1]
+    assert any("still wrong" in one for one in result.notes)
+    # The same answers: not followed up twice.
+    asyncio.run(client._sqc_read_answers(bot, "990", post, result, rookqc.recalled()["990"]))
+    assert sum("you said it's done" in one for one in sent) == 1
+
+    # "It's right as is" - OK'd.
+    def ok(config, said, asked, replies):
+        return {"verdict": "right_as_is", "reason": "Veteran Final Expense is Veteran Plus.", "follow_up": ""}
+
+    monkeypatch.setattr(rytevoice, "read_reply", ok)
+    result = rookqc.Checked(client="Peter Kuyper", problems=["The hub has the lead type “X”, the payment “Y”"],
+                            talk=[("Ryte", "QC on Peter Kuyper ..."), ("Rook", "That's the same product.")])
+    asyncio.run(client._sqc_read_answers(bot, "990", post, result, rookqc.recalled()["990"]))
+    assert result.rook_ok.startswith("Rook: Veteran Final Expense is Veteran Plus")
+
+
+def test_the_plain_question_when_claude_cant_be_had(monkeypatch):
+    from wilbyte import rytevoice
+    from wilbyte.bot import client
+
+    monkeypatch.setattr(rytevoice, "compose", lambda config, said: "")
+    sent = []
+
+    class Thread:
+        guild = SimpleNamespace(members=[])
+
+        async def send(self, text=None, **kw):
+            sent.append(text)
+            return SimpleNamespace(jump_url="https://discord.com/channels/1/77/501")
+
+    async def thread_for(bot, channel, client_, posted):
+        return Thread()
+
+    monkeypatch.setattr(client, "_rook_nova_channel", lambda bot: Thread())
+    monkeypatch.setattr(client, "_rn_thread_for", thread_for)
+    post = SimpleNamespace(jump_url="https://discord.com/channels/1/2/991", content="AMOUNT: $90.00", embeds=[],
+                           message_snapshots=[], created_at=datetime.now(timezone.utc))
+    asyncio.run(client._sqc_ask(SimpleNamespace(config=SimpleNamespace()), "991", post,
+                                rookqc.Checked(client="Tom Skinner", problems=["Not on the hub"])))
+    assert "QC on **Tom Skinner**" in sent[0]
+
+
+def test_ryte_s_facts_are_what_it_read():
+    from wilbyte import rytevoice
+
+    result = rookqc.check(PAYRA_FOR_FACTS, [])
+    said = rytevoice.facts(result, invoice="INV-1", amount="$90.00")
+    assert said["payment"]["amount"] == "$90.00" and said["hub_row"] is None
+
+
+PAYRA_FOR_FACTS = "New Payment | Payra\nNAME: Tom Skinner\nAMOUNT: $90.00\nPRODUCT: Text-Verified Veteran Leads\n"

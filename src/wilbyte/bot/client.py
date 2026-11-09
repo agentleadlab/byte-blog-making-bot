@@ -12072,6 +12072,11 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
                 result.problems.remove(one)
                 result.notes.append("With the team on Trello - not on the hub yet; checked against the payment "
                                     "once it is")
+    try:
+        await _sqc_read_answers(bot, key, post, result, held)
+        held = rookqc.recalled().get(key) or held
+    except Exception:
+        log.warning("Reading the answers on %s broke", key, exc_info=True)
     if result.rook_ok:
         # What Ryte asked and Rook said is right as it is: OK'd, in Rook's words.
         answered = [one for one in result.problems if rookqc.among(one, held.get("asked_problems"))
@@ -13366,6 +13371,92 @@ async def _rn_thread_for(bot, channel, client: str, posted: datetime | None):
 ROOK_NOVA_IDS = {"nova": 1529479205165858923}
 
 
+#: Ryte writes its own questions to Rook and Nova, and reads their answers.
+SETUP_QC_VOICE = True
+#: At most one follow-up to the same answers.
+SETUP_QC_FOLLOW_UPS_AN_HOUR = 6
+_FOLLOWED_TIMES: list = []
+
+
+def _rook_nova_tags(channel) -> str:
+    tags = []
+    for wanted in ("rook", "nova"):
+        if wanted in ROOK_NOVA_IDS:
+            tags.append(f"<@{ROOK_NOVA_IDS[wanted]}>")
+            continue
+        member = next((one for one in getattr(getattr(channel, "guild", None), "members", None) or []
+                       if getattr(one, "bot", False)
+                       and str(getattr(one, "display_name", "") or one.name).casefold().startswith(wanted)), None)
+        tags.append(member.mention if member is not None else f"@{wanted.capitalize()}")
+    return " ".join(tags)
+
+
+async def _sqc_read_answers(bot, key: str, post, result, held: dict) -> None:
+    """What Rook, Nova or the team answered Ryte's question, read against
+    what Ryte sees - and acted on: right as it is (OK'd), taken to the team,
+    waiting on the client, or still wrong (one follow-up, with the figures).
+    Not when the plain reading already understood the answer."""
+    from .. import rookqc, rytevoice
+
+    if not SETUP_QC_VOICE or not held.get("asked_at") or getattr(bot, "config", None) is None:
+        return
+    if result.rook_ok or result.with_team or getattr(result, "waiting_client", "") or getattr(result, "team_ok", ""):
+        return
+    talk = list(getattr(result, "talk", []) or [])
+    last = next((at for at in range(len(talk) - 1, -1, -1) if talk[at][0].casefold().startswith("ryte")), None)
+    if last is None:
+        return
+    replies = [(who, said) for who, said in talk[last + 1:] if not who.casefold().startswith(("ryte", "luna"))]
+    if not replies:
+        return
+    import hashlib
+    import json
+
+    digest = hashlib.sha1(json.dumps(replies, default=str).encode()).hexdigest()[:16]
+    said = rytevoice.facts(result, talk=talk)
+    if held.get("read_hash") == digest:
+        reading = {"verdict": held.get("read_verdict") or "", "reason": held.get("read_reason") or "",
+                   "follow_up": ""}
+    else:
+        try:
+            reading = await asyncio.to_thread(partial(rytevoice.read_reply, bot.config, said, talk[last][1], replies))
+        except Exception:
+            log.warning("Couldn't read the answers on %s", result.client, exc_info=True)
+            return
+        if not reading:
+            return
+        rookqc.remember(key, read_hash=digest, read_verdict=reading["verdict"], read_reason=reading["reason"])
+    verdict, reason = reading.get("verdict") or "", reading.get("reason") or ""
+    who = replies[-1][0]
+    if verdict == "right_as_is":
+        result.rook_ok = f"{who}: {reason}"
+    elif verdict == "with_team":
+        result.with_team = f"{who}: {reason}"
+    elif verdict == "waiting_client":
+        result.waiting_client = f"{who}: {reason}"
+        for one in [one for one in result.problems if one.startswith(_NOT_SET_UP_YET)]:
+            result.problems.remove(one)
+    if verdict and verdict != "unclear":
+        result.notes.append(f"Ryte read their answer as {verdict.replace('_', ' ')} - {reason}")
+    if verdict == "still_wrong" and reading.get("follow_up") and held.get("followed_hash") != digest:
+        if not _room(_FOLLOWED_TIMES, SETUP_QC_FOLLOW_UPS_AN_HOUR):
+            return
+        where = None
+        found = re.search(r"/channels/\d+/(\d+)/\d+", str(held.get("asked") or ""))
+        if found:
+            try:
+                where = bot.get_channel(int(found.group(1))) or await bot.fetch_channel(int(found.group(1)))
+            except Exception:
+                where = None
+        if where is None:
+            return
+        with mirror.answering():
+            await where.send(_rook_nova_tags(where) + " " + reading["follow_up"][:1700]
+                             + f"\n-# <{getattr(post, 'jump_url', '')}>")
+        rookqc.remember(key, followed_hash=digest,
+                        followed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
 async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list | None = None) -> str:
     """Rook and Nova asked about this payment - in its thread when there's
     one, else #rook-nova. The question's link, or "" with nowhere to ask."""
@@ -13393,10 +13484,23 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
     where = await _rn_thread_for(bot, channel, result.client, getattr(post, "created_at", None)) or channel
     # Only ever a question about one payment, in #rook-nova: the go-ahead to
     # speak in the Growth server ("Ok to communicate with Nova and rook").
+    invoice = (re.search(r"\bINV-?\d+\b", _all_of_it(post) if hasattr(post, "content") else "") or [""])[0]
+    # In Ryte's own words, from what it read - "he doesnt have to use
+    # templated message" - and the plain question when Claude can't be had.
+    written = ""
+    if SETUP_QC_VOICE and getattr(bot, "config", None) is not None:
+        from .. import rytevoice
+
+        amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1] if hasattr(post, "content") else ""
+        try:
+            written = await asyncio.to_thread(partial(rytevoice.compose, bot.config, rytevoice.facts(
+                asking, invoice=invoice, amount=amount, talk=list(getattr(result, "talk", []) or []))))
+        except Exception:
+            log.warning("Couldn't write %s's question in Ryte's words", result.client, exc_info=True)
+    text = (f"{written}\n-# <{post.jump_url}>" if written
+            else rookqc.question(asking, link=post.jump_url, invoice=invoice))
     with mirror.answering():
-        invoice = (re.search(r"\bINV-?\d+\b", _all_of_it(post) if hasattr(post, "content") else "") or [""])[0]
-        asked = await where.send(" ".join(tags) + " " + rookqc.question(asking, link=post.jump_url,
-                                                                        invoice=invoice)[:1800])
+        asked = await where.send(" ".join(tags) + " " + text[:1800])
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     held = rookqc.recalled().get(key) or {}
     rookqc.remember(key, asked=asked.jump_url, asked_by=by or "Ryte", asked_at=now,

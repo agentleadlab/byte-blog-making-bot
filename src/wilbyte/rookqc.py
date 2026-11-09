@@ -89,8 +89,9 @@ class Checked:
     asked: tuple = ()
     #: Rook's setup message the QC was held to, as it was written.
     setup_text: str = ""
-    #: Everything said about it, run together.
+    #: Everything said about it, run together - and as (who, what) in order.
     talk_text: str = ""
+    talk: list = field(default_factory=list)
     #: Rook or Nova saying they've taken it to Therese / Nicole themselves.
     with_team: str = ""
     #: The other payment post this one looks to be a second of.
@@ -463,6 +464,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     result.notes += called_off
     result.setup_text = said[0] if said else ""
     result.talk_text = "\n".join(said for _who, said in talk)
+    result.talk = list(talk)
     result.wanted = _filled(paid, rook)
     result.paid = result_paid
     if paid.aged:
