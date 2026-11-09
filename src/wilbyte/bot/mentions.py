@@ -774,6 +774,14 @@ FAITH_ASKED = re.compile(
 _ABOUT_AGENTS = re.compile(r"\b(?:agents?|clients?)\b", re.IGNORECASE)
 
 
+#: "can ryte change discord channel names? ... those need changing" - into
+#: the "✉️│ᴀᴅᴍɪɴ-ᴀɢᴇɴᴛʟᴇᴀᴅʟᴀʙ-ᴄᴏᴍ" style.
+CHANNEL_NAMES = re.compile(
+    r"\b(?:rename|restyle|style|format|fix|change|update|redo)\b.{0,40}\bchannels?(?:\s*names?)?\b"
+    r"|\bchannel\s*names?\b.{0,40}\b(?:rename|restyle|style|format|fix|chang\w*|updat\w*|redo)\b",
+    re.IGNORECASE)
+
+
 #: "is robert allaraj still active" - answered by the chat as "Board says
 #: he's live", with what the hub shows of today left out.
 HUB_STATUS = re.compile(
@@ -985,6 +993,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # agent going live today or tomorrow is set up". Each one checked.
     if SETUP_ASKED.search(text):
         return MentionRequest(action="setupask", brief=text)
+    if CHANNEL_NAMES.search(text) and not re.search(r"\bclear\s*-?\s*out\b|\bquiet\b", text, re.IGNORECASE):
+        return MentionRequest(action="stylechannels", brief=text)
     # "can i ask him did we miss anything and he'll just send me those not
     # setup and wrong setup?"
     if MISSED_ASK.search(text):
@@ -1708,6 +1718,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ban them and delete the channel. Nothing goes until both are kept. A list,
 > one name a line, is matched and shown once - one press clears them all.
 > **clear her out still, she disputed** goes ahead under a month quiet
+> @RYTE **rename channels** — this server's channels into the "✉️│ᴀᴅᴍɪɴ-ᴄᴏᴍ"
+> style, shown first, one press. Or **rename channels in Gabi & Ryte**, or
+> name them: **rename channels #one #two**. Never the clients server
 > @RYTE **how many are going live thursday** — who the board says goes live
 > on a day, with what they bought and whether their card is ticked. Any day:
 > tomorrow, monday, 09/18

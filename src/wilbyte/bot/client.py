@@ -1447,7 +1447,7 @@ def is_allowed(
     ring_here = any(
         bool(ring) and (
             ring == str(channel_id)
-            or (not ring.isdigit() and ring.casefold() == str(channel_name or "").casefold())
+            or (not ring.isdigit() and _plain_letters(ring) == _plain_letters(channel_name))
         )
         for ring in (
             str(getattr(config.secrets, setting, "") or "").lstrip("#").strip()
@@ -1851,6 +1851,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
             if request.action == "hubstatus":
                 await _hub_status(responder, config, request.brief or "")
+                return
+
+            if request.action == "stylechannels":
+                await _style_channels(responder, config, message, request.brief or "")
                 return
 
             if request.action == "sqcsaid":
@@ -16390,14 +16394,108 @@ def _hub_responder(bot: "WilByteBot"):
     return None
 
 
+#: Never renamed: Gabi's - "do not touch it".
+STYLE_NEVER = ("mindful",)
+
+
+async def _style_channels(responder: Responder, config: Config, message, asked: str) -> None:
+    """"can ryte change discord channel names? ... those need changing" -
+    the channels of the server asked in, into the "✉️│ᴀᴅᴍɪɴ-ᴀɢᴇɴᴛʟᴇᴀᴅʟᴀʙ-ᴄᴏᴍ"
+    style: the emoji, the bar, the words in small capitals. Shown first, one
+    press renames. The channels named (#one #two), or a category's ("in Gabi
+    & Ryte"), or all of them. Never the clients server - its channels are
+    found by the client's name for clear-outs - and never Gabi's."""
+    from .. import fancy
+
+    guild = getattr(message, "guild", None)
+    if guild is None:
+        await responder.send("Ask me in the server whose channels you want renamed.")
+        return
+    if str(guild.id) == str(config.secrets.discord_clients_guild_id or "").strip():
+        await responder.send("Not in the clients server - its channels are found by the client's name "
+                             "for clear-outs, so they stay as they are.")
+        return
+    named = list(getattr(message, "channel_mentions", None) or [])
+    category = None
+    found = re.search(r"\b(?:in|under)\s+(?:the\s+)?(.+?)(?:\s+categor(?:y|ies))?\s*[?.!]*$", asked or "",
+                      re.IGNORECASE)
+    if not named and found:
+        wanted = _plain_letters(found.group(1))
+        category = next((one for one in guild.categories
+                         if wanted and _plain_letters(one.name) == wanted), None)
+    if named:
+        channels = named
+    elif category is not None:
+        channels = list(category.channels)
+    else:
+        channels = [one for one in guild.channels if not isinstance(one, discord.CategoryChannel)]
+    me = guild.me
+    renames, cant = [], []
+    for one in sorted(channels, key=lambda one: (getattr(one, "position", 0))):
+        old = str(one.name)
+        if any(word in _plain_letters(old) or word in _plain_letters(getattr(one.category, "name", ""))
+               for word in STYLE_NEVER):
+            continue
+        new = fancy.styled(old)
+        if new == old:
+            continue
+        if me is None or not one.permissions_for(me).manage_channels:
+            cant.append(old)
+            continue
+        renames.append((one, new))
+    where = f"**{category.name}**" if category is not None else (
+        "the channels you named" if named else f"**{guild.name}**")
+    if not renames:
+        await responder.send(f"Every channel in {where} is already in the style."
+                             + (f"\n-# I can't rename {len(cant)} - I don't have Manage Channels on them: "
+                                + ", ".join(f"#{one}" for one in cant[:15]) if cant else ""))
+        return
+    lines = [f"✏️ **{len(renames)} channel(s) in {where}** into the style:"]
+    lines += [f"• #{one.name} → #{new}" for one, new in renames]
+    if cant:
+        lines.append(f"-# Can't rename {len(cant)} - no Manage Channels for me on them: "
+                     + ", ".join(f"#{one}" for one in cant[:15]))
+    lines.append("-# Only the names change - nothing in them. Discord allows two renames per channel "
+                 "every 10 minutes.")
+    text = "\n".join(lines)
+    while len(text) > 1900:
+        cut = text.rfind("\n", 0, 1900)
+        await responder.send(text[:cut])
+        text = text[cut + 1:]
+    view = views.ConfirmView(requester_id=responder.requester_id,
+                             timeout=config.discord.approval_timeout_seconds,
+                             label=f"Rename {len(renames)}", emoji="✏️")
+    await responder.send(text, view=view)
+    await view.wait()
+    if not view.confirmed:
+        await responder.send("Left the names as they are.")
+        return
+    done, failed = 0, []
+    who = str(getattr(getattr(message, "author", None), "display_name", "") or "the team")
+    for one, new in renames:
+        old = str(one.name)
+        try:
+            await one.edit(name=new, reason=f"Ryte: channel name style, asked by {who}")
+            done += 1
+        except Exception as exc:
+            failed.append(f"#{old} - {_readable(exc)}")
+        await asyncio.sleep(1)
+    await responder.send(f"✏️ Renamed **{done}** of {len(renames)}."
+                         + ("\n⚠ " + "\n⚠ ".join(failed[:15]) if failed else ""))
+
+
 def _plain_letters(name) -> str:
     """A name's letters a-z, whatever they're written in: "𝒩𝒾𝒸𝑜𝓁𝑒" and
     "ʜᴜʙ-ᴀɢᴇɴᴛ" (small capitals, which NFKC leaves alone) read as plain
     letters, emoji and separators dropped."""
     import unicodedata
 
+    from ..fancy import plain
+
     out = []
-    for ch in unicodedata.normalize("NFKC", str(name or "")):
+    # The small capitals' own letters first: their q is "ǫ", o with a hook,
+    # and #ʀᴏᴏᴋ-ǫᴄ read as "rookoc" would be a #rook-qc never found.
+    for ch in unicodedata.normalize("NFKC", plain(str(name or ""))):
         if ch.isascii():
             out.append(ch.casefold())
             continue
@@ -16763,7 +16861,7 @@ def _ring_channel(bot: "WilByteBot", setting: str = "ringcentral_channel_id") ->
         named = [
             one for one in bot.get_all_channels()
             if getattr(one, "type", None) == discord.ChannelType.text
-            and str(one.name).casefold() == wanted.casefold()
+            and _plain_letters(one.name) == _plain_letters(wanted)
         ]
         if len(named) != 1:
             return None, (

@@ -173,7 +173,10 @@ def tidy(name: str) -> str:
     rodriguez ✅", "jayrodriguez1" - and a person types the name as it is
     written on the card.
     """
-    return re.sub(r"[^a-z0-9]+", "", (name or "").casefold())
+    from .fancy import plain
+
+    # A styled name - "ᴊᴀʏ-ʀᴏᴅʀɪɢᴜᴇᴢ" - is still Jay Rodriguez.
+    return re.sub(r"[^a-z0-9]+", "", plain(name or "").casefold())
 
 
 #: What a client channel's name carries after the person: "justin_schwartz-
@@ -421,7 +424,9 @@ def the_one_to_delete(plan: Plan, channel, *, guild_id) -> str:
 
 def tidy_words(name: str) -> str:
     """A channel name without emoji or separators - "📋 general" -> "general"."""
-    said = re.sub(r"[^\w\s-]", " ", (name or ""))
+    from .fancy import plain
+
+    said = re.sub(r"[^\w\s-]", " ", plain(name or ""))
     return " ".join(said.replace("-", " ").replace("_", " ").split()).casefold()
 
 
