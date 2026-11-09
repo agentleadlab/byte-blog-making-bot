@@ -7301,7 +7301,10 @@ def picture_check(config: Config, plan, link: str) -> tuple[bool, str]:
             folder = reading.about(parent) if parent else {}
     except Exception as exc:
         return False, f"Couldn't check the picture in Drive: {_short(exc, 120)}"
-    if str(folder.get("name") or "") != clearout.their_folder(plan):
+    # The same folder however it was capitalised - Drive found "Madison
+    # Mcgill" for "madison mcgill" typed, and the check held her channel.
+    if " ".join(str(folder.get("name") or "").split()).casefold() != " ".join(
+            clearout.their_folder(plan).split()).casefold():
         return False, (f"“{meta.get('name')}” is in “{folder.get('name') or 'the top folder'}”, "
                        f"not their folder “{clearout.their_folder(plan)}”")
     return True, f"“{meta.get('name')}” is in their folder “{folder.get('name')}”"

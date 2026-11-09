@@ -3994,6 +3994,8 @@ def _picture_files(folder="Tristen Miller", size=80000, kind="image/png", trashe
 @pytest.mark.parametrize("files, fine", [
     (_picture_files(), True),
     (_picture_files(folder="D"), False),
+    # "madison mcgill" typed, Drive's folder "Madison Mcgill" - the same one.
+    (_picture_files(folder="tristen  MILLER"), True),
     (_picture_files(size=200), False),
     (_picture_files(kind="text/html"), False),
     (_picture_files(trashed=True), False),
