@@ -13073,13 +13073,22 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
     except Exception:
         log.warning("Couldn't read Nova's #launching board", exc_info=True)
         board, complete = {}, False
+    # Live on the hub and no new lead in three days - payments or not.
+    stalled = []
+    try:
+        from .. import hub, stalls
+
+        rows = await asyncio.to_thread(hub.agents, bot.config.secrets, status="all")
+        stalled = stalls.lines(stalls.watch(rows, now=now, today=today), now=now)
+    except Exception:
+        log.warning("Couldn't look for live orders with no leads", exc_info=True)
     if parts is not None:
-        parts["lines"] = [*aged, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
-                                   if board else [])]
+        parts["lines"] = [*aged, *stalled, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
+                                             if board else [])]
         parts["today"] = list(missing)  # Payra's are today's, by what they are
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
-                        board_complete=complete)
+                        board_complete=complete, stalled=stalled)
 
 
 async def _launching_board(bot) -> tuple[dict, bool]:
