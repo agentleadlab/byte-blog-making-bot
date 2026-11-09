@@ -4652,6 +4652,13 @@ async def _clear_out_one(
         )
         return "kept"
 
+    done_before = _KEPT_AND_CHECKED.get(found[0].channel_id)
+    if anyway and not auto and done_before and time.monotonic() - done_before[1] < KEPT_AND_CHECKED_FOR:
+        # "clear her out still, she disputed" right after: the sheet, the
+        # messages and the picture were kept and checked minutes ago - not
+        # all of it again, just the button.
+        return await _delete_kept(responder, guild, done_before[0], name, why=anyway)
+
     plan = clearout.Plan(name=name, channel=found[0], guild_id=str(guild.id))
     member = _member_called(guild, name)
     if member is not None:
@@ -4903,13 +4910,22 @@ async def _clear_out_one(
     kept.append("\n🔎 **Checked my own work:**\n" + "\n".join(
         f"{'✅' if ok else '❌'} {said}" for ok, said in checks
     ))
-    if not all(ok for ok, _said in checks):
+    failed = [said for ok, said in checks if not ok]
+    # Only "under a month quiet" wrong, and a person here to say: the sheet,
+    # the messages and the picture are all kept and checked - the button,
+    # warned, rather than "Nothing deleted" and the whole thing again once
+    # they type "clear her out still, she disputed".
+    only_quiet = (not auto and len(failed) == 1 and failed[0].startswith("Not quiet"))
+    if not only_quiet:
+        _KEPT_AND_CHECKED.pop(plan.channel.channel_id, None)
+    if failed and not only_quiet:
         await responder.send(
             "\n".join(kept)
             + "\n\n**Nothing deleted.** Something above isn't right, and the channel "
             "is the only copy until it is."
         )
         return "trouble"
+    _KEPT_AND_CHECKED[plan.channel.channel_id] = (plan, time.monotonic())
 
     going = views.ConfirmView(
         requester_id=responder.requester_id,
@@ -4925,6 +4941,8 @@ async def _clear_out_one(
     # entirely. The chargeback run is where a ban belongs.
     asking = await responder.send(
         "\n".join(kept)
+        + ("\n\n⚠ **Under a month quiet** — everything else is kept and checked. Press delete only if "
+           "they're done with us (a dispute, they asked to go)." if only_quiet else "")
         + f"\n\n**This cannot be undone.**\n"
         + ("" if plan.sheet else
            "• ⚠ **No sheet link was found** — not on the board, not in the "
@@ -4952,6 +4970,38 @@ async def _clear_out_one(
             "Left alone. The sheet row and the messages above stay either way."
         )
         return "left"
+    return await _delete_the_channel(responder, guild, plan, name)
+
+
+#: Clear-outs whose sheet, messages and picture are kept and checked, by
+#: channel id - (plan, when). A go-ahead soon after goes straight to delete.
+_KEPT_AND_CHECKED: dict[str, tuple] = {}
+KEPT_AND_CHECKED_FOR = 3 * 60 * 60
+
+
+async def _delete_kept(responder: Responder, guild, plan, name: str, *, why: str) -> str:
+    """The delete button for a clear-out already kept and checked."""
+    from .. import clearout
+
+    going = views.ConfirmView(
+        requester_id=responder.requester_id,
+        timeout=60 * 15,
+        label=f"Delete #{plan.channel.name}",
+        emoji="🗑",
+        danger=True,
+    )
+    await responder.send(
+        f"🧹 **#{plan.channel.name}** — the sheet, the messages and the picture are already kept and "
+        f"checked (above). Only the month-quiet check held it; going ahead: {why}.\n\n"
+        f"**This cannot be undone.**\n• Delete {clearout.jump_to(plan)}\n"
+        "-# Nobody is banned by this. That is the chargeback run's job.",
+        view=going,
+    )
+    await going.wait()
+    if not going.confirmed:
+        await responder.send("Left alone. The sheet row and the messages above stay either way.")
+        return "left"
+    _KEPT_AND_CHECKED.pop(plan.channel.channel_id, None)
     return await _delete_the_channel(responder, guild, plan, name)
 
 

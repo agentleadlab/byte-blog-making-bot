@@ -158,3 +158,34 @@ def test_agreed_and_asked_for_the_fix_is_being_fixed_not_a_follow_up():
 
     assert "being_fixed" in rytevoice.VERDICTS
     assert "being_fixed" in rytevoice._READING["input_schema"]["properties"]["verdict"]["enum"]
+
+
+def test_a_go_ahead_after_its_kept_is_just_the_delete_button(monkeypatch):
+    # "what are we doing" - "clear her out still" redid the sheet, the 27
+    # messages and the picture. Kept and checked minutes ago: just the button.
+    sent, deleted = [], []
+
+    class Responder:
+        requester_id = 1
+
+        async def send(self, text="", **_kw):
+            sent.append(text)
+
+    class View:
+        def __init__(self, **_kw):
+            self.confirmed = True
+
+        async def wait(self):
+            return None
+
+    async def delete(responder, guild, plan, name):
+        deleted.append(plan.channel.name)
+        return "deleted"
+
+    monkeypatch.setattr(client.views, "ConfirmView", View)
+    monkeypatch.setattr(client, "_delete_the_channel", delete)
+    plan = clearout.Plan(name="madison mcgill", channel=clearout.Channel(
+        channel_id="9", name="madison-mcgill-trucker", category=""), guild_id="1")
+    how = asyncio.run(client._delete_kept(Responder(), None, plan, "madison mcgill", why="a dispute"))
+    assert how == "deleted" and deleted == ["madison-mcgill-trucker"]
+    assert "already kept and checked" in sent[0] and "a dispute" in sent[0]
