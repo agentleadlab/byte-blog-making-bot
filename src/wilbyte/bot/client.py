@@ -1594,6 +1594,8 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
     request = mentions.parse(message.content, max_batch=config.discord.max_batch)
     responder = MessageResponder(message)
+    if not untagged:
+        await _ayoko_nga(message)
 
     # "@Ryte this are good to go: / Anwari - aged lead orders / Juan Serna -
     # Spark agent ... / Francesca - Spark ad spend agent" went to the ad
@@ -16434,6 +16436,39 @@ def _hub_responder(bot: "WilByteBot"):
         return ChannelResponder(channel)
     log.warning("No #hub-agent-fulfillment found - hub alerts go to the board's channel")
     return None
+
+
+#: "prank people here just one time ... make him say 'ayoko nga' and still do
+#: it anyway" - #trello-manager, the first tag after this, once ever.
+AYOKO_NGA_IN = "trellomanager"
+
+
+def _ayoko_nga_path():
+    from ..state import _state_dir
+
+    return _state_dir() / "ayoko-nga.json"
+
+
+async def _ayoko_nga(message) -> None:
+    """Once, ever: "ayoko nga" - then on with the job as asked."""
+    import json
+    if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != AYOKO_NGA_IN:
+        return
+    if getattr(getattr(message, "author", None), "bot", False):
+        return
+    where = _ayoko_nga_path()
+    if where.exists():
+        return
+    try:
+        # Written down before it's said: a restart never says it twice.
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_text(json.dumps({"said_at": datetime.now(timezone.utc).isoformat(),
+                                     "to": str(getattr(message.author, "display_name", "") or "")}),
+                         encoding="utf-8")
+        await message.reply("ayoko nga", mention_author=False)
+        await asyncio.sleep(3)
+    except Exception:
+        log.warning("Couldn't say ayoko nga", exc_info=True)
 
 
 #: Never renamed: Gabi's - "do not touch it".

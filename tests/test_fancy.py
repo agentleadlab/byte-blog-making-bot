@@ -97,3 +97,26 @@ def test_a_chargeback_goes_to_dispute_management_not_the_board(monkeypatch):
     bot = SimpleNamespace(config=config, guilds=[goat], get_channel=lambda _id: None)
     monkeypatch.setattr(client, "_board_responder", lambda _bot: "board")
     assert client._chargeback_responder(bot).channel is disputes
+
+
+def test_ayoko_nga_once_ever_then_the_job(tmp_path, monkeypatch):
+    said = []
+
+    class Message:
+        channel = SimpleNamespace(name="👩‍💼│ᴛʀᴇʟʟᴏ-ᴍᴀɴᴀɢᴇʀ")
+        author = SimpleNamespace(bot=False, display_name="Kharyl")
+
+        async def reply(self, text, **_kw):
+            said.append(text)
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(client.asyncio, "sleep", lambda _s: real_sleep(0))
+    monkeypatch.setattr(client, "_ayoko_nga_path", lambda: tmp_path / "ayoko.json")
+    asyncio.run(client._ayoko_nga(Message()))
+    asyncio.run(client._ayoko_nga(Message()))
+    assert said == ["ayoko nga"]
+    other = Message()
+    other.channel = SimpleNamespace(name="general")
+    (tmp_path / "ayoko.json").unlink()
+    asyncio.run(client._ayoko_nga(other))
+    assert said == ["ayoko nga"], "only in #trello-manager"

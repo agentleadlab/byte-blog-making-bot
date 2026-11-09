@@ -35,6 +35,10 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(keeplist, "KEEP_PATH", tmp_path / "quiet-keep.json")
     from wilbyte import failedwatch
     monkeypatch.setattr(failedwatch, "WARNED_PATH", tmp_path / "failed-payments.json")
+    from wilbyte.bot import client as _client
+    # Nor a clear-out kept and checked, nor the one-time "ayoko nga".
+    monkeypatch.setattr(_client, "_kept_and_checked_path", lambda: tmp_path / "clearout-kept.json")
+    monkeypatch.setattr(_client, "_ayoko_nga_path", lambda: tmp_path / "ayoko-nga.json")
     from wilbyte.bot import jobs as _jobs
     monkeypatch.setattr(_jobs, "TAG_CHECKS_PATH", tmp_path / "tag-checks.json")
     monkeypatch.setattr(_jobs, "AGED_OK_PATH", tmp_path / "aged-lines-ok.json")
