@@ -1346,3 +1346,21 @@ def test_a_long_paste_arrives_as_a_file_and_is_read(monkeypatch):
     text = asyncio.run(client._message_text(message))
     assert "Thomas Poulin" in text and "owen anderson" in text
     assert len(client.team_notes(text)) == 2
+
+
+def test_monday_catches_up_from_friday(monkeypatch):
+    """"todays monday right? ... he'll go thru friday after eod" - only
+    Sunday's and Monday's posts were looked through."""
+    from wilbyte.bot import client
+
+    bot = SimpleNamespace(config=SimpleNamespace(schedule=SimpleNamespace(timezone="America/New_York")),
+                          _was_alive=None)
+    monday = date(2026, 11, 9)
+    assert client._catch_up_days(bot, monday) == [date(2026, 11, 6), date(2026, 11, 7), date(2026, 11, 8), monday]
+    assert client._catch_up_days(bot, date(2026, 11, 10)) == [date(2026, 11, 9), date(2026, 11, 10)]
+    # Off since Wednesday: back to then.
+    bot._was_alive = datetime(2026, 11, 4, 20, 0, tzinfo=timezone.utc)
+    assert client._catch_up_days(bot, monday)[0] == date(2026, 11, 4)
+    # Never more than a week.
+    bot._was_alive = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    assert client._catch_up_days(bot, monday)[0] == date(2026, 11, 2)

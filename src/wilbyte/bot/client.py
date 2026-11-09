@@ -12457,13 +12457,37 @@ async def ledger_loop(bot) -> None:
         await asyncio.sleep(LEDGER_EVERY_SECONDS)
 
 
+#: Never further back than this, whatever was missed.
+CATCH_UP_DAYS_MOST = 7
+
+
+def _catch_up_days(bot, today) -> list:
+    """The days whose payment posts are looked through for ones nobody took
+    in: back to the last working day - Friday, on a Monday - and to when RYTE
+    was last running, if that's further. Friday evening's and Saturday's
+    were never looked at when the Mac slept through the weekend."""
+    start = today - timedelta(days=1)
+    while start.weekday() >= 5:
+        start -= timedelta(days=1)
+    try:
+        away = _last_alive(bot)
+    except Exception:
+        away = None
+    if away is not None and hasattr(away, "astimezone"):
+        from zoneinfo import ZoneInfo
+
+        start = min(start, away.astimezone(ZoneInfo(bot.config.schedule.timezone)).date())
+    start = max(start, today - timedelta(days=CATCH_UP_DAYS_MOST))
+    return [start + timedelta(days=step) for step in range((today - start).days + 1)]
+
+
 async def _ledger_pass(bot) -> int:
     """One pass: today's and yesterday's payment posts nobody's watching
     taken in, and each payment still followed checked again. How many."""
     from .. import ledger, rookqc
 
     today = _today(bot.config)
-    for day in (today - timedelta(days=1), today):
+    for day in _catch_up_days(bot, today):
         for post in await _payments_on(bot, day):
             if str(post.id) not in rookqc.recalled():
                 _sqc_watch(bot, post)
