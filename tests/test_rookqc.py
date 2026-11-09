@@ -1460,3 +1460,19 @@ def test_rooks_setup_for_another_order_when_the_hub_has_whats_paid_for():
     aged = ROOK.replace("Text-Verified Final Expense (fresh)", "Aged Final Expense 90-180")
     fresh = rookqc.check(PAYRA, [("Rook", aged), ("Rook", ROOK), ("Nova", NOVA)], hub=_hub())
     assert not any("reads aged" in one for one in fresh.problems)
+
+
+def test_waiting_on_the_clients_answer_isnt_a_miss():
+    """Beniam Tekelsslasie: "Rook texted him asking how many + states ...
+    setup waits on his answer" - and Ryte's question said the payment was
+    "— (match to their order)"."""
+    zelle = ("New Payment | Zelle\nNAME: Beniam Tekelsslasie\nAMOUNT: $1,200.00\nMETHOD: Zelle (Chase)\n"
+             "PRODUCT: — (match to their order)\n")
+    assert rookqc.payment(zelle).lead_type == ""
+    talk = [("Nova", "@Ryte Beniam's $1,200 Zelle came in today and isn't set up yet. It's not for his last order. "
+                     "Can you confirm the lead type and how many leads with him?"),
+            ("Rook", "Beniam: new money for a new trucker round (his last order is done 27/27). Rook texted him "
+                     "asking how many + states ($1,200 = 25 @ $48 or 20 @ $60). setup waits on his answer")]
+    result = rookqc.check(zelle, talk)
+    assert not result.problems, result.problems
+    assert result.waiting_client.startswith("Beniam: new money")

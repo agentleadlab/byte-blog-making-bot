@@ -12103,6 +12103,11 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     if getattr(result, "team_ok", ""):
         result.todo = []
         result.cant = ""
+    if getattr(result, "waiting_client", "") and not held.get("team_note"):
+        # On the list as waiting on the client, in Rook's words - not "paid,
+        # not set up", and not asked about again.
+        rookqc.remember(key, team_note=f"waiting on the client - {result.waiting_client}")
+        held = rookqc.recalled().get(key) or held
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)

@@ -101,6 +101,8 @@ class Checked:
     rook_ok: str = ""
     #: The team's answer in #rook-qc that it's done: who, and their words.
     team_ok: str = ""
+    #: Rook or Nova waiting on the client before it's set up: their words.
+    waiting_client: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -320,6 +322,11 @@ def payment(post: str) -> Order:
         order.states, order.left_out = list(dict.fromkeys(states)), list(dict.fromkeys(left_out))
     else:
         order.lead_type = _field(notes, r"Lead\s*Type(?:\s*Ordered)?", "Package") or _field(text, "PRODUCT")
+        # Nova's Zelle post with nothing to go by: "PRODUCT: — (match to
+        # their order)" - not a product, and said as one in Ryte's question.
+        if re.fullmatch(r"[\W_]*(?:\(?\s*match\s+(?:it\s+)?to\s+(?:their|the|his|her)\s+order\s*\)?)?[\W_]*",
+                        order.lead_type or "", re.IGNORECASE):
+            order.lead_type = ""
         many = re.search(r"\d[\d,]*", _field(notes, r"Number\s+of\s+(?:Requested\s+)?Leads(?:\s+Requested)?",
                                              r"Leads?", r"Qty", r"Quantity"))
         order.count = int(many.group(0).replace(",", "")) if many else None
@@ -569,6 +576,17 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     if handed:
         result.with_team = " ".join(handed.split())[:200]
         result.notes.append(f"Rook/Nova took it to the team: “{result.with_team}”")
+    # Rook or Nova waiting on the client - Beniam's "Rook texted him asking
+    # how many + states ... setup waits on his answer": not a miss, nor asked
+    # about again.
+    if hub is None:
+        waiting = next((said for who, said in reversed(talk) if who.casefold().startswith(("rook", "nova"))
+                        and _WAITING_CLIENT.search(said)), "")
+        if waiting:
+            result.waiting_client = " ".join(waiting.split())[:220]
+            for one in [one for one in result.problems if one.startswith(_NOT_SET_UP_YET)]:
+                result.problems.remove(one)
+            result.notes.append(f"Waiting on the client - “{result.waiting_client}”")
     result.team_ok = team_answered(in_qc)
     if result.team_ok:
         result.notes.append(f"✅ The team answered in #rook-qc - {result.team_ok}")
@@ -603,7 +621,9 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
                      and not CANT.search(said) and (about(said, whom) or _first_named(said, whom.name))
                      and not _names_someone_else_first(said, whom.name)),
                     "") if hub is None and whom.name else ""
-    if nova_did:
+    if result.waiting_client and hub is None:
+        pass  # waiting on the client - said in the notes, not flagged
+    elif nova_did:
         looked = ", ".join(dict.fromkeys(f"{getattr(one, 'name', '?')} ({getattr(one, 'status', '') or '?'})"
                                          for one in hub_rows or [])) or "nobody by this name"
         result.problems.append(f"Nova says it's done (“{' '.join(nova_did.split())[:140]}”), but I can't find it on "
@@ -1127,6 +1147,15 @@ _ALL_RIGHT = re.compile(r"\bno\s+fix\s+needed\b|\bnothing\s+(?:to\s+fix|wrong)\b
                         r"\bas\s+(?:intended|expected)\b|\bthat'?s\s+(?:right|correct|expected|intended)\b|"
                         r"\bare\s+the\s+same\s+(?:lead\s+type|product)\b", re.IGNORECASE | re.MULTILINE)
 
+
+#: Rook or Nova waiting on the client's answer before setting it up.
+_WAITING_CLIENT = re.compile(r"\b(?:setup\s+)?waits?\s+on\s+(?:his|her|their|the\s+client['’]?s?)\s+(?:answer|reply|response)"
+                             r"|\bwaiting\s+(?:on|for)\s+(?:his|her|their|the\s+client['’]?s?)\s+(?:answer|reply|response)"
+                             r"|\b(?:texted|messaged|asked)\s+(?:him|her|them|the\s+client)\s+(?:asking|to\s+confirm|for|which|"
+                             r"what|how\s+many)", re.IGNORECASE)
+#: What a payment nobody's set up yet says.
+_NOT_SET_UP_YET = ("Not sure which order this pays for", "Not on the hub", "Nothing on the hub for this order",
+                   "Nova hasn't answered Rook", "Rook and Nova haven't said")
 
 #: Said after who it is, for what's said in #rook-qc.
 IN_ROOK_QC = " (#rook-qc)"
