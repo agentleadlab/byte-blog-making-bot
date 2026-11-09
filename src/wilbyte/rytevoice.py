@@ -38,6 +38,8 @@ _WHO = (
     "How you talk to Rook and Nova: like a sharp, respectful colleague who owns the outcome. Direct, specific, no "
     "filler, no greetings, no emojis, no bullet-point walls - a few short sentences. Quote the exact figures that "
     "disagree (counts, states, lead types, names, row numbers). Say plainly what you believe is wrong and why. "
+    "Read everything you're given first - the payment post, the team's notes under it, Rook's setup, the thread - "
+    "and never ask for something that's already written there. "
     "When the facts could have an explanation you can't see (a renewal on the same row, states the client changed, "
     "a friend paying, a second product on the invoice), ASK instead of accusing - you must be right, not loud. "
     "Ask for exactly what you need to close it: a fix on the hub, a confirmation, or who has it. Say what you'll do "
@@ -112,6 +114,12 @@ def facts(result, *, invoice: str = "", amount: str = "", talk: list | None = No
         "handed_to_the_team": list(dict.fromkeys(getattr(result, "todo", []) or [])),
         "notes": list(getattr(result, "notes", []) or [])[:8],
     }
+    post = str(getattr(result, "post_text", "") or "")
+    if post:
+        # The payment post itself, and what the team wrote under it - Will
+        # Seitz's "Fresh Text Verified Vet: 14, CA" in Kharyl's words, asked
+        # for again because only the parsed fields were given.
+        said["payment_post_and_team_notes"] = " ".join(post.split())[:1500]
     if talk:
         said["thread"] = [{"who": who, "said": " ".join(str(text).split())[:500]} for who, text in talk[-14:]]
     return said

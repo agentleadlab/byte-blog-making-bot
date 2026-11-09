@@ -104,6 +104,8 @@ class Checked:
     team_ok: str = ""
     #: Rook or Nova waiting on the client before it's set up: their words.
     waiting_client: str = ""
+    #: The payment post as read, with the team's notes in its thread.
+    post_text: str = ""
     #: The hub row this order is, when there's one - and what it was held to.
     hub: object = None
     wanted: object = None
@@ -460,6 +462,7 @@ def check(post: str, talk: list[tuple[str, str]], *, hub=None, hub_problem: str 
     paid = payment(post)
     result_paid = paid
     result = Checked(client=paid.name)
+    result.post_text = str(post or "")
     rook, called_off, *said = the_setup(talk, paid)
     result.notes += called_off
     result.setup_text = said[0] if said else ""

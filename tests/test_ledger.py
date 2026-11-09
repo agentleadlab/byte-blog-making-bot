@@ -1500,3 +1500,14 @@ def test_nova_s_unanswered_question_is_chased_by_ryte(monkeypatch):
     assert sent and sent[0].startswith("<@41> <@42> Nova's question on Benny Biniamin's $1,920.00 is still open")
     asyncio.run(client._sqc_chase_question(bot, "995", post, result, rookqc.recalled()["995"]))
     assert len(sent) == 1, "once a question"
+
+
+def test_ryte_s_question_sees_the_team_s_notes_on_the_payment():
+    """Will Seitz: Kharyl's "Fresh Text Verified Vet: 14, CA" in the payment
+    thread, and Ryte asked for the count, lead type and states anyway."""
+    from wilbyte import rytevoice
+
+    post = ("New Payment | Zelle\nNAME: William J Seitz\nAMOUNT: $480.00\nNotes:\n"
+            "Will Seitz, Fresh Text Verified Vet: 14, CA, live today or add to his current order")
+    said = rytevoice.facts(rookqc.check(post, []))
+    assert "Fresh Text Verified Vet: 14, CA" in said["payment_post_and_team_notes"]
