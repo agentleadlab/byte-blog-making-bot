@@ -1428,3 +1428,18 @@ def test_are_these_people_set_up():
     assert said_back[2].startswith("✅ **Cavell Stubbs Jr**")
     assert said_back[3].startswith("✅ **Evan Mori**") and "overflow's the team's" in said_back[3]
     assert said_back[4].startswith("❌ **Nobody Here** — not on the hub")
+
+
+def test_a_name_in_brackets_is_another_it_goes_by():
+    """"JT (James) Wideman" - "I looked for JT (James) Wideman and found
+    nobody"; "Cavell (CJ) Stubbs Jr"; Chaz for Charles."""
+    assert rookqc.name_aliases("JT (James) Wideman") == ["JT (James) Wideman", "JT Wideman", "James Wideman"]
+    assert "CJ Stubbs" in rookqc.name_aliases("Cavell (CJ) Stubbs Jr")
+    assert "Hussein Suleiman" in rookqc.name_aliases("Shane Suleiman (also goes by Hussein Suleiman)")
+    rows = [SimpleNamespace(name="James Wideman"), SimpleNamespace(name="Cavell Stubbs"),
+            SimpleNamespace(name="Somebody Else")]
+    assert [one.name for one in rookqc.hub_named(rows, "JT (James) Wideman")] == ["James Wideman"]
+    assert [one.name for one in rookqc.hub_named(rows, "Cavell (CJ) Stubbs Jr")] == ["Cavell Stubbs"]
+    assert rookqc.same_person_strict("JT (James) Wideman", "James Wideman")
+    assert rookqc.same_person_strict("chaz loschiavo", "Charles loschiavo")
+    assert not rookqc.same_person_strict("JT (James) Wideman", "James Wyman")

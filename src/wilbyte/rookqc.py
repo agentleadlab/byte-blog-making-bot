@@ -192,7 +192,7 @@ _NICKNAMES = [set(one.split()) for one in (
     "elizabeth liz lizzy beth betsy eliza", "jennifer jen jenny", "edward ed eddie ted", "gregory greg",
     "jeffrey jeff", "jonathan john jon johnny jack", "ronald ron ronnie", "donald don donnie", "richard rick rich ricky dick",
     "patrick pat", "patricia pat patty trish", "timothy tim timmy", "zachary zach zack", "andrew andy drew",
-    "charles charlie chuck chas", "francis frank frankie", "franklin frank", "gabriel gabe", "jacob jake",
+    "charles charlie chuck chas chaz", "francis frank frankie", "franklin frank", "gabriel gabe", "jacob jake",
     "nathan nate", "nathaniel nate nat", "abigail abby", "amanda mandy", "deborah debbie deb",
     "susan sue susie", "margaret maggie meg peggy", "rebecca becky becca", "victoria vicky tori",
     "kenneth ken kenny", "lawrence larry", "leonard leo len lenny", "raymond ray", "jose pepe",
@@ -204,9 +204,37 @@ _NICKNAMES = [set(one.split()) for one in (
 )]
 
 
+def name_aliases(name: str) -> list:
+    """A name and the others it's written with: "JT (James) Wideman" is also
+    "JT Wideman" and "James Wideman"; "Cavell (CJ) Stubbs Jr" is also "CJ
+    Stubbs"; "Shane Suleiman (also goes by Hussein Suleiman)" is also
+    "Hussein Suleiman". Looked for as "JT (James) Wideman", nobody was found."""
+    said = " ".join(str(name or "").split())
+    out = [said]
+    base = " ".join(re.sub(r"\([^)]*\)", " ", said).split())
+    if base and base != said:
+        out.append(base)
+    last = (_name_words(base) or [""])[-1]
+    for inside in re.findall(r"\(([^)]*)\)", said):
+        other = re.sub(r"^\s*(?:also\s+goes\s+by|aka|a\.k\.a\.?|goes\s+by|or)\s+", "", inside, flags=re.IGNORECASE)
+        words = [one for one in re.findall(r"[A-Za-z][A-Za-z'’.-]*", other)]
+        if len(words) >= 2:
+            out.append(" ".join(words))
+        elif len(words) == 1 and last:
+            out.append(f"{words[0]} {last.capitalize()}")
+    return list(dict.fromkeys(one for one in out if one))
+
+
 def same_person_strict(one: str, other: str) -> bool:
     """The same first (or its nickname) and last name - not just a shared
-    word: Duehat Kanan isn't Mohammad Kanan, Brandon Nguyen isn't Mai."""
+    word: Duehat Kanan isn't Mohammad Kanan, Brandon Nguyen isn't Mai. Any
+    name either goes by counts - "JT (James) Wideman" is James Wideman."""
+    if "(" in str(one or "") or "(" in str(other or ""):
+        return any(_same_person_strict(a, b) for a in name_aliases(one) for b in name_aliases(other))
+    return _same_person_strict(one, other)
+
+
+def _same_person_strict(one: str, other: str) -> bool:
     first, second = _name_words(one), _name_words(other)
     if not first or not second:
         return False
@@ -229,7 +257,15 @@ def hub_named(found: list, who: str) -> list:
 
     # Both: the name as written and as the same person's - Tom Skinner's
     # ended row was found as "Tom Skinner" and his live one, written
-    # "Thomas Skinner", never looked for.
+    # "Thomas Skinner", never looked for. And every name they go by.
+    aliases = name_aliases(who)
+    if len(aliases) > 1:
+        out = []
+        for alias in aliases:
+            if "(" in alias:
+                continue
+            out += [one for one in hub_named(found, alias) if one not in out]
+        return out
     out = list(named(found, who))
     words = _name_words(who)
     if len(words) < 2:
