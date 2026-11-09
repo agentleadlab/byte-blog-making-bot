@@ -1971,8 +1971,21 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "clearout":
+                # "clear her out still, she disputed" - her is the one named
+                # before, and a dispute goes ahead though it isn't a month quiet.
+                who, anyway, why = clearout_asked(request.brief or "")
+                if (not who or _CLEAROUT_PRONOUN.match(who)) and message is not None:
+                    earlier = await _clearout_earlier(message)
+                    if earlier:
+                        who = earlier
+                    elif who:
+                        await responder.send(f"Who's **{who}**? Name them: `@RYTE clearout Madison McGill`.")
+                        return
+                if who and message is not None and getattr(message, "channel", None) is not None:
+                    _CLEAROUT_LAST[message.channel.id] = who
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
-                    await _clear_out(bot, responder, config, request.brief or "")
+                    await _clear_out(bot, responder, config, who if (who or not anyway) else (request.brief or ""),
+                                     **({"anyway": why} if anyway else {}))
                 return
 
             if request.action == "blacklist":
@@ -4356,22 +4369,80 @@ def _clearing_out() -> bool:
     return _CLEAROUTS_OPEN > 0 or _QUIET_RUNNING
 
 
+#: "clear her out still, she disputed" - the words that say go ahead though
+#: the channel isn't a month quiet. A dispute is the reason a client's
+#: channel goes early: they're done with us whatever the date says.
+_CLEAROUT_ANYWAY = re.compile(
+    r"\b(?:disput\w*|charge[ds]?\s*-?\s*back\w*|cb'?d|still|anyway|anyways|regardless|"
+    r"even\s+(?:if|though)\b[^,.;]*|not\s+quiet\b[^,.;]*|go\s+ahead|do\s+it)\b", re.I)
+_CLEAROUT_DISPUTED = re.compile(r"\b(?:disput\w*|charge[ds]?\s*-?\s*back\w*|cb'?d)\b", re.I)
+#: Someone already named - "her", "him", "them", "this one".
+_CLEAROUT_PRONOUN = re.compile(r"^(?:her|him|them|they|she|he|it|this(?:\s+one)?|that(?:\s+one)?|the\s+same(?:\s+one)?)$", re.I)
+#: A clear-out asked by name, in the channel's history.
+_CLEAROUT_ASKED = re.compile(r"^\s*(?:<@!?\d+>\s*|@?ryte\s+)*clear\s*-?\s*out\s+(.+?)\s*$", re.I | re.S)
+#: The last name each channel cleared out, so "her" means somebody.
+_CLEAROUT_LAST: dict[int, str] = {}
+
+
+def clearout_asked(brief: str) -> tuple[str, bool, str]:
+    """(who, anyway, why) out of what came after "clear": "her out still, she
+    disputed" is ("her", True, "she disputed"). The name stays as it was when
+    nothing in it says go ahead."""
+    text = " ".join((brief or "").split())
+    anyway = bool(_CLEAROUT_ANYWAY.search(text))
+    why = ""
+    if anyway:
+        why = "a dispute" if _CLEAROUT_DISPUTED.search(text) else "you said to go ahead"
+        # The reason is its own clause: ", she disputed", "- she charged back".
+        text = re.split(r"\s*[,;.\-–—]\s+|\s+(?:because|bc|cause|since|as)\s+", text, maxsplit=1)[0]
+        text = _CLEAROUT_ANYWAY.sub(" ", text)
+    words = [one for one in text.split() if one.lower() not in ("out", "please", "pls", "now", "too", "also")]
+    return " ".join(words).strip(" ,.;:-"), anyway, why
+
+
+async def _clearout_earlier(message) -> str:
+    """Who "her" is: the message this one answers, else the last clear-out
+    asked by name in this channel."""
+    channel = getattr(message, "channel", None)
+    remembered = _CLEAROUT_LAST.get(getattr(channel, "id", 0) or 0, "")
+    looked = []
+    reference = getattr(message, "reference", None)
+    if reference is not None and getattr(reference, "resolved", None) is not None:
+        looked.append(reference.resolved)
+    try:
+        async for one in channel.history(limit=30, before=message):
+            looked.append(one)
+    except Exception:
+        pass
+    for one in looked:
+        if getattr(getattr(one, "author", None), "bot", False):
+            continue
+        asked = _CLEAROUT_ASKED.match(str(getattr(one, "content", "") or ""))
+        if not asked:
+            continue
+        who, _anyway, _why = clearout_asked(asked.group(1))
+        if who and not _CLEAROUT_PRONOUN.match(who):
+            return who
+    return remembered
+
+
 async def _clear_out(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
-    *, run: tuple[int, int] | None = None, auto: bool = False,
+    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "",
 ) -> str:
     global _CLEAROUTS_OPEN
 
     _CLEAROUTS_OPEN += 1
     try:
-        return await _clear_out_one(bot, responder, config, name, run=run, auto=auto)
+        return await _clear_out_one(bot, responder, config, name, run=run, auto=auto,
+                                    **({"anyway": anyway} if anyway else {}))
     finally:
         _CLEAROUTS_OPEN -= 1
 
 
 async def _clear_out_one(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
-    *, run: tuple[int, int] | None = None, auto: bool = False,
+    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "",
 ) -> str:
     """Close an agent down: keep the sheet, keep the conversation, then go.
 
@@ -4695,7 +4766,10 @@ async def _clear_out_one(
     # the screenshots are right and on the folder". Anything it can put right
     # - a row or a picture that didn't land - it puts right once and looks
     # again; anything it can't, and the channel stays.
-    checks = await _check_my_work(config, plan, messages, pictures)
+    # A person saying go ahead - "clear her out still, she disputed" - takes
+    # the month-quiet check off; never on RYTE's own run.
+    checks = await _check_my_work(config, plan, messages, pictures,
+                                  **({"anyway": anyway} if anyway and not auto else {}))
     kept.append("\n🔎 **Checked my own work:**\n" + "\n".join(
         f"{'✅' if ok else '❌'} {said}" for ok, said in checks
     ))
@@ -4810,13 +4884,19 @@ def _clients_guild(bot, config):
     return bot.get_guild(int(where)) if where.isdigit() else None
 
 
-async def _check_my_work(config: Config, plan, messages, pictures) -> list[tuple[bool, str]]:
+async def _check_my_work(config: Config, plan, messages, pictures, *, anyway: str = "") -> list[tuple[bool, str]]:
     """The clear-out's own work, checked before its channel can go.
-    [(fine, said)]. A row or a picture that didn't land is done again once."""
+    [(fine, said)]. A row or a picture that didn't land is done again once.
+    `anyway` is why a person said to go ahead though it isn't a month quiet
+    ("a dispute") - the quiet check is said, not held to."""
     now = datetime.now(timezone.utc)
     stamps = [one.at for one in messages if getattr(one, "at", None)]
     newest = max(stamps) if stamps else None
-    checks = [jobs.quiet_check(newest, now)]
+    quiet = jobs.quiet_check(newest, now)
+    if not quiet[0] and anyway:
+        quiet = (True, quiet[1].replace("Not quiet: ", "Not a month quiet (")
+                 + f") — going ahead: {anyway}")
+    checks = [quiet]
 
     ok, said, missing = await asyncio.to_thread(jobs.row_check, config, plan)
     if missing:
