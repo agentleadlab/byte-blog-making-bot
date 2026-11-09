@@ -55,15 +55,27 @@ def leave_alone(now: datetime, held: dict | None = None) -> set[str]:
     return out
 
 
-def left_for_a_person(channel_ids, now: datetime, path: Path | None = None) -> None:
-    """Remember the channels this run left, and forget the ones long past."""
+def left_for_a_person(channel_ids, now: datetime, path: Path | None = None, *, why: dict | None = None) -> None:
+    """Remember the channels this run left, and forget the ones long past.
+    `why` is what each was left for, so it can be said when asked - "@quiet"
+    answering "nothing I haven't already left for you" named none of them."""
     held = load(path)
     keep = {key: value for key, value in (held.get("leave") or {}).items()
             if key in leave_alone(now, held)}
     until = (now + LEAVE_FOR).isoformat()
     keep.update({str(one): until for one in channel_ids})
     held["leave"] = keep
+    reasons = {key: value for key, value in (held.get("why") or {}).items() if key in keep}
+    reasons.update({str(key): str(value) for key, value in (why or {}).items()
+                    if value and str(key) in keep})
+    held["why"] = reasons
     save(held, path)
+
+
+def why_left(path: Path | None = None) -> dict:
+    """{channel id: what it was left for}, for the ones still left."""
+    held = load(path)
+    return {key: value for key, value in (held.get("why") or {}).items() if key in (held.get("leave") or {})}
 
 
 def forget(path: Path | None = None) -> int:

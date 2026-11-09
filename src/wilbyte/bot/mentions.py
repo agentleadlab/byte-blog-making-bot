@@ -1705,7 +1705,9 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > Order card; add **confirm** to take those lines back off
 > @RYTE **clearout Jay Rodriguez** — close an agent down: their sheet into ALL
 > CLIENTS, a picture of the conversation into Drive, then a second button to
-> ban them and delete the channel. Nothing goes until both are kept
+> ban them and delete the channel. Nothing goes until both are kept. A list,
+> one name a line, is matched and shown once - one press clears them all.
+> **clear her out still, she disputed** goes ahead under a month quiet
 > @RYTE **how many are going live thursday** — who the board says goes live
 > on a day, with what they bought and whether their card is ticked. Any day:
 > tomorrow, monday, 09/18

@@ -1608,7 +1608,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     # Franklin's "these are good to go:" list went unread.
     said_all = await _message_text(message)
     notes = team_notes(said_all, followed)
-    if notes and request.action != "comment" and (len(notes) >= 2 or _GOOD_TO_GO.search(said_all or "")):
+    if notes and request.action not in ("comment", "clearout") and (len(notes) >= 2 or _GOOD_TO_GO.search(said_all or "")):
         try:
             if await _sqc_team_notes(bot, responder, message, text=said_all):
                 return
@@ -1968,6 +1968,11 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
             if request.action == "redobell":
                 with mirror.copying_into(mirror.CLEAROUT_INTO):
                     await _redo_bell(bot, responder, config, request.brief or "")
+                return
+
+            if request.action == "clearout" and message is not None and clearout_names(said_all or ""):
+                with mirror.copying_into(mirror.CLEAROUT_INTO):
+                    await _clear_out_named(bot, responder, config, clearout_names(said_all or ""))
                 return
 
             if request.action == "clearout":
@@ -4426,23 +4431,140 @@ async def _clearout_earlier(message) -> str:
     return remembered
 
 
+#: Why the last run held each channel it held - by channel id.
+_HELD_WHY: dict[str, str] = {}
+
+
+def clearout_names(said: str) -> list[str]:
+    """The names in "@Ryte clearout" + a pasted list, one a line. [] for one
+    name."""
+    from .. import clearout
+
+    return clearout.named_list(said)
+
+
+def _resolve_named(names: list[str], channels) -> tuple[list, list, list]:
+    """Each name to its channel: ([(name, channel, guessed)], [not found],
+    [(name, [channels])] more than one). A misspelling - "Leonrdo Lopez" - is
+    the nearest channel, marked as a guess so it's seen before anything runs."""
+    from .. import clearout
+
+    found, missing, several, seen = [], [], [], set()
+    for name in names:
+        hits, guessed = clearout.channels_for(name, channels), False
+        if not hits:
+            hits, guessed = clearout.closest_channels(name, channels), True
+        if not hits:
+            missing.append(name)
+        elif len(hits) > 1:
+            several.append((name, hits))
+        elif hits[0].channel_id not in seen:
+            seen.add(hits[0].channel_id)
+            found.append((name, hits[0], guessed))
+    return found, missing, several
+
+
+async def _clear_out_named(bot, responder: Responder, config: Config, names: list[str], *, said: str = "") -> None:
+    """"I checked the channels one by one ... there are alot of them" - a
+    pasted list, each matched to its channel and shown once; one press and
+    RYTE goes down it pressing the buttons itself. Every channel is still
+    kept, checked and only then deleted; what would lose something is still
+    held."""
+    from .. import clearout, keeplist
+
+    where = (config.secrets.discord_clients_guild_id or "").strip()
+    guild = bot.get_guild(int(where)) if where.isdigit() else None
+    if guild is None:
+        await responder.send("I'm not in the clients server, or DISCORD_CLIENTS_GUILD_ID in .env isn't it.")
+        return
+    if not keeplist.readable():
+        await responder.send("⚠ I couldn't read the keep list, so I'm not clearing anything out.")
+        return
+    channels = [clearout.Channel(channel_id=str(one.id), name=str(one.name),
+                                 category=str(getattr(one.category, "name", "") or ""))
+                for one in guild.text_channels]
+    found, missing, several = _resolve_named(names, channels)
+    lines = [f"🧹 **{len(found)} to clear out**" + (f" — {said}" if said else "") + ":"]
+    lines += [f"• {name} → **#{one.name}**" + (" ⚠ *closest match — check it*" if guessed else "")
+              for name, one, guessed in found]
+    if missing:
+        lines.append("❓ No channel for: " + ", ".join(missing))
+    for name, hits in several:
+        lines.append(f"❓ **{name}** could be " + " or ".join(f"#{one.name}" for one in hits)
+                     + " — name the one you mean")
+    if not found:
+        await responder.send("\n".join(lines))
+        return
+    lines.append("-# For each: the sheet into Ryte Collection, the screenshots into Drive, my own work "
+                 "checked - then I press delete. Anything that would lose something (no sheet, history "
+                 "that won't open, under a month quiet) stays and is listed. Nobody is banned.")
+    view = views.ConfirmView(requester_id=responder.requester_id,
+                             timeout=config.discord.approval_timeout_seconds,
+                             label=f"Clear out these {len(found)}", emoji="🧹", danger=True)
+    await responder.send("\n".join(lines), view=view)
+    await view.wait()
+    if not view.confirmed:
+        await responder.send("Left them all alone.")
+        return
+    await _all_of_them(bot, responder, config, [clearout.target(one) for _name, one, _g in found],
+                       auto=True, named=True)
+
+
+async def _the_ones_left(bot, responder: Responder, config: Config, held: list, since) -> None:
+    """"@quiet" when every quiet channel is one RYTE held back: which, and
+    why, with a button to clear them out - not "nothing I haven't already
+    left for you" and nothing more."""
+    from .. import quietauto
+
+    try:
+        why = quietauto.why_left()
+    except Exception:
+        why = {}
+    held = [one for one in held if one.readable]
+    if not held:
+        await responder.send(f"Nothing has been quiet since **{since:%d %b %Y}** that I haven't already left for you.")
+        return
+    lines = [f"✋ **{len(held)} quiet channel(s)** I held back for you to look at — quiet since before "
+             f"**{since:%d %b %Y}**:"]
+    for one in held:
+        reason = why.get(one.channel_id) or "held on an earlier run (reason not kept)"
+        lines.append(f"• <#{one.channel_id}> — {reason[:220]}")
+    lines.append("-# Press the button to clear them out as you've seen them - each still kept and "
+                 "checked first. Or `@RYTE clearout` + the names you want gone, one a line.")
+    text = "\n".join(lines)
+    while len(text) > 1900:
+        cut = text.rfind("\n", 0, 1900)
+        await responder.send(text[:cut])
+        text = text[cut + 1:]
+    view = views.ConfirmView(requester_id=responder.requester_id,
+                             timeout=config.discord.approval_timeout_seconds,
+                             label=f"Clear out these {len(held)}", emoji="🧹", danger=True)
+    await responder.send(text, view=view)
+    await view.wait()
+    if view.confirmed:
+        from .. import clearout
+
+        await _all_of_them(bot, responder, config, [clearout.target(one) for one in held], auto=True, named=True)
+
+
 async def _clear_out(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
-    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "",
+    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "", named: bool = False,
 ) -> str:
     global _CLEAROUTS_OPEN
 
     _CLEAROUTS_OPEN += 1
     try:
         return await _clear_out_one(bot, responder, config, name, run=run, auto=auto,
-                                    **({"anyway": anyway} if anyway else {}))
+                                    **({"anyway": anyway} if anyway else {}),
+                                    **({"named": True} if named else {}))
     finally:
         _CLEAROUTS_OPEN -= 1
 
 
 async def _clear_out_one(
     bot: "WilByteBot", responder: Responder, config: Config, name: str,
-    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "",
+    *, run: tuple[int, int] | None = None, auto: bool = False, anyway: str = "", named: bool = False,
 ) -> str:
     """Close an agent down: keep the sheet, keep the conversation, then go.
 
@@ -4599,7 +4721,13 @@ async def _clear_out_one(
 
     held = (list(plan.problems) + [one for one in plan.notes if one not in just_said]
             + ([] if plan.sheet else ["no sheet link found"]))
-    if auto:
+    if named:
+        # A person named this one and said go - "I checked the channels one by
+        # one". A note (two sheets, another channel of theirs, a card) is said
+        # on the card, not held for them; what would lose something - history
+        # that won't open, a sheet that can't be kept, no sheet at all - still is.
+        held = list(plan.problems) + ([] if plan.sheet else ["no sheet link found"])
+    if auto and not named:
         # Two more a person would think of before deleting on their own -
         # "MAKE SURE RYTE DONT MAKE MISTAKE HERE".
         # Another channel of theirs is only a reason to stop when it is still
@@ -4627,6 +4755,8 @@ async def _clear_out_one(
     if auto and held:
         # On its own, anything that needed a person's eye is left for one: a
         # note (two sheets, a name that doesn't fit), a problem, no sheet.
+        # Remembered with why, so "@quiet" can say which and what for.
+        _HELD_WHY[plan.channel.channel_id] = "; ".join(held)
         await responder.send(
             (f"-# {run[0]} of {run[1]}\n" if run else "") + clearout.describe(plan)
             + "\n\n**Left for you** — " + "; ".join(held)
@@ -5345,10 +5475,10 @@ async def _quiet_channels(
         waiting = quietauto.leave_alone(datetime.now(timezone.utc))
         targets = clearout.one_by_one([one for one in quiet if one.channel_id not in waiting])
         if not targets:
-            await responder.send(
-                f"Nothing has been quiet since **{since:%d %b %Y}** that I haven't already "
-                "left for you." if quiet else pages[-1]
-            )
+            if not quiet:
+                await responder.send(pages[-1])
+                return
+            await _the_ones_left(bot, responder, config, [one for one in quiet if one.channel_id in waiting], since)
             return
         await responder.send(
             f"🧹 **{len(targets)} channels** with nothing said since **{since:%d %b %Y}** — "
@@ -5399,7 +5529,7 @@ async def _quiet_channels(
 
 async def _all_of_them(
     bot: "WilByteBot", responder: Responder, config: Config, names: list,
-    *, earlier: dict | None = None, auto: bool = False,
+    *, earlier: dict | None = None, auto: bool = False, named: bool = False,
 ) -> None:
     """Down the whole list, one at a time, asking the same two each time.
 
@@ -5419,14 +5549,15 @@ async def _all_of_them(
     global _QUIET_RUNNING
     _QUIET_RUNNING = True
     try:
-        await _down_the_list(bot, responder, config, names, earlier=earlier, auto=auto)
+        await _down_the_list(bot, responder, config, names, earlier=earlier, auto=auto,
+                             **({"named": True} if named else {}))
     finally:
         _QUIET_RUNNING = False
 
 
 async def _down_the_list(
     bot: "WilByteBot", responder: Responder, config: Config, names: list,
-    *, earlier: dict | None = None, auto: bool = False,
+    *, earlier: dict | None = None, auto: bool = False, named: bool = False,
 ) -> None:
     from .. import clearout, quietauto, quietrun
 
@@ -5455,6 +5586,7 @@ async def _down_the_list(
         try:
             how = await _clear_out(
                 bot, responder, config, target, run=(number, len(names)), auto=auto,
+                **({"named": True} if named else {}),
             )
         except Exception as exc:
             # One client's channel breaking something is that client's
@@ -5477,7 +5609,7 @@ async def _down_the_list(
             held.append(name)
         else:
             trouble.append(name)
-        if auto and how in ("held", "trouble"):
+        if auto and not named and how in ("held", "trouble"):
             by_id = re.fullmatch(r"<#(\d+)>", str(target))
             if by_id:
                 held_ids.append(by_id.group(1))
@@ -5498,7 +5630,8 @@ async def _down_the_list(
     if held_ids:
         try:
             # Not offered to the hourly run again for a week, the same as its own.
-            quietauto.left_for_a_person(held_ids, datetime.now(timezone.utc))
+            quietauto.left_for_a_person(held_ids, datetime.now(timezone.utc),
+                                        why={one: _HELD_WHY.get(one, "") for one in held_ids})
         except Exception:
             log.warning("Couldn't write down which channels were left", exc_info=True)
     summary = clearout.how_the_run_went(
@@ -5662,9 +5795,10 @@ async def _quiet_auto(
         # Not taken again for a week. The three that went wrong in a row are
         # the exception - that was something being down, not them.
         again = trouble[-3:] if wrong_in_a_row >= 3 else []
-        quietauto.left_for_a_person(
-            [ids[one] for one in left + held + trouble if one not in again], now,
-        )
+        kept_back = [ids[one] for one in left + held + trouble if one not in again]
+        quietauto.left_for_a_person(kept_back, now, why={
+            one: _HELD_WHY.get(one, "") or ("you said leave it" if one in {ids[x] for x in left} else "a check failed")
+            for one in kept_back})
     except Exception:
         log.warning("Couldn't write down which channels were left", exc_info=True)
 

@@ -1030,6 +1030,52 @@ def pick_from(quiet, *, now: datetime, most: int = PICKABLE) -> list:
     ]
 
 
+def closest_channels(name: str, channels) -> list:
+    """The channel a misspelled name means - "Leonrdo Lopez" is
+    #leonardo-lopez-mtg, "Thoms Barksi" #thomas-barski-... Only a near miss on
+    the whole person (first and last name together), and only when one person
+    is nearest: two people as near is a question, not an answer."""
+    import difflib
+
+    wanted = person_in(name)
+    if len(wanted) < 6:
+        return []
+    scored = []
+    for one in channels or []:
+        if off_limits(one):
+            continue
+        theirs = person_in(one.name)
+        if not theirs:
+            continue
+        # The channel's person, with the lead type on the end or not.
+        best = max(difflib.SequenceMatcher(None, wanted, theirs[:len(wanted) + cut]).ratio()
+                   for cut in range(-2, 3))
+        if best >= 0.84:
+            scored.append((best, one))
+    if not scored:
+        return []
+    top = max(score for score, _one in scored)
+    nearest = [one for score, one in scored if score >= top - 0.02]
+    people = {person_in(one.name) for one in nearest}
+    return nearest if len(people) == 1 else []
+
+
+def named_list(text: str) -> list[str]:
+    """The names in a pasted list - one a line - with the line that asked
+    ("@Ryte clear these out:") left off. [] when it's one name, not a list."""
+    lines = [" ".join(line.split()).strip(" ,.;:-•*") for line in str(text or "").splitlines()]
+    lines = [line for line in lines if line]
+    if lines:
+        first = re.sub(r"(?i)^(?:<@!?\d+>\s*)*(?:@?ryte\b\s*)?", "", lines[0])
+        first = re.sub(r"(?i)^(?:clear\s*-?\s*out|clear)\b\s*", "", first).strip(" ,.;:-")
+        if not first or re.search(r"(?i)\b(?:these|those|them|following|channels?|quiet|all)\b", first):
+            lines = lines[1:]
+        else:
+            lines[0] = first
+    names = [line for line in lines if re.search(r"[A-Za-z]", line) and len(line.split()) <= 5]
+    return names if len(names) >= 2 else []
+
+
 def target(one) -> str:
     """One channel, by its id - the way a run names it. Keith Harper has two
     channels both called #keith-harper-iul, and by name a run could only say
