@@ -1600,6 +1600,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
 
     request = mentions.parse(message.content, max_batch=config.discord.max_batch)
     responder = MessageResponder(message)
+    # The answer to "Which one?" for a payment link, before it's read as a
+    # new ask of its own.
+    if _PAYLINK_WAITING and await _paylink_answer(responder, config, message):
+        return
     if not untagged:
         await _ayoko_nga(message)
 
@@ -1729,7 +1733,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "payment":
-                await _payment_link(responder, config, request.brief or "")
+                await _payment_link(responder, config, request.brief or "", message=message)
                 return
 
             if request.action == "recording":
@@ -7231,7 +7235,56 @@ async def _attached_cues(message) -> list | None:
     return None
 
 
-async def _payment_link(responder: Responder, config: Config, said: str) -> None:
+#: A payment link waiting on "Which one?" - {(channel, person): (asked, [names], when)}.
+#: "@Ryte text verified aged veteran leads", Santiago's answer to it, was
+#: read as a new ask - "text" - and got four SMS drafts instead of a link.
+_PAYLINK_WAITING: dict = {}
+PAYLINK_WAIT_SECONDS = 15 * 60
+_PICK_FILLER = {"the", "one", "a", "an", "please", "pls", "that", "this", "for", "it", "is", "ryte", "i", "mean", "meant"}
+
+
+def _paylink_pick(answer: str, names: list) -> str:
+    """Which of the offered packages the answer names - by its number, its
+    whole name, or words only it has. "" when it names none, or more than one."""
+    said = " ".join(mentions.MENTION_RE.sub(" ", str(answer or "")).split()).strip(" .!?")
+    number = re.fullmatch(r"(?:#|no\.?\s*|option\s*)?(\d)", said, re.IGNORECASE)
+    if number and 1 <= int(number.group(1)) <= len(names):
+        return names[int(number.group(1)) - 1]
+    words = {one for one in re.split(r"[^a-z0-9]+", said.casefold()) if one and one not in _PICK_FILLER}
+    if not words:
+        return ""
+    def wordset(name):
+        return {one for one in re.split(r"[^a-z0-9]+", name.casefold()) if one}
+    exact = [name for name in names if wordset(name) == words]
+    if len(exact) == 1:
+        return exact[0]
+    fits = [name for name in names if words <= wordset(name)]
+    if len(fits) > 1:
+        # "aged veteran" fits the aged one and not just veteran: the fewest
+        # words left over wins, when only one does.
+        least = min(len(wordset(name) - words) for name in fits)
+        fits = [name for name in fits if len(wordset(name) - words) == least]
+    return fits[0] if len(fits) == 1 else ""
+
+
+async def _paylink_answer(responder: Responder, config: Config, message) -> bool:
+    """The answer to Ryte's "Which one?", made into the link that was asked
+    for. False when there's no question waiting, or the answer isn't one."""
+    key = (getattr(message.channel, "id", 0), getattr(message.author, "id", 0))
+    waiting = _PAYLINK_WAITING.get(key)
+    if not waiting or time.monotonic() - waiting[2] > PAYLINK_WAIT_SECONDS:
+        _PAYLINK_WAITING.pop(key, None)
+        return False
+    chosen = _paylink_pick(message.content or "", waiting[1])
+    if not chosen:
+        return False
+    _PAYLINK_WAITING.pop(key, None)
+    await _payment_link(responder, config, waiting[0], chosen=chosen)
+    return True
+
+
+async def _payment_link(responder: Responder, config: Config, said: str, *, chosen: str = "",
+                        message=None) -> None:
     """Make a Stripe payment link for what somebody asked for, once they say so.
 
     Nothing is created before the confirm: the amount comes from a message
@@ -7258,12 +7311,18 @@ async def _payment_link(responder: Responder, config: Config, said: str) -> None
         await responder.send("That amount isn't something I can charge for.")
         return
 
-    product = products.find(said)
+    product = (next((item for item in products.CATALOGUE if item.name == chosen), None) if chosen
+               else products.find(said))
     if product is None:
         near = products.matches(said)
         if near:
+            names = [item.name for item in near[:5]]
+            if message is not None:
+                _PAYLINK_WAITING[(getattr(message.channel, "id", 0), getattr(message.author, "id", 0))] = (
+                    said, names, time.monotonic())
             await responder.send(
-                "Which one? " + ", ".join(item.name for item in near[:5])
+                "Which one? " + "  ".join(f"**{at}.** {name}" for at, name in enumerate(names, start=1))
+                + "\n-# Answer with `@RYTE` and the number or the name."
             )
         else:
             await responder.send(
