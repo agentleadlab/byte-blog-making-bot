@@ -839,3 +839,78 @@ def near(data: dict, who: str, *, most: int = 6) -> list[str]:
         if len(said) >= most:
             break
     return said
+
+
+def _words(text: str) -> list[str]:
+    return [one for one in re.split(r"[^a-z0-9]+", str(text or "").casefold()) if one]
+
+
+def matches_loosely(term: str, *texts: str) -> bool:
+    """Every word of `term` starts a word in the name or email - "FND" is "FND
+    Life" and join@fndlife.com; "Bryce Evans" is Bryce Evans. Never letters
+    inside a word."""
+    wanted = [one for one in _words(term) if len(one) >= 2]
+    have = [word for text in texts for word in _words(text)]
+    return bool(wanted) and all(any(word.startswith(one) for word in have) for one in wanted)
+
+
+def payments_for(data: dict, term: str, *, most: int = 40) -> dict:
+    """"can you pull up all FND payments?" - every invoice whose name or email
+    has the word, with what was paid on it, and payments with no invoice whose
+    customer has it. {"paid": [(when, line)], "unpaid": [line], "total_cents",
+    "names": [...]}, newest first."""
+    term = " ".join(str(term or "").split())
+    paid, unpaid, names, total, seen = [], [], [], 0, set()
+    for invoice in data.get("invoices", {}).values():
+        if not matches_loosely(term, invoice.get("name", ""), invoice.get("email", "")):
+            continue
+        if invoice.get("name") and invoice["name"] not in names:
+            names.append(invoice["name"])
+        on_it = payments_on(data, invoice)
+        went = [one for one in on_it if _went_through(one)]
+        about = f" — {invoice['description']}" if invoice.get("description") else ""
+        number = f"#{invoice.get('number')}" if invoice.get("number") else "no number"
+        for pay in went:
+            seen.add(id(pay))
+            cents = _cents(pay.get("amount")) or 0
+            total += cents
+            how = f" ({pay['how']})" if pay.get("how") else ""
+            paid.append((str(pay.get("paid_on") or ""),
+                         f"• {_spelled(pay.get('paid_on'))} · {number} · {invoice.get('name') or '?'} · "
+                         f"**{_money(pay.get('amount'))}**{how}{about}"))
+        for pay in on_it:
+            if pay.get("refund"):
+                seen.add(id(pay))
+                paid.append((str(pay.get("paid_on") or ""),
+                             f"• {_spelled(pay.get('paid_on'))} · {number} · {invoice.get('name') or '?'} · "
+                             f"↩️ refund {_money(pay.get('amount'))}"))
+        if not went and invoice.get("active", True):
+            unpaid.append(f"• {number} · {invoice.get('name') or '?'} · {_money(invoice.get('total'))}, dated "
+                          f"{_spelled(invoice.get('invoice_date'))}{about}")
+    for pay in data.get("payments", {}).values():
+        if id(pay) in seen or not _went_through(pay) or not matches_loosely(term, pay.get("customer", "")):
+            continue
+        total += _cents(pay.get("amount")) or 0
+        paid.append((str(pay.get("paid_on") or ""),
+                     f"• {_spelled(pay.get('paid_on'))} · no invoice · {pay.get('customer') or '?'} · "
+                     f"**{_money(pay.get('amount'))}**" + (f" ({pay['how']})" if pay.get("how") else "")))
+    paid.sort(key=lambda one: one[0], reverse=True)
+    return {"paid": paid[:most], "more": max(0, len(paid) - most), "unpaid": unpaid[:10],
+            "total_cents": total, "names": names[:8], "count": len(paid)}
+
+
+def payments_said(found: dict, term: str) -> str:
+    """The answer, as Ryte says it."""
+    if not found["paid"] and not found["unpaid"]:
+        return (f"Nothing in Payra with **{term}** in the name or email. Spark charges aren't in Payra - "
+                "only invoices and payments made through it.")
+    lines = [f"💳 **{term}** in Payra — {found['count']} payment(s), **{_money(found['total_cents'] / 100)}** "
+             "paid" + (f" · {', '.join(found['names'])}" if found["names"] else "")]
+    lines += [line for _when, line in found["paid"]]
+    if found["more"]:
+        lines.append(f"-# …and {found['more']} older")
+    if found["unpaid"]:
+        lines.append("\n**Invoiced, nothing paid on it:**")
+        lines += found["unpaid"]
+    lines.append("-# From Ryte's copy of Payra. Spark charges aren't in Payra.")
+    return "\n".join(lines)

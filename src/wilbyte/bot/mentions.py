@@ -782,6 +782,30 @@ CHANNEL_NAMES = re.compile(
     re.IGNORECASE)
 
 
+#: "can you pull up all FND payments?" - answered "FND isn't a word I know".
+PAYMENTS_OF = re.compile(
+    r"^\s*(?:(?:can|could)\s+(?:you|u)\s+)?(?:please\s+)?(?:pull\s*up|show(?:\s+me)?|list|find|get|give\s+me|"
+    r"look\s*up|what\s+are)\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?(?P<who>.+?)(?:['’]s)?\s+payments?"
+    r"(?:\s+in\s+payra)?\s*[.?!]*\s*$"
+    r"|^\s*(?:(?:all|every)\s+)?payments?\s+(?:from|for|of|by)\s+(?P<who2>.+?)\s*[.?!]*\s*$"
+    r"|^\s*(?:how\s+much|what)\s+(?:has|did|have)\s+(?P<who3>.+?)\s+(?:paid|pay|been\s+paying)\b.*$",
+    re.IGNORECASE)
+_NOT_SOMEBODY = re.compile(r"^(?:the|all|my|our|new|today'?s?|yesterday'?s?|these|those|missing|paid|recent|"
+                           r"latest|failed|aged|fresh|clearout|unmatched|every|any)$", re.IGNORECASE)
+
+
+def payments_of(text: str) -> str:
+    """Whose payments were asked for - "FND" - or ""."""
+    found = PAYMENTS_OF.match(str(text or ""))
+    if not found:
+        return ""
+    who = " ".join(next((one for one in found.groups() if one), "").split()).strip(" .,'’")
+    who = re.sub(r"^(?:all\s+(?:of\s+)?)?(?:the\s+)?", "", who, flags=re.IGNORECASE)
+    if not who or _NOT_SOMEBODY.match(who) or len(who.split()) > 5:
+        return ""
+    return who
+
+
 #: "is robert allaraj still active" - answered by the chat as "Board says
 #: he's live", with what the hub shows of today left out.
 HUB_STATUS = re.compile(
@@ -993,6 +1017,8 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # agent going live today or tomorrow is set up". Each one checked.
     if SETUP_ASKED.search(text):
         return MentionRequest(action="setupask", brief=text)
+    if payments_of(text):
+        return MentionRequest(action="paymentsof", brief=payments_of(text))
     if CHANNEL_NAMES.search(text) and not re.search(r"\bclear\s*-?\s*out\b|\bquiet\b", text, re.IGNORECASE):
         return MentionRequest(action="stylechannels", brief=text)
     # "can i ask him did we miss anything and he'll just send me those not
@@ -1718,6 +1744,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ban them and delete the channel. Nothing goes until both are kept. A list,
 > one name a line, is matched and shown once - one press clears them all.
 > **clear her out still, she disputed** goes ahead under a month quiet
+> @RYTE **pull up all FND payments** — every Payra payment with that word in
+> the name or email (a business, an email domain, a person), with the total
 > @RYTE **rename channels** — this server's channels into the "✉️│ᴀᴅᴍɪɴ-ᴄᴏᴍ"
 > style, shown first, one press. Or **rename channels in Gabi & Ryte**, or
 > name them: **rename channels #one #two**. Never the clients server

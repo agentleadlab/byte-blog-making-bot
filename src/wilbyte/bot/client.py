@@ -1861,6 +1861,18 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _hub_status(responder, config, request.brief or "")
                 return
 
+            if request.action == "paymentsof":
+                from .. import payraapi
+
+                data = await asyncio.to_thread(payraapi.load)
+                said = payraapi.payments_said(payraapi.payments_for(data, request.brief or ""), request.brief or "")
+                while len(said) > 1900:
+                    cut = said.rfind("\n", 0, 1900)
+                    await responder.send(said[:cut])
+                    said = said[cut + 1:]
+                await responder.send(said)
+                return
+
             if request.action == "stylechannels":
                 await _style_channels(responder, config, message, request.brief or "")
                 return
