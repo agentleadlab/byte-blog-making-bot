@@ -1015,6 +1015,17 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="ordergiven", brief=text)
     # "are these people setup?" and a list of them - answered with "every
     # agent going live today or tomorrow is set up". Each one checked.
+    # "i want ryte to stop flagging that like a off button" - Google suspended.
+    switch = re.match(r"\s*(?:turn\s+|switch\s+)?(?:the\s+)?(?:google\s+)?(?:sheets?|sheet\s+checks?|excel)\s+"
+                      r"(?:checks?\s+)?(?P<how>off|on|pause[d]?|resume|back\s+on)\b"
+                      r"|\s*(?:stop|don'?t|quit)\s+(?:checking|flagging|opening)\s+(?:the\s+)?(?:lead\s+)?"
+                      r"(?:sheets?|excel)\b(?P<stop>)"
+                      r"|\s*(?:turn|switch)\s+(?P<how2>off|on)\s+(?:the\s+)?(?:google\s+)?(?:sheets?|sheet\s+checks?|excel)\b",
+                      text, re.IGNORECASE)
+    if switch:
+        how = (switch.group("how") or switch.group("how2") or "").casefold()
+        off = switch.group("stop") is not None or how in ("off", "pause", "paused")
+        return MentionRequest(action="sheetsswitch", brief="off" if off else "on")
     if SETUP_ASKED.search(text):
         return MentionRequest(action="setupask", brief=text)
     if payments_of(text):
@@ -1744,6 +1755,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ban them and delete the channel. Nothing goes until both are kept. A list,
 > one name a line, is matched and shown once - one press clears them all.
 > **clear her out still, she disputed** goes ahead under a month quiet
+> @RYTE **sheets off** — stop opening and flagging lead sheets (Google
+> suspended or down); **sheets on** to start again
 > @RYTE **pull up all FND payments** — every Payra payment with that word in
 > the name or email (a business, an email domain, a person), with the total
 > @RYTE **rename channels** — this server's channels into the "✉️│ᴀᴅᴍɪɴ-ᴄᴏᴍ"

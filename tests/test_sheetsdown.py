@@ -46,3 +46,21 @@ def test_while_down_a_payments_sheet_isnt_its_problem(monkeypatch):
     rows, problem = asyncio.run(client._sqc_sheet(bot, "https://docs.google.com/spreadsheets/d/zzz"))
     assert (rows, problem) == (None, "")
     assert len(said) == 1 and "Google Sheets is refusing me on every sheet" in said[0]
+
+
+def test_the_off_button(tmp_path, monkeypatch):
+    from wilbyte import prefs
+    from wilbyte.bot.mentions import parse
+
+    monkeypatch.setattr(prefs, "PREFS_PATH", tmp_path / "prefs.json")
+    for said, how in (("<@1> sheets off", "off"), ("<@1> stop flagging the sheets", "off"),
+                      ("<@1> turn off sheet checks", "off"), ("<@1> sheets on", "on"),
+                      ("<@1> sheets back on", "on")):
+        request = parse(said)
+        assert (request.action, request.brief) == ("sheetsswitch", how), said
+    sheetsdown.switch(True)
+    assert sheetsdown.switched_off()
+    monkeypatch.setattr(jobs, "lead_sheet_rows", lambda config, url: (_ for _ in ()).throw(AssertionError("read")))
+    assert asyncio.run(client._sqc_sheet(SimpleNamespace(config=None), "https://x")) == (None, "")
+    sheetsdown.switch(False)
+    assert not sheetsdown.switched_off()

@@ -60,3 +60,25 @@ def reset() -> None:
     _FAILED.clear()
     _TO_SAY.clear()
     _DOWN_SINCE = 0.0
+
+
+def switched_off() -> bool:
+    """"we got suspended ... i want ryte to stop flagging that like a off
+    button" - `@RYTE sheets off`, kept until `@RYTE sheets on`."""
+    from . import prefs
+
+    try:
+        return bool(prefs.load().get("sheets_off"))
+    except Exception:
+        return False
+
+
+def switch(off: bool) -> None:
+    from . import prefs
+
+    held = prefs.load()
+    if off:
+        held["sheets_off"] = True
+    else:
+        held.pop("sheets_off", None)
+    prefs.save(held)

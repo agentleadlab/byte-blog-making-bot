@@ -1877,6 +1877,17 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await responder.send(said)
                 return
 
+            if request.action == "sheetsswitch":
+                from .. import sheetsdown
+
+                off = request.brief == "off"
+                sheetsdown.switch(off)
+                await responder.send(
+                    "📴 **Sheet checks are off.** I won't open lead sheets or flag them on any card - everything "
+                    "else is still checked. `@RYTE sheets on` when Google's back." if off else
+                    "✅ **Sheet checks are back on** - lead sheets are opened and checked again from the next pass.")
+                return
+
             if request.action == "stylechannels":
                 await _style_channels(responder, config, message, request.brief or "")
                 return
@@ -12395,6 +12406,11 @@ _SHEETS_READ: dict = {}
 async def _sqc_sheet(bot, url: str) -> tuple:
     """A lead sheet's rows, read at most every two minutes - the Ask button
     pressed after a QC doesn't read it all over again."""
+    from .. import sheetsdown as _off
+
+    if _off.switched_off():
+        # Sheets switched off - not read, not flagged.
+        return None, ""
     held = _SHEETS_READ.get(url)
     if held is not None and time.time() - held[0] < RN_FRESH:
         return held[1], held[2]
@@ -14422,7 +14438,7 @@ async def _unless_sheets_down(bot, trouble, rows):
     from .. import sheetsdown
 
     await _sheets_down_said(bot)
-    return "" if trouble and rows is None and sheetsdown.down() else trouble
+    return "" if trouble and rows is None and (sheetsdown.down() or sheetsdown.switched_off()) else trouble
 
 
 async def _aged_check_one(bot, thread, done_message) -> "object":
