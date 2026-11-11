@@ -16977,7 +16977,13 @@ def aged_sheet_read(config: Config, link: str) -> tuple[int | None, dict | None,
             titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:6]]
             every = client.rows_of(sheet_id, [f"'{title}'!A1:Z2000" for title in titles])
     except Exception as exc:
+        from .. import sheetsdown
+
+        sheetsdown.failed(sheet_id)
         return None, None, f"couldn't open it ({_short(exc, 100)})"
+    from .. import sheetsdown
+
+    sheetsdown.opened()
     # The tab holding the leads: the one with the most rows that have a state.
     best = max((agedqc.sheet_states(rows) for rows in every), key=lambda got: got[0], default=(0, {}))
     if not best[0]:
@@ -17002,7 +17008,13 @@ def lead_sheet_rows(config: Config, link: str) -> tuple[int | None, str]:
             titles = [str((one or {}).get("title") or "Sheet1") for one in tabs[:20]]
             every = client.rows_of(sheet_id, [f"'{title}'!A1:Z3000" for title in titles])
     except Exception as exc:
+        from .. import sheetsdown
+
+        sheetsdown.failed(sheet_id)
         return None, f"couldn't open it ({_short(exc, 100)})"
+    from .. import sheetsdown
+
+    sheetsdown.opened()
     most = max((delivery.count_rows(rows, tab=title).rows for title, rows in zip(titles, every)), default=0)
     # Leads split over several tabs - a tab a batch, a tab a state - counted
     # once each across them all: Carson Rentz's "the hub says 100 delivered,

@@ -35,6 +35,8 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(keeplist, "KEEP_PATH", tmp_path / "quiet-keep.json")
     from wilbyte import failedwatch
     monkeypatch.setattr(failedwatch, "WARNED_PATH", tmp_path / "failed-payments.json")
+    from wilbyte import sheetsdown as _sheetsdown
+    _sheetsdown.reset()
     from wilbyte import stalls as _stalls
     monkeypatch.setattr(_stalls, "STALLS_PATH", tmp_path / "hub-stalls.json")
     from wilbyte.bot import client as _client

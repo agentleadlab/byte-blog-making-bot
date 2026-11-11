@@ -12399,8 +12399,36 @@ async def _sqc_sheet(bot, url: str) -> tuple:
     if held is not None and time.time() - held[0] < RN_FRESH:
         return held[1], held[2]
     rows, problem = await asyncio.to_thread(jobs.lead_sheet_rows, bot.config, url)
+    from .. import sheetsdown
+
+    await _sheets_down_said(bot)
+    if problem and rows is None and sheetsdown.down():
+        # Google's down, not this client's sheet: not on their card, and not
+        # kept - read again once it's back.
+        return None, ""
     _SHEETS_READ[url] = (time.time(), rows, problem)
     return rows, problem
+
+
+async def _sheets_down_said(bot) -> None:
+    """"ryte needs to know that excel is down" - said once in #agent-setup
+    when every sheet's refused, and once when they open again."""
+    from .. import sheetsdown
+
+    for state, when in sheetsdown.to_say():
+        at = datetime.fromtimestamp(when, tz=timezone.utc).astimezone(ZoneInfo("America/New_York"))
+        text = (f"⚠️ **Google Sheets is refusing me on every sheet** since {at:%-I:%M %p} ET - Google's down, or "
+                "my Google sign-in lost access. Sheet checks are paused: nothing gets flagged for a sheet "
+                "until they open again, and I'll say when they do."
+                if state == "down" else
+                f"✅ **Sheets are opening again** ({at:%-I:%M %p} ET) - sheet checks are back on.")
+        try:
+            channel = await _card_channel(bot, "setup")
+            if channel is not None:
+                with mirror.answering():
+                    await channel.send(text)
+        except Exception:
+            log.warning("Couldn't say Sheets are %s", state, exc_info=True)
 
 
 async def _sqc_hub(bot):
@@ -14388,6 +14416,15 @@ async def _aged_sheets_read(bot, sheets: list) -> tuple:
     return rows, states, "; ".join(troubles)
 
 
+async def _unless_sheets_down(bot, trouble, rows):
+    """An aged sheet that wouldn't open isn't the pull's problem when every
+    sheet's refused."""
+    from .. import sheetsdown
+
+    await _sheets_down_said(bot)
+    return "" if trouble and rows is None and sheetsdown.down() else trouble
+
+
 async def _aged_check_one(bot, thread, done_message) -> "object":
     """One aged pull checked: the payment post the thread hangs off, Nova's
     message, and the sheet when it opens. The result, kept."""
@@ -14397,6 +14434,7 @@ async def _aged_check_one(bot, thread, done_message) -> "object":
     post_text, done_text = _all_of_it(post), _all_of_it(done_message)
     first = agedqc.check(post_text, done_text)
     rows, states, trouble = await _aged_sheets_read(bot, first.sheets)
+    trouble = await _unless_sheets_down(bot, trouble, rows)
     result = agedqc.check(post_text, done_text, sheet_rows=rows, sheet_states=states,
                           sheet_problem=trouble if trouble and rows is None else "")
     await asyncio.to_thread(agedqc.remember, str(post.id), result)
@@ -14502,6 +14540,7 @@ async def _aged_rook_qc(bot, message) -> None:
         done = "\n".join(said)
         first = agedqc.check("", done, asked=asked)
         rows, states, trouble = await _aged_sheets_read(bot, first.sheets)
+        trouble = await _unless_sheets_down(bot, trouble, rows)
         result = agedqc.check("", done, asked=asked, sheet_rows=rows, sheet_states=states,
                               sheet_problem=trouble if trouble and rows is None else "")
         key = f"rn:{thread.id}"
