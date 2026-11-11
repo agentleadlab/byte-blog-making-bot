@@ -12512,6 +12512,15 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
         # Taken in before the ads package was left out - Cole Jackson's.
         rookqc.remember(key, aged=True, ads=True, due_done=True)
         return ""
+    if (not getattr(result, "aged_pull", False) and result.hub is None
+            and any(one.startswith(_NOT_SET_UP_YET) for one in result.problems)):
+        # Aged leads pulled for them around the payment, somewhere other than
+        # its thread - Christopher Gallion's $100 Zelle, asked about an hour
+        # after Nova had pulled his 100 aged MTG and texted him the sheet.
+        found = _aged_pulled_for(result, held, post)
+        if found:
+            result.aged_pull = True
+            result.notes.insert(0, f"🧺 Aged - {found}")
     if getattr(result, "aged_pull", False) and not result.talk_about_setup():
         # An aged order Nova pulled in the payment's thread - Jake Scott's
         # "haven't said anything in #rook-nova" was one. The aged QC has it.
@@ -12680,6 +12689,35 @@ def _sqc_twin(key: str, post, result, held: dict) -> None:
                                   " - the same payment posted twice, or paid twice? Check Payra / the bank")
         result.twin = str(one.get("link") or other)
         return
+
+
+def _aged_pulled_for(result, held: dict, post) -> str:
+    """Where an aged pull for this payment's client was seen, within a day
+    and a half of the payment - an aged QC Ryte kept, or Nova's own "pulled"
+    line in the talk about them. "" when there's none."""
+    from .. import agedqc, rookqc
+
+    client = result.client or held.get("name") or ""
+    posted = _moment_of(held.get("posted")) or getattr(post, "created_at", None)
+    if not client or posted is None:
+        return ""
+    # A payment that says it's for fresh leads is never taken for an aged
+    # pull the same day - Anzac Keehan had 102 aged and 29 fresh.
+    paid = getattr(result, "paid", None) or getattr(result, "wanted", None)
+    lead = str(getattr(paid, "lead_type", "") or "")
+    if lead and "aged" not in lead.casefold():
+        return ""
+    for _key, one in agedqc.recalled().items():
+        at = _moment_of(one.get("at"))
+        if (one.get("client") and rookqc.same_person_strict(str(one["client"]), client)
+                and at is not None and abs(at - posted) <= timedelta(hours=36)):
+            return f"an aged pull was checked for {one['client']}" + (
+                f" ({one['invoice']})" if one.get("invoice") else "")
+    for who, said in getattr(result, "talk", []) or []:
+        if who.casefold().startswith("nova") and agedqc.pulled(said):
+            lines = agedqc.pulled(said)
+            return "Nova pulled " + ", ".join(f"{line.count} {line.package}" for line in lines[:3])
+    return ""
 
 
 #: What a payment nobody's set up yet says.
