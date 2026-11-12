@@ -11116,11 +11116,26 @@ def _spark_unread_path():
     return _state_dir() / "spark-unread.json"
 
 
+#: #spark's routine notices - a lead marked sold, the hub blocking it from
+#: aging in. Twelve of them filled the list on the first day.
+_SPARK_ROUTINE = re.compile(r"marked\s+(?:this\s+lead\s+)?sold|\bmarked\s+sold\b|blocked\s+before\s+it\s+ages|"
+                            r"hub\s+inventory|not\s+in\s+the\s+aged\s+pool|matched\s+by\s+(?:ghl|lead\s+post)",
+                            re.IGNORECASE)
+#: What makes a #spark post about money or a membership - the ones a person
+#: may need to set up.
+_SPARK_MONEY = re.compile(r"\$\s?\d|\bpaid\b|\bpayments?\b|\brenew\w*|\bmembership\b|\bsubscri\w*|\bcharge[ds]?\b|"
+                          r"\binvoice\b|\bcancel\w*|\brefund\w*|\bbilling\b|\brecurring\b|\bpaid\s+through\b|"
+                          r"\btop[\s-]?up\b|\bbudget\b|\bper\s+(?:day|week)\b|/\s*(?:day|wk|week)\b",
+                          re.IGNORECASE)
+
+
 def _spark_unread(message) -> bool:
-    """A post in #spark that's neither a new pool member nor a state change."""
+    """A post in #spark about money or a membership that's neither a new pool
+    member nor a state change - not its routine "marked sold" notices."""
     if _plain_letters(getattr(getattr(message, "channel", None), "name", "")) != "spark":
         return False
-    if not _all_of_it(message).strip():
+    said = _all_of_it(message)
+    if not said.strip() or _SPARK_ROUTINE.search(said) or not _SPARK_MONEY.search(said):
         return False
     return not _spark_member(message) and not _spark_states_changed(message)
 
@@ -11155,6 +11170,10 @@ def _spark_unread_lines() -> list[str]:
         return []
     out = []
     for _key, one in sorted(held.items(), key=lambda item: str(item[1].get("at") or "")):
+        said = str(one.get("said") or "")
+        if _SPARK_ROUTINE.search(said) or not _SPARK_MONEY.search(said):
+            # Kept before routine notices were told apart.
+            continue
         at = _moment_of(one.get("at"))
         when = f"{at.astimezone(ZoneInfo('America/New_York')):%b %-d %-I:%M %p}" if at else "?"
         out.append(f"• {when} — “{one.get('said') or ''}” — paid or changed? Nobody's set it up "

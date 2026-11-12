@@ -72,3 +72,22 @@ def test_a_spark_post_ryte_cant_read_is_on_the_list(monkeypatch):
     assert len(lines) == 1 and "Bryce Evans" in lines[0] and "77" in lines[0]
     said = ledger.daily({}, now=NOW, today=NOW.date(), through=NOW.date(), spark=lines)
     assert "⚡ #spark posts nobody's acted on** (1)" in said
+
+
+
+def test_sparks_routine_sold_notices_arent_listed():
+    from types import SimpleNamespace
+
+    from wilbyte.bot import client
+
+    def post(text):
+        return SimpleNamespace(id=1, channel=SimpleNamespace(name="spark"), created_at=NOW, jump_url="x",
+                               content=text, embeds=[], attachments=[])
+
+    for routine in ("A lead you delivered was marked sold on Spark IUL - Volume · Tony Ornelas The buyer marked "
+                    "this lead sold. See every delivery and its outcome on your Spark",
+                    "Marked sold: [Hub](https://hub.agentleadlab.com/admin/sold) — blocked before it ages in "
+                    "-# Matched by GHL + lead post.",
+                    "Hub Inventory: not in the aged pool -# Matched by GHL + lead post."):
+        assert not client._spark_unread(post(routine)), routine
+    assert client._spark_unread(post("Membership renewed on Spark: Bryce Evans, Veteran pool, $700/wk"))
