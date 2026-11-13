@@ -92,7 +92,8 @@ def _ask_claude(config, system: str, user: str, tool: dict) -> dict | None:
     return None
 
 
-def facts(result, *, invoice: str = "", amount: str = "", talk: list | None = None) -> dict:
+def facts(result, *, invoice: str = "", amount: str = "", talk: list | None = None,
+          lessons: list | None = None) -> dict:
     """What Ryte read for one payment, plainly, for Claude - nothing else."""
     from .rookqc import rook_setup
 
@@ -133,6 +134,10 @@ def facts(result, *, invoice: str = "", amount: str = "", talk: list | None = No
         said["payment_post_and_team_notes"] = " ".join(post.split())[:1500]
     if talk:
         said["thread"] = [{"who": who, "said": " ".join(str(text).split())[:500]} for who, text in talk[-14:]]
+    if lessons:
+        # What the team taught Ryte - Franklin's own lessons, misses not to
+        # repeat, and flags like these that turned out fine, and why.
+        said["lessons_from_the_team"] = list(lessons)[:30]
     return said
 
 
@@ -144,6 +149,37 @@ _QUESTION = {
             "thing you see wrong on this payment, the figures that disagree, and the one thing you need. Ask "
             "where an explanation you can't see is possible.")}},
         "required": ["message"]}}
+
+
+_QUESTION_OR_NOT = {
+    "name": "ask", "description": "Ryte's message to Rook and Nova about this payment - or not asking, because a "
+                                  "lesson from the team already explains it.",
+    "input_schema": {"type": "object", "properties": {
+        "skip": {"type": "boolean", "description": (
+            "true ONLY when one of lessons_from_the_team clearly explains what you see on THIS payment, so asking "
+            "would be the same question the team already answered. When in doubt, false.")},
+        "lesson": {"type": "string", "description": "When skip: the lesson that explains it, in a few words."},
+        "message": {"type": "string", "description": (
+            "When not skip: the message, without the @ tags (they're added). Two or three sentences, under 60 "
+            "words: the one thing you see wrong on this payment, the figures that disagree, and the one thing "
+            "you need. Ask where an explanation you can't see is possible.")}},
+        "required": ["skip", "message"]}}
+
+
+def compose_or_skip(config, said: dict) -> tuple[str, str]:
+    """(Ryte's question, "") - or ("", the lesson) when a lesson from the team
+    already explains what it sees. ("", "") when Claude couldn't be had."""
+    if not said.get("lessons_from_the_team"):
+        # Nothing taught that could explain it: the plain question.
+        return compose(config, said), ""
+    got = _ask_claude(config, _WHO, "Write your message to Rook and Nova about this payment - unless one of the "
+                      "lessons the team taught you already explains it. What you read:\n"
+                      + json.dumps(said, default=str, indent=1), _QUESTION_OR_NOT)
+    if not got:
+        return "", ""
+    if got.get("skip") and said.get("lessons_from_the_team"):
+        return "", " ".join(str(got.get("lesson") or "a lesson from the team").split())[:200]
+    return " ".join(str(got.get("message") or "").split())[:MOST_CHARS], ""
 
 
 def compose(config, said: dict) -> str:

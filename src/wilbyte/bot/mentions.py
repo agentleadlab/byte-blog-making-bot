@@ -1015,6 +1015,26 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="ordergiven", brief=text)
     # "are these people setup?" and a list of them - answered with "every
     # agent going live today or tomorrow is set up". Each one checked.
+    # "he's not learning and is going dumb everyday" - taught, told what he
+    # missed, and scored.
+    taught = re.match(r"\s*(?:lesson|teach(?:\s+(?:you|him|ryte))?|rule)\s*[:\-]\s*(.+?)\s*$", text,
+                      re.IGNORECASE | re.S)
+    if taught:
+        return MentionRequest(action="lessonadd", brief=" ".join(taught.group(1).split()))
+    miss = re.match(r"\s*(?:you|ryte|u)\s+missed\s*[:\-]?\s*(.+?)\s*$|\s*miss(?:ed)?\s*:\s*(.+?)\s*$", text,
+                    re.IGNORECASE | re.S)
+    if miss:
+        return MentionRequest(action="lessonmiss", brief=" ".join((miss.group(1) or miss.group(2)).split()))
+    gone = re.match(r"\s*forget\s+lesson\s*#?\s*(\d+)\s*[.!]*\s*$", text, re.IGNORECASE)
+    if gone:
+        return MentionRequest(action="lessonforget", brief=gone.group(1))
+    if re.match(r"\s*(?:(?:show\s+(?:me\s+)?)?(?:your\s+|the\s+)?lessons|what\s+(?:have\s+you|did\s+you)\s+"
+                r"(?:learned|learn)|what\s+do\s+you\s+know)\s*[.?!]*\s*$", text, re.IGNORECASE):
+        return MentionRequest(action="lessonlist", brief=text)
+    if re.match(r"\s*(?:(?:show\s+(?:me\s+)?)?(?:your\s+|the\s+)?(?:score\s*card|report\s+card|score)|how\s+(?:are|r)\s+"
+                r"(?:you|u)\s+doing(?:\s+(?:at|on)\s+qc)?|how\s+good\s+(?:are|is)\s+(?:you|ryte))\s*[.?!]*\s*$",
+                text, re.IGNORECASE):
+        return MentionRequest(action="scorecard", brief=text)
     # "i want ryte to stop flagging that like a off button" - Google suspended.
     switch = re.match(r"\s*(?:turn\s+|switch\s+)?(?:the\s+)?(?:google\s+)?(?:sheets?|sheet\s+checks?|excel)\s+"
                       r"(?:checks?\s+)?(?P<how>off|on|pause[d]?|resume|back\s+on)\b"
@@ -1755,6 +1775,10 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > ban them and delete the channel. Nothing goes until both are kept. A list,
 > one name a line, is matched and shown once - one press clears them all.
 > **clear her out still, she disputed** goes ahead under a month quiet
+> @RYTE **lesson: aged orders never have a hub row** — teach me; I read every
+> lesson before asking Rook or Nova. **lessons** lists them, **forget lesson 2**
+> @RYTE **you missed Bryce Evans - paid, nobody set it up** — a miss, counted
+> @RYTE **scorecard** — my last 7 days: real catches, false alarms, misses
 > @RYTE **sheets off** — stop opening and flagging lead sheets (Google
 > suspended or down); **sheets on** to start again
 > @RYTE **pull up all FND payments** — every Payra payment with that word in

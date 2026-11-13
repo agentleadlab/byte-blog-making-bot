@@ -328,7 +328,7 @@ def _ready(one: dict) -> str:
 def daily(records: dict, *, now: datetime, today: date, through: date, morning: bool = False,
           payra_missing: list | None = None, aged: list | None = None, board: dict | None = None,
           board_complete: bool = True, placed: dict | None = None, only: tuple | None = None,
-          stalled: list | None = None, spark: list | None = None) -> str:
+          stalled: list | None = None, spark: list | None = None, score_line: str = "") -> str:
     """The day's list. `through`: the last launch day looked ahead to
     (tomorrow, or Monday on a Friday). `payra_missing`: lines for payments
     Payra has that #new-payment doesn't; `aged`: lines for aged orders."""
@@ -487,6 +487,8 @@ def daily(records: dict, *, now: datetime, today: date, through: date, morning: 
     risk = money_at_risk(records, at_risk)
     if risk:
         lines.append(risk)
+    if score_line and not morning:
+        lines.append(score_line)
     said_any = False
     for title, items in sections:
         if not items:

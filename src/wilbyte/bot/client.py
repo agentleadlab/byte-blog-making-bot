@@ -1620,7 +1620,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
     # Franklin's "these are good to go:" list went unread.
     said_all = await _message_text(message)
     notes = team_notes(said_all, followed)
-    if notes and request.action not in ("comment", "clearout") and (len(notes) >= 2 or _GOOD_TO_GO.search(said_all or "")):
+    if notes and request.action not in ("comment", "clearout", "lessonadd", "lessonmiss") and (len(notes) >= 2 or _GOOD_TO_GO.search(said_all or "")):
         try:
             if await _sqc_team_notes(bot, responder, message, text=said_all):
                 return
@@ -1875,6 +1875,34 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                     await responder.send(said[:cut])
                     said = said[cut + 1:]
                 await responder.send(said)
+                return
+
+            if request.action in ("lessonadd", "lessonmiss", "lessonlist", "lessonforget", "scorecard"):
+                from .. import lessons, rookqc, scorecard
+
+                who = str(getattr(message.author, "display_name", "") or "")
+                if request.action == "lessonadd":
+                    number = lessons.teach(request.brief or "", by=who)
+                    await responder.send(f"🧠 Lesson {number} kept: “{request.brief}”. I read it before I ask Rook "
+                                         "or Nova anything. `@RYTE lessons` shows them all.")
+                elif request.action == "lessonmiss":
+                    lessons.missed(request.brief or "", by=who)
+                    await responder.send(f"❌ Counted as a miss, and kept as a lesson: “{request.brief}”. "
+                                         "`@RYTE scorecard` shows how I'm doing.")
+                elif request.action == "lessonforget":
+                    gone = lessons.forget(int(request.brief or 0))
+                    await responder.send(f"Forgot lesson {request.brief}: “{gone}”." if gone
+                                         else f"There's no lesson {request.brief}. `@RYTE lessons` lists them.")
+                elif request.action == "lessonlist":
+                    said = lessons.listed(rookqc.recalled())
+                    while len(said) > 1900:
+                        cut = said.rfind("\n", 0, 1900)
+                        await responder.send(said[:cut])
+                        said = said[cut + 1:]
+                    await responder.send(said)
+                else:
+                    await responder.send(scorecard.said(scorecard.score(
+                        rookqc.recalled(), now=datetime.now(timezone.utc)))[:1990])
                 return
 
             if request.action == "sheetsswitch":
@@ -12675,6 +12703,9 @@ async def _sqc_run(bot, key: str, *, due: bool = False, force: bool = False) -> 
     _ledger_keep(key, post, result, held)
     held = rookqc.recalled().get(key) or held
     _okd(result, held)
+    if held.get("held_back") and any(rookqc.problem_key(one) in set(held.get("held_back_keys") or [])
+                                     for one in result.problems):
+        result.notes.insert(0, f"🧠 Didn't ask Rook & Nova - a lesson says: {held['held_back']}")
     if result.cant and not waiting:
         await _sqc_auto_hammer(bot, key, post, result, held)
     cards = await _card_channel(bot, "setup")
@@ -12962,8 +12993,14 @@ async def _sqc_card(bot, channel, key: str, post, result, held: dict, *, due: bo
         new = []
     else:
         ever |= {rookqc.problem_key(one) for one in result.problems}
+    # The flags in their words, and when - for the scorecard.
+    texts = dict(held.get("flag_texts") or {})
+    if settled:
+        when = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for one in result.problems:
+            texts.setdefault(rookqc.problem_key(one), {"text": one[:300], "at": when})
     rookqc.remember(key, digest=result.digest(), client=result.client, problems=result.problems, todo=result.todo,
-                    cant=result.cant, flagged=flagged, ever_flagged=sorted(ever))
+                    cant=result.cant, flagged=flagged, ever_flagged=sorted(ever), flag_texts=texts)
     await _sqc_tell_fixed(bot, key, result, rookqc.recalled().get(key) or held)
     await _sqc_auto_ask(bot, key, post, result, rookqc.recalled().get(key) or held)
     await _sqc_chase_question(bot, key, post, result, rookqc.recalled().get(key) or held)
@@ -13321,9 +13358,16 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         parts["lines"] = [*aged, *stalled, *spark, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
                                              if board else [])]
         parts["today"] = list(missing)  # Payra's are today's, by what they are
+    try:
+        from .. import scorecard
+
+        score_line = scorecard.one_line(scorecard.score(rookqc.recalled(), now=now))
+    except Exception:
+        log.warning("Couldn't count the scorecard", exc_info=True)
+        score_line = ""
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
-                        board_complete=complete, stalled=stalled, spark=spark)
+                        board_complete=complete, stalled=stalled, spark=spark, score_line=score_line)
 
 
 async def _launching_board(bot) -> tuple[dict, bool]:
@@ -14174,13 +14218,31 @@ async def _sqc_ask(bot, key: str, post, result, *, by: str = "", problems: list 
     # In Ryte's own words, from what it read - "he doesnt have to use
     # templated message" - and the plain question when Claude can't be had.
     written = ""
+    held = rookqc.recalled().get(key) or {}
+    keys = {rookqc.problem_key(one) for one in asking.problems or []}
+    if not by and keys and keys <= set(held.get("held_back_keys") or []):
+        # A lesson already explained these - not asked, nor weighed again.
+        return ""
     if SETUP_QC_VOICE and getattr(bot, "config", None) is not None:
-        from .. import rytevoice
+        from .. import lessons, rytevoice
 
         amount = (_AMOUNT.search(_all_of_it(post)) or [None, ""])[1] if hasattr(post, "content") else ""
         try:
-            written = await asyncio.to_thread(partial(rytevoice.compose, bot.config, rytevoice.facts(
-                asking, invoice=invoice, amount=amount, talk=list(getattr(result, "talk", []) or []))))
+            taught = lessons.for_question(rookqc.recalled(), list(asking.problems or []))
+            said = rytevoice.facts(asking, invoice=invoice, amount=amount,
+                                   talk=list(getattr(result, "talk", []) or []), lessons=taught)
+            if by:
+                # A person pressed Ask: asked, whatever the lessons say.
+                written = await asyncio.to_thread(partial(rytevoice.compose, bot.config, said))
+            else:
+                written, lesson = await asyncio.to_thread(partial(rytevoice.compose_or_skip, bot.config, said))
+                if lesson:
+                    # "he's not learning" - the team answered this kind before:
+                    # not asked again. Still on the card and the list for
+                    # Franklin, with the lesson that held it back.
+                    rookqc.remember(key, held_back=lesson, held_back_keys=sorted(keys | set(
+                        held.get("held_back_keys") or [])))
+                    return ""
         except Exception:
             log.warning("Couldn't write %s's question in Ryte's words", result.client, exc_info=True)
     text = (f"{written}\n-# <{post.jump_url}>" if written
