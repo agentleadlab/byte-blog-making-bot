@@ -35,6 +35,9 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(keeplist, "KEEP_PATH", tmp_path / "quiet-keep.json")
     from wilbyte import failedwatch
     monkeypatch.setattr(failedwatch, "WARNED_PATH", tmp_path / "failed-payments.json")
+    # The states logic stays tested; Ryte runs with it off (rookqc.CHECK_STATES).
+    from wilbyte import rookqc as _rookqc
+    monkeypatch.setattr(_rookqc, "CHECK_STATES", True)
     from wilbyte import sheetsdown as _sheetsdown
     _sheetsdown.reset()
     from wilbyte import stalls as _stalls

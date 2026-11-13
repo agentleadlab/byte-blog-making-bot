@@ -975,7 +975,18 @@ def _state_set(states, left_out) -> set:
     return set()
 
 
+#: "just have ryte not check the states anymore, he's not doing it properly" -
+#: Kevin's changed states insisted on, and his leads to be replaced. Off: no
+#: state is flagged, asked about or put back, in setup or aged checks.
+CHECK_STATES = False
+STATES_OFF_NOTE = "States aren't checked - switched off"
+
+
 def _compare_states(result: Checked, whose: str, states, left_out, paid: Order) -> None:
+    if not CHECK_STATES:
+        if STATES_OFF_NOTE not in result.notes:
+            result.notes.append(STATES_OFF_NOTE)
+        return
     # "All but NY" and the 50 others written out are the same states -
     # Duehat Kanan's and Ciana Araya's were flagged as not matching.
     theirs, wanted = _state_set(states, left_out), _state_set(paid.states, paid.left_out)
@@ -1669,6 +1680,8 @@ def apply_client_asks(result, asks: list) -> None:
     asked off that the hub still has is the problem."""
     result.client_asks = [f"{_asked_when(one)}: {' '.join(str(one.get('text') or '').split())[:300]}"
                           for one in asks or []][:6]
+    if not CHECK_STATES:
+        return
     off, on = client_state_changes(asks)
     if not off and not on:
         return

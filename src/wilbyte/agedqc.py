@@ -192,7 +192,7 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
             short = f"{line.package}: {paid_for} {line.count}, Nova pulled {match.count}"
             got_states = set(match.by_state) or (set(sheet_states or {}) if len(bought) == 1 else set())
             unpulled = [code for code in line.states if code not in got_states] if got_states else []
-            if match.count < line.count and unpulled and got_states:
+            if match.count < line.count and unpulled and got_states and _states_checked():
                 # Michael Mcallister's: "14 available to them (Ohio 14)", short
                 # 36 - and 25 of the 26 states he paid for never looked in.
                 result.problems.append(
@@ -204,14 +204,14 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
                 result.problems.append(short)
         else:
             result.ok.append(f"{line.package}: {match.count} pulled, as {paid_for.replace('Rook asked for', 'asked')}")
-        if line.states:
+        if line.states and _states_checked():
             outside = [code for code in match.by_state if code not in line.states]
             if outside:
                 result.problems.append(f"{line.package}: pulled in {', '.join(outside)}, which they didn't order "
                                        f"(ordered {', '.join(line.states)})")
             elif match.by_state:
                 result.ok.append(f"{line.package}: every state pulled is one they ordered")
-        if match.by_state and sum(match.by_state.values()) != match.count:
+        if match.by_state and _states_checked() and sum(match.by_state.values()) != match.count:
             result.problems.append(f"{line.package}: the states add up to {sum(match.by_state.values())}, "
                                    f"not the {match.count} said")
     for one in left:
@@ -240,7 +240,7 @@ def check(post: str, done: str, *, sheet_states: dict | None = None, sheet_rows:
             result.problems.append(f"{_the_sheets(result)} {sheet_rows} leads, and Nova says it pulled {want}")
         else:
             result.ok.append(f"{_the_sheets(result)} {sheet_rows} leads")
-    if sheet_states:
+    if sheet_states and _states_checked():
         allowed = {code for one in bought for code in one.states}
         stray = sorted(code for code in sheet_states if allowed and code not in allowed)
         if stray:
@@ -361,3 +361,10 @@ def remember(post_id: str, result: Checked) -> None:
                           "sheets": result.sheets, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     PATH.parent.mkdir(parents=True, exist_ok=True)
     PATH.write_text(json.dumps(held, indent=1))
+
+
+def _states_checked() -> bool:
+    """Whether states are checked at all - off with the setup check's."""
+    from .rookqc import CHECK_STATES
+
+    return CHECK_STATES
