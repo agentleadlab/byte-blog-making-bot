@@ -197,7 +197,7 @@ _HOW_MANY = re.compile(r"\b(\d{1,5})\s*(?=[a-z])", re.IGNORECASE)
 
 _TOTAL = re.compile(r"\b(?:total|grand\s+total|amount\s+due|charge|comes?\s+to)\b\W{0,6}\$\s*([\d,]+(?:\.\d{1,2})?)",
                     re.IGNORECASE)
-_EACH = re.compile(r"\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:each|apiece|per\s+lead|a\s+lead|/\s*lead|/\s*ea)\b"
+_EACH = re.compile(r"\$?\s*([\d,]+(?:\.\d{1,2})?)\s*(?:each|apiece|per\s+lead|a\s+lead|/\s*lead|/\s*ea)\b"
                    r"|@\s*\$\s*([\d,]+(?:\.\d{1,2})?)", re.IGNORECASE)
 _DISCOUNT = re.compile(r"\b(\d{1,2}(?:\.\d+)?)\s*%\s*(?:off|discount)\b|\bdiscount\s+of\s+(\d{1,2}(?:\.\d+)?)\s*%",
                        re.IGNORECASE)
@@ -208,6 +208,30 @@ def _dollars(said: str) -> float | None:
         return float(str(said).replace(",", ""))
     except ValueError:
         return None
+
+
+#: "1800 for 50 text verified veteran leads" - the money, then the count,
+#: written without a dollar sign.
+_BARE_FOR = re.compile(r"(?<![\d$.,])([\d,]{3,}(?:\.\d{1,2})?)\s+for\s+(\d{1,5})\b", re.IGNORECASE)
+
+
+def amount_choices(said: str) -> list[tuple[float, str]]:
+    """Both readings of a price a lead with a discount, when no total is
+    said - "50 leads for 36/lead with 20% OFF" was Tre's $45 vets at 20% off,
+    so $1,800, and taking 20% off again would have made a $1,440 link. [] when
+    there's only one way to read it."""
+    text = said or ""
+    if _TOTAL.search(text):
+        return []
+    each, many, off = _EACH.search(text), how_many(text), _DISCOUNT.search(text)
+    if not (each and many and off):
+        return []
+    price = _dollars(each.group(1) or each.group(2))
+    if price is None:
+        return []
+    share = float(off.group(1) or off.group(2))
+    return [(round(price * many, 2), f"${price:g} is already the price after {share:g}% off"),
+            (round(price * many * (1 - share / 100), 2), f"{share:g}% off ${price:g}")]
 
 
 def amount_asked(said: str) -> float | None:
@@ -230,13 +254,19 @@ def amount_asked(said: str) -> float | None:
             return round(price * many * share, 2)
     found = _MONEY.search(text)
     if not found:
-        return None
+        bare = _BARE_FOR.search(text)
+        return _dollars(bare.group(1)) if bare else None
     return _dollars(found.group(1))
 
 
 def how_many(said: str) -> int | None:
     """How many leads. The number that isn't the money, nor a percentage."""
+    bare = _BARE_FOR.search(said or "")
+    if bare and not _MONEY.search(said or ""):
+        return int(bare.group(2))
     text = re.sub(r"\d+(?:\.\d+)?\s*%", " ", _MONEY.sub(" ", said or ""))
+    # A price a lead isn't the count: "36/lead".
+    text = re.sub(r"\d[\d,.]*\s*(?:/\s*lead|per\s+lead|a\s+lead|each)\b", " ", text, flags=re.IGNORECASE)
     found = _HOW_MANY.search(text)
     return int(found.group(1)) if found else None
 

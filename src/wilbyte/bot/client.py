@@ -7306,24 +7306,57 @@ def _paylink_pick(answer: str, names: list) -> str:
     return fits[0] if len(fits) == 1 else ""
 
 
+def _paylink_amount(answer: str, amounts: list) -> float | None:
+    """The amount in an answer to "How much?" - an option's number, "$1800",
+    or "1800" with no dollar sign. None when it says none."""
+    from .. import products
+
+    said = " ".join(mentions.MENTION_RE.sub(" ", str(answer or "")).split()).strip(" .!?")
+    number = re.fullmatch(r"(?:#|no\.?\s*|option\s*)?(\d)", said, re.IGNORECASE)
+    if amounts and number and 1 <= int(number.group(1)) <= len(amounts):
+        return amounts[int(number.group(1)) - 1]
+    found = products.amount_asked(said)
+    if found is None:
+        bare = re.search(r"(?<![\w.])(\d[\d,]*(?:\.\d{1,2})?)(?![\w%])", said)
+        found = products._dollars(bare.group(1)) if bare else None
+    return found if found and found > 0 else None
+
+
 async def _paylink_answer(responder: Responder, config: Config, message) -> bool:
-    """The answer to Ryte's "Which one?", made into the link that was asked
-    for. False when there's no question waiting, or the answer isn't one."""
+    """The answer to Ryte's "Which one?" or "How much?", made into the link
+    that was asked for. False when there's no question waiting, or the answer
+    isn't one."""
     key = (getattr(message.channel, "id", 0), getattr(message.author, "id", 0))
     waiting = _PAYLINK_WAITING.get(key)
-    if not waiting or time.monotonic() - waiting[2] > PAYLINK_WAIT_SECONDS:
+    if not waiting or time.monotonic() - waiting["when"] > PAYLINK_WAIT_SECONDS:
         _PAYLINK_WAITING.pop(key, None)
         return False
-    chosen = _paylink_pick(message.content or "", waiting[1])
+    if waiting["kind"] == "amount":
+        amount = _paylink_amount(message.content or "", waiting.get("amounts") or [])
+        if amount is None:
+            return False
+        _PAYLINK_WAITING.pop(key, None)
+        await _payment_link(responder, config, waiting["said"], amount=amount, chosen=waiting.get("chosen", ""),
+                            message=message)
+        return True
+    chosen = _paylink_pick(message.content or "", waiting["names"])
     if not chosen:
         return False
     _PAYLINK_WAITING.pop(key, None)
-    await _payment_link(responder, config, waiting[0], chosen=chosen)
+    await _payment_link(responder, config, waiting["said"], chosen=chosen, amount=waiting.get("amount"),
+                        message=message)
     return True
 
 
+def _paylink_wait(message, said: str, *, kind: str, **more) -> None:
+    if message is None:
+        return
+    _PAYLINK_WAITING[(getattr(message.channel, "id", 0), getattr(message.author, "id", 0))] = dict(
+        said=said, kind=kind, when=time.monotonic(), **more)
+
+
 async def _payment_link(responder: Responder, config: Config, said: str, *, chosen: str = "",
-                        message=None) -> None:
+                        message=None, amount: float | None = None) -> None:
     """Make a Stripe payment link for what somebody asked for, once they say so.
 
     Nothing is created before the confirm: the amount comes from a message
@@ -7339,11 +7372,22 @@ async def _payment_link(responder: Responder, config: Config, said: str, *, chos
         )
         return
 
-    amount = products.amount_asked(said)
     if amount is None:
+        # "36/lead with 20% OFF": already the price after the discount, or 20%
+        # off it? Tre's $45 vets at 20% off were $36 - $1,800, not $1,440.
+        choices = products.amount_choices(said)
+        if choices:
+            _paylink_wait(message, said, kind="amount", amounts=[one for one, _why in choices], chosen=chosen)
+            await responder.send(
+                "Which total? " + "  ".join(f"**{at}.** {stripepay.dollars(stripepay.as_cents(one))} — {why}"
+                                             for at, (one, why) in enumerate(choices, start=1))
+                + "\n-# Answer with `@RYTE` and the number.")
+            return
+        amount = products.amount_asked(said)
+    if amount is None:
+        _paylink_wait(message, said, kind="amount", amounts=[], chosen=chosen)
         await responder.send(
-            "How much? Say it with the amount — "
-            "`@RYTE payment link $621 for 40 basic spanish leads`."
+            "How much? Answer with `@RYTE` and the total — `@RYTE $1800`."
         )
         return
     if amount <= 0:
@@ -7356,9 +7400,7 @@ async def _payment_link(responder: Responder, config: Config, said: str, *, chos
         near = products.matches(said)
         if near:
             names = [item.name for item in near[:5]]
-            if message is not None:
-                _PAYLINK_WAITING[(getattr(message.channel, "id", 0), getattr(message.author, "id", 0))] = (
-                    said, names, time.monotonic())
+            _paylink_wait(message, said, kind="which", names=names, amount=amount)
             await responder.send(
                 "Which one? " + "  ".join(f"**{at}.** {name}" for at, name in enumerate(names, start=1))
                 + "\n-# Answer with `@RYTE` and the number or the name."
