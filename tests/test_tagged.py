@@ -1400,17 +1400,17 @@ def _three(_config, notes, _people):
     ]}
 
 
-def test_one_comment_can_be_three_jobs(config, monkeypatch):
-    """"basically thats three tasks in one trello comment link right" — and
-    until now one comment was one line for each person it named."""
+def test_one_comment_is_one_line_per_person(config, monkeypatch):
+    """"we have like 3 paragraph or 3 bullet on the task or in the comment.
+    Ryte adds them as separate checklist making it a lot to complete" - one
+    line each for the people it names, the rest counted on it and one click
+    away in the comment."""
     board = TaggedBoard({"g": [{"id": "c1", "text": TRES, "author": "Tre Tarpley"}]})
 
     tasks, _problems = planning(board, monkeypatch, config, read=_three)
 
     assert [(one.checklist, one.summary) for one in tasks] == [
-        ("Kath", "Move the entire VET 2.0 amount over"),
-        ("Kath", "Set up a discord call for the gameplan"),
-        ("Kath", "Scene changes for the new creatives"),
+        ("Kath", "Move the entire VET 2.0 amount over (+2 more in the comment)"),
         ("Jenn", "Set up a discord call for the gameplan"),
     ]
 
@@ -1454,10 +1454,9 @@ def test_the_ones_already_filed_are_counted_not_asked(config, monkeypatch):
     board.card_checklists = with_two_of_kaths
     tasks, _problems = planning(board, monkeypatch, config, read=_three)
 
-    # Two of Kath's three are there, so only her third is left, and Jenn's
-    # line is untouched by any of it.
+    # Kath's one line for this comment is there already, and Jenn's is
+    # untouched by any of it.
     assert [(one.checklist, one.summary) for one in tasks] == [
-        ("Kath", "Scene changes for the new creatives"),
         ("Jenn", "Set up a discord call for the gameplan"),
     ]
 

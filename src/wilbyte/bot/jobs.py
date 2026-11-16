@@ -3620,7 +3620,7 @@ def _read_the_tags(config, wants, people, cards, problems, held_by=None) -> list
 
     written = {}
     try:
-        written = _ask_about_tags(config, list(by_id.values()), people)
+        written = _one_per_person(_ask_about_tags(config, list(by_id.values()), people))
     except Exception as exc:
         problems.append(
             "Couldn't have the comments read, so these are the raw first lines: "
@@ -3693,6 +3693,33 @@ def _named_in_comment(text: str, person) -> bool:
     names.add(str(first or "").casefold())
     names |= {called for called, handle in dailyops.TEAM_HANDLES.items() if handle.casefold() == username}
     return any(name and re.search(rf"(?<![\w@]){re.escape(name)}(?!\w)", said) for name in names)
+
+
+def _one_per_person(written: dict) -> dict:
+    """One entry per person per comment. "we have like 3 paragraph or 3 bullet
+    on the task or in the comment. Ryte adds them as separate checklist making
+    it a lot to complete" - the person's first job is the line, the rest are
+    counted on it, and the line links to the comment that has them all."""
+    out = {}
+    for comment_id, entries in (written or {}).items():
+        grouped, order = {}, []
+        for entry in entries or []:
+            who = str(entry.get("person") or "").casefold().lstrip("@")
+            if who not in grouped:
+                grouped[who] = []
+                order.append(who)
+            grouped[who].append(entry)
+        merged = []
+        for who in order:
+            theirs = grouped[who]
+            first = dict(theirs[0])
+            if len(theirs) > 1:
+                more = len(theirs) - 1
+                first["summary"] = (f"{str(first.get('summary') or '').rstrip(' .')} "
+                                    f"(+{more} more in the comment)")
+            merged.append(first)
+        out[comment_id] = merged
+    return out
 
 
 def _their_jobs(written: dict, comment_id: str, person, people) -> list:
