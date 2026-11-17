@@ -73,3 +73,23 @@ def test_the_commands():
     assert parse("<@1> scorecard").action == "scorecard"
     assert parse("<@1> how are you doing").action == "scorecard"
     assert parse("<@1> did we miss anything").action == "missedsetup"
+
+
+def test_all_the_aged_are_good_to_go():
+    from wilbyte.bot.mentions import parse
+
+    for said in ("all 104 aged leads are good to go", "the aged are all good", "clear the aged"):
+        request = parse("<@1> " + said)
+        assert (request.action, request.brief) == ("ledgerclear", "aged"), said
+    assert parse("<@1> Jacob aged order is done").action != "ledgerclear"
+
+
+def test_a_pull_checked_in_another_thread_is_the_payments_pull():
+    from wilbyte.bot import client
+
+    paid = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
+    pulls = {"rn:555": {"client": "Aiden Perry", "at": "2026-11-10T18:00:00+00:00"}}
+    assert client._pulled_elsewhere({"title": "Aiden Perry (INV-21736)"}, paid, pulls)
+    assert not client._pulled_elsewhere({"title": "Elijah Dendy (INV-21761)"}, paid, pulls)
+    old = {"rn:1": {"client": "Aiden Perry", "at": "2026-11-01T18:00:00+00:00"}}
+    assert not client._pulled_elsewhere({"title": "Aiden Perry (INV-21736)"}, paid, old), "an older order's pull"

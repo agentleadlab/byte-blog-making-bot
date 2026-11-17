@@ -1926,7 +1926,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "ledgerclear":
-                await _ledger_clear(bot, responder, message)
+                await _ledger_clear(bot, responder, message, aged_only=request.brief == "aged")
                 return
 
             if request.action == "ledgerunclear":
@@ -13372,7 +13372,8 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         at = _moment_of(card.get("at"))
         if at is None or now - at > timedelta(days=ledger.OPEN_DAYS):
             continue
-        if card.get("standing") == "waiting" and now - at > timedelta(hours=4) and key.split(":", 1)[1] not in pulls:
+        if (card.get("standing") == "waiting" and now - at > timedelta(hours=4) and key.split(":", 1)[1] not in pulls
+                and not _pulled_elsewhere(card, at, pulls)):
             aged.append(f"• **{card.get('title') or '?'}** - paid, not pulled yet" + (
                 f" <{card['link']}>" if card.get("link") else ""))
         elif card.get("standing") == "problem":
@@ -13397,6 +13398,7 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
         log.warning("Couldn't look for live orders with no leads", exc_info=True)
     spark = _spark_unread_lines()
     if parts is not None:
+        parts["aged"] = list(aged)
         parts["lines"] = [*aged, *stalled, *spark, *(ledger.board_vs(rookqc.recalled(), board, now=now, complete=complete)
                                              if board else [])]
         parts["today"] = list(missing)  # Payra's are today's, by what they are
@@ -13410,6 +13412,25 @@ async def _ledger_text(bot, which: str, parts: dict | None = None) -> str:
     return ledger.daily(rookqc.recalled(), now=now, today=today, through=dailyops.chased_through(today),
                         morning=which == "morning", payra_missing=missing, aged=aged, board=board,
                         board_complete=complete, stalled=stalled, spark=spark, score_line=score_line)
+
+
+def _pulled_elsewhere(card: dict, at, pulls: dict) -> bool:
+    """An aged payment's pull checked somewhere other than its own thread -
+    a #rook-nova thread, kept by its thread - for the same client, from a
+    day before the payment on. "all 104 aged leads are good to go": they were
+    pulled, and listed as "paid, not pulled yet" because the pull wasn't in
+    the payment's thread."""
+    from .. import rookqc
+
+    who = re.sub(r"\s*\((?:INV|#)[^)]*\)\s*$", "", str(card.get("title") or ""), flags=re.IGNORECASE).strip()
+    if not who:
+        return False
+    for one in pulls.values():
+        when = _moment_of(one.get("at"))
+        if (one.get("client") and rookqc.same_person_strict(str(one["client"]), who)
+                and (when is None or at is None or when >= at - timedelta(days=1))):
+            return True
+    return False
 
 
 async def _launching_board(bot) -> tuple[dict, bool]:
@@ -13854,7 +13875,7 @@ async def _sqc_team_said(bot, responder: Responder, message, kind: str, name: st
         await responder.send(f"✅ Got it - {whose} needs no setup. Off the list, and not asked about again.")
 
 
-async def _ledger_clear(bot, responder: Responder, message) -> None:
+async def _ledger_clear(bot, responder: Responder, message, *, aged_only: bool = False) -> None:
     """"these are all good to go so clear them out" - everything on the
     day's list taken off it as good to go: the payments, OK'd as they are
     (no more asking Rook and Nova about them), and the aged, Payra and
@@ -13890,11 +13911,18 @@ async def _ledger_clear(bot, responder: Responder, message) -> None:
 
     today = _today(bot.config)
     records = rookqc.recalled()
+    if aged_only:
+        # "all 104 aged leads are good to go" - the Aged section, nothing else.
+        parts["lines"], records, before = list(parts.get("aged") or []), {}, None
     keys, lines = await asyncio.to_thread(partial(ledger.clear, records, now=now, by=_asker(message) or "the team",
                                                   today=today, through=dailyops.chased_through(today),
                                                   before=before, lines=parts.get("lines") or []))
     if not keys and not lines:
         await responder.send("Nothing on the list to clear.")
+        return
+    if aged_only:
+        await responder.send(f"🧺 Cleared {len(lines)} aged line(s) off the list as good to go - not flagged again "
+                             "unless something new goes wrong with one.\n-# `@Ryte undo clear` puts them back.")
         return
     names = list(dict.fromkeys(str((records.get(key) or {}).get("client") or (records.get(key) or {}).get("name")
                                    or "?") for key in keys))

@@ -57,7 +57,8 @@ def test_a_spark_post_ryte_cant_read_is_on_the_list(monkeypatch):
 
     from wilbyte.bot import client
 
-    renewal = SimpleNamespace(id=77, channel=SimpleNamespace(name="⚡│ꜱᴘᴀʀᴋ"), created_at=NOW,
+    # Now, not NOW: kept posts older than a week are let go.
+    renewal = SimpleNamespace(id=77, channel=SimpleNamespace(name="⚡│ꜱᴘᴀʀᴋ"), created_at=datetime.now(timezone.utc),
                               jump_url="https://discord.com/channels/1/2/77", content="Membership renewed on Spark: "
                               "Bryce Evans, Veteran pool, paid through Nov 16", embeds=[], attachments=[])
     member = SimpleNamespace(id=78, channel=SimpleNamespace(name="spark"), created_at=NOW,

@@ -945,6 +945,9 @@ LIST_CLEAR = re.compile(r"\b(?:clear|clean)\s*(?:out\s+)?(?:(?:them|these|those|
                         r"|\bclear\s*(?:out)?\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?(?:payments?\s+(?:from\s+|of\s+)?)?"
                         r"yesterday(?:['’]?s)?(?:\s+(?:payments?|list|ones))?\s*[.!]*\s*$"
                         r"|\bclear\s*(?:out)?\s+(?:the\s+)?(?:payments?|list)\s*[.!]*\s*$", re.IGNORECASE)
+AGED_CLEAR = re.compile(r"(?:^|[\s,.])(?:all\s+(?:of\s+)?(?:the\s+)?(?:\d+\s+)?|^\s*the\s+(?:\d+\s+)?|^\s*\d+\s+)aged\b[^\n]{0,30}?"
+                        r"\b(?:are\s+|is\s+)?(?:all\s+)?(?:good\s+to\s+go|good|fine|done|ok(?:ay)?|pulled|clear(?:ed)?)\b"
+                        r"|\bclear\s+(?:out\s+)?(?:all\s+)?(?:the\s+)?aged\b", re.IGNORECASE)
 LIST_UNCLEAR = re.compile(r"\b(?:undo|unclear|un-clear|reverse|bring\s+back)\b[^\n]{0,20}\b(?:clear(?:ed|ing)?|list)\b"
                           r"|\bunclear\s*$", re.IGNORECASE)
 
@@ -1069,6 +1072,10 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
         return MentionRequest(action="sqcsaid", brief=f"{kind}\n{(said.group('name') or '').strip()}\n{text}")
     if LIST_UNCLEAR.search(text):
         return MentionRequest(action="ledgerunclear", brief=text)
+    # "all 104 aged leads are good to go" - only the Aged section, and no
+    # reply to the list needed.
+    if AGED_CLEAR.search(text):
+        return MentionRequest(action="ledgerclear", brief="aged")
     if LIST_CLEAR.search(text):
         return MentionRequest(action="ledgerclear", brief=text)
     # Looking back over the clear-outs already done, and redrawing one
