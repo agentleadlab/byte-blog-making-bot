@@ -690,6 +690,10 @@ def who_wants_a_sheet(text: str) -> str:
     said = " ".join((text or "").split())
     if not said:
         return ""
+    # "caleb keys aged leads sheet" - which order, not part of the name:
+    # looked for as "caleb keys aged leads" and found nobody.
+    said = re.sub(r"(?i)\b(?:aged|fresh)\b(?:\s+(?:vet(?:eran)?s?|iul|fex|mtg|mortgage|widows?|final\s+expense))?"
+                     r"(?:\s+(?:leads?|orders?|pull))?\b|\b(?:leads?|orders?)\b(?=\s*(?:sheet|$))", " ", said)
     shorter = _SHEET_AFTER.sub("", _SHEET_BEFORE.sub("", said, count=1), count=1)
     left = " ".join(shorter.strip(" -–—:?").split())
     return "" if left.casefold() in ("sheet", "spreadsheet", "link", "") else left

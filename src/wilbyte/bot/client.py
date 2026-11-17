@@ -3122,8 +3122,35 @@ async def _card_find(responder: Responder, config: Config, name: str) -> None:
     await responder.send("\n".join(lines))
 
 
+def _aged_sheets_for(said: str) -> list[str]:
+    """"caleb keys aged leads sheet" - the sheets Nova linked when it pulled
+    aged leads for them, newest first, from the pulls Ryte checked. Aged
+    orders have no New Agent card to find a sheet on."""
+    from .. import agedqc, agents as rules, rookqc
+
+    names = rules.who_wants_sheets(said)
+    found = []
+    for key, one in sorted(agedqc.recalled().items(), key=lambda item: str(item[1].get("at") or ""), reverse=True):
+        client = str(one.get("client") or "")
+        if not client or not any(rookqc.same_person_strict(client, name) for name in names):
+            continue
+        when = _moment_of(one.get("at"))
+        day = f"{when.astimezone(ZoneInfo('America/New_York')):%b %-d}" if when else ""
+        for link in one.get("sheets") or []:
+            line = (f"• **{client}**" + (f" ({one['invoice']})" if one.get("invoice") else "")
+                    + (f" · pulled {day}" if day else "") + f" — <{link}>")
+            if line not in found:
+                found.append(line)
+    return found[:8]
+
+
 async def _send_sheet(responder: Responder, config: Config, said: str) -> None:
     """Answer "sheet for Faith" with the Google Sheet off her card."""
+    if re.search(r"\baged\b", said or "", re.IGNORECASE):
+        aged = _aged_sheets_for(said)
+        if aged:
+            await responder.send("🧺 **Aged lead sheets**, newest first:\n" + "\n".join(aged))
+            return
     try:
         found, problems = await asyncio.to_thread(jobs.agent_sheet, config, said)
     except PIPELINE_ERRORS as exc:
