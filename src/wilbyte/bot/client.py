@@ -400,6 +400,8 @@ class WilByteBot(discord.Client):
             # The down alarm: say how long RYTE was gone, then check in
             # every five minutes for as long as it's up.
             _also_running(self.loop.create_task(alive_loop(self)))
+            # The sale's prices on at 1 AM Tuesday and back at 11:59 PM Friday.
+            _also_running(self.loop.create_task(sale_loop(self)))
             # The hub's fulfilled orders against the agents' sheets - only
             # once Nova's read-only key is in .env.
             if getattr(self.config.secrets, "hub_api_token", None):
@@ -1903,6 +1905,10 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 else:
                     await responder.send(scorecard.said(scorecard.score(
                         rookqc.recalled(), now=datetime.now(timezone.utc)))[:1990])
+                return
+
+            if request.action == "saleprices":
+                await _sale_prices(bot, responder, message, request.brief or "")
                 return
 
             if request.action == "sheetsswitch":
@@ -9317,6 +9323,195 @@ async def _not_set_up(responder: Responder, config: Config) -> None:
         said = (f"💳 Everybody who paid in the last {paidsetup.LOOK_BACK.days} days has a card "
                 "with a launch date." if not problems else "")
     await responder.send(said + "".join(f"\n⚠ {one}" for one in problems), quiet=True)
+
+
+# ------------------------------------------------------------- the sale
+
+def _sale_field(config: Config):
+    """(client, field, problem) - Lead Type | English, read fresh."""
+    from .. import ghl, saleprices
+
+    if not (config.secrets.ghl_api_token and config.secrets.ghl_location_id):
+        return None, None, "GHL isn't set up: GHL_API_TOKEN or GHL_LOCATION_ID missing."
+    client = ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id)
+    try:
+        field, close = saleprices.find_field(client)
+    except Exception:
+        client.close()
+        raise
+    if field is None:
+        client.close()
+        return None, None, (f"I can't find a custom field called “{saleprices.FIELD_NAME}”."
+                            + (f" Close: {', '.join(close[:6])}." if close else ""))
+    return client, saleprices.read_field(client, str(field.get("id"))) or field, ""
+
+
+def _sale_snapshot(config: Config) -> tuple[dict, str]:
+    """The saved original list - saved now if it isn't yet. (held, problem)."""
+    from .. import saleprices
+
+    held = saleprices.load()
+    client, field, problem = _sale_field(config)
+    if problem:
+        return held, problem
+    try:
+        current = saleprices.options_of(field)
+        if not held.get("original"):
+            if not current:
+                return held, "That field has no options I can read."
+            if saleprices.looks_on_sale(current):
+                return held, ("It already reads at sale prices, so that's not a list to put back on Friday. "
+                              "Put the normal prices back first, then `@RYTE sale prices` again.")
+            planned, left = saleprices.plan(current)
+            held.update({"field_id": str(field.get("id")), "field_name": str(field.get("name") or ""),
+                         "original": current, "planned": planned, "left_alone": left,
+                         "saved_at": saleprices.now_iso()})
+            saleprices.save(held)
+        held["current"] = current
+        return held, ""
+    finally:
+        client.close()
+
+
+def _sale_change(config: Config, to: str) -> tuple[bool, str]:
+    """Prices on ("on") or back ("off"), option by option, read back. (worked, said)."""
+    from .. import saleprices
+
+    held = saleprices.load()
+    if not held.get("original"):
+        return False, "I haven't saved the original list yet - `@RYTE sale prices` first."
+    client, field, problem = _sale_field(config)
+    if problem:
+        return False, problem
+    try:
+        current = saleprices.options_of(field)
+        if to == "on":
+            want = saleprices.swap(current, held["original"], held["planned"])
+        else:
+            want = saleprices.swap(current, held["planned"], held["original"])
+        if want != current:
+            held["shape"] = saleprices.write_options(client, field, want, shape=held.get("shape", ""))
+        after = saleprices.options_of(saleprices.read_field(client, str(field.get("id"))))
+    finally:
+        client.close()
+    if after != want:
+        return False, "GHL took the change but the field doesn't read back right:\n" + "\n".join(f"• {one}" for one in after)
+    stamp = "applied_at" if to == "on" else "restored_at"
+    held[stamp] = saleprices.now_iso()
+    saleprices.save(held)
+    changed = [f"• {one} → **{two}**" for one, two in zip(current, after) if one != two]
+    extra = [one for one in after if one not in held["original"] and one not in held["planned"]]
+    head = ("🏷️ **Sale prices are on** - Lead Type | English" if to == "on"
+            else "↩️ **Prices are back** - Lead Type | English is the list saved before the sale")
+    body = "\n".join(changed) if changed else "Nothing needed changing - it already read that way."
+    if extra:
+        body += "\n-# Left as they are (added after I saved the list): " + "; ".join(extra)
+    return True, f"{head}, read back and checked:\n{body}"[:1990]
+
+
+def _sale_listed(held: dict) -> str:
+    from .. import saleprices
+
+    zone = saleprices.ZONE
+    lines = [f"🏷️ **{held.get('field_name') or saleprices.FIELD_NAME}** - the only field I touch.",
+             "**Saved before the sale (the restore list):**"]
+    lines += [f"• {one}" for one in held.get("original") or []]
+    lines.append("**At sale prices:**")
+    lines += [f"• {two}" if one != two else f"• {one}  -# unchanged" for one, two in
+              zip(held.get("original") or [], held.get("planned") or [])]
+    if held.get("left_alone"):
+        lines.append("⚠️ **Left alone:** " + "; ".join(held["left_alone"]))
+    if held.get("current") and held["current"] != held.get("original") and not held.get("applied_at"):
+        lines.append("⚠️ It reads differently from the saved list right now - somebody's changed it.")
+    state = ("❌ cancelled" if held.get("cancelled") else
+             "✅ back to normal" if held.get("restored_at") else
+             "🏷️ on sale now" if held.get("applied_at") else
+             "⏰ set" if held.get("armed") else "not set - `@RYTE sale prices go` to set it")
+    lines.append(f"**On:** {saleprices.APPLY_AT.astimezone(zone):%a %b %-d, %-I:%M %p} · **Back:** "
+                 f"{saleprices.RESTORE_AT.astimezone(zone):%a %b %-d, %-I:%M %p} (Memphis time) · {state}")
+    return "\n".join(lines)
+
+
+async def _sale_prices(bot, responder: Responder, message, what: str) -> None:
+    """`@RYTE sale prices [test|go|cancel|on now|off now]`."""
+    from .. import ghl, saleprices
+
+    config = bot.config
+    try:
+        if what == "test":
+            await responder.send("Trying it on a throwaway dropdown first - Lead Type | English isn't touched…")
+            def run():
+                with ghl.GHLClient(config.secrets.ghl_api_token, config.secrets.ghl_location_id) as client:
+                    return saleprices.test_run(client)
+            shape, said = await asyncio.to_thread(run)
+            if shape:
+                held = saleprices.load()
+                held["shape"] = shape
+                saleprices.save(held)
+            await responder.send("\n".join(said + ([
+                "**It works** - `@RYTE sale prices` shows the plan, `@RYTE sale prices go` sets it for 1 AM."]
+                if shape else ["**It doesn't work through GHL's API** - change the prices by hand."]))[:1990])
+            return
+        if what in ("on", "off"):
+            worked, said = await asyncio.to_thread(_sale_change, config, what)
+            await responder.send(said if worked else f"❌ {said}")
+            return
+        held, problem = await asyncio.to_thread(_sale_snapshot, config)
+        if problem:
+            await responder.send(f"❌ {problem}")
+            return
+        if what == "go":
+            if not held.get("shape"):
+                await responder.send("Run `@RYTE sale prices test` first - I won't set it until I've seen GHL "
+                                     "take a change on a test field.")
+                return
+            held.update({"armed": True, "cancelled": False, "channel_id": getattr(message.channel, "id", None)})
+            saleprices.save(held)
+        elif what == "cancel":
+            held.update({"armed": False, "cancelled": True})
+            saleprices.save(held)
+        said = _sale_listed(held)
+        while len(said) > 1990:
+            cut = said.rfind("\n", 0, 1990)
+            await responder.send(said[:cut])
+            said = said[cut + 1:]
+        await responder.send(said)
+    except ghl.GHLError as exc:
+        await responder.send(f"❌ GHL said no: {_readable(exc)}")
+
+
+async def sale_loop(bot: "WilByteBot") -> None:
+    """Prices on at 1 AM Tuesday, back at 11:59 PM Friday - each read back,
+    and said. Late if Ryte was off at the time; never twice."""
+    from .. import saleprices
+
+    while not bot.is_closed():
+        try:
+            held = saleprices.load()
+            todo = saleprices.due(held, datetime.now(timezone.utc)) if held.get("armed") else ""
+            if todo:
+                worked, said = await asyncio.to_thread(_sale_change, bot.config, "on" if todo == "apply" else "off")
+                channel = bot.get_channel(int(held["channel_id"])) if held.get("channel_id") else None
+                channel = channel or _announce_channel(bot)
+                if channel is not None:
+                    ping = _unmarked_ping(bot.config)
+                    if worked:
+                        await channel.send(said)
+                    else:
+                        what = "put the sale prices on" if todo == "apply" else "put the prices back"
+                        await channel.send(f"{ping}\n🚨 **I couldn't {what}** on Lead Type | English - do it by hand "
+                                           f"in GHL → Settings → Custom Fields.\n{said}"[:1990])
+                if not worked:
+                    # Tried again in ten minutes, three times at most, then left to a person.
+                    held = saleprices.load()
+                    held[f"tries_{todo}"] = held.get(f"tries_{todo}", 0) + 1
+                    saleprices.save(held)
+                    await asyncio.sleep(600)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Sale price check failed", exc_info=True)
+        await asyncio.sleep(60)
 
 
 async def alive_loop(bot: "WilByteBot") -> None:

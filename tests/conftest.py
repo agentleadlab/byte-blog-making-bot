@@ -38,6 +38,8 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     # The states logic stays tested; Ryte runs with it off (rookqc.CHECK_STATES).
     from wilbyte import rookqc as _rookqc
     monkeypatch.setattr(_rookqc, "CHECK_STATES", True)
+    from wilbyte import saleprices as _saleprices
+    monkeypatch.setattr(_saleprices, "PATH", tmp_path / "sale-prices.json")
     from wilbyte import lessons as _lessons
     monkeypatch.setattr(_lessons, "LESSONS_PATH", tmp_path / "lessons.json")
     from wilbyte import sheetsdown as _sheetsdown

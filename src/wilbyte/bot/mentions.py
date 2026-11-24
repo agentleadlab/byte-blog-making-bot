@@ -986,6 +986,10 @@ TEAM_SAYS = re.compile(
     re.IGNORECASE)
 
 
+SALE_PRICES = re.compile(r"^\s*sale\s+prices?\b\W*(?P<what>test|go|cancel|status|on\s+now|off\s+now)?\b",
+                         re.IGNORECASE)
+
+
 def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     """Read a mention's text into a request. Never raises - falls back to help."""
     from ..formats import find, find_label
@@ -998,6 +1002,11 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     # agent's: "when do I go live" is the launch question everywhere else.
     if _opens_with(text, ("respond",)):
         return MentionRequest(action="respond", brief=_strip_word(text, ("respond",)))
+    # The sale: Lead Type | English's prices changed and put back.
+    sale = SALE_PRICES.match(text)
+    if sale:
+        what = " ".join((sale.group("what") or "").casefold().split())
+        return MentionRequest(action="saleprices", brief=what.replace(" now", ""))
     switch = _responder_switch(text)
     if switch is not None:
         return MentionRequest(action="responder", brief=switch)
@@ -1786,6 +1795,7 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > lesson before asking Rook or Nova. **lessons** lists them, **forget lesson 2**
 > @RYTE **you missed Bryce Evans - paid, nobody set it up** — a miss, counted
 > @RYTE **scorecard** — my last 7 days: real catches, false alarms, misses
+> @RYTE **sale prices** — Lead Type | English: the saved list and the sale prices. **test** first, then **go** (on 1 AM Tue, back 11:59 PM Fri), **cancel**, **on now** / **off now**
 > @RYTE **sheets off** — stop opening and flagging lead sheets (Google
 > suspended or down); **sheets on** to start again
 > @RYTE **pull up all FND payments** — every Payra payment with that word in
