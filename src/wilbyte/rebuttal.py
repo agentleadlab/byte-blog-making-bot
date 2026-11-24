@@ -205,6 +205,28 @@ CODES = {
         "the same as 13.3: what was promised, what arrived, and what the "
         "cardholder did with it",
     ),
+    # Elevate's own numbering, the two Franklin answers most: Gavin
+    # Mathieu's $507.15 was a 4553 and his $724.50 an 8002.
+    "4553": (
+        "Quality of Goods and Services",
+        "that the leads were poor quality or not as good as promised",
+        "proof the leads were DELIVERED and WORKED, and that they produced: "
+        "the leads delivered against the number ordered, and when; the sales "
+        "the cardholder closed from them (the rows marked Sold on their own "
+        "sheet) and the appointments booked; anything they said afterwards "
+        "that shows they were satisfied or ordered again. Then the signed "
+        "terms saying results are not guaranteed. Lead with delivery and the "
+        "sales - a lead that closed a sale is not a poor-quality lead",
+    ),
+    "8002": (
+        "Credit Not Processed",
+        "that a refund or credit was promised or owed and never given",
+        "the signed agreement's no-refund / no-credit clause, quoted word for "
+        "word, with when and how it was signed (and initialled, if it was); "
+        "that nobody ever promised a refund or credit - nothing in the "
+        "conversations says so; and that the leads were delivered in full, "
+        "so nothing was left owing. Lead with the no-credit clause",
+    ),
 }
 
 #: The codes that ask WHO paid rather than what was sold. On these the
@@ -340,6 +362,92 @@ def split_payment(text: str) -> tuple[str, str]:
     if not found:
         return said, ""
     return said[: found.start()].rstrip(), said[found.end():].strip()
+
+
+def _money_of(said: str) -> str:
+    found = _MONEY.search(str(said or ""))
+    return found.group(1).replace(",", "") if found else ""
+
+
+def _same_cardholder(one: "Dispute", other: "Dispute") -> bool:
+    from .rookqc import same_person_strict
+
+    if one.customer_email and other.customer_email:
+        return one.customer_email.strip().casefold() == other.customer_email.strip().casefold()
+    return bool(one.customer_name and other.customer_name
+                and same_person_strict(one.customer_name, other.customer_name))
+
+
+def other_disputes(this: "Dispute", notices: list[str]) -> list["Dispute"]:
+    """The same cardholder's other disputes among these notices - not this
+    one again (same ARN, or same amount and transaction date: the notice and
+    Ryte's own flag card of it both say it), and each counted once."""
+    mine = (this.arn, _money_of(this.amount), as_date(this.transaction_date))
+    seen, out = set(), []
+    for said in notices:
+        other = read_facts(said)
+        if not other.amount or not _same_cardholder(this, other):
+            continue
+        key = (_money_of(other.amount), as_date(other.transaction_date))
+        if (other.arn and other.arn == this.arn) or key == mine[1:]:
+            continue
+        if (other.arn and other.arn in seen) or key in seen:
+            continue
+        seen.update({key} | ({other.arn} if other.arn else set()))
+        out.append(other)
+    return out
+
+
+def _last4(said: str) -> str:
+    digits = re.sub(r"\D", "", str(said or ""))
+    return digits[-4:] if len(digits) >= 4 else ""
+
+
+def against_bank(alert: "Dispute", bank_text: str) -> list[str]:
+    """What the bank's "New Chargeback Notification" says differently from
+    the alert - name, amount, card, transaction date - and fills the alert's
+    blanks from it. [] when they agree. Only fields both carry are compared."""
+    from .rookqc import same_person_strict
+
+    bank = read_facts(bank_text)
+    wrong = []
+    if alert.customer_name and bank.customer_name and not same_person_strict(alert.customer_name, bank.customer_name):
+        wrong.append(f"name: alert says {alert.customer_name}, bank says {bank.customer_name}")
+    if _money_of(alert.amount) and _money_of(bank.amount) and \
+            float(_money_of(alert.amount)) != float(_money_of(bank.amount)):
+        wrong.append(f"amount: alert says {alert.amount}, bank says {bank.amount}")
+    if _last4(alert.card) and _last4(bank.card) and _last4(alert.card) != _last4(bank.card):
+        wrong.append(f"card: alert says {alert.card}, bank says {bank.card}")
+    if as_date(alert.transaction_date) and as_date(bank.transaction_date) and \
+            as_date(alert.transaction_date) != as_date(bank.transaction_date):
+        wrong.append(f"transaction date: alert says {alert.transaction_date}, bank says {bank.transaction_date}")
+    if not wrong:
+        for name in ("mid", "dispute_date", "dispute_type", "arn", "card", "customer_email", "reason",
+                     "customer_name", "amount", "transaction_date"):
+            if not getattr(alert, name) and getattr(bank, name):
+                setattr(alert, name, getattr(bank, name))
+    return wrong
+
+
+def pattern_said(others: list["Dispute"]) -> str:
+    """The other disputes, one line each, for the rebuttal."""
+    if not others:
+        return ""
+    lines = [f"{len(others)} other dispute(s) filed by this same cardholder, from our dispute notices:"]
+    for one in others:
+        bits = [f"${_money_of(one.amount)}"]
+        if one.transaction_date:
+            bits.append(f"charged {spelled(one.transaction_date)}")
+        if one.dispute_date:
+            bits.append(f"disputed {spelled(one.dispute_date)}")
+        if one.code:
+            bits.append(f"reason code {one.code} ({CODES[one.code][0]})")
+        if one.card:
+            bits.append(f"card {one.card}")
+        if one.arn:
+            bits.append(f"ARN {one.arn}")
+        lines.append("- " + ", ".join(bits))
+    return "\n".join(lines)
 
 
 def read_facts(text: str) -> Dispute:
@@ -485,6 +593,10 @@ class Gathered:
     #: and none of it is reachable by any API we have - and against a
     #: no-authorisation code it is the whole argument.
     payment: str = ""
+    #: Other disputes from the same cardholder, off the dispute channel -
+    #: "a pattern of disputes is strong evidence". Gavin Mathieu had $507.15
+    #: and $724.50 open on the same card.
+    pattern: str = ""
     #: What they bought, for the tracker's own column.
     product: str = ""
     #: What the rebuttal file was called, so the row points at it.
@@ -670,6 +782,7 @@ def writing_prompt(one: Dispute, found: Gathered, exhibits: list) -> str:
             ("the delivered lead sheet", found.sheet),
             ("what the cardholder did with the leads", found.activity),
             ("the cardholder's own messages", found.texts),
+            ("other disputes from this same cardholder", found.pattern),
         ) if str(text).strip()
     ]
     seen = "\n\n".join(f"### {name}\n{text}" for name, text in have)

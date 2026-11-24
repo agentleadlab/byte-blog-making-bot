@@ -294,6 +294,9 @@ class Secrets:
     # it on pandadoc" - so this is blank unless contracts reach an inbox some
     # other way.
     gmail_contract_sender: str | None = None
+    #: Who the bank's "New Chargeback Notification" emails come from, for
+    #: checking each dispute alert against them. Blank: not checked.
+    gmail_chargeback_sender: str | None = None
     # RingCentral, read-only: Faith's texts with the agents, so RYTE can draft
     # replies the way she writes them and ping Franklin with them. An app on
     # the JWT auth flow with Read Messages and Read Accounts, and a JWT made by
@@ -470,6 +473,7 @@ def load_config(path: Path | None = None, *, load_env: bool = True) -> Config:
                 clients_drive_folder=_env("CLIENTS_DRIVE_FOLDER"),
                 gmail_invoice_sender=_env("GMAIL_INVOICE_SENDER"),
                 gmail_contract_sender=_env("GMAIL_CONTRACT_SENDER"),
+                gmail_chargeback_sender=_env("GMAIL_CHARGEBACK_SENDER"),
                 ringcentral_client_id=_env("RINGCENTRAL_CLIENT_ID"),
                 ringcentral_client_secret=_env("RINGCENTRAL_CLIENT_SECRET"),
                 ringcentral_jwt=_env("RINGCENTRAL_JWT"),

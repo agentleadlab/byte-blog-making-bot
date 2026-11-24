@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .. import ghl, pipeline, prefs, youtube
+from .. import ghl, pipeline, prefs, sheetcolors, youtube
 from ..config import Config
 from ..models import BlogPost, Transcript, Video
 from ..scheduler import next_open_slots, taken_days_from_ledger, taken_days_from_posts
@@ -7709,6 +7709,29 @@ def _print_pdf(html: str) -> bytes:
             browser.close()
 
 
+def bank_notice(config: Config, dispute) -> tuple[str, str, str]:
+    """The bank's "New Chargeback Notification" for this dispute - found by
+    its ARN, else its amount. (what it says, when it was sent, a problem or
+    ""). Not set up: ("", "", "")."""
+    from .. import gmail as inbox
+
+    if not (getattr(config.secrets, "gmail_chargeback_sender", "") or "").strip():
+        return "", "", ""
+    terms = [one for one in (dispute.arn,) if one] or [f"${dispute.amount.lstrip('$').strip()}" if dispute.amount else ""]
+    try:
+        with inbox.open_chargebacks(config.secrets) as reading:
+            found = reading.invoices_for(*[one for one in terms if one])
+            if not found and dispute.customer_name:
+                found = reading.invoices_for(dispute.customer_name)
+    except Exception as exc:
+        return "", "", f"Couldn't read the bank's chargeback email: {_short(exc, 140)}"
+    notices = [one for one in found if "chargeback" in f"{one.subject} {one.body}".casefold()]
+    if not notices:
+        return "", "", "No “New Chargeback Notification” email from the bank for this one yet."
+    one = notices[0]
+    return f"{one.subject}\n{one.body}", one.when, ""
+
+
 def _payment_receipt(config: Config, dispute) -> tuple[str, str]:
     """Payra's confirmation for this customer. (what it says, a problem or "").
 
@@ -7950,6 +7973,14 @@ def _read_lead_sheet(config: Config, link: str, gsheets) -> tuple[str, str]:
             return "", "That sheet has no tabs I can read."
         title = str((tabs[0] or {}).get("title") or "Sheet1")
         rows = client.rows(sheet_id, f"{title}!A1:Z400")
+        # What the agent marked by colour - green Sold, yellow appointment -
+        # read off the sheet's own legend. Its own read: a sheet that won't
+        # give its formatting still gives its rows.
+        try:
+            marked = sheetcolors.said(sheetcolors.count(client.fills(sheet_id, f"'{title}'!A1:I1000")))
+        except Exception:
+            logging.getLogger("wilbyte.bot").warning("Couldn't read the lead sheet's colours", exc_info=True)
+            marked = ""
     except Exception as exc:
         return "", f"Couldn't read the lead sheet: {_short(exc, 120)}"
     finally:
@@ -7962,21 +7993,21 @@ def _read_lead_sheet(config: Config, link: str, gsheets) -> tuple[str, str]:
     body = [row for row in rows[1:] if any(str(cell).strip() for cell in row)]
     written = [
         f"Tab: {title}",
-        f"Columns: {', '.join(heads)}",
         f"Leads delivered: {len(body)}",
     ]
-    # The client's own writing, which is the part that proves they had it.
-    notes = []
+    if marked:
+        written.append(marked)
+    # The client's own writing proves they had the leads and worked them -
+    # counted, never quoted. "Hide or crop the agent's notes column first.
+    # Agents' notes can be crude or unprofessional, and they don't belong in
+    # a bank submission."
+    noted = 0
     for row in body:
-        for cell in row[len(heads) - 3:] if len(row) > 3 else []:
-            said = str(cell).strip()
-            if len(said) > 8 and not said.replace("-", "").isdigit():
-                notes.append(said)
-    if notes:
-        written.append(
-            f"Notes the client wrote on the leads ({len(notes)}):\n"
-            + "\n".join(f"- {one}" for one in notes[:25])
-        )
+        if any(len(str(cell).strip()) > 8 and not str(cell).strip().replace("-", "").isdigit()
+               for cell in (row[len(heads) - 3:] if len(row) > 3 else [])):
+            noted += 1
+    if noted:
+        written.append(f"The client wrote their own call notes on {noted} of the leads.")
     return "\n".join(written), ""
 
 

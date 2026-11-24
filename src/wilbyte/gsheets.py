@@ -226,6 +226,25 @@ class SheetsClient:
         return [[[str(cell) for cell in row] for row in (one.get("values") or [])]
                 for one in got.get("valueRanges", [])]
 
+    def fills(self, sheet_id: str, span: str) -> list[list[tuple]]:
+        """Each cell in a range as (text, (r, g, b) or None) - the fill as
+        shown, conditional formatting included. For counting what an agent
+        marked green (Sold) on their own sheet."""
+        fields = "sheets.data.rowData.values(formattedValue,effectiveFormat.backgroundColor)"
+        got = self._request("GET", f"/{sheet_id}?ranges={quoted(span)}&includeGridData=true&fields={fields}")
+        out = []
+        for sheet in got.get("sheets") or []:
+            for data in sheet.get("data") or []:
+                for row in data.get("rowData") or []:
+                    cells = []
+                    for cell in row.get("values") or []:
+                        colour = ((cell.get("effectiveFormat") or {}).get("backgroundColor"))
+                        rgb = None if colour is None else tuple(
+                            float(colour.get(part, 0.0)) for part in ("red", "green", "blue"))
+                        cells.append((str(cell.get("formattedValue") or ""), rgb))
+                    out.append(cells)
+        return out
+
     # ------------------------------------------------------------------ writing
 
     def tab_named(self, sheet_id: str, gid: str | int) -> str:

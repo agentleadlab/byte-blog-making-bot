@@ -305,6 +305,20 @@ def open_contracts(secrets) -> GmailClient:
     )
 
 
+def open_chargebacks(secrets) -> GmailClient:
+    """A reader pinned to whoever sends the bank's "New Chargeback
+    Notification" - the same inbox as the invoices, a different sender."""
+    client = GmailClient(
+        _signed_in(secrets),
+        sender=getattr(secrets, "gmail_chargeback_sender", ""),
+        setting="GMAIL_CHARGEBACK_SENDER",
+        what="the bank's \"New Chargeback Notification\" emails come from",
+    )
+    if (getattr(secrets, "gmail_refresh_token", "") or "").strip():
+        client.which = "GMAIL_REFRESH_TOKEN"
+    return client
+
+
 def open_gmail(secrets) -> GmailClient:
     """A signed-in client, or a plain sentence about what is missing.
 

@@ -14,6 +14,7 @@ days from GHL, so two concurrent runs would hand out the same day twice.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -42,7 +43,7 @@ from ..corpus import Corpus
 from ..models import CoverPlan
 from ..pipeline import DEFAULT_OUTPUT_DIR, PipelineError
 from ..scheduler import SchedulerError, next_open_slots
-from ..state import Ledger
+from ..state import Ledger, _state_dir
 from ..writer import WriterError
 from ..youtube import IngestError
 from . import embeds, jobs, mentions, mirror
@@ -2116,7 +2117,7 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 return
 
             if request.action == "rebuttal":
-                await _rebuttal(responder, config, message, request.brief or "")
+                await _rebuttal(responder, config, message, request.brief or "", bot=bot)
                 return
 
             if request.action == "tracker":
@@ -4079,7 +4080,25 @@ ASK_FOR_THE_BLOCK = (
 OUR_FLAG = "⚖️ **Chargeback**"
 
 
-async def _rebuttal(responder: Responder, config: Config, message, said: str) -> None:
+async def _dispute_notices(bot, config: Config, *, most: int = 500) -> list[str]:
+    """Every notice in the dispute channel, newest first, as text - for the
+    cardholder's other disputes. [] when there's no channel to read."""
+    where = getattr(config.secrets, "discord_dispute_channel_id", None)
+    channel = bot.get_channel(int(where)) if (bot is not None and where and str(where).isdigit()) else None
+    if channel is None:
+        return []
+    out = []
+    try:
+        async for one in channel.history(limit=most):
+            said = _all_text(one).strip()
+            if said:
+                out.append(said)
+    except Exception:
+        log.warning("Couldn't read back through the dispute channel", exc_info=True)
+    return out
+
+
+async def _rebuttal(responder: Responder, config: Config, message, said: str, *, bot=None) -> None:
     """Build a chargeback rebuttal from the dispute facts and what he can find.
 
     Franklin pastes the block off the acquirer's notice and attaches the
@@ -4164,6 +4183,26 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         )
         return
 
+    # The bank's own email for it, first: "Confirm that the name, amount,
+    # card last 4 and transaction date match the alert ... If anything
+    # doesn't match, stop."
+    try:
+        bank, sent, trouble = await asyncio.to_thread(jobs.bank_notice, config, dispute)
+    except Exception as exc:
+        bank, sent, trouble = "", "", f"Couldn't read the bank's chargeback email: {jobs._short(exc, 140)}"
+    if bank:
+        wrong = rules_doc.against_bank(dispute, bank)
+        if wrong:
+            await responder.send(
+                f"🛑 **The bank's chargeback email doesn't match this alert** - not building it:\n"
+                + "\n".join(f"• {one}" for one in wrong)
+                + "\nCheck which is right, then ask again with the right facts.")
+            return
+        await responder.send(f"-# ✅ Matches the bank's chargeback email{f' ({sent})' if sent else ''}: name, "
+                             "amount, card and transaction date.")
+    elif trouble:
+        await responder.send(f"-# ⚠ {trouble}")
+
     exhibits = []
     skipped = []
     for attachment in getattr(message, "attachments", []) or []:
@@ -4200,6 +4239,10 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str) ->
         if exhibits:
             exhibits = await asyncio.to_thread(jobs.sort_exhibits, config, exhibits)
         found = await asyncio.to_thread(jobs.rebuttal_evidence, config, dispute)
+        # The same cardholder's other disputes - "a pattern of disputes is
+        # strong evidence" - off the dispute channel's own notices.
+        others = rules_doc.other_disputes(dispute, await _dispute_notices(bot, config))
+        found.pattern = rules_doc.pattern_said(others)
         # Pasted, or transcribed off a screenshot of the portal - either
         # reaches the same section. A picture of the gateway record is easier
         # to produce than a tidy copy of it, and RYTE reads what is in it.
@@ -18833,6 +18876,11 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
     if where:
         note += f"\n[The notice]({where})"
     note += (
+        "\n-# Building the rebuttal now - their card, invoice, contract, sheet (sales counted), "
+        "the bank's email and any other disputes of theirs I find myself. Reply to it with "
+        "`@RYTE rebuttal` and chat screenshots attached to rebuild it with them. Uploading it to "
+        "ElevateQS is still yours."
+        if CHARGEBACK_AUTO and not holes else
         "\n-# Reply to it with `@RYTE rebuttal` and the text screenshots "
         "attached. Their card, what they ordered, the setup confirmations and "
         "the delivered lead sheet I find myself. Uploading it to ElevateQS is "
@@ -18847,6 +18895,51 @@ async def handle_dispute(bot: "WilByteBot", message) -> None:
         await responder.send(note)
     except Exception:
         log.exception("Couldn't flag that chargeback")
+
+    # "i want ryte to be able to do what i did": the rebuttal built as the
+    # alert lands, for a person to read and file. Once per dispute.
+    if not CHARGEBACK_AUTO or holes:
+        return
+    key = _built_key(found)
+    if key in _rebuttals_built():
+        return
+    _rebuttal_built(key)
+    try:
+        if not found.code:
+            await responder.send(
+                f"-# No reason code on the alert. Building **{found.customer_name}**'s now anyway - when you "
+                "have the code from Elevate, reply to the alert with `@RYTE rebuttal code 4553` (the real "
+                "code) and I'll aim it at that.")
+        await _rebuttal(responder, bot.config, message, said, bot=bot)
+    except Exception:
+        log.exception("Couldn't build that chargeback's rebuttal")
+        await responder.send(f"⚠ Couldn't build **{found.customer_name}**'s rebuttal on my own - reply to the "
+                             "alert with `@RYTE rebuttal` to try again.")
+
+
+#: Build each dispute's rebuttal as its alert lands. False: flag only.
+CHARGEBACK_AUTO = True
+_BUILT_PATH = _state_dir() / "rebuttals-built.json"
+
+
+def _built_key(found) -> str:
+    return (found.arn or f"{found.customer_name}|{found.amount}|{found.transaction_date}").strip().casefold()
+
+
+def _rebuttals_built() -> set:
+    try:
+        return set(json.loads(_BUILT_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def _rebuttal_built(key: str) -> None:
+    held = sorted(_rebuttals_built() | {key})
+    try:
+        _BUILT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _BUILT_PATH.write_text(json.dumps(held[-2000:]), encoding="utf-8")
+    except OSError:
+        log.warning("Couldn't remember that rebuttal was built", exc_info=True)
 
 
 async def handle_payment(bot: "WilByteBot", message) -> None:

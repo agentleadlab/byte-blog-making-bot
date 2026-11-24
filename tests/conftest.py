@@ -38,6 +38,11 @@ def _said_nothing_yet(tmp_path, monkeypatch):
     # The states logic stays tested; Ryte runs with it off (rookqc.CHECK_STATES).
     from wilbyte import rookqc as _rookqc
     monkeypatch.setattr(_rookqc, "CHECK_STATES", True)
+    # Building a rebuttal as an alert lands is tested on its own; elsewhere a
+    # chargeback alert is only flagged.
+    from wilbyte.bot import client as _client
+    monkeypatch.setattr(_client, "CHARGEBACK_AUTO", False)
+    monkeypatch.setattr(_client, "_BUILT_PATH", tmp_path / "rebuttals-built.json")
     from wilbyte import saleprices as _saleprices
     monkeypatch.setattr(_saleprices, "PATH", tmp_path / "sale-prices.json")
     from wilbyte import lessons as _lessons
