@@ -9443,10 +9443,16 @@ def _sale_change(config: Config, to: str) -> tuple[bool, str]:
     held[stamp] = saleprices.now_iso()
     saleprices.save(held)
     changed = [f"• {one} → **{two}**" for one, two in zip(current, after) if one != two]
-    extra = [one for one in after if one not in held["original"] and one not in held["planned"]]
+    renamed = saleprices.renames(current, held["planned"] if to == "off" else held["original"])
+    called = {now for _was, now in renamed}
+    extra = [two for one, two in zip(current, after)
+             if one not in called and two not in held["original"] and two not in held["planned"]]
     head = ("🏷️ **Sale prices are on** - Lead Type | English" if to == "on"
             else "↩️ **Prices are back** - Lead Type | English is the list saved before the sale")
     body = "\n".join(changed) if changed else "Nothing needed changing - it already read that way."
+    if renamed:
+        body += "\n-# Renamed since I saved the list - price changed, new name kept: " + "; ".join(
+            f"{was} → {now}" for was, now in renamed)
     if extra:
         body += "\n-# Left as they are (added after I saved the list): " + "; ".join(extra)
     return True, f"{head}, read back and checked:\n{body}"[:1990]

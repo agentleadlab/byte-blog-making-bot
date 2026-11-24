@@ -130,3 +130,37 @@ def test_the_test_field(monkeypatch):
     refusing = FakeGHL(ORIGINAL, takes="nothing")
     shape, said = saleprices.test_run(refusing)
     assert shape == "" and any("wouldn't take" in one for one in said)
+
+
+def test_renamed_during_the_sale_still_goes_back():
+    """Franklin made "Text-Verified IUL Leads" "Text-Verified IUL Plus Leads"
+    with the sale on - it still has to go back to $40 on Friday."""
+    original = ["Text-Verified IUL Standard Leads [FRESH - $28/Lead]",
+                "Text-Verified IUL Leads [FRESH - $40/Lead]",
+                "SPANISH Text-Verified IUL Leads [FRESH - $40/Lead]"]
+    planned, _ = saleprices.plan(original)
+    now = list(planned)
+    now[1] = "Text-Verified IUL Plus Leads [FRESH - $28.00/Lead]"
+    back = saleprices.swap(now, planned, original)
+    assert back == ["Text-Verified IUL Standard Leads [FRESH - $28/Lead]",
+                    "Text-Verified IUL Plus Leads [FRESH - $40/Lead]",
+                    "SPANISH Text-Verified IUL Leads [FRESH - $40/Lead]"]
+    assert saleprices.renames(now, planned) == [(planned[1], now[1])]
+    # Moved as well as renamed: found by its words.
+    moved = [now[1], now[0], now[2]]
+    assert saleprices.swap(moved, planned, original)[0] == "Text-Verified IUL Plus Leads [FRESH - $40/Lead]"
+    # A brand-new option is left alone.
+    added = now + ["Text-Verified Annuity Leads [FRESH - $50/Lead]"]
+    assert saleprices.swap(added, planned, original)[-1] == "Text-Verified Annuity Leads [FRESH - $50/Lead]"
+
+
+def test_friday_with_a_renamed_option(monkeypatch):
+    fake = FakeGHL(ORIGINAL, takes="options")
+    config = _wired(monkeypatch, fake)
+    client._sale_snapshot(config)
+    assert client._sale_change(config, "on")[0]
+    fake.fields["f1"]["picklistOptions"][2] = "Final Expense Plus [FRESH - $19.60/Lead]"
+    worked, said = client._sale_change(config, "off")
+    assert worked, said
+    assert fake.fields["f1"]["picklistOptions"][2] == "Final Expense Plus [FRESH - $28/Lead]"
+    assert "Renamed since" in said and "added after" not in said

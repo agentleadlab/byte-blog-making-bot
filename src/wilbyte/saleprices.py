@@ -83,11 +83,70 @@ def plan(options: list[str]) -> tuple[list[str], list[str]]:
     return out, left
 
 
+def _price(option: str) -> str:
+    found = _PRICE.findall(option or "")
+    return found[0] if len(found) == 1 else ""
+
+
+def _words(option: str) -> set:
+    return set(re.findall(r"[a-z]+", _PRICE.sub(" ", option or "").casefold()))
+
+
+def renamed_from(option: str, at: int, before: list[str], used: set) -> int | None:
+    """Which of `before` this option is, renamed - "Text-Verified IUL Leads"
+    made "Text-Verified IUL Plus Leads" during the sale. Same price, and
+    either the same place in the list or most of the same words. None if it
+    isn't one of them (a new option)."""
+    price = _price(option)
+    if not price:
+        return None
+    if at < len(before) and at not in used and _price(before[at]) == price:
+        return at
+    mine = _words(option)
+    best = None
+    for index, one in enumerate(before):
+        if index in used or _price(one) != price:
+            continue
+        theirs = _words(one)
+        overlap = len(mine & theirs) / max(1, len(mine | theirs))
+        if overlap >= 0.6 and (best is None or overlap > best[0]):
+            best = (overlap, index)
+    return best[1] if best else None
+
+
 def swap(current: list[str], before: list[str], after: list[str]) -> list[str]:
-    """`current` with each option that's in `before` turned into its `after`;
-    anything else - an option added since - kept as it is."""
+    """`current` with each option that's in `before` turned into its `after`.
+    An option renamed since keeps its new name and gets only its price
+    changed; anything else - an option added since - is kept as it is."""
     turn = {one: two for one, two in zip(before, after)}
-    return [turn.get(option, option) for option in current]
+    used = {before.index(option) for option in current if option in turn}
+    out = []
+    for at, option in enumerate(current):
+        if option in turn:
+            out.append(turn[option])
+            continue
+        index = renamed_from(option, at, before, used)
+        if index is None or not _price(after[index]):
+            out.append(option)
+            continue
+        used.add(index)
+        match = _PRICE.search(option)
+        out.append(option[:match.start(1)] + _price(after[index]) + option[match.end(1):])
+    return out
+
+
+def renames(current: list[str], before: list[str]) -> list[tuple[str, str]]:
+    """[(what it was, what it's called now)] - for saying so."""
+    used = {before.index(option) for option in current if option in before}
+    out = []
+    for at, option in enumerate(current):
+        if option in before:
+            continue
+        index = renamed_from(option, at, before, used)
+        if index is not None:
+            used.add(index)
+            out.append((before[index], option))
+    return out
 
 
 # ------------------------------------------------------------------ memory
