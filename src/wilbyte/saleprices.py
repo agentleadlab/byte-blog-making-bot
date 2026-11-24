@@ -31,9 +31,13 @@ from .state import _state_dir
 PATH = _state_dir() / "sale-prices.json"
 
 FIELD_NAME = "Lead Type | English"
-ZONE = ZoneInfo("America/Chicago")  # Memphis
-APPLY_AT = datetime(2026, 11, 24, 1, 0, tzinfo=ZONE)
-RESTORE_AT = datetime(2026, 11, 27, 23, 59, tzinfo=ZONE)
+ZONE = ZoneInfo("America/Chicago")  # Memphis, for saying the times
+# The same moments as the Black Friday code on leadlabcrm.com, which runs
+# 1:00 AM to 11:59:59 PM *Eastern* - so the page and the order form's
+# dropdown change together rather than an hour apart.
+EASTERN = ZoneInfo("America/New_York")
+APPLY_AT = datetime(2026, 11, 24, 1, 0, tzinfo=EASTERN)
+RESTORE_AT = datetime(2026, 11, 28, 0, 0, tzinfo=EASTERN)
 
 #: English fresh, as Franklin wrote it.
 FRESH = {"28": "19.60", "32": "22.40", "40": "28.00", "43": "32.25", "45": "33.75", "52": "36.40", "60": "42.00"}

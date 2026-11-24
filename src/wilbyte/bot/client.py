@@ -9428,7 +9428,7 @@ def _sale_listed(held: dict) -> str:
              "🏷️ on sale now" if held.get("applied_at") else
              "⏰ set" if held.get("armed") else "not set - `@RYTE sale prices go` to set it")
     lines.append(f"**On:** {saleprices.APPLY_AT.astimezone(zone):%a %b %-d, %-I:%M %p} · **Back:** "
-                 f"{saleprices.RESTORE_AT.astimezone(zone):%a %b %-d, %-I:%M %p} (Memphis time) · {state}")
+                 f"{saleprices.RESTORE_AT.astimezone(zone):%a %b %-d, %-I:%M %p} Memphis time, with the website · {state}")
     return "\n".join(lines)
 
 
