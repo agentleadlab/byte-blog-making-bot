@@ -1111,6 +1111,49 @@ def row_for_tracker(headings, one: Dispute, found: "Gathered", *, when,
     return row
 
 
+def _cents(said: str) -> int | None:
+    found = re.search(r"\$?\s*([\d,]+)(?:\.(\d{1,2}))?", str(said or ""))
+    if not found or not found.group(1).replace(",", ""):
+        return None
+    return int(found.group(1).replace(",", "")) * 100 + int((found.group(2) or "0").ljust(2, "0"))
+
+
+def on_the_tracker(one: "Dispute", tabs: dict) -> str:
+    """The tab this dispute is already on - by the whole name in a cell of a
+    row with the same amount, in any month's tab - or ""."""
+    wanted = " ".join(str(one.customer_name or "").split()).casefold()
+    cents = _cents(one.amount)
+    if not wanted:
+        return ""
+    for tab, rows in (tabs or {}).items():
+        for row in rows[1:]:
+            cells = [" ".join(str(cell).split()) for cell in row]
+            if not any(cell.casefold() == wanted for cell in cells):
+                continue
+            if cents is None or any(_cents(cell) == cents for cell in cells if re.search(r"\d", cell)):
+                return tab
+    return ""
+
+
+def notices_untracked(notices: list, tabs: dict) -> list:
+    """[(Dispute, posted date)] off the dispute channel's notices - each
+    dispute once (its ARN, or name + amount + transaction date) and only the
+    ones on no tab of the tracker yet. Oldest first. `notices` is
+    [(text, posted date)]."""
+    seen, out = set(), []
+    for text, posted in notices:
+        one = read_facts(text)
+        if not one.customer_name or not one.amount:
+            continue
+        key = one.arn or (one.customer_name.casefold(), _cents(one.amount), as_date(one.transaction_date))
+        if key in seen:
+            continue
+        seen.add(key)
+        if not on_the_tracker(one, tabs):
+            out.append((one, posted))
+    return sorted(out, key=lambda pair: (as_date(pair[0].dispute_date) or pair[1] or date.min))
+
+
 def columns_known(headings) -> tuple[list[str], list[str]]:
     """(the headings RYTE fills, the ones it leaves alone).
 

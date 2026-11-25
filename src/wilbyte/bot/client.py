@@ -2120,6 +2120,9 @@ async def handle_mention(bot: WilByteBot, message: discord.Message, *, untagged:
                 await _rebuttal(responder, config, message, request.brief or "", bot=bot)
                 return
 
+            if request.action == "trackerbackfill":
+                await _backfill_tracker(bot, responder, config, request.brief or "")
+                return
             if request.action == "tracker":
                 await _to_the_tracker(responder, config, message, request.brief or "")
                 return
@@ -4314,6 +4317,98 @@ async def _rebuttal(responder: Responder, config: Config, message, said: str, *,
     await responder.send("\n".join(note), file=discord.File(str(path)))
     found.rebuttal_name = path.name
     await _offer_the_tracker(responder, config, dispute, found)
+
+
+async def _backfill_tracker(bot, responder: Responder, config: Config, since_said: str = "") -> None:
+    """`@RYTE backfill tracker` - every dispute in the dispute channel that's
+    on no tab of the chargeback tracker yet, each in its own month's tab,
+    shown first and written only on the button. Status "Pending"; nothing
+    already there is touched, and no month tab is made for the past."""
+    from .. import rebuttal as rules_doc
+
+    since = rules_doc.as_date(since_said) if since_said else None
+    if since_said and since is None:
+        await responder.send(f"I can't read “{since_said}” as a date - try `backfill tracker since 9/1/2026`.")
+        return
+    where = getattr(config.secrets, "discord_dispute_channel_id", None)
+    channel = bot.get_channel(int(where)) if where and str(where).isdigit() else None
+    if channel is None:
+        await responder.send("I can't see the dispute channel (DISCORD_DISPUTE_CHANNEL_ID), so there's nothing to read.")
+        return
+    await responder.send("Reading every dispute alert and the whole tracker…")
+    notices = []
+    try:
+        async for one in channel.history(limit=3000, oldest_first=True):
+            said = _all_text(one).strip()
+            if said:
+                notices.append((said, one.created_at.astimezone(ZoneInfo(config.schedule.timezone)).date()))
+    except Exception as exc:
+        await responder.send(f"⚠ Couldn't read the dispute channel: {_readable(exc)}")
+        return
+    tabs, problems = await asyncio.to_thread(jobs.tracker_everything, config)
+    if problems:
+        await responder.send("⚠ " + "\n⚠ ".join(problems))
+        return
+
+    missing = rules_doc.notices_untracked(notices, tabs)
+    titles = list(tabs)
+    planned, skipped = [], []
+    for one, posted in missing:
+        day = rules_doc.as_date(one.dispute_date) or posted
+        if since and day and day < since:
+            continue
+        tab = rules_doc.monthly_tab(titles, day) if day else ""
+        if not tab and not any(rules_doc.looks_monthly(title) for title in titles) and titles:
+            tab = titles[0]
+        if not tab:
+            skipped.append(f"{one.customer_name} {one.amount} - no tab for {day:%b %Y}" if day else
+                           f"{one.customer_name} {one.amount} - no date to file it under")
+            continue
+        headings = jobs._the_list_columns([str(cell) for cell in (tabs.get(tab) or [[]])[0]]) if tabs.get(tab) else []
+        if not headings:
+            skipped.append(f"{one.customer_name} {one.amount} - {tab} has no headings in row 1")
+            continue
+        row = rules_doc.row_for_tracker(headings, one, rules_doc.Gathered(), when=day)
+        planned.append((tab, headings, row, one, day))
+
+    if not planned:
+        await responder.send("🧾 **The tracker is up to date** - every dispute in the channel is on it."
+                             + (("\n⚠ Couldn't file: " + "; ".join(skipped)) if skipped else ""))
+        return
+    lines = [f"🧾 **{len(planned)} dispute(s) aren't on the tracker yet:**"]
+    by_tab = {}
+    for tab, _headings, _row, one, day in planned:
+        by_tab.setdefault(tab, []).append(
+            f"• {one.customer_name} — {one.amount}"
+            + (f" — charged {one.transaction_date}" if one.transaction_date else "")
+            + (f" — code {one.code}" if one.code else ""))
+    for tab, rows in by_tab.items():
+        lines.append(f"**{tab}**")
+        lines += rows
+    if skipped:
+        lines.append("⚠ **Can't file these** (make the month's tab first): " + "; ".join(skipped))
+    lines.append("-# Each goes in as Status **Pending**, in the month it was disputed. Any that the bank has "
+                 "already decided, change the Status yourself after.")
+    said = "\n".join(lines)
+    while len(said) > 1900:
+        cut = said.rfind("\n", 0, 1900)
+        await responder.send(said[:cut])
+        said = said[cut + 1:]
+    view = views.ConfirmView(requester_id=responder.requester_id, timeout=config.discord.approval_timeout_seconds,
+                             label=f"Add {len(planned)} row(s)", emoji="🧾")
+    await responder.send(said, view=view)
+    await view.wait()
+    if not view.confirmed:
+        return
+    added, failed = 0, []
+    for tab, _headings, row, one, _day in planned:
+        landed, trouble = await asyncio.to_thread(jobs.track_chargeback, config, tab, row)
+        if landed:
+            added += 1
+        else:
+            failed.append(f"{one.customer_name} {one.amount}: {'; '.join(trouble)}")
+    await responder.send(f"🧾 **Added {added} row(s)** to the tracker."
+                         + (("\n⚠ " + "\n⚠ ".join(failed)) if failed else ""))
 
 
 async def _offer_the_tracker(

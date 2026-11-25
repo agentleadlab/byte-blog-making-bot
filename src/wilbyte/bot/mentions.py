@@ -1306,6 +1306,13 @@ def parse(content: str, *, max_batch: int = 10) -> MentionRequest:
     if re.match(r"\s*(?:paid\s+(?:but\s+)?not\s+set\s*up|not\s+set\s*up|unset|payra\s+(?:setup|set\s*up|cards?))\s*[.?!]*\s*$",
                 text, re.IGNORECASE):
         return MentionRequest(action="notsetup", brief=text)
+    # "can ryte backfill the chargback to add on the tracker? i havent added
+    # them in a while" - every notice in the dispute channel not on it yet.
+    backfill = re.match(r"\s*(?:backfill|catch\s*up|fill\s+in)\s+(?:the\s+)?(?:chargebacks?\s+|dispute\s+)?"
+                        r"(?:tracker|chargebacks?)\b(?:\s+(?:since|from)\s+(?P<since>.+?))?\s*[.?!]*\s*$",
+                        text, re.IGNORECASE)
+    if backfill:
+        return MentionRequest(action="trackerbackfill", brief=(backfill.group("since") or "").strip())
     # "@Ryte add to tracker", replying to the chargeback card - the row on its
     # own, without building a rebuttal first. Not the Levinson tracker: that
     # one is named.
@@ -1771,6 +1778,8 @@ HELP_TEXT = """**Hi, I'm RYTE** 🤖 — I write copy in Agent Lead Lab's voice.
 > @RYTE **team off friday** (or **team off 10/30 and 11/02**, **team off clear**) — the team is out those days: the setup cards those days would have worked come into Today now, and the reminders cover through the day you're back.
 > @RYTE **backup now** — my memory into iCloud Drive › Ryte Backups this minute. It
 > happens by itself every night from 3am too; the last 14 nights are kept
+> @RYTE **backfill tracker** — every dispute in #disputed-payments that isn't on the chargeback tracker
+> yet, in its own month, shown first and added with a button. **backfill tracker since 9/1/2026** to start later
 > @RYTE **add to tracker**, replying to the ⚖️ Chargeback card — its row in the
 > chargeback tracker on its own, shown with a button first. Or **add to tracker
 > Megan Lucas** to find her notice above. Never twice for the same person

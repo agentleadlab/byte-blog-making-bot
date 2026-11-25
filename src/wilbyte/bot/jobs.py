@@ -5940,6 +5940,24 @@ def _cents_in(said: str) -> int | None:
     return int(found.group(1).replace(",", "") or 0) * 100 + int((found.group(2) or "0").ljust(2, "0"))
 
 
+def tracker_everything(config: Config) -> tuple[dict, list[str]]:
+    """Every tab of the chargeback tracker, its list columns A-F, in one
+    read. ({tab: rows}, problems). Reads only."""
+    from .. import gsheets
+
+    sheet = (getattr(config.secrets, "tracker_sheet_id", "") or "").strip()
+    if not sheet:
+        return {}, ["No TRACKER_SHEET_ID in .env."]
+    sheet = gsheets.sheet_id_in(sheet) or sheet
+    try:
+        with gsheets.SheetsClient(gsheets.credentials(config.secrets)) as reading:
+            titles = [str(one.get("title") or "") for one in reading.tabs(sheet)]
+            got = reading.rows_of(sheet, [f"'{one}'!A1:F2000" for one in titles])
+    except Exception as exc:
+        return {}, [f"Couldn't read the tracker: {_short(exc, 200)}"]
+    return dict(zip(titles, got)), []
+
+
 def track_chargeback(config: Config, tab: str, row: list) -> tuple[str, list[str]]:
     """Write one row into the tracker's list. (where it landed, problems).
 
